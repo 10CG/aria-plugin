@@ -1,6 +1,6 @@
 # Aria Plugin
 
-> Aria AI-DDD 方法论完整插件 - 23个 Skills + 9个 Agents
+> Aria AI-DDD 方法论完整插件 - 23个 Skills + 9个 Agents + Hooks系统
 
 ## 安装
 
@@ -13,6 +13,23 @@
 ```
 
 ## 包含内容
+
+### Hooks 系统 (自动触发)
+
+| Hook 点 | 触发时机 | 对应 Skill | 功能 |
+|--------|----------|-----------|------|
+| `SessionStart` | 会话开始时 | `state-scanner` | 自动状态扫描和环境检查 |
+| `SessionEnd` | 会话结束时 | `progress-updater` | 检查进度更新和归档 |
+| `PreToolUse` | 工具调用前 | `tdd-enforcer` | 强制执行 TDD 规则 |
+
+**禁用 Hooks**：
+```bash
+# 设置环境变量
+export ARIA_HOOKS_DISABLED=true
+
+# 或在插件设置中禁用
+/plugin disable aria@10cg-aria-plugin
+```
 
 ### Skills (23个)
 
@@ -69,7 +86,22 @@
 
 ## 使用方式
 
-安装后，统一使用 `/aria:` 前缀调用：
+### Hooks 自动触发
+
+安装后，hooks 会在关键节点自动触发：
+
+```bash
+# 会话开始 - 自动执行状态扫描
+# → 等同于调用 /aria:state-scanner
+
+# 编写代码 - 自动检查 TDD 规则
+# → 等同于调用 /aria:tdd-enforcer
+
+# 会话结束 - 自动检查进度
+# → 等同于调用 /aria:progress-updater
+```
+
+### 手动调用 Skills
 
 ```bash
 # Skills

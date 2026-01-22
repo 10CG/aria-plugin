@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0",
+  "description": "Aria 十步循环工作流 Hooks 配置 - 复用现有 Skills",
+  "enabled": true,
+  "hooks": {
+    "SessionStart": {
+      "skill": "aria:state-scanner",
+      "enabled": true,
+      "description": "会话开始时执行状态扫描和环境检查",
+      "timeout": 30
+    },
+    "SessionEnd": {
+      "skill": "aria:progress-updater",
+      "enabled": true,
+      "description": "会话结束时检查进度更新和归档",
+      "timeout": 15
+    },
+    "PreToolUse": {
+      "skill": "aria:tdd-enforcer",
+      "enabled": true,
+      "description": "拦截 Write/Edit 工具调用，强制执行 TDD 规则",
+      "rules": [
+        {
+          "tool": "Write",
+          "condition": "source_code_file",
+          "action": "check_test_exists"
+        },
+        {
+          "tool": "Edit",
+          "condition": "source_code_file",
+          "action": "check_test_exists"
+        }
+      ]
+    },
+    "PostToolUse": {
+      "enabled": false,
+      "description": "工具调用后检查（当前禁用，未来可用于文档同步检查）"
+    }
+  },
+  "disable_with_env": "ARIA_HOOKS_DISABLED=false"
+}
