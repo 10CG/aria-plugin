@@ -1,0 +1,685 @@
+# OpenAPI 3.0 模板
+#
+# 用途：为REST API项目生成OpenAPI规范的完整模板
+# 使用方法：复制此模板，替换${PROJECT_NAME}等占位符，根据实际API调整端点和schema
+
+openapi: 3.0.0
+info:
+  title: ${PROJECT_NAME} API
+  version: 1.0.0
+  description: |
+    ${PROJECT_DESCRIPTION}
+
+    ## 认证
+    大部分端点需要Bearer token认证。
+
+    ## 错误处理
+    API使用标准HTTP状态码。
+
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: https://api.example.com/v1
+    description: 生产环境
+  - url: https://staging-api.example.com/v1
+    description: 测试环境
+  - url: http://localhost:8000
+    description: 本地开发
+
+tags:
+  - name: auth
+    description: 认证相关接口
+  - name: users
+    description: 用户管理
+  - name: todos
+    description: 待办事项
+
+paths:
+  # ========================================
+  # 认证端点
+  # ========================================
+
+  /auth/login:
+    post:
+      tags:
+        - auth
+      summary: 用户登录
+      description: 使用邮箱和密码登录，返回JWT token
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: password123
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                      refreshToken:
+                        type: string
+                      user:
+                        $ref: '#/components/schemas/User'
+                  message:
+                    type: string
+                    example: 登录成功
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/logout:
+    post:
+      tags:
+        - auth
+      summary: 用户登出
+      description: 使当前token失效
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 登出成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ========================================
+  # 用户端点
+  # ========================================
+
+  /users:
+    get:
+      tags:
+        - users
+      summary: 获取用户列表
+      description: 分页获取所有用户（需要管理员权限）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: 页码（从1开始）
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: search
+          in: query
+          description: 搜索关键词（搜索名称和邮箱）
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功获取用户列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/User'
+                      total:
+                        type: integer
+                        description: 总记录数
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      totalPages:
+                        type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - users
+      summary: 创建新用户
+      description: 注册新用户账号
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: 用户创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/User'
+                  message:
+                    type: string
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /users/{userId}:
+    get:
+      tags:
+        - users
+      summary: 获取用户详情
+      description: 根据ID获取单个用户信息
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: 成功获取用户信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags:
+        - users
+      summary: 更新用户信息
+      description: 更新指定用户的信息（仅限本人或管理员）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+    delete:
+      tags:
+        - users
+      summary: 删除用户
+      description: 删除指定用户（仅限管理员）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ========================================
+  # 待办事项端点
+  # ========================================
+
+  /todos:
+    get:
+      tags:
+        - todos
+      summary: 获取待办事项列表
+      description: 获取当前用户的待办事项
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: 按状态筛选
+          schema:
+            type: string
+            enum: [pending, completed, all]
+            default: all
+        - name: priority
+          in: query
+          description: 按优先级筛选
+          schema:
+            type: string
+            enum: [low, medium, high]
+      responses:
+        '200':
+          description: 成功获取列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Todo'
+
+    post:
+      tags:
+        - todos
+      summary: 创建待办事项
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTodoRequest'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Todo'
+
+  /todos/{todoId}:
+    get:
+      tags:
+        - todos
+      summary: 获取待办事项详情
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: todoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Todo'
+
+    put:
+      tags:
+        - todos
+      summary: 更新待办事项
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: todoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTodoRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Todo'
+
+    delete:
+      tags:
+        - todos
+      summary: 删除待办事项
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: todoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 删除成功
+
+# ========================================
+# 组件定义
+# ========================================
+
+components:
+  # 安全方案
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token认证。
+
+        在请求头中添加：
+        ```
+        Authorization: Bearer <your-token>
+        ```
+
+  # 通用参数
+  parameters:
+    UserIdPath:
+      name: userId
+      in: path
+      description: 用户ID
+      required: true
+      schema:
+        type: string
+        example: "123e4567-e89b-12d3-a456-426614174000"
+
+  # 数据模型
+  schemas:
+    # 用户相关
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        name:
+          type: string
+          example: 张三
+        avatar:
+          type: string
+          format: uri
+          nullable: true
+          example: https://example.com/avatar.jpg
+        role:
+          type: string
+          enum: [user, admin]
+          example: user
+        createdAt:
+          type: string
+          format: date-time
+          example: "2025-01-14T10:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2025-01-14T10:30:00Z"
+
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        avatar:
+          type: string
+          format: uri
+
+    # 待办事项相关
+    Todo:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          example: 完成项目文档
+        description:
+          type: string
+          nullable: true
+          example: 编写API文档和使用说明
+        status:
+          type: string
+          enum: [pending, completed]
+          example: pending
+        priority:
+          type: string
+          enum: [low, medium, high]
+          example: high
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        userId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateTodoRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+        dueDate:
+          type: string
+          format: date-time
+
+    UpdateTodoRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pending, completed]
+        priority:
+          type: string
+          enum: [low, medium, high]
+        dueDate:
+          type: string
+          format: date-time
+
+    # 通用响应
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: 操作成功
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: 请求参数验证失败
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+  # 通用响应
+  responses:
+    Unauthorized:
+      description: 未授权 - token无效或已过期
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: 认证token无效或已过期
+
+    Forbidden:
+      description: 禁止访问 - 权限不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: FORBIDDEN
+              message: 没有权限执行此操作
+
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: 请求的资源不存在
+
+    ValidationError:
+      description: 请求参数验证失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: 请求参数验证失败
+              details:
+                - field: email
+                  message: 邮箱格式不正确
+                - field: password
+                  message: 密码长度至少8位
