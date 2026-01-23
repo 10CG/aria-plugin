@@ -21,8 +21,6 @@
         "source": "url",
         "url": "https://github.com/10CG/aria-plugin.git"
       },
-      "agents": "agents",
-      "commands": "skills",
       "category": "development",
       "keywords": ["ai-ddd", "workflow", "git", "agile", "architecture"]
     }
