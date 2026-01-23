@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Aria AI-DDD 方法论完整插件市场",
   "owner": {
     "name": "10CG",
@@ -18,7 +18,7 @@
         "name": "10CG"
       },
       "source": {
-        "source": "url",
+        "type": "git",
         "url": "https://github.com/10CG/aria-plugin.git"
       },
       "category": "development",
