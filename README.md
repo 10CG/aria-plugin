@@ -9,7 +9,7 @@
 /plugin marketplace add 10CG/aria-plugin
 
 # 安装
-/plugin install aria@10cg-aria-plugin
+/plugin install aria@10CG-aria-plugin
 ```
 
 ## 包含内容
