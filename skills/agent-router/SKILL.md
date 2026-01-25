@@ -1,15 +1,12 @@
 ---
 name: agent-router
 description: |
-  任务到 Agent 的智能路由器。根据任务类型、文件路径、复杂度自动选择最合适的 Agent。
-  支持自动、推荐、手动三种模式。
+  任务到 Agent 的智能路由器，根据任务类型、文件路径自动选择最合适的 Agent。
 
-  使用场景：
-  - subagent-driver 需要为任务选择 Agent
-  - 用户不确定应该使用哪个 Agent
-  - 需要智能匹配专业 Agent
-
-  特性: 智能路由、置信度评分、多模式支持、用户覆盖
+  使用场景：subagent-driver 需要为任务选择 Agent、不确定应该使用哪个 Agent
+argument-hint: "[task-description]"
+context: fork
+agent: general-purpose
 allowed-tools: Read, Glob, Grep, Bash
 ---
 

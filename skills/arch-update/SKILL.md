@@ -1,11 +1,13 @@
 ---
 name: arch-update
 description: |
-  基于v4.5架构文档管理系统，自动化管理代码架构文档的创建、更新和验证，确保文档与代码100%同步。
+  自动化管理代码架构文档的创建、更新和验证，确保文档与代码100%同步。
 
-  使用场景：完成功能开发后同步架构文档、重构后更新文档、新建模块时创建架构文档。
-
-  推荐Agent: knowledge-manager
+  使用场景：完成功能开发后同步架构文档、重构后更新文档。
+argument-hint: "[module-path]"
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Read, Write, Glob, Grep, Edit
 ---
 
 # 架构文档更新器

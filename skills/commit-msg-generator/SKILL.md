@@ -2,11 +2,12 @@
 name: commit-msg-generator
 description: |
   根据Git暂存区的更改生成符合Conventional Commits规范的commit消息。
-  支持可选的增强标记(Agent/Context/Module)，用于复杂场景的提交追溯。
 
   使用场景：准备提交代码时生成规范消息、自动总结代码变更。
-
-  兼容性: 完全向后兼容v1.0.0
+argument-hint: "[--enhanced]"
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Bash, Read, Grep
 ---
 
 # Git Commit 消息生成器

@@ -1,16 +1,12 @@
 ---
 name: spec-drafter
 description: |
-  辅助创建 OpenSpec proposal.md 文档。
-  支持十步循环 A.1 (Spec管理)。
+  辅助创建 OpenSpec proposal.md 文档，支持十步循环 A.1 (Spec管理)。
 
-  使用场景：
-  - "创建新功能的 Spec"
-  - "需要写 proposal"
-  - "帮我起草规范文档"
-  - "为这个需求生成 OpenSpec"
-
-  特性: Level 自动判断、信息提取、交互模式、上下文增强
+  使用场景："创建新功能的 Spec"、"需要写 proposal"
+argument-hint: "[feature-name]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 ---
 

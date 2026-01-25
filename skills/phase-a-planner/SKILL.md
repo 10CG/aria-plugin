@@ -1,16 +1,11 @@
 ---
 name: phase-a-planner
 description: |
-  十步循环 Phase A - 规划阶段执行器。
-  编排 A.1-A.3 步骤：Spec 管理、任务规划、Agent 分配。
+  十步循环 Phase A - 规划阶段执行器，编排 A.1-A.3 步骤。
 
-  使用场景：
-  - "执行规划阶段"
-  - "Phase A"
-  - "创建 Spec 并规划任务"
-  - 被 workflow-runner 调用
-
-  特性: 步骤编排、智能跳过、上下文传递
+  使用场景："执行规划阶段"、"Phase A"、"创建 Spec 并规划任务"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Task
 ---
 

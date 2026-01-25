@@ -1,16 +1,12 @@
 ---
 name: phase-c-integrator
 description: |
-  十步循环 Phase C - 集成阶段执行器。
-  编排 C.1-C.2 步骤：Git 提交、PR 创建/合并。
+  十步循环 Phase C - 集成阶段执行器，编排 C.1-C.2 步骤。
 
-  使用场景：
-  - "执行集成阶段"
-  - "Phase C"
-  - "提交代码并创建 PR"
-  - 被 workflow-runner 调用
-
-  特性: 步骤编排、智能跳过、增强提交消息
+  使用场景："执行集成阶段"、"Phase C"、"提交代码并创建 PR"
+argument-hint: "[--skip-pr]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---
 

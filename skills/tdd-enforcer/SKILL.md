@@ -1,12 +1,10 @@
 ---
 name: tdd-enforcer
 description: |
-  强制执行测试驱动开发 (TDD) 工作流。
-  使用 RED-GREEN-REFACTOR 循环确保测试先于代码编写。
+  强制执行测试驱动开发 (TDD) 工作流，使用 RED-GREEN-REFACTOR 循环确保测试先于代码编写。
 
   使用场景：开发新功能时确保 TDD 最佳实践、代码质量审查。
-
-  特性: PreToolUse hook 拦截、测试依赖验证、自动状态检测
+user-invocable: true
 ---
 
 # TDD 强制执行器 (TDD Enforcer)

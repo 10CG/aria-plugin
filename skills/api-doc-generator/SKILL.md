@@ -1,9 +1,13 @@
 ---
 name: api-doc-generator
 description: |
-  从代码生成API文档和OpenAPI规范，支持多种后端框架（FastAPI、Express.js、Django等）。
+  从代码生成API文档和OpenAPI规范，支持多种后端框架。
 
-  使用场景：为REST API项目生成OpenAPI 3.0规范、创建或更新API接口文档、从代码自动提取API信息。
+  使用场景：为REST API项目生成OpenAPI 3.0规范、创建或更新API接口文档。
+argument-hint: "[framework]"
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Read, Glob, Grep, Write
 ---
 
 # API 文档生成器

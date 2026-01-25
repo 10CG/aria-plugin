@@ -1,13 +1,13 @@
 ---
 name: strategic-commit-orchestrator
 description: |
-  基于AI-DDD v3.0.0的战略提交编排器，智能分析项目变更设计分组提交计划，
-  支持多模块(mobile/backend/frontend/shared)协同提交和阶段性成果提交。
+  基于AI-DDD v3.0.0的战略提交编排器，智能分析项目变更设计分组提交计划。
 
-  使用场景：需要分组提交多个变更、跨模块协同开发、阶段性成果提交、大规模重构。
-
-  依赖: commit-msg-generator
-  推荐Agent: tech-lead
+  使用场景：需要分组提交多个变更、跨模块协同开发、阶段性成果提交。
+argument-hint: "[--dry-run]"
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Bash, Read, Grep, Task
 ---
 
 # Strategic Commit Orchestrator

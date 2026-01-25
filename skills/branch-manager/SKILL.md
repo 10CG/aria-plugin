@@ -1,12 +1,13 @@
 ---
 name: branch-manager
 description: |
-  管理 Git 分支的创建、推送和 PR 流程。
-  支持十步循环中的 B.1 (分支创建) 和 C.2 (分支合并/PR)。
+  管理 Git 分支的创建、推送和 PR 流程，支持十步循环中的 B.1 和 C.2。
 
   使用场景：开始新任务时创建分支、完成开发后创建 PR。
-
-  特性: 支持主仓库和子模块内操作、集成 Forgejo API
+argument-hint: "[branch-name]"
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Bash, Read, Grep
 ---
 
 # 分支管理器 (Branch Manager)

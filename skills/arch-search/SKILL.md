@@ -4,8 +4,10 @@ description: |
   通过搜索架构文档替代直接搜索项目代码，平均节省 70% Token 消耗。
 
   使用场景：定位功能实现位置、了解模块设计、回答架构问题。
-
-  触发方式：显式调用（搜索/查找/在哪里）+ 隐式集成（AI 开发任务时自动触发）
+argument-hint: "[search-term]"
+context: fork
+agent: Explore
+allowed-tools: Read, Grep, Glob
 ---
 
 # 架构搜索

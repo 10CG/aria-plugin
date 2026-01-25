@@ -4,15 +4,10 @@ description: |
   项目状态扫描与智能工作流推荐，十步循环的统一入口。
   收集项目状态、分析变更、推荐最佳工作流、引导用户确认执行。
 
-  使用场景：
-  - "查看项目当前状态"
-  - "我要提交代码"
-  - "开发新功能"
-  - "快速修复 Bug"
-  - "准备开始新任务"
-  - "状态感知" / "A.0"
-
-  特性: 状态感知、智能推荐、工作流引导、Phase Skills 编排
+  使用场景："查看项目当前状态"、"我要提交代码"、"开发新功能"
+argument-hint: "[intent]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
 

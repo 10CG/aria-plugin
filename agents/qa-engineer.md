@@ -1,6 +1,10 @@
 ---
 name: qa-engineer
-description: Use this agent when you need comprehensive quality assurance analysis, including code review for bugs and quality issues, test strategy development, defect analysis, or systematic evaluation of software components. Examples: After implementing a new feature and wanting thorough quality assessment, when investigating production issues that require systematic debugging, when developing test plans for complex functionality, or when you need expert evaluation of code quality and potential failure points.
+description: |
+  Comprehensive quality assurance analysis: code review, test strategy, defect analysis.
+
+  Scenarios: post-implementation quality assessment, production issue debugging,
+  test plan development, code quality evaluation
 model: sonnet
 color: yellow
 ---

@@ -1,16 +1,11 @@
 ---
 name: phase-d-closer
 description: |
-  十步循环 Phase D - 收尾阶段执行器。
-  编排 D.1-D.2 步骤：进度更新、Spec 归档。
+  十步循环 Phase D - 收尾阶段执行器，编排 D.1-D.2 步骤。
 
-  使用场景：
-  - "执行收尾阶段"
-  - "Phase D"
-  - "更新进度并归档 Spec"
-  - 被 workflow-runner 调用
-
-  特性: 步骤编排、智能跳过、UPM 更新、Spec 归档
+  使用场景："执行收尾阶段"、"Phase D"、"更新进度并归档 Spec"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Bash, Task
 ---
 

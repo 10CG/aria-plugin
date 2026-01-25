@@ -2,15 +2,11 @@
 name: progress-updater
 description: |
   更新项目进度状态，写入 UPM 文档的 UPMv2-STATE 机读区块。
-  支持十步循环中的 D.1 (进度更新)。
 
-  使用场景：
-  - "更新项目进度"
-  - "标记任务完成"
-  - "更新 mobile 模块 KPI"
-  - "写入周期进度报告"
-
-  特性: 自动 stateToken 计算、并发冲突检测、周期文档生成
+  使用场景："更新项目进度"、"标记任务完成"
+argument-hint: "[task-id]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 

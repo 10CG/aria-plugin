@@ -1,18 +1,16 @@
-# Subagent Driver (子代理驱动器)
-
-> **版本**: 1.2.0 | **十步循环**: B.2 (执行验证)
-> **更新**: 2026-01-22 - 集成 agent-router 智能路由
-
 ---
-
+name: subagent-driver
 description: |
-  子代理驱动开发 (Subagent-Driven Development) 的核心执行器。
-  管理 Fresh Subagent 启动、任务间代码审查、上下文隔离验证。
+  子代理驱动开发 (SDD) 的核心执行器，管理 Fresh Subagent 启动、任务间代码审查。
 
-  特性: Fresh Subagent 模式、任务间代码审查、4 选项完成流程、上下文隔离、TDD 配置传递、智能 Agent 路由
+  使用场景：需要使用 Subagent 执行开发任务
+argument-hint: "[task-description]"
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Task, Bash, Read, Grep
 ---
 
-# 子代理驱动器 (Subagent Driver)
+# Subagent Driver (子代理驱动器)
 
 > **版本**: 1.2.0 | **十步循环**: B.2 (执行验证)
 > **更新**: 2026-01-22 - 集成 agent-router 智能路由

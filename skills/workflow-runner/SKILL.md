@@ -1,16 +1,12 @@
 ---
 name: workflow-runner
 description: |
-  十步循环轻量编排器。协调 Phase Skills 执行，支持灵活组合。
-  通常由 state-scanner 推荐后触发，也可直接调用。
+  十步循环轻量编排器，协调 Phase Skills 执行，支持灵活组合。
 
-  使用场景：
-  - 接收 state-scanner 推荐执行工作流
-  - "执行 quick-fix 工作流"
-  - "运行 [Phase B, Phase C]"
-  - 自定义 Phase 组合
-
-  特性: Phase 编排、灵活组合、上下文传递、智能委托、TDD 双保险 pre-hook
+  使用场景："执行 quick-fix 工作流"、"运行 [Phase B, Phase C]"、自定义 Phase 组合
+argument-hint: "[workflow-name]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Task, Read, Write, Glob, Grep
 ---
 

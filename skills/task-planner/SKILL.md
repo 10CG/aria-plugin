@@ -1,22 +1,12 @@
 ---
 name: task-planner
 description: |
-  将 OpenSpec 分解为可执行的任务列表。
-  支持十步循环 A.2 (任务规划) + A.3 (Agent 分配)。
-  实现双层任务架构：tasks.md (粗粒度) + detailed-tasks.yaml (细粒度)。
+  将 OpenSpec 分解为可执行的任务列表，支持十步循环 A.2 (任务规划) + A.3 (Agent 分配)。
 
-  使用场景：
-  - "把这个 Spec 分解成任务"
-  - "规划一下这个功能的开发任务"
-  - "生成任务列表和执行顺序"
-  - "分析任务依赖关系"
-
-  特性:
-  - 双层任务架构 (OpenSpec 兼容)
-  - tasks.md 优先读取与解析
-  - 自动生成 detailed-tasks.yaml
-  - parent 字段链接
-  - 复杂度评估、依赖分析、Agent 预分配
+  使用场景："把这个 Spec 分解成任务"、"规划开发任务"
+argument-hint: "[spec-path]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 ---
 

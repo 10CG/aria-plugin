@@ -3,13 +3,10 @@ name: arch-scaffolder
 description: |
   从 PRD 生成 System Architecture 文档骨架，自动提取关键信息并填充模板。
 
-  使用场景：
-  - "从 PRD 生成架构文档"
-  - "创建系统架构骨架"
-  - "初始化架构文档"
-  - "arch-scaffolder"
-
-  特性: PRD 分析、模板填充、智能提取、架构建议
+  使用场景："从 PRD 生成架构文档"、"创建系统架构骨架"
+argument-hint: "[prd-path]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Glob, Grep, Write
 ---
 

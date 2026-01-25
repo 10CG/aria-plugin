@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Aria 十步循环工作流 Hooks 配置 - 复用现有 Skills",
   "enabled": true,
   "hooks": {

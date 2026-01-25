@@ -1,18 +1,15 @@
-# Branch Finisher (分支完成器)
-
-> **版本**: 1.0.0 | **十步循环**: B.2 (执行验证) → C.1 (提交)
-> **更新**: 2026-01-21 - 初始版本
-
 ---
-
+name: branch-finisher
 description: |
-  分支开发完成后的收尾工作执行器。
-  负责测试验证、4 选项完成流程、worktree 清理决策。
+  分支开发完成后的收尾工作执行器，负责测试验证、worktree 清理。
 
-  特性: 测试前置验证、4 选项完成流程、worktree 清理、与 subagent-driver 集成
+  使用场景：分支开发完成后的收尾工作
+disable-model-invocation: true
+user-invocable: true
+allowed-tools: Bash, Read, Grep, Task
 ---
 
-# 分支完成器 (Branch Finisher)
+# Branch Finisher (分支完成器)
 
 > **版本**: 1.0.0 | **十步循环**: B.2 → C.1
 > **更新**: 2026-01-21 - 初始版本

@@ -3,13 +3,10 @@ name: requirements-sync
 description: |
   同步 User Story 状态到 UPM requirements 节，检测偏差并维护一致性。
 
-  使用场景：
-  - "同步需求状态到 UPM"
-  - "检查 UPM 需求是否一致"
-  - "更新 UPM 需求统计"
-  - "requirements-sync"
-
-  特性: Story 扫描、UPM 更新、偏差检测、多模式同步
+  使用场景："同步需求状态到 UPM"、"检查 UPM 需求是否一致"
+argument-hint: "[--dry-run]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Glob, Grep, Edit
 ---
 

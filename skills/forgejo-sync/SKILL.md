@@ -2,16 +2,11 @@
 name: forgejo-sync
 description: |
   同步 User Story 与 Forgejo Issue，发布 PRD 到 Wiki。
-  支持 Story ↔ Issue 双向同步，PRD → Wiki 单向发布。
 
-  使用场景：
-  - "同步 Story 到 Forgejo Issue"
-  - "从 Issue 同步状态"
-  - "发布 PRD 到 Wiki"
-  - "检查 Story-Issue 状态差异"
-  - "forgejo-sync"
-
-  特性: Issue 同步、状态映射、Wiki 发布、批量操作
+  使用场景："同步 Story 到 Forgejo Issue"、"发布 PRD 到 Wiki"
+argument-hint: "[--sync-direction]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Glob, Grep, Edit, WebFetch
 ---
 

@@ -1,18 +1,12 @@
 ---
 name: requirements-validator
 description: |
-  验证产品文档（PRD、System Architecture、User Story）格式，检查关联完整性和需求覆盖率。
+  验证产品文档（PRD、System Architecture、User Story）格式，检查关联完整性。
 
-  使用场景：
-  - "验证需求文档"
-  - "检查 PRD 格式"
-  - "验证系统架构文档"
-  - "检查文档层次"
-  - "检查 User Story 关联"
-  - "需求覆盖率分析"
-  - "requirements-validator"
-
-  特性: PRD 验证、System Architecture 验证、Story 验证、层次验证、关联检查、覆盖率分析
+  使用场景："验证需求文档"、"检查 PRD 格式"、"检查 User Story 关联"
+argument-hint: "[--check-mode]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Read, Glob, Grep
 ---
 

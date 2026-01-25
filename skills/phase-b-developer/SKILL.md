@@ -1,16 +1,12 @@
 ---
 name: phase-b-developer
 description: |
-  十步循环 Phase B - 开发阶段执行器。
-  编排 B.1-B.3 步骤：分支管理、测试验证、架构同步。
+  十步循环 Phase B - 开发阶段执行器，编排 B.1-B.3 步骤。
 
-  使用场景：
-  - "执行开发阶段"
-  - "Phase B"
-  - "创建分支并运行测试"
-  - 被 workflow-runner 调用
-
-  特性: 步骤编排、智能跳过、测试验证、架构同步
+  使用场景："执行开发阶段"、"Phase B"、"创建分支并运行测试"
+argument-hint: "[--skip-tests]"
+disable-model-invocation: true
+user-invocable: true
 allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---
 

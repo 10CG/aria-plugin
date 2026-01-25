@@ -4,6 +4,7 @@ description: |
   架构文档 Skills 的共享配置，定义 L0/L1/L2 层级体系、命名规范和文档位置。
 
   此 Skill 不直接触发，由 arch-search 和 arch-update 引用。
+user-invocable: false
 ---
 
 # 架构文档共享配置
