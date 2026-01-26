@@ -1,6 +1,6 @@
 # Aria Plugin
 
-> Aria AI-DDD 方法论完整插件 - 23个 Skills + 9个 Agents + Hooks系统
+> Aria AI-DDD 方法论完整插件 - 24个 Skills + 10个 Agents + Hooks系统
 
 ## 安装
 
@@ -31,7 +31,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10cg-aria-plugin
 ```
 
-### Skills (23个)
+### Skills (24个)
 
 **十步循环核心**
 - state-scanner - 项目状态扫描与智能工作流推荐
@@ -52,6 +52,7 @@ export ARIA_HOOKS_DISABLED=true
 
 **开发工具**
 - subagent-driver - 子代理驱动开发 (SDD)
+- agent-router - 任务到 Agent 的智能路由器
 - tdd-enforcer - 强制执行 TDD 工作流
 
 **架构文档**
@@ -66,7 +67,7 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-sync - Story ↔ UPM 状态同步
 - forgejo-sync - Story ↔ Issue 同步
 
-### Agents (9个)
+### Agents (10个)
 
 **核心管理**
 - tech-lead - 技术架构决策、任务规划、跨团队协调
