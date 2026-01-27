@@ -5,6 +5,8 @@ description: |
 
   使用场景：subagent-driver 需要为任务选择 Agent、不确定应该使用哪个 Agent
 argument-hint: "[task-description]"
+disable-model-invocation: false
+user-invocable: false
 context: fork
 agent: general-purpose
 allowed-tools: Read, Glob, Grep, Bash

@@ -5,7 +5,7 @@ description: |
 
   使用场景："更新项目进度"、"标记任务完成"
 argument-hint: "[task-id]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 ---

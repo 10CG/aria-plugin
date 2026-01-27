@@ -5,7 +5,7 @@ description: |
 
   使用场景："创建新功能的 Spec"、"需要写 proposal"
 argument-hint: "[feature-name]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 ---

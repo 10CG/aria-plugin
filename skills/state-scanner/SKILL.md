@@ -6,7 +6,7 @@ description: |
 
   使用场景："查看项目当前状态"、"我要提交代码"、"开发新功能"
 argument-hint: "[intent]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---

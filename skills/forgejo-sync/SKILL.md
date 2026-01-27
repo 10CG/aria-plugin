@@ -5,7 +5,7 @@ description: |
 
   使用场景："同步 Story 到 Forgejo Issue"、"发布 PRD 到 Wiki"
 argument-hint: "[--sync-direction]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Edit, WebFetch
 ---

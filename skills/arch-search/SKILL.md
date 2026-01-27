@@ -5,6 +5,8 @@ description: |
 
   使用场景：定位功能实现位置、了解模块设计、回答架构问题。
 argument-hint: "[search-term]"
+disable-model-invocation: false
+user-invocable: true
 context: fork
 agent: Explore
 allowed-tools: Read, Grep, Glob

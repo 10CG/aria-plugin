@@ -5,7 +5,7 @@ description: |
 
   使用场景："把这个 Spec 分解成任务"、"规划开发任务"
 argument-hint: "[spec-path]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 ---

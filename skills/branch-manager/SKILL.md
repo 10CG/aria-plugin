@@ -5,7 +5,7 @@ description: |
 
   使用场景：开始新任务时创建分支、完成开发后创建 PR。
 argument-hint: "[branch-name]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Grep
 ---

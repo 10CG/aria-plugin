@@ -5,7 +5,7 @@ description: |
 
   使用场景：完成功能开发后同步架构文档、重构后更新文档。
 argument-hint: "[module-path]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Edit
 ---

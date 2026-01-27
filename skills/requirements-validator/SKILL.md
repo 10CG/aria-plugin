@@ -5,7 +5,7 @@ description: |
 
   使用场景："验证需求文档"、"检查 PRD 格式"、"检查 User Story 关联"
 argument-hint: "[--check-mode]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Glob, Grep
 ---

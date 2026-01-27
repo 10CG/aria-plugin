@@ -5,7 +5,7 @@ description: |
 
   使用场景："执行开发阶段"、"Phase B"、"创建分支并运行测试"
 argument-hint: "[--skip-tests]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---

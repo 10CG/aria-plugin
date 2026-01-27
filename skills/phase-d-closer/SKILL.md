@@ -4,7 +4,7 @@ description: |
   十步循环 Phase D - 收尾阶段执行器，编排 D.1-D.2 步骤。
 
   使用场景："执行收尾阶段"、"Phase D"、"更新进度并归档 Spec"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Bash, Task
 ---

@@ -4,7 +4,7 @@ description: |
   分支开发完成后的收尾工作执行器，负责测试验证、worktree 清理。
 
   使用场景：分支开发完成后的收尾工作
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Task
 ---

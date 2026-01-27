@@ -5,7 +5,7 @@ description: |
 
   使用场景：需要分组提交多个变更、跨模块协同开发、阶段性成果提交。
 argument-hint: "[--dry-run]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Task
 ---

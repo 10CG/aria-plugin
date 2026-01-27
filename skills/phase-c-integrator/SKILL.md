@@ -5,7 +5,7 @@ description: |
 
   使用场景："执行集成阶段"、"Phase C"、"提交代码并创建 PR"
 argument-hint: "[--skip-pr]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---

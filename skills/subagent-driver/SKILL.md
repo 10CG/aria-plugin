@@ -5,7 +5,7 @@ description: |
 
   使用场景：需要使用 Subagent 执行开发任务
 argument-hint: "[task-description]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Task, Bash, Read, Grep
 ---

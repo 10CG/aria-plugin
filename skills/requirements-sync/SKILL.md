@@ -5,7 +5,7 @@ description: |
 
   使用场景："同步需求状态到 UPM"、"检查 UPM 需求是否一致"
 argument-hint: "[--dry-run]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Edit
 ---

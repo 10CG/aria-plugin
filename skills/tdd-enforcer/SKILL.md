@@ -4,6 +4,7 @@ description: |
   强制执行测试驱动开发 (TDD) 工作流，使用 RED-GREEN-REFACTOR 循环确保测试先于代码编写。
 
   使用场景：开发新功能时确保 TDD 最佳实践、代码质量审查。
+disable-model-invocation: false
 user-invocable: true
 ---
 

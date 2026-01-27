@@ -4,7 +4,7 @@ description: |
   十步循环 Phase A - 规划阶段执行器，编排 A.1-A.3 步骤。
 
   使用场景："执行规划阶段"、"Phase A"、"创建 Spec 并规划任务"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Task
 ---

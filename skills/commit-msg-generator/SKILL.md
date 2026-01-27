@@ -5,7 +5,7 @@ description: |
 
   使用场景：准备提交代码时生成规范消息、自动总结代码变更。
 argument-hint: "[--enhanced]"
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Grep
 ---
