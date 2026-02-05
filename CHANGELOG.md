@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-05
+
+### Added
+
+- **brainstorm** Skill - AI-DDD 协作思考引擎，通过多轮对话澄清需求、记录设计决策
+  - 三种工作模式: `problem` (问题空间探索), `requirements` (需求分解), `technical` (技术方案设计)
+  - 对话状态机: INIT → CLARIFY → EXPLORE → CONVERGE → SUMMARY → COMPLETE
+  - 决策记录系统: 结构化记录"为什么选 A 而非 B"
+  - 约束管理: 支持 business/technical/team 三类约束
+  - 与 state-scanner/spec-drafter 深度集成
+
+- **state-scanner 增强** - 新增头脑风暴推荐规则
+  - `fuzziness_requirement`: 检测模糊需求，推荐 problem 模式
+  - `missing_prd`: 复杂功能变更，推荐创建 PRD
+  - `prd_refinement`: PRD 需要细化，推荐 requirements 模式
+  - `tech_design_needed`: 有就绪 Story 无 OpenSpec，推荐 technical 模式
+
+- **spec-drafter 增强** - 内置头脑风暴流程
+  - PRD 创建时自动触发 requirements 模式
+  - OpenSpec 创建时自动触发 technical 模式
+  - 基于讨论结果预填充 proposal.md
+  - 决策引用系统，支持完整追溯链
+
+### Changed
+
+- **workflow-runner** - 新增 A.0.5 步骤 (问题空间头脑风暴)
+- **Skills 总数**: 24 → 25
+- **Progressive Disclosure**: brainstorm SKILL.md 采用三层加载架构 (357 行主文件 + 按需引用)
+
+### Fixed
+
+- 优化 SKILL.md 文件大小 (1723 → 357 行, -79%)，符合最佳实践
+
 ## [1.1.1] - 2026-01-28
 
 ### Fixed
