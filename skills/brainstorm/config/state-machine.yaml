@@ -1,0 +1,106 @@
+# Brainstorm Skill - 状态机配置
+# 定义对话状态转换规则和执行逻辑
+
+states:
+  INIT:
+    entry:
+      - 分析用户输入，确定模式 (problem/requirements/technical)
+      - 从项目配置加载默认约束 (.claude/aria.local.md)
+      - 扫描现有决策记录 (docs/decisions/)
+      - 选择对应模式的引导模板
+      - 输出开场问题
+    exit_condition: 用户首次响应
+    next_state: CLARIFY
+    opening_questions:
+      problem:
+        - "让我们先理解一下你想要解决的问题。"
+        - "能详细描述一下你的想法吗？"
+      requirements:
+        - "让我们把这个需求分解成可实现的 User Stories。"
+        - "首先，要实现的核心功能是什么？"
+      technical:
+        - "让我们讨论一下技术实现方案。"
+        - "有哪些技术选项需要考虑？"
+
+  CLARIFY:
+    entry:
+      - 从用户输入中提取可能模糊的术语
+      - 识别业务术语、技术术语、缩写
+      - 请求定义关键术语
+    actions:
+      - 术语澄清: "你说的 [X] 具体指什么？"
+      - 概念统一: "所以 [X] 的定义是..."
+      - 边界界定: "这个需求的边界在哪里？"
+    exit_condition:
+      - 关键术语已定义 >= 3 个
+      - 或达到最大问题数 (3个)
+    next_state: EXPLORE
+
+  EXPLORE:
+    entry:
+      - 列举所有可能的方案/选项
+      - 收集约束条件
+      - 检查约束库 (.claude/aria.local.md)
+    actions:
+      - 方案列举: "实现 [X] 有哪些方式？"
+      - 约束收集: "有什么限制条件？(预算/时间/技术)"
+      - 约束验证: 对每个方案检查是否违反约束
+      - 方案过滤: 标记不可行方案
+    exit_condition:
+      - 可行方案已明确 >= 2 个
+      - 或达到最大问题数 (5个)
+    next_state: CONVERGE
+
+  CONVERGE:
+    entry:
+      - 创建方案对比表
+      - 评估每个方案的优缺点
+      - 计算方案评分 (基于约束匹配度)
+    actions:
+      - 对比分析: "方案 A 和 B 的主要区别是什么？"
+      - 风险评估: "每个方案的主要风险是什么？"
+      - 决策引导: "综合考虑，你倾向哪个方案？"
+    exit_condition:
+      - 用户明确选择 ("我选择方案A")
+      - 或共识度 >= 0.8
+      - 或达到最大问题数 (3个)
+    next_state: SUMMARY
+
+  SUMMARY:
+    entry:
+      - 总结讨论要点
+      - 列出所有收集的约束
+      - 确认最终选择
+      - 生成决策记录草稿
+    actions:
+      - 总结确认: "所以我们决定采用...，对吗？"
+      - 约束回顾: "我们的约束是..."
+      - 决策确认: "这个决策的理由是..."
+    exit_condition: 用户确认总结
+    next_state: COMPLETE
+
+  COMPLETE:
+    entry:
+      - 写入决策日志 (docs/decisions/)
+      - 使用 decision-template.md 生成格式化记录
+      - 生成决策 ID (DEC-YYYYMMDD-序号)
+      - 更新决策索引
+    actions:
+      - 写入文件: 使用 Write 工具创建决策文档
+      - 同步文档: 如需要，触发 spec-drafter
+      - 提供后续建议
+    output:
+      - 决策记录路径
+      - 后续步骤选项
+
+# 最大轮次配置
+max_rounds:
+  problem: 10
+  requirements: 15
+  technical: 8
+
+  # 每状态问题上限
+  per_state:
+    CLARIFY: 3
+    EXPLORE: 5
+    CONVERGE: 3

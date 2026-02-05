@@ -1,0 +1,160 @@
+# Brainstorm Skill - 约束库配置
+# 定义业务、技术、团队三类约束
+
+constraint_library:
+  # === 业务约束 ===
+  business:
+    budget:
+      type: range
+      unit: "$/月"
+      hard: true
+      default: null
+      validator: "检查成本是否在范围内"
+      description: "项目预算限制"
+
+    timeline:
+      type: range
+      unit: "周"
+      hard: true
+      default: null
+      validator: "检查时间是否在范围内"
+      description: "项目时间限制"
+
+    compliance:
+      type: enum
+      values: ["GDPR", "SOC2", "HIPAA", "ISO27001", "数据不出境", "无"]
+      hard: true
+      default: "无"
+      validator: "检查方案是否满足合规要求"
+      description: "法规合规要求"
+
+    resources:
+      type: range
+      unit: "人"
+      hard: false
+      default: null
+      validator: "检查人力资源是否足够"
+      description: "团队人力限制"
+
+  # === 技术约束 ===
+  technical:
+    deployment:
+      type: enum
+      values: ["cloud", "on-premise", "hybrid"]
+      hard: true
+      default: "cloud"
+      validator: "检查部署方式支持"
+      description: "部署环境要求"
+
+    tech_stack:
+      type: list
+      hard: false
+      default: []
+      validator: "检查技术栈兼容性"
+      description: "允许使用的技术栈"
+
+    performance:
+      type: object
+      fields: ["latency", "throughput", "concurrency"]
+      hard: false
+      default: {}
+      validator: "检查性能要求"
+      description: "性能指标要求"
+
+    scalability:
+      type: enum
+      values: ["single-user", "small-team", "enterprise", "internet-scale"]
+      hard: false
+      default: "small-team"
+      validator: "检查扩展性要求"
+      description: "用户规模预期"
+
+    architecture:
+      type: enum
+      values: ["monolith", "microservices", "modular-monolith"]
+      hard: false
+      default: null
+      validator: "检查架构风格兼容性"
+      description: "架构风格约束"
+
+    compatibility:
+      type: list
+      hard: false
+      default: []
+      validator: "检查兼容性要求"
+      description: "需要兼容的系统/版本"
+
+  # === 团队约束 ===
+  team:
+    skills:
+      type: list
+      hard: false
+      default: []
+      validator: "检查团队是否具备所需技能"
+      description: "团队现有技能"
+
+    preferences:
+      type: list
+      hard: false
+      default: []
+      validator: "考虑团队偏好"
+      description: "团队技术偏好"
+
+    capacity:
+      type: range
+      unit: "人周"
+      hard: false
+      default: null
+      validator: "检查工作量是否在容量内"
+      description: "团队可用工时"
+
+    communication:
+      type: enum
+      values: ["async", "sync", "hybrid"]
+      hard: false
+      default: "hybrid"
+      validator: "检查协作方式支持"
+      description: "团队协作模式"
+
+# === 约束验证流程 ===
+verification:
+  steps:
+    - name: "收集约束"
+      actions:
+        - 从项目配置读取 (.claude/aria.local.md)
+        - 从对话中提取
+        - 推断隐含约束
+
+    - name: "方案验证"
+      logic: |
+        for option in options:
+          for constraint in constraints:
+            result = validate(option, constraint)
+            if result.violates and constraint.hard:
+              option.feasible = false
+              option.blocking_reasons.append(result.reason)
+
+    - name: "结果输出"
+      actions:
+        - 列出所有可行方案
+        - 说明不可行方案的原因
+        - 对可行方案按软约束评分排序
+
+# === 示例配置 ===
+# .claude/aria.local.md
+project_constraints_example:
+  budget:
+    max: 500
+    unit: "$/月"
+
+  deployment:
+    required: "on-premise"
+    reason: "私有机房，不能使用外部服务"
+
+  compliance:
+    - "数据不出境"
+    - "GDPR"
+
+  team:
+    skills: ["Python", "JavaScript"]
+    capacity: 40  # 人周/月
