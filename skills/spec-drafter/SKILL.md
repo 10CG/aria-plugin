@@ -42,6 +42,7 @@ allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 | Level 3 扩展 | 架构变更时额外生成 tasks.md |
 | 交互模式 | 逐章节确认和修改 |
 | 上下文增强 | 集成 state-scanner 获取项目状态 |
+| **头脑风暴集成** | 内置 brainstorm 流程，基于决策记录预填充 |
 
 ---
 
@@ -72,11 +73,20 @@ allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 ## 执行流程
 
 ```yaml
+A.1.0 - 头脑风暴检查 (新增):
+  - 检查是否有现有决策记录 (docs/decisions/)
+  - 根据文档类型决定是否需要头脑风暴:
+    * 创建 PRD: 检查是否有 problem decision-log
+    * 创建 OpenSpec: 检查是否有 technical decision-log
+  - 如无决策记录，询问是否先运行 brainstorm
+
 A.1.1 - 收集需求信息:
+  - 从决策记录预填充 (如有)
   - 提取需求标题 (Feature Name)
   - 提取动机说明 (Why)
   - 提取功能描述 (What)
   - 提取交付物列表 (Deliverables)
+  - 提取约束条件 (Constraints)
 
 A.1.2 - Level 判断:
   - 关键词匹配 (Level 1/3 触发词)
@@ -93,6 +103,7 @@ A.1.3 - 模块检测:
 A.1.4 - 生成 Spec 文档:
   Level 2: standards/openspec/changes/{feature}/proposal.md
   Level 3: proposal.md + tasks.md (OpenSpec 双层架构格式)
+  - 预填充决策引用 (如有决策记录)
 
 A.1.5 - 交互确认 (可选):
   逐章节确认: Level → Why → What → Deliverables → Impact → Tasks → Success Criteria
@@ -198,6 +209,124 @@ Module: cross (standards + mobile + backend)
 
 ---
 
+## 头脑风暴集成
+
+### 集成概述
+
+spec-drafter 与 brainstorm skill 深度集成，实现"决策优先于文档"的理念。
+
+```yaml
+流程:
+  1. 检测决策记录
+     ├── 有 decision-log → 预填充 Spec
+     └── 无 decision-log → 询问是否先头脑风暴
+
+  2. 预填充逻辑
+     ├── Background ← problem 模式决策
+     ├── Constraints ← 收集的约束条件
+     ├── Technical Approach ← technical 模式决策
+     └── Decisions ← 引用决策 ID
+
+  3. 决策引用
+     ├── 格式: [DEC-001](../../docs/decisions/problem-001.md)
+     ├── 自动生成决策链接
+     └── 保持可追溯性
+```
+
+### PRD 创建集成
+
+```yaml
+触发场景: 用户要创建 PRD 文档
+
+检查流程:
+  1. 扫描 docs/decisions/problem-*.md
+  2. 检查是否有相关决策记录
+
+  如有相关决策:
+    - 基于决策内容预填充 PRD
+    - 引用决策 ID
+
+  如无相关决策:
+    - 提示: "建议先运行 brainstorm.problem 澄清问题"
+    - 选项:
+      [1] 先头脑风暴 (推荐)
+      [2] 直接创建 PRD
+      [3] 取消
+```
+
+### OpenSpec 创建集成
+
+```yaml
+触发场景: 用户要创建 OpenSpec proposal
+
+检查流程:
+  1. 扫描 docs/decisions/technical-*.md
+  2. 检查是否有相关技术决策
+
+  如有相关决策:
+    - 预填充技术方案
+    - 引用决策 ID
+    - 自动填充约束条件
+
+  如无相关决策:
+    - 提示: "建议先运行 brainstorm.technical 讨论技术方案"
+    - 选项:
+      [1] 先头脑风暴 (推荐)
+      [2] 直接创建 OpenSpec
+      [3] 取消
+```
+
+### 预填充格式
+
+proposal.md 中引用决策的格式：
+
+```markdown
+# {Feature Name}
+
+> **决策来源**: [DEC-001](../../docs/decisions/problem-001.md), [DEC-002](../../docs/decisions/technical-001.md)
+
+## 背景
+> 基于 [DEC-001](../../docs/decisions/problem-001.md) 的讨论
+
+用户需要 24/7 可用的客服支持...
+
+## 约束条件
+| 类型 | 约束 | 来源 |
+|------|------|------|
+| business | 预算 < $500/月 | DEC-001 |
+| technical | 私有化部署 | DEC-001 |
+
+## 技术方案
+> 基于 [DEC-002](../../docs/decisions/technical-001.md) 的决策
+
+采用自建 RAG 方案 (FAISS + 本地模型)...
+
+## 关键决策
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 向量存储 | FAISS | 满足成本约束 |
+| 嵌入模型 | 待定 | 需要 brainstorm.technical 讨论 |
+```
+
+### 决策追溯链
+
+```yaml
+决策链:
+  problem-001 (问题定义)
+    ↓ 引用
+  requirements-001 (需求分解)
+    ↓ 引用
+  technical-001 (技术方案)
+    ↓ 引用
+  proposal.md (最终规范)
+
+追溯:
+  proposal.md → technical-001 → requirements-001 → problem-001
+  完整的"为什么"决策链
+```
+
+---
+
 ## tasks.md 格式要求
 
 Level 3 生成的 tasks.md 遵循 OpenSpec 双层架构：
@@ -233,14 +362,34 @@ Level 3 生成的 tasks.md 遵循 OpenSpec 双层架构：
 ```
 state-scanner (A.0) ──▶ 状态感知
         │
+        ├── brainstorm (A.0.5) ──▶ 决策记录 ← 新增
+        │                              │
+        └──────────────────────────────┘
         ▼
-spec-drafter (A.1) ──▶ proposal.md + tasks.md
+spec-drafter (A.1) ──▶ proposal.md + tasks.md (基于决策预填充)
         │
         ▼
 task-planner (A.2/A.3) ──▶ detailed-tasks.yaml
         │
         ▼
 branch-manager (B.1) ──▶ 功能分支
+```
+
+### 头脑风暴集成点
+
+```yaml
+A.0.5 头脑风暴 (可选):
+  ├── brainstorm.problem: 问题空间探索
+  ├── brainstorm.requirements: 需求分解
+  └── brainstorm.technical: 技术方案设计
+
+A.1 Spec 创建:
+  ├── 检测决策记录
+  ├── 预填充 Spec 内容
+  └── 引用决策 ID
+
+决策记录 → Spec 同步:
+  docs/decisions/*.md → openspec/changes/*/proposal.md
 ```
 
 ---
@@ -272,11 +421,12 @@ branch-manager (B.1) ──▶ 功能分支
 - [Phase A: 规范与规划](../../../standards/core/ten-step-cycle/phase-a-spec-planning.md)
 - [OpenSpec 项目定义](../../../standards/openspec/project.md)
 - [proposal-minimal 模板](../../../standards/openspec/templates/proposal-minimal.md)
+- [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎 (新增集成)
 - [state-scanner](../state-scanner/SKILL.md)
 - [task-planner](../task-planner/SKILL.md)
 
 ---
 
-**最后更新**: 2025-12-23
-**Skill版本**: 2.0.0
+**最后更新**: 2026-02-05
+**Skill版本**: 2.1.0 (新增 brainstorm 集成)
 **架构**: 双层任务架构 (v2.0.0)

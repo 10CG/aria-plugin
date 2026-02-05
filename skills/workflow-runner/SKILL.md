@@ -10,11 +10,11 @@ user-invocable: true
 allowed-tools: Task, Read, Write, Glob, Grep
 ---
 
-# Workflow Runner v2.1 (轻量编排器)
+# Workflow Runner v2.2 (轻量编排器)
 
-> **版本**: 2.1.0 | **架构**: Phase-Based
+> **版本**: 2.2.0 | **架构**: Phase-Based
 > **类型**: 编排器 (调用 Phase Skills)
-> **更新**: 2026-01-22 - 添加 TDD 双保险 pre-hook (方案 B)
+> **更新**: 2026-02-05 - 添加 A.0.5 头脑风暴步骤集成
 
 ## 快速开始
 
@@ -59,8 +59,11 @@ allowed-tools: Task, Read, Write, Glob, Grep
 ```
 workflow-runner (编排器)
      │
+     ├──▶ A.0.5 brainstorm (可选) ← 新增
+     │         └── problem/requirements/technical 模式
+     │
      ├──▶ phase-a-planner (A.1-A.3)
-     │         └── spec-drafter, task-planner
+     │         └── spec-drafter (内置 brainstorm), task-planner
      │
      ├──▶ phase-b-developer (B.1-B.3)
      │         └── branch-manager, test-verifier, arch-update
@@ -122,21 +125,27 @@ config:
    - 接收 state-scanner 传递的上下文
    - 或读取当前项目状态
 
-3. Pre-Hook 检查 (v2.1.0 新增):
+3. A.0.5 头脑风暴检查 (v2.2.0 新增):
+   - 检测工作流包含 Phase A
+   - 检查 state-scanner 推荐中是否包含 brainstorm 模式
+   - 如果推荐 → 在 Phase A 前执行 brainstorm
+   - 传递决策记录到 spec-drafter
+
+4. Pre-Hook 检查 (v2.1.0):
    - 检测是否包含 Phase B
    - 如果包含 → 启用 TDD 主会话 Hook (方案 B)
    - 记录 tdd_session_id
 
-4. Phase 顺序执行:
+5. Phase 顺序执行:
    - 调用对应 Phase Skill
    - 传递 context_for_next 到下一 Phase
    - 收集执行结果
 
-5. Post-Hook 清理 (v2.1.0 新增):
+6. Post-Hook 清理 (v2.1.0):
    - 检测 Phase B 完成
    - 可选: 保持或关闭 TDD Hook
 
-6. 结果汇总:
+7. 结果汇总:
    - 生成执行报告
    - 返回最终状态
 ```
@@ -160,9 +169,15 @@ skip_in_B: [B.3]  # Phase B 内部跳过 B.3
 ```yaml
 phases: [A, B, C]
 skip_in_A: [A.1]  # 如果已有 OpenSpec
+with_brainstorm: true  # 可选: 如 state-scanner 推荐
 
 触发: "开发新功能", "运行 feature-dev"
 适用: 新功能、中等规模开发
+
+包含 A.0.5 (可选):
+  - 如果 state-scanner 推荐包含 brainstorm
+  - 在 Phase A 前执行头脑风暴
+  - 传递决策记录到 spec-drafter
 ```
 
 ### doc-update (文档更新)
@@ -272,8 +287,13 @@ Workflow: feature-dev
 Phases: A → B → C
 
 ───────────────────────────────────────────────────────────────
+💡 A.0.5 brainstorm (可选) ← 新增
+   problem 模式            → 问题空间探索
+   requirements 模式       → 需求分解
+   technical 模式          → 技术方案设计
+
 📋 Phase A (规划)
-   A.1 spec-drafter      → Spec 管理
+   A.1 spec-drafter      → Spec 管理 (基于决策预填充)
    A.2 task-planner      → 任务规划
    A.3 task-planner      → Agent 分配
 
@@ -411,6 +431,7 @@ context:
 ## 相关文档
 
 - [WORKFLOWS.md](./WORKFLOWS.md) - 工作流详细定义
+- [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎 (新增 A.0.5)
 - [state-scanner](../state-scanner/SKILL.md) - 状态感知与推荐
 - [phase-a-planner](../phase-a-planner/SKILL.md) - Phase A
 - [phase-b-developer](../phase-b-developer/SKILL.md) - Phase B
@@ -593,5 +614,5 @@ PHASE RESULTS:
 
 ---
 
-**最后更新**: 2026-01-22
-**Skill版本**: 2.1.0
+**最后更新**: 2026-02-05
+**Skill版本**: 2.2.0 (新增 A.0.5 brainstorm 步骤)
