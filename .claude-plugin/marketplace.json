@@ -1,6 +1,6 @@
 {
   "name": "10CG-aria-plugin",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Aria AI-DDD 方法论完整插件市场 - 25个 Skills + 10个 Agents",
   "owner": {
     "name": "10CG",
@@ -13,7 +13,7 @@
     {
       "name": "aria",
       "description": "Aria AI-DDD 方法论完整插件 - 25个 Skills + 10个 Agents + Hooks系统",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "author": {
         "name": "10CG"
       },
