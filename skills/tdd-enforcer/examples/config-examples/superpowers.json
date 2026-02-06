@@ -1,0 +1,97 @@
+{
+  "$schema": "tdd-config-schema.json",
+  "enabled": true,
+  "strictness": "superpowers",
+  "skip_patterns": [
+    "**/*.md",
+    "**/*.json",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/config/**",
+    "**/migrations/**",
+    "**/fixtures/**",
+    "**/mock*/**",
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/__pycache__/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.git/**"
+  ],
+  "test_patterns": {
+    "python": ["test_*.py", "*_test.py"],
+    "javascript": ["*.test.js", "*.spec.js"],
+    "typescript": ["*.test.ts", "*.spec.ts"],
+    "dart": ["*_test.dart"],
+    "go": ["*_test.go"]
+  },
+  "green_phase_limits": {
+    "enabled": true,
+    "max_lines_after_pass": 50,
+    "max_new_functions": 3,
+    "max_complexity": 5,
+    "warn_on_exceed": true
+  },
+  "golden_testing_detection": {
+    "enabled": true,
+    "patterns": [
+      {
+        "pattern": "assert True",
+        "description": "Always-passing assertion",
+        "severity": "error"
+      },
+      {
+        "pattern": "assert False",
+        "description": "Always-passing assertion",
+        "severity": "error"
+      },
+      {
+        "pattern": "@skip",
+        "description": "Skipped test",
+        "severity": "warning"
+      },
+      {
+        "pattern": "test.skip\\(",
+        "description": "Skipped test (JS)",
+        "severity": "warning"
+      },
+      {
+        "pattern": "expect(true).toBe(true)",
+        "description": "Always-passing assertion (Jest)",
+        "severity": "error"
+      },
+      {
+        "pattern": "expect(true, true)",
+        "description": "Always-passing assertion (Dart)",
+        "severity": "error"
+      }
+    ]
+  },
+  "state_persistence": {
+    "enabled": true,
+    "state_file": ".claude/tdd-state.yaml"
+  },
+  "language_settings": {
+    "python": {
+      "framework": "pytest",
+      "test_dir": "tests"
+    },
+    "javascript": {
+      "framework": "jest",
+      "test_dir": "__tests__"
+    },
+    "typescript": {
+      "framework": "jest",
+      "test_dir": "__tests__"
+    },
+    "dart": {
+      "framework": "flutter",
+      "test_dir": "test"
+    },
+    "go": {
+      "framework": "builtin",
+      "test_dir": "."
+    }
+  }
+}

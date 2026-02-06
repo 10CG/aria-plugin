@@ -1,0 +1,29 @@
+{
+  "name": "tdd-enforcer-js-example",
+  "version": "1.0.0",
+  "description": "TDD Enforcer JavaScript Example",
+  "main": "src/calculator.js",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "tdd",
+    "testing",
+    "example"
+  ],
+  "author": "Aria",
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/**/*.test.js"
+    ]
+  }
+}

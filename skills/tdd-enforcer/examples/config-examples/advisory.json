@@ -1,0 +1,47 @@
+{
+  "$schema": "tdd-config-schema.json",
+  "enabled": true,
+  "strictness": "advisory",
+  "skip_patterns": [
+    "**/*.md",
+    "**/*.json",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/config/**",
+    "**/migrations/**",
+    "**/fixtures/**",
+    "**/mock*/**",
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/__pycache__/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.git/**"
+  ],
+  "test_patterns": {
+    "python": ["test_*.py", "*_test.py"],
+    "javascript": ["*.test.js", "*.spec.js"],
+    "typescript": ["*.test.ts", "*.spec.ts"],
+    "dart": ["*_test.dart"],
+    "go": ["*_test.go"]
+  },
+  "language_settings": {
+    "python": {
+      "framework": "auto",
+      "test_dir": "tests"
+    },
+    "javascript": {
+      "framework": "auto",
+      "test_dir": "__tests__"
+    },
+    "dart": {
+      "framework": "auto",
+      "test_dir": "test"
+    },
+    "go": {
+      "framework": "auto",
+      "test_dir": "."
+    }
+  }
+}

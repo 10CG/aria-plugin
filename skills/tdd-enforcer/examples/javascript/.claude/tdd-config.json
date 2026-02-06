@@ -1,0 +1,20 @@
+{
+  "$schema": "tdd-config-schema.json",
+  "enabled": true,
+  "strictness": "strict",
+  "skip_patterns": [
+    "**/*.md",
+    "**/*.json",
+    "**/.git/**",
+    "**/node_modules/**"
+  ],
+  "test_patterns": {
+    "javascript": ["*.test.js", "*.spec.js"]
+  },
+  "language_settings": {
+    "javascript": {
+      "framework": "jest",
+      "test_dir": "__tests__"
+    }
+  }
+}

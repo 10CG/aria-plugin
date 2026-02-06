@@ -1,0 +1,51 @@
+{
+  "$schema": "tdd-config-schema.json",
+  "enabled": true,
+  "strictness": "strict",
+  "skip_patterns": [
+    "**/*.md",
+    "**/*.json",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/config/**",
+    "**/migrations/**",
+    "**/fixtures/**",
+    "**/mock*/**",
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/__pycache__/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.git/**"
+  ],
+  "test_patterns": {
+    "python": ["test_*.py", "*_test.py"],
+    "javascript": ["*.test.js", "*.spec.js"],
+    "typescript": ["*.test.ts", "*.spec.ts"],
+    "dart": ["*_test.dart"],
+    "go": ["*_test.go"]
+  },
+  "language_settings": {
+    "python": {
+      "framework": "pytest",
+      "test_dir": "tests"
+    },
+    "javascript": {
+      "framework": "jest",
+      "test_dir": "__tests__"
+    },
+    "typescript": {
+      "framework": "jest",
+      "test_dir": "__tests__"
+    },
+    "dart": {
+      "framework": "flutter",
+      "test_dir": "test"
+    },
+    "go": {
+      "framework": "builtin",
+      "test_dir": "."
+    }
+  }
+}

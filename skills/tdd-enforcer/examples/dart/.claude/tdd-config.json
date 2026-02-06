@@ -1,0 +1,21 @@
+{
+  "$schema": "tdd-config-schema.json",
+  "enabled": true,
+  "strictness": "strict",
+  "skip_patterns": [
+    "**/*.md",
+    "**/*.json",
+    "**/.git/**",
+    "**/.dart_tool/**",
+    "**/build/**"
+  ],
+  "test_patterns": {
+    "dart": ["*_test.dart"]
+  },
+  "language_settings": {
+    "dart": {
+      "framework": "dart",
+      "test_dir": "test"
+    }
+  }
+}

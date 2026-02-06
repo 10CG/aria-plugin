@@ -1,0 +1,18 @@
+{
+  "$schema": "tdd-config-schema.json",
+  "enabled": true,
+  "strictness": "strict",
+  "skip_patterns": [
+    "**/*.md",
+    "**/.git/**"
+  ],
+  "test_patterns": {
+    "python": ["test_*.py", "*_test.py"]
+  },
+  "language_settings": {
+    "python": {
+      "framework": "pytest",
+      "test_dir": "tests"
+    }
+  }
+}
