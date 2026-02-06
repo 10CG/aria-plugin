@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-02-06
+
+### Fixed
+
+- **state-scanner** - 修复 Windows 环境下 Bash 命令兼容性问题
+  - Claude Code 在 Windows 上使用 Git Bash/WSL，而非 Windows CMD
+  - 添加跨平台命令对照表 (正确/错误语法对比)
+  - 新增 `references/cross-platform-commands.md` 详细参考文档
+  - 采用 Progressive Disclosure 最佳实践 (SKILL.md 精简至 1,362 词)
+
+### Changed
+
+- **state-scanner** v2.3.0
+  - 精简 SKILL.md 中的实现注意事项章节
+  - 将详细命令示例移至 references/cross-platform-commands.md
+  - 更新相关文档章节结构，分类更清晰
+
 ## [1.3.0] - 2026-02-06
 
 ### Changed
