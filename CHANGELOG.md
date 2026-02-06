@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-02-06
+
+### Changed
+
+- **tdd-enforcer** - v2.0 重大重构：从代码驱动设计改为**文档驱动设计**
+  - 参考 Superpowers 的实现方式，AI 读取文档理解并执行 TDD 规则
+  - 移除所有 Python 实现文件 (17+ 模块: test_runners/, validators/, hooks/, tests/)
+  - 重写 SKILL.md (798 → 355 行)，采用 Progressive Disclosure 架构
+  - 新增 references/ 目录包含 4 个详细参考文档
+  - 配置格式变更: `strict_mode` → `strictness` (advisory|strict|superpowers)
+
+- **brainstorm** - v1.1.0 结构优化完成
+  - SKILL.md 优化 (1723 → 357 行, -79%)
+  - 完整实现 Phase 1-4 核心框架
+
+### Removed
+
+- tdd-enforcer Python 实现:
+  - `cache.py`, `config.py`, `diff_analyzer.py`
+  - `state_persistence.py`, `state_tracker.py`
+  - `test_runners/`, `validators/`, `hooks/`, `tests/` 目录
+
+### Design Philosophy
+
+```yaml
+v1.x (错误):
+  问题: 把 Skill 当作 Python 包来开发
+  - 创建大量 Python 模块
+  - 实现复杂的类继承结构
+  - 编写单元测试
+  根本问题: Claude Code 不会导入执行这些 Python 代码
+
+v2.0 (正确):
+  方案: 参考 Superpowers，文档驱动设计
+  - SKILL.md 描述工作流
+  - AI 读取并理解流程
+  - AI 按流程执行检查
+  优势: 符合 Agent Skills 设计原则
+```
+
 ## [1.2.0] - 2026-02-05
 
 ### Added

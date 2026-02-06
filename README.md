@@ -1,6 +1,8 @@
 # Aria Plugin
 
-> Aria AI-DDD 方法论完整插件 - 24个 Skills + 10个 Agents + Hooks系统
+> **Version**: 1.3.0 | **Released**: 2026-02-06
+>
+> Aria AI-DDD 方法论完整插件 - 25个 Skills + 10个 Agents + Hooks系统
 
 ## 安装
 
@@ -31,7 +33,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10cg-aria-plugin
 ```
 
-### Skills (24个)
+### Skills (25个)
 
 **十步循环核心**
 - state-scanner - 项目状态扫描与智能工作流推荐
@@ -43,6 +45,9 @@ export ARIA_HOOKS_DISABLED=true
 - spec-drafter - 创建 OpenSpec proposal.md
 - task-planner - 将 OpenSpec 分解为可执行任务
 - progress-updater - 更新项目进度状态
+
+**协作思考**
+- brainstorm - AI 辅助的决策讨论和需求澄清 (problem/requirements/technical 模式)
 
 **Git 工作流**
 - commit-msg-generator - 生成符合 Conventional Commits 的提交消息
