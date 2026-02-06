@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **版本规范化** - 统一所有配置文件版本信息
+  - 更新 `marketplace.json` 版本: 1.1.1 → 1.3.0
+  - 更新 `hooks.json` 版本: 1.1.0 → 1.3.0
+  - 新增 `VERSION` 文件作为人类可读版本快照
+  - Skills 数量: 24 → 25
+
 - **tdd-enforcer** - v2.0 重大重构：从代码驱动设计改为**文档驱动设计**
   - 参考 Superpowers 的实现方式，AI 读取文档理解并执行 TDD 规则
   - 移除所有 Python 实现文件 (17+ 模块: test_runners/, validators/, hooks/, tests/)
