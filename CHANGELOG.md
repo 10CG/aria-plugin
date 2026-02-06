@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-02-06
+
+### Changed
+
+- **brainstorm** - v2.0.0 重大重构：基于 Superpowers 最佳实践简化对话流程
+  - 移除复杂的 6 状态机 (INIT/CLARIFY/EXPLORE/CONVERGE/SUMMARY/COMPLETE)
+  - 采用简洁的 3 阶段流程 (Understanding → Exploring → Presenting)
+  - 新增"不可协商规则"强制对话控制
+  - SKILL.md 精简 (357 → 262 行, -27%)
+  - 新增 `references/principles.md` - 核心原则详解
+  - 新增 `references/question-patterns.md` - 提问模式库
+
+### Fixed
+
+- **brainstorm** - 修复 AI 跳过对话直接生成 User Stories 的问题
+  - 添加"每次只能问 1 个问题"强制约束
+  - 添加"禁止一次性生成所有 User Stories"规则
+  - 添加"分段验证"机制 (200-300 词/段)
+
 ## [1.3.1] - 2026-02-06
 
 ### Fixed
