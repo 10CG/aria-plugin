@@ -507,6 +507,26 @@ workflow-runner v2.0
 
 ---
 
+## 实现注意事项
+
+> **重要**: Claude Code 在 Windows 上使用 Git Bash/WSL。所有 Bash 命令必须使用跨平台兼容语法。
+
+### 跨平台命令规范
+
+| ✅ 正确 | ❌ 错误 |
+|---------|---------|
+| `ls path/*.md 2>/dev/null \|\| echo "NO"` | `if exist path\*.md (dir ...) else (echo NO)` |
+| `ls docs/requirements/` | `dir docs\requirements\` |
+| `[ -f file ] && cat file` | `if exist file (type file) else ...` |
+| 路径使用 `/` | 路径使用 `\` |
+| `2>/dev/null` | `2>nul` |
+
+### 参考文档
+
+详细的跨平台命令示例和调试技巧，见 **[`references/cross-platform-commands.md`](./references/cross-platform-commands.md)**。
+
+---
+
 ## 错误处理
 
 | 错误 | 原因 | 解决方案 |
@@ -515,6 +535,7 @@ workflow-runner v2.0
 | UPM 文档不存在 | 模块未配置 UPM | 使用默认进度信息 |
 | 无法确定模块 | 文件分布多模块 | 提示用户手动指定 |
 | 推荐冲突 | 多规则同时匹配 | 按优先级选择第一个 |
+| Bash 语法错误 | 使用了 Windows CMD 语法 | 参考跨平台命令规范 |
 
 ---
 
@@ -551,8 +572,14 @@ workflow-runner v2.0
 
 ## 相关文档
 
+### 推荐规则
 - [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md) - 推荐规则定义
-- [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎 (新增集成)
+
+### 跨平台参考
+- [cross-platform-commands.md](./references/cross-platform-commands.md) - 跨平台命令参考
+
+### 工作流相关
+- [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎
 - [workflow-runner](../workflow-runner/SKILL.md) - 工作流执行器
 - [phase-a-planner](../phase-a-planner/SKILL.md) - 规划阶段
 - [phase-b-developer](../phase-b-developer/SKILL.md) - 开发阶段
@@ -561,5 +588,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-02-05
-**Skill版本**: 2.2.0 (新增 brainstorm 集成)
+**最后更新**: 2026-02-06
+**Skill版本**: 2.3.0 (新增跨平台兼容性指南)
