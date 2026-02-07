@@ -21,6 +21,123 @@ forgejo:
 
 ---
 
+## Cloudflare Access Support
+
+> **AI 读取规则**: 当调用 Forgejo API 前，AI **必须先检查**本配置中的 `cloudflare_access.enabled` 状态。如果为 `true`，所有 API 调用必须添加 Cloudflare Access 头部。
+
+### What is Cloudflare Access?
+
+Cloudflare Access 保护服务器需要额外的认证头部。如果你的 Forgejo 服务器返回 403 错误或 Cloudflare challenge 页面，说明启用了此保护。
+
+### 配置检测规则 (AI 必须遵循)
+
+```yaml
+# AI 执行前检查流程
+1. 读取 forgejo.cloudflare_access.enabled
+2. 如果 enabled == true:
+   - 所有 API 调用添加 CF-Access-Client-Id 头部
+   - 所有 API 调用添加 CF-Access-Client-Secret 头部
+3. 如果 API 调用返回 403/Cloudflare 错误:
+   - 自动提示用户启用 cloudflare_access
+```
+
+### Configuration
+
+```yaml
+forgejo:
+  url: "https://forgejo.example.com"
+  api_token: "${FORGEJO_TOKEN}"
+  repo: "owner/repo"
+
+  # Cloudflare Access (AI 会自动读取此配置)
+  cloudflare_access:
+    # 是否启用 Cloudflare Access
+    enabled: true
+
+    # Client ID 环境变量名
+    client_id_env: "CF_ACCESS_CLIENT_ID"
+
+    # Client Secret (Service Token) 环境变量名
+    client_secret_env: "CF_ACCESS_CLIENT_SECRET"
+```
+
+### Environment Variables
+
+```bash
+# Cloudflare Access Service Token
+export CF_ACCESS_CLIENT_ID="your-client-id-here"
+export CF_ACCESS_CLIENT_SECRET="your-service-token-here"
+
+# Forgejo API Token
+export FORGEJO_TOKEN="your-api-token-here"
+```
+
+### API Call Templates
+
+**Standard Mode** (cloudflare_access.enabled = false):
+```bash
+curl -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "${FORGEJO_API_URL}/repos/owner/repo/issues"
+```
+
+**Cloudflare Access Mode** (cloudflare_access.enabled = true):
+```bash
+curl \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+  -H "Content-Type: application/json" \
+  "${FORGEJO_API_URL}/repos/owner/repo/issues"
+```
+
+### Error Detection & Auto-Prompt
+
+**AI must detect** these conditions:
+- HTTP status code is 403
+- Response contains: "cloudflare" OR "challenge" OR "access denied"
+
+**Auto-prompt template**:
+```
+⚠️ 检测到 Cloudflare Access 保护
+
+API 调用返回 403，响应包含 Cloudflare challenge。
+请在 CLAUDE.local.md 中添加配置：
+
+forgejo:
+  cloudflare_access:
+    enabled: true
+    client_id_env: "CF_ACCESS_CLIENT_ID"
+    client_secret_env: "CF_ACCESS_CLIENT_SECRET"
+
+并设置环境变量：
+export CF_ACCESS_CLIENT_ID="your-client-id"
+export CF_ACCESS_CLIENT_SECRET="your-service-token"
+```
+
+### Complete Example with Cloudflare Access
+
+```yaml
+# In CLAUDE.local.md
+forgejo:
+  url: "https://forgejo.example.com"
+  api_token: "${FORGEJO_TOKEN}"
+  repo: "owner/repo"
+
+  # Cloudflare Access
+  cloudflare_access:
+    enabled: true
+    client_id_env: "CF_ACCESS_CLIENT_ID"
+    client_secret_env: "CF_ACCESS_CLIENT_SECRET"
+
+  default_labels: ["user-story"]
+  wiki:
+    enabled: true
+    page_prefix: "PRD-"
+```
+
+---
+
 ## Optional Configuration
 
 ```yaml

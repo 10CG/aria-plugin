@@ -553,11 +553,27 @@ Related Issue: #{issue_number} (如有)
 
 ### Forgejo API 调用
 
-**创建 PR**:
-```bash
-source ~/.bash_profile
+> 🔒 **Cloudflare Access 支持**: 在调用 Forgejo API 前，AI **必须**检查 `forgejo.cloudflare_access.enabled` 配置。详见 `forgejo-sync/CONFIG.md` 中的 Cloudflare Access 章节。
 
-forgejo-api -X POST "$FORGEJO_API/repos/10CG/todo-app/pulls" \
+#### API 调用前检查 (不可协商规则)
+
+```yaml
+Pre_API_Call_Check:
+  1. 读取 forgejo.cloudflare_access.enabled
+  2. 如果 enabled == true:
+     → 添加 CF-Access-Client-Id 头部
+     → 添加 CF-Access-Client-Secret 头部
+  3. 如果 API 返回 403/CF 错误:
+     → 自动提示用户配置 Cloudflare Access
+```
+
+#### 创建 PR
+
+**标准模式** (无 Cloudflare Access):
+```bash
+curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls" \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "Content-Type: application/json" \
   -d '{
     "title": "{pr_title}",
     "body": "{pr_body}",
@@ -566,20 +582,62 @@ forgejo-api -X POST "$FORGEJO_API/repos/10CG/todo-app/pulls" \
   }'
 ```
 
-**合并 PR**:
+**Cloudflare Access 模式** (cloudflare_access.enabled = true):
+```bash
+curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls" \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "{pr_title}",
+    "body": "{pr_body}",
+    "head": "{branch_name}",
+    "base": "{base_branch}"
+  }'
+```
+
+#### 合并 PR
+
+**标准模式**:
 ```bash
 # squash (推荐)
-forgejo-api -X POST "$FORGEJO_API/repos/10CG/todo-app/pulls/{pr_number}/merge" \
+curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls/{pr_number}/merge" \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "Content-Type: application/json" \
   -d '{"Do": "squash"}'
 
 # merge
-forgejo-api -X POST "$FORGEJO_API/repos/10CG/todo-app/pulls/{pr_number}/merge" \
+curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls/{pr_number}/merge" \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "Content-Type: application/json" \
   -d '{"Do": "merge"}'
 ```
 
-**删除远程分支**:
+**Cloudflare Access 模式** (添加 CF 头部):
 ```bash
-forgejo-api -X DELETE "$FORGEJO_API/repos/10CG/todo-app/branches/{branch_name}"
+curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls/{pr_number}/merge" \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+  -H "Content-Type: application/json" \
+  -d '{"Do": "squash"}'
+```
+
+#### 删除远程分支
+
+**标准模式**:
+```bash
+curl -X DELETE "${FORGEJO_API}/repos/10CG/todo-app/branches/{branch_name}" \
+  -H "Authorization: token ${FORGEJO_TOKEN}"
+```
+
+**Cloudflare Access 模式**:
+```bash
+curl -X DELETE "${FORGEJO_API}/repos/10CG/todo-app/branches/{branch_name}" \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"
 ```
 
 ### 子模块 PR 注意事项

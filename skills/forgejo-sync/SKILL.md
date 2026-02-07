@@ -106,6 +106,84 @@ forgejo:
 
 ## 执行流程
 
+### 🔒 AI 执行前检查 (不可协商规则)
+
+> **CRITICAL**: 在执行任何 Forgejo API 调用前，AI **必须**遵循以下检查流程。
+
+#### 检查流程
+
+```yaml
+API_Call_Pre_Check:
+  1. 读取配置:
+     - 读取 CLAUDE.local.md 或 CONFIG.md
+     - 查找 forgejo.cloudflare_access.enabled 值
+
+  2. 根据 enabled 状态决定调用模式:
+     enabled = true:
+       → 使用 Cloudflare Access 模式
+       → 必须添加两个头部:
+         - CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}
+         - CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}
+
+     enabled = false 或未设置:
+       → 使用标准模式
+       → 仅添加标准 Authorization 头部
+
+  3. 执行后检测:
+     - 检查 HTTP 状态码
+     - 检查响应内容
+     - 如果 403 或包含 "cloudflare"/"challenge":
+       → 自动提示用户配置 Cloudflare Access
+```
+
+#### API 调用模板 (不可修改)
+
+**标准模式** (cloudflare_access 未启用):
+```bash
+curl -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "${FORGEJO_API_URL}/repos/{owner}/{repo}/issues"
+```
+
+**Cloudflare Access 模式** (cloudflare_access.enabled = true):
+```bash
+curl \
+  -H "Authorization: token ${FORGEJO_TOKEN}" \
+  -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+  -H "Content-Type: application/json" \
+  "${FORGEJO_API_URL}/repos/{owner}/{repo}/issues"
+```
+
+#### 错误检测与自动提示
+
+**检测条件**:
+- HTTP 状态码: 403
+- 响应包含关键词: "cloudflare" OR "challenge" OR "access denied"
+
+**自动提示模板**:
+```
+⚠️ 检测到 Cloudflare Access 保护
+
+Forgejo API 调用被拒绝 (403)，响应中包含 Cloudflare challenge。
+请在 CLAUDE.local.md 中添加以下配置：
+
+forgejo:
+  url: "你的 Forgejo URL"
+  api_token: "${FORGEJO_TOKEN}"
+  repo: "owner/repo"
+  cloudflare_access:
+    enabled: true
+    client_id_env: "CF_ACCESS_CLIENT_ID"
+    client_secret_env: "CF_ACCESS_CLIENT_SECRET"
+
+并设置环境变量：
+export CF_ACCESS_CLIENT_ID="your-client-id"
+export CF_ACCESS_CLIENT_SECRET="your-service-token"
+```
+
+---
+
 ### Story → Issue
 
 ```yaml
