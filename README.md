@@ -1,8 +1,8 @@
 # Aria Plugin
 
-> **Version**: 1.3.2 | **Released**: 2026-02-06
+> **Version**: 1.4.0 | **Released**: 2026-02-07
 >
-> Aria AI-DDD 方法论完整插件 - 25个 Skills + 10个 Agents + Hooks系统
+> Aria AI-DDD 方法论完整插件 - 26个 Skills + 11个 Agents + Hooks系统
 
 ## 安装
 
@@ -33,7 +33,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10cg-aria-plugin
 ```
 
-### Skills (25个)
+### Skills (26个)
 
 **十步循环核心**
 - state-scanner - 项目状态扫描与智能工作流推荐
@@ -56,9 +56,10 @@ export ARIA_HOOKS_DISABLED=true
 - branch-finisher - 分支完成收尾
 
 **开发工具**
-- subagent-driver - 子代理驱动开发 (SDD)
+- subagent-driver - 子代理驱动开发 (SDD)，支持两阶段代码审查
 - agent-router - 任务到 Agent 的智能路由器
 - tdd-enforcer - 强制执行 TDD 工作流
+- requesting-code-review - 请求两阶段代码审查 (Phase 1: 规范合规性 → Phase 2: 代码质量)
 
 **架构文档**
 - arch-common - 架构工具共享组件
@@ -72,12 +73,13 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-sync - Story ↔ UPM 状态同步
 - forgejo-sync - Story ↔ Issue 同步
 
-### Agents (10个)
+### Agents (11个)
 
 **核心管理**
 - tech-lead - 技术架构决策、任务规划、跨团队协调
 - context-manager - 多 Agent 协作、上下文管理
 - knowledge-manager - 知识库管理、文档同步
+- code-reviewer - 两阶段代码审查 (Phase 1: 规范合规性 + Phase 2: 代码质量)
 
 **开发相关**
 - backend-architect - 后端架构、API 设计、数据库模式
@@ -114,10 +116,12 @@ export ARIA_HOOKS_DISABLED=true
 /aria:state-scanner
 /aria:spec-drafter
 /aria:workflow-runner
+/aria:requesting-code-review
 
 # Agents
 /aria:tech-lead
 /aria:backend-architect
+/aria:code-reviewer
 /aria:knowledge-manager
 ```
 

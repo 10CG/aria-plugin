@@ -1,6 +1,6 @@
 {
-  "version": "1.3.2",
-  "description": "Aria 十步循环工作流 Hooks 配置 - 25个 Skills + 10个 Agents",
+  "version": "1.4.0",
+  "description": "Aria 十步循环工作流 Hooks 配置 - 26个 Skills + 11个 Agents",
   "enabled": true,
   "hooks": {
     "SessionStart": {

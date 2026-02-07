@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.3.2
-> **发布日期**: 2026-02-06
+> **版本**: 1.4.0
+> **发布日期**: 2026-02-07
 > **仓库**: https://forgejo.10cg.pub/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.3.2
+1.4.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (3)**: 25 个 Skills，TDD Enforcer v2.0 文档驱动重构，Brainstorm Skill v2.0.0
-- **Patch (2)**: state-scanner 跨平台指南 + brainstorm 对话控制重构
+- **Minor (4)**: 26 个 Skills，11 个 Agents，两阶段代码审查，TDD Enforcer v2.0，Brainstorm v2.0.0
+- **Patch (0)**: 当前版本
 
 ## 包含内容
 
-### Skills (25个)
+### Skills (26个)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -30,8 +30,8 @@
 **Git 工作流 (4个)**
 - commit-msg-generator, strategic-commit-orchestrator, branch-manager, branch-finisher
 
-**开发工具 (3个)**
-- subagent-driver, agent-router, tdd-enforcer
+**开发工具 (4个)**
+- subagent-driver, agent-router, tdd-enforcer, requesting-code-review
 
 **架构文档 (5个)**
 - arch-common, arch-search, arch-update, arch-scaffolder, api-doc-generator
@@ -39,9 +39,9 @@
 **需求管理 (3个)**
 - requirements-validator, requirements-sync, forgejo-sync
 
-### Agents (10个)
+### Agents (11个)
 
-- tech-lead, context-manager, knowledge-manager
+- tech-lead, context-manager, knowledge-manager, code-reviewer
 - backend-architect, mobile-developer, qa-engineer
 - ai-engineer, api-documenter, ui-ux-designer, legal-advisor
 

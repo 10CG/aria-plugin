@@ -12,8 +12,8 @@ allowed-tools: Task, Bash, Read, Grep
 
 # Subagent Driver (子代理驱动器)
 
-> **版本**: 1.2.0 | **十步循环**: B.2 (执行验证)
-> **更新**: 2026-01-22 - 集成 agent-router 智能路由
+> **版本**: 1.3.0 | **十步循环**: B.2 (执行验证)
+> **更新**: 2026-02-06 - 集成两阶段代码审查机制 (Superpowers 兼容)
 
 ## 快速开始
 
@@ -138,7 +138,47 @@ Fresh Subagent 启动流程:
             发现问题? → 修复后继续
 ```
 
+### 两阶段审查机制 (v1.3.0 新增)
+
+```yaml
+两阶段代码审查:
+  Phase 1: 规范合规性检查
+    ├─ 对照 detailed-tasks.yaml 检查
+    ├─ 对照 OpenSpec proposal.md 检查
+    ├─ 文件路径验证
+    ├─ 功能完整性验证
+    └─ 范围变更检测
+       │
+       ├─ PASS → 继续 Phase 2
+       └─ FAIL → 阻塞，返回修复
+
+  Phase 2: 代码质量检查
+    ├─ 代码风格检查
+    ├─ 测试覆盖率检查
+    ├─ 安全漏洞检查
+    ├─ 架构设计检查
+    └─ 判定: PASS/WARN/FAIL
+```
+
+### 审查模式
+
+| 模式 | Agent | 说明 | 触发方式 |
+|------|------|------|----------|
+| **传统审查** | feature-dev:code-reviewer | 综合代码质量检查 | `enable_two_phase=false` |
+| **两阶段审查** | aria:code-reviewer | Phase 1 规范 + Phase 2 质量 | `enable_two_phase=true` (默认) |
+
 ### 审查内容
+
+#### Phase 1: 规范合规性
+
+| 审查项 | 说明 | 严重程度 |
+|--------|------|---------|
+| **文件路径** | 与计划文件是否一致 | 高 |
+| **功能完整性** | 计划功能是否全部实现 | 高 |
+| **范围控制** | 是否有超出计划的变更 | 高 |
+| **文档同步** | OpenSpec 字段是否更新 | 中 |
+
+#### Phase 2: 代码质量
 
 | 审查项 | 说明 | 严重程度 |
 |--------|------|---------|
@@ -146,28 +186,40 @@ Fresh Subagent 启动流程:
 | **逻辑正确性** | 业务逻辑是否正确 | 高 |
 | **安全漏洞** | XSS、SQL 注入等 | 高 |
 | **测试覆盖** | 是否有对应测试 | 中 |
-| **文档同步** | 注释和文档是否更新 | 低 |
+| **CLAUDE.md** | 项目规范是否遵守 | 低 |
 
 ### 审查流程
 
 ```yaml
-代码审查流程:
-  1. 收集变更:
+代码审查流程 (两阶段):
+   1. 收集变更:
      - git diff 获取变更内容
      - 识别变更文件类型
+     - 获取 BASE_SHA 和 HEAD_SHA
 
-  2. 启动审查 Agent:
-     - 使用 feature-dev:code-reviewer agent
-     - 传递变更内容和上下文
+  2. 读取计划文件:
+     - 尝试读取 detailed-tasks.yaml
+     - 尝试读取 OpenSpec proposal.md
+     - 如果都不存在，跳过 Phase 1
 
-  3. 生成审查报告:
-     - 问题列表 (按严重程度排序)
-     - 建议修复方案
-     - 通过/不通过判定
+  3. 选择审查模式:
+     - enable_two_phase=true → 使用 aria:code-reviewer (两阶段)
+     - enable_two_phase=false → 使用 feature-dev:code-reviewer (传统)
 
-  4. 处理审查结果:
-     - 通过 → 继续下一任务
-     - 不通过 → 返回修复
+  4. 填充参数模板:
+     - WHAT_WAS_IMPLEMENTED: 任务描述
+     - PLAN_OR_REQUIREMENTS: 计划文件引用
+     - BASE_SHA: 起始 SHA
+     - HEAD_SHA: 结束 SHA
+
+  5. 启动审查 Agent:
+     - 调用 Task 工具
+     - 传递参数和模板
+
+  6. 处理审查结果:
+     - Phase 1 FAIL → 阻塞，返回修复
+     - Phase 2 FAIL → 可选阻塞
+     - PASS/WARN → 继续下一任务
 ```
 
 ### 审查报告格式
@@ -336,6 +388,7 @@ next_task: "TASK-003"
 | `enable_review` | ❌ | 启用任务间审查 (默认 true) | `true`, `false` |
 | `review_threshold` | ❌ | 审查严重程度阈值 | `high`, `medium`, `low` |
 | `auto_continue` | ❌ | 自动继续下一任务 (默认 false) | `true`, `false` |
+| `enable_two_phase` | ❌ | 启用两阶段审查 (默认 true) | `true`, `false` |
 | `tdd_config` | ❌ | TDD 配置 (v1.1.0) | 见下方 TDD 配置 |
 
 ### TDD 配置 (v1.1.0 新增)
@@ -506,6 +559,8 @@ Phase B:
 - [tdd-enforcer](../tdd-enforcer/SKILL.md) - TDD 强制执行
 - [phase-b-developer](../phase-b-developer/SKILL.md) - Phase B 编排
 - [workflow-runner](../workflow-runner/SKILL.md) - 工作流编排
+- [requesting-code-review](../requesting-code-review/SKILL.md) - 两阶段代码审查 (新增 v1.3.0)
+- [aria:code-reviewer](../../agents/code-reviewer.md) - 两阶段审查 Agent (新增 v1.3.0)
 
 ---
 
@@ -733,5 +788,5 @@ agent_routing:
 
 ---
 
-**最后更新**: 2026-01-22
-**Skill版本**: 1.2.0
+**最后更新**: 2026-02-06
+**Skill版本**: 1.3.0

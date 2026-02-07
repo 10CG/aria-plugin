@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-02-07
+
+### Added
+
+- **两阶段代码审查** - Superpowers 风格的代码审查机制
+  - 新增 `aria:code-reviewer` Agent - 执行 Phase 1 (规范合规性) + Phase 2 (代码质量) 检查
+  - 新增 `requesting-code-review` Skill - 用户可调用入口，自动填充模板并启动审查
+  - **subagent-driver** 集成两阶段审查 - 新增 `enable_two_phase` 参数 (默认: true)
+  - 审查结果分类: Critical (必须修复) / Important (应该修复) / Minor (建议修复)
+  - 支持无计划降级模式 - 无 detailed-tasks.yaml 时仅执行 Phase 2
+  - 中英双语支持 - 审查结果可用中文或英文输出
+  - 7 个完整示例场景 - 覆盖 PASS/FAIL/WARN/Fallback/分批/调用等场景
+
+### Changed
+
+- **subagent-driver** v1.3.0
+  - 新增 `enable_two_phase` 参数控制两阶段审查开关
+  - 新增两阶段审查流程图和文档说明
+  - 审查模式对比: 传统模式 vs 两阶段模式
+
+- **Skills 总数**: 25 → 26
+- **Agents 总数**: 10 → 11
+
+### Design Philosophy
+
+```yaml
+两阶段代码审查:
+  Phase 1: 规范合规性检查 (Specification Compliance)
+    - 验证实现与计划一致
+    - 检查功能完整性
+    - 检测范围变更
+    - 阻塞性: FAIL 终止审查
+
+  Phase 2: 代码质量检查 (Code Quality)
+    - 检查代码风格
+    - 检查测试覆盖
+    - 检查安全性
+    - 检查架构设计
+    - 阻塞性: 仅 Critical 阻塞
+
+参考实现:
+  - obra/superpowers requesting-code-review
+  - Superpowers Code Review 最佳实践
+```
+
 ## [1.3.2] - 2026-02-06
 
 ### Changed
