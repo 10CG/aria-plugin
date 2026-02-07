@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-02-07
+
+### Added
+
+- **Cloudflare Access AI 自动处理** - AI 主动识别和处理 Forgejo 的 Cloudflare Access 保护
+  - 新增 `cloudflare_access` 配置项 - 控制 AI 是否使用 CF Access 模式
+  - 新增 `API_CALL_PATTERN.md` - 统一的 Forgejo API 调用模式文档
+  - AI 执行前检查规则 - API 调用前自动检测 `cloudflare_access.enabled`
+  - 错误自动检测 - API 返回 403/CF 错误时自动提示配置
+  - 自动配置提示模板 - 检测到 CF 保护时输出配置示例
+
+### Changed
+
+- **forgejo-sync SKILL.md** - 新增 "AI 执行前检查 (不可协商规则)" 章节
+- **branch-manager SKILL.md** - 更新 Forgejo API 调用，支持 CF Access 头部
+- **phase-c-integrator SKILL.md** - 添加 Cloudflare Access 引用
+- **forgejo-sync 规范 (standards)** - 新增 Cloudflare Access 支持要求
+
+---
+
 ## [1.4.0] - 2026-02-07
 
 ### Added
