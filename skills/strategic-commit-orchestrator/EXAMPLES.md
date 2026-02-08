@@ -149,7 +149,7 @@ feat(backend/api): 实现任务优先级API端点
 
 **变更文件**:
 ```
-M  docs/standards/core/unified-progress-management-spec.md
+M  standards/core/unified-progress-management-spec.md
 M  .claude/skills/strategic-commit-orchestrator/SKILL.md
 A  .claude/docs/UPM_PATH_INCONSISTENCY_ANALYSIS.md
 A  .claude/docs/UPM_PATH_FIX_VERIFICATION.md
@@ -158,7 +158,7 @@ A  .claude/docs/UPM_PATH_FIX_VERIFICATION.md
 **执行流程**:
 ```yaml
 Step 1.0: 变更类型识别
-  识别: docs/standards/** + .claude/skills/** + .claude/docs/** 变更
+  识别: standards/** + .claude/skills/** + .claude/docs/** 变更
   变更类型: 类型B（主项目基础设施变更）
   → 跳过UPM路径解析
 
@@ -172,7 +172,7 @@ Step 2-5: 分析、分组、Subagent分配、编排
 Step 6.2: 增强标记
   🤖 Executed-By: knowledge-manager subagent
   📋 Context: Phase1-Cycle1 standards-unification  # 逻辑Phase
-  🔗 Module: docs/standards
+  🔗 Module: standards
 ```
 
 **最终提交**:
@@ -189,7 +189,7 @@ fix(standards/upm): 修复UPM路径规范不一致问题 / Fix UPM path specific
 
 📋 Context: Phase1-Cycle1 standards-unification
 
-🔗 Module: docs/standards
+🔗 Module: standards
 
 Refs: .claude/docs/UPM_PATH_INCONSISTENCY_ANALYSIS.md
 Refs: .claude/docs/UPM_PATH_FIX_VERIFICATION.md
@@ -569,7 +569,7 @@ Refs #789
 **变更文件**:
 ```
 M  docs/maintained/README.md
-M  docs/standards/do-ref-workflow.md
+M  standards/do-ref-workflow.md
 M  docs/components/document-header.md
 A  docs/templates/document-template-v2.md
 ```

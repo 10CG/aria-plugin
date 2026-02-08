@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 3. **模块识别策略增强**:
    - ELSE分支添加主项目路径识别
-   - docs/standards/**, .claude/skills/**, scripts/** 等
+   - standards/**, .claude/skills/**, scripts/** 等
    - 明确标记为类型B，跳过UPM读取
 
 4. **增强6.3: Phase/Cycle来源决策**:
@@ -157,9 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **参考文档**:
 - [AI-DDD v3.0.0架构设计](../../docs/analysis/ai-ddd-universal-progress-management-adr.md)
 - [Skills组合设计方案](../../.claude/docs/SKILLS_COMBINATION_DESIGN.md)
-- [核心标准文档](../../docs/standards/core/ai-ddd-progress-management-core.md)
-- [Backend扩展](../../docs/standards/extensions/backend-ai-ddd-extension.md)
-- [Mobile扩展](../../docs/standards/extensions/mobile-ai-ddd-extension.md)
+- [核心标准文档](../../standards/core/ai-ddd-progress-management-core.md)
+- [Backend扩展](../../standards/extensions/backend-ai-ddd-extension.md)
+- [Mobile扩展](../../standards/extensions/mobile-ai-ddd-extension.md)
 
 ---
 

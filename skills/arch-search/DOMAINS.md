@@ -277,7 +277,7 @@ doc_management:
     - L0
     - L1
     - L2
-  primary: docs/standards/architecture-documentation-management-system.md
+  primary: standards/architecture-documentation-management-system.md
   description: 架构文档的创建和维护规范
 ```
 
