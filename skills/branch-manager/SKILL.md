@@ -503,7 +503,7 @@ C.2.2 - 推送分支:
 
 C.2.3 - 创建 PR (Forgejo API):
   ⚠️ **强制前置检查** (不可跳过):
-    → 引用: ../FORGEJO_API_PRE_CHECK.md
+    → 引用: ../forgejo-sync/PRE_CHECK.md
     → 执行: 读取 forgejo.cloudflare_access.enabled
     → 决定: 使用标准模式或 Cloudflare Access 模式
 
@@ -562,7 +562,7 @@ Related Issue: #{issue_number} (如有)
 ### Forgejo API 调用
 
 > ⚠️ **重要**: 所有 Forgejo API 调用前必须执行前置检查
-> **强制引用**: `../FORGEJO_API_PRE_CHECK.md`
+> **强制引用**: `../forgejo-sync/PRE_CHECK.md`
 >
 > 前置检查是**不可协商的强制步骤**，嵌入在执行流程 C.2.3 中。
 
@@ -570,7 +570,7 @@ Related Issue: #{issue_number} (如有)
 
 ```yaml
 # 在执行任何 Forgejo API 调用前，必须先执行:
-引用: ../FORGEJO_API_PRE_CHECK.md
+引用: ../forgejo-sync/PRE_CHECK.md
 
 检查流程:
   1. 读取 CLAUDE.local.md 中的 forgejo.cloudflare_access.enabled

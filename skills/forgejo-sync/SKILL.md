@@ -109,13 +109,13 @@ forgejo:
 ### 🔒 AI 执行前检查 (不可协商规则)
 
 > **CRITICAL**: 在执行任何 Forgejo API 调用前，AI **必须**遵循以下检查流程。
-> **统一规范**: 引用 `../FORGEJO_API_PRE_CHECK.md`
+> **统一规范**: 引用 `PRE_CHECK.md` (同目录)
 
 #### 检查流程
 
 ```yaml
 # 统一的前置检查规范
-引用: ../FORGEJO_API_PRE_CHECK.md
+引用: PRE_CHECK.md
 
 API_Call_Pre_Check:
   1. 读取配置:
