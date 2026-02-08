@@ -562,7 +562,7 @@ Related Issue: #{issue_number} (如有)
 ### Forgejo API 调用
 
 > ⚠️ **重要**: 所有 Forgejo API 调用前必须执行前置检查
-> **强制引用**: `aria/skills/FORGEJO_API_PRE_CHECK.md`
+> **强制引用**: `../FORGEJO_API_PRE_CHECK.md`
 >
 > 前置检查是**不可协商的强制步骤**，嵌入在执行流程 C.2.3 中。
 

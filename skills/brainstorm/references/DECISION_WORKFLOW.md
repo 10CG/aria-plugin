@@ -114,7 +114,7 @@ def generate_decision_id():
 ```yaml
 步骤:
   1. 读取决策模板:
-     模板路径: aria/skills/brainstorm/templates/decision-template.md
+     模板路径: ../../templates/decision-template.md
 
   2. 填充占位符:
      - {ID}: 生成的决策 ID
