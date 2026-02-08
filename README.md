@@ -33,7 +33,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10cg-aria-plugin
 ```
 
-### Skills (26个)
+### Skills (27个)
 
 **十步循环核心**
 - state-scanner - 项目状态扫描与智能工作流推荐
@@ -72,6 +72,9 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-validator - PRD/Story/Architecture 验证
 - requirements-sync - Story ↔ UPM 状态同步
 - forgejo-sync - Story ↔ Issue 同步
+
+**OpenSpec**
+- openspec-archive - 归档已完成的 OpenSpec 变更 (自动修正 CLI bug)
 
 ### Agents (11个)
 

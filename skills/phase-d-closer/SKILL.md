@@ -35,7 +35,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 | 步骤 | Skill | 职责 | 输出 |
 |------|-------|------|------|
 | D.1 | progress-updater | 进度更新 | upm_updated |
-| D.2 | openspec:archive | Spec 归档 | spec_archived |
+| D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug) | spec_archived |
 
 ---
 
@@ -76,7 +76,7 @@ D.1 - 进度更新:
       completed_tasks: [TASK-001, ...]
 
 D.2 - Spec 归档:
-  skill: openspec:archive
+  skill: openspec-archive
   skip_if:
     - no_openspec: true               # 无活跃 Spec
     - spec_not_complete: true         # Spec 未完成

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.0] - 2026-02-08
 
+### Added
+
+- **openspec-archive Skill** - 归档已完成的 OpenSpec 变更
+  - 自动验证 Spec 完成状态
+  - 执行 openspec archive CLI 命令
+  - **自动修正 CLI 归档位置 bug** (openspec/changes/archive/ → openspec/archive/)
+  - 清理空目录并验证最终结果
+  - 更新 phase-d-closer 引用新的 openspec-archive skill
+
 ### Changed
 
 - **Cloudflare Access 自动处理重构** - 彻底解决 AI 不自动使用 CF Access 配置的问题

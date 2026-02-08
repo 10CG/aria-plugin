@@ -13,7 +13,7 @@
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (5)**: 26 个 Skills，11 个 Agents，Cloudflare Access 自动处理重构，统一 API 调用前置检查
+- **Minor (5)**: 27 个 Skills (+openspec-archive)，11 个 Agents，Cloudflare Access 自动处理重构，统一 API 调用前置检查
 - **Patch (0)**: 初始版本
 
 ## 包含内容
