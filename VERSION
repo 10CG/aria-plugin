@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.4.1
-> **发布日期**: 2026-02-07
+> **版本**: 1.5.0
+> **发布日期**: 2026-02-08
 > **仓库**: https://forgejo.10cg.pub/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.4.1
+1.5.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (4)**: 26 个 Skills，11 个 Agents，两阶段代码审查，TDD Enforcer v2.0，Brainstorm v2.0.0
-- **Patch (1)**: Cloudflare Access AI 自动处理支持
+- **Minor (5)**: 26 个 Skills，11 个 Agents，Cloudflare Access 自动处理重构，统一 API 调用前置检查
+- **Patch (0)**: 初始版本
 
 ## 包含内容
 

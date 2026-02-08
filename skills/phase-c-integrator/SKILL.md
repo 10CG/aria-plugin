@@ -104,7 +104,7 @@ C.2 - PR/合并:
     pr_number: 123
 
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。
-> 见 `branch-manager/SKILL.md` 和 `forgejo-sync/API_CALL_PATTERN.md`
+> 统一规范见 `../FORGEJO_API_PRE_CHECK.md`
 ```
 
 ### 输出

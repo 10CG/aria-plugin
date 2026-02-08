@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-02-08
+
+### Changed
+
+- **Cloudflare Access 自动处理重构** - 彻底解决 AI 不自动使用 CF Access 配置的问题
+  - 新增 `FORGEJO_API_PRE_CHECK.md` - 统一的前置检查规范，作为所有 Forgejo API 调用的唯一真理来源
+  - **branch-manager/SKILL.md** - 将前置检查嵌入执行流程 C.2.3，不再作为文档说明
+  - **forgejo-sync/SKILL.md** - 引用统一检查规范文档
+  - **phase-c-integrator/SKILL.md** - 更新引用统一规范
+
+### Design Philosophy
+
+```yaml
+v1.4.1 问题:
+  - 检查规则放在文档章节，AI 需要主动理解
+  - 配置在 forgejo-sync，但 PR 创建在 branch-manager
+  - 没有强制执行点
+
+v1.5.0 解决方案:
+  - 创建统一的 FORGEJO_API_PRE_CHECK.md
+  - 检查规则嵌入执行流程步骤中
+  - AI 按步骤执行时强制检查
+  - 所有 Skills 引用同一规范
+```
+
+### Fixed
+
+- **AI 自动检测 Cloudflare Access** - 前置检查成为执行流程的一部分，AI 必须执行
+
+---
+
 ## [1.4.1] - 2026-02-07
 
 ### Added

@@ -501,9 +501,16 @@ C.2.2 - 推送分支:
   - 推送到远程: git push origin {branch_name}
   - 如果 rebase 后需要: git push --force-with-lease origin {branch_name}
 
-C.2.3 - 创建 PR (Forgejo):
+C.2.3 - 创建 PR (Forgejo API):
+  ⚠️ **强制前置检查** (不可跳过):
+    → 引用: ../FORGEJO_API_PRE_CHECK.md
+    → 执行: 读取 forgejo.cloudflare_access.enabled
+    → 决定: 使用标准模式或 Cloudflare Access 模式
+
   - 加载环境变量: source ~/.bash_profile
+  - 根据检查结果选择 API 调用模式
   - 调用 Forgejo API 创建 PR
+  - 检查响应，如遇 403/CF 错误自动提示配置
   - 返回 PR URL
 
 C.2.4 - 等待审批:
@@ -511,6 +518,7 @@ C.2.4 - 等待审批:
   - 等待用户确认合并
 
 C.2.5 - 合并 (可选，auto_merge=true 时):
+  - 同样需要执行前置检查
   - 调用 Forgejo API 合并 PR
   - 删除远程分支
   - 删除本地分支
@@ -553,18 +561,22 @@ Related Issue: #{issue_number} (如有)
 
 ### Forgejo API 调用
 
-> 🔒 **Cloudflare Access 支持**: 在调用 Forgejo API 前，AI **必须**检查 `forgejo.cloudflare_access.enabled` 配置。详见 `forgejo-sync/CONFIG.md` 中的 Cloudflare Access 章节。
+> ⚠️ **重要**: 所有 Forgejo API 调用前必须执行前置检查
+> **强制引用**: `aria/skills/FORGEJO_API_PRE_CHECK.md`
+>
+> 前置检查是**不可协商的强制步骤**，嵌入在执行流程 C.2.3 中。
 
-#### API 调用前检查 (不可协商规则)
+#### API 调用前检查 (强制执行)
 
 ```yaml
-Pre_API_Call_Check:
-  1. 读取 forgejo.cloudflare_access.enabled
-  2. 如果 enabled == true:
-     → 添加 CF-Access-Client-Id 头部
-     → 添加 CF-Access-Client-Secret 头部
-  3. 如果 API 返回 403/CF 错误:
-     → 自动提示用户配置 Cloudflare Access
+# 在执行任何 Forgejo API 调用前，必须先执行:
+引用: ../FORGEJO_API_PRE_CHECK.md
+
+检查流程:
+  1. 读取 CLAUDE.local.md 中的 forgejo.cloudflare_access.enabled
+  2. enabled = true → 使用 Cloudflare Access 模式
+  3. enabled = false → 使用标准模式
+  4. API 调用失败 (403/CF) → 自动提示配置
 ```
 
 #### 创建 PR
