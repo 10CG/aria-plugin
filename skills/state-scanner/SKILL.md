@@ -126,7 +126,81 @@ allowed-tools: Read, Glob, Grep, Bash
     suggestion: "如需启用需求追踪，创建 PRD 文件或使用 OpenSpec"
 ```
 
-### 阶段 1.6: 架构状态扫描
+### 阶段 1.6: OpenSpec 状态扫描
+
+**重要**: 此阶段始终执行，检测 OpenSpec 变更和归档状态。
+
+**OpenSpec 目录结构说明**:
+
+根据 OpenSpec 标准，项目中的 `openspec/` 目录包含两个子目录：
+
+```
+openspec/
+├── changes/        # 活跃变更 (Draft/Review/Approved/In Progress)
+└── archive/        # 已完成变更 (归档的 Spec)
+```
+
+**注意**: `standards/openspec/` 是格式定义库（作为 Git submodule），不存储项目变更。
+
+```yaml
+检测路径:
+  主项目:
+    - openspec/changes/      # 活跃变更
+    - openspec/archive/      # 已完成变更
+
+检测步骤:
+  1. 检查 openspec/changes/ 目录是否存在
+  2. 如果存在:
+     - 扫描所有 {feature}/proposal.md 文件
+     - 提取 Status 字段 (Draft/Reviewed/Approved/In Progress/Complete)
+     - 统计各状态的 Spec 数量
+  3. 检查 openspec/archive/ 目录是否存在
+  4. 如果存在:
+     - 扫描所有 {YYYY-MM-DD}-{feature}/ 目录
+     - 提取完成日期和功能名称
+     - 统计已归档的 Spec 数量
+  5. 检查是否有 Status=Complete 但未归档的 Spec
+
+输出 (已配置):
+  openspec_status:
+    configured: true
+    changes:
+      total: 3
+      draft: 1
+      reviewed: 0
+      approved: 1
+      in_progress: 1
+      complete: 0
+      items:
+        - id: "add-auth"
+          status: "approved"
+          path: "openspec/changes/add-auth/proposal.md"
+        - id: "refactor-api"
+          status: "in_progress"
+          path: "openspec/changes/refactor-api/proposal.md"
+    archive:
+      total: 5
+      items:
+        - date: "2026-01-15"
+          feature: "user-profile"
+          path: "openspec/archive/2026-01-15-user-profile/"
+        - date: "2026-01-20"
+          feature: "payment-integration"
+          path: "openspec/archive/2026-01-20-payment-integration/"
+    pending_archive:
+      - id: "completed-feature"
+        reason: "Status=Complete but still in changes/"
+
+输出 (未配置):
+  openspec_status:
+    configured: false
+    expected_paths:
+      - "openspec/changes/"
+      - "openspec/archive/"
+    suggestion: "如需使用 OpenSpec，参考 standards/openspec/templates/"
+```
+
+### 阶段 1.7: 架构状态扫描
 
 **重要**: 此阶段始终执行，检测 System Architecture 文档状态。
 
@@ -297,6 +371,12 @@ allowed-tools: Read, Glob, Grep, Bash
   最后更新: 2026-01-01
   需求链路: ✅ PRD → Architecture 完整
 
+📋 OpenSpec 状态
+───────────────────────────────────────────────────────────────
+  活跃变更: 2 个 (approved: 1, in_progress: 1)
+  已归档: 5 个
+  待归档: 0 个
+
 🎯 推荐工作流
 ───────────────────────────────────────────────────────────────
   ➤ [1] feature-dev (推荐)
@@ -353,6 +433,31 @@ allowed-tools: Read, Glob, Grep, Bash
   需求链路: ❌ 问题:
     - Architecture 未引用 PRD
     - PRD 更新时间晚于 Architecture
+```
+
+### 输出格式 (OpenSpec 未配置时)
+
+```
+📋 OpenSpec 状态
+───────────────────────────────────────────────────────────────
+  配置状态: ❌ 未配置 OpenSpec
+  期望路径: openspec/changes/, openspec/archive/
+  建议操作:
+    - 如需使用 OpenSpec，参考 standards/openspec/templates/
+    - 或使用 /spec-drafter 创建新的 proposal
+```
+
+### 输出格式 (有待归档 Spec 时)
+
+```
+📋 OpenSpec 状态
+───────────────────────────────────────────────────────────────
+  活跃变更: 3 个
+  已归档: 5 个
+  待归档: ⚠️ 1 个
+    - completed-feature (Status=Complete)
+  建议操作:
+    - 使用 /openspec-archive 归档已完成的 Spec
 ```
 
 ### 输出格式 (头脑风暴建议时)
@@ -588,5 +693,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-02-06
-**Skill版本**: 2.3.0 (新增跨平台兼容性指南)
+**最后更新**: 2026-02-08
+**Skill版本**: 2.4.0 (新增 OpenSpec archive 扫描支持)

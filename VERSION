@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.5.0
+> **版本**: 1.5.1
 > **发布日期**: 2026-02-08
 > **仓库**: https://forgejo.10cg.pub/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.5.0
+1.5.1
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (5)**: 27 个 Skills (+openspec-archive)，11 个 Agents，Cloudflare Access 自动处理重构，统一 API 调用前置检查
-- **Patch (0)**: 初始版本
+- **Patch (1)**: state-scanner 新增 OpenSpec archive 扫描支持
 
 ## 包含内容
 
-### Skills (26个)
+### Skills (27个)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer

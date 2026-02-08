@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-02-08
+
+### Fixed
+
+- **state-scanner OpenSpec 检测逻辑** - 修复只扫描 changes 目录，未扫描 archive 目录的问题
+  - 新增 `openspec/archive/` 目录扫描支持
+  - 明确区分 `standards/openspec/` (格式定义库) 和项目 `openspec/` (工作区)
+  - 新增待归档 Spec 检测 (Status=Complete 但仍在 changes/)
+  - 新增 OpenSpec 状态输出格式（活跃变更、已归档、待归档）
+
+---
+
 ## [1.5.0] - 2026-02-08
 
 ### Added

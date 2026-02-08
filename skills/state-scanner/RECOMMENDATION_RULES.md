@@ -386,17 +386,46 @@ file_type_classification:
 
 ### OpenSpec 检测
 
+**重要**: OpenSpec 有两个不同的目录需要扫描：
+
+1. **`openspec/changes/`** - 活跃变更（进行中的 Spec）
+2. **`openspec/archive/`** - 已完成变更（已归档的 Spec）
+
+**注意**: `standards/openspec/` 是格式定义库（Git submodule），不存储项目变更。
+
 ```yaml
 openspec_detection:
-  scan_command: "ls openspec/changes/"
+  # 扫描活跃变更
+  changes_scan:
+    path: "openspec/changes/"
+    command: "find openspec/changes/ -name 'proposal.md' 2>/dev/null || echo 'NO_CHANGES'"
+
+  # 扫描已归档变更
+  archive_scan:
+    path: "openspec/archive/"
+    command: "ls -d openspec/archive/* 2>/dev/null || echo 'NO_ARCHIVE'"
+    directory_format: "{YYYY-MM-DD}-{feature}"
 
   status_parsing:
     path: "openspec/changes/{id}/proposal.md"
     field: "Status"
     values: [Draft, Reviewed, Approved, In Progress, Complete]
 
+  # 活跃 Spec 定义
   active_specs:
     filter: status in [Reviewed, Approved, In Progress]
+
+  # 待归档检测
+  pending_archive:
+    condition: status == Complete AND path starts with "openspec/changes/"
+    recommendation: "使用 /openspec-archive 归档"
+
+  # 归档目录解析
+  archive_parsing:
+    from_directory: "{YYYY-MM-DD}-{feature}"
+    extract:
+      completion_date: "$1"  # YYYY-MM-DD 部分
+      feature_name: "$2"      # feature 名称部分
 ```
 
 ### 复杂度评估
@@ -583,4 +612,13 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-01-02
+**最后更新**: 2026-02-08
+
+## 变更历史
+
+### v2.4.0 (2026-02-08)
+
+- **新增**: OpenSpec archive 目录扫描支持
+  - 区分 `openspec/changes/` 和 `openspec/archive/`
+  - 添加待归档 Spec 检测
+  - 明确 `standards/openspec/` 是格式定义库，不存储项目变更
