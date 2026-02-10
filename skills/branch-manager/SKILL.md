@@ -585,7 +585,7 @@ Related Issue: #{issue_number} (如有)
 ```bash
 curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls" \
   -H "Authorization: token ${FORGEJO_TOKEN}" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json; charset=utf-8" \
   -d '{
     "title": "{pr_title}",
     "body": "{pr_body}",
@@ -600,7 +600,7 @@ curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls" \
   -H "Authorization: token ${FORGEJO_TOKEN}" \
   -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
   -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json; charset=utf-8" \
   -d '{
     "title": "{pr_title}",
     "body": "{pr_body}",
@@ -616,13 +616,13 @@ curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls" \
 # squash (推荐)
 curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls/{pr_number}/merge" \
   -H "Authorization: token ${FORGEJO_TOKEN}" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json; charset=utf-8" \
   -d '{"Do": "squash"}'
 
 # merge
 curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls/{pr_number}/merge" \
   -H "Authorization: token ${FORGEJO_TOKEN}" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json; charset=utf-8" \
   -d '{"Do": "merge"}'
 ```
 
@@ -632,7 +632,7 @@ curl -X POST "${FORGEJO_API}/repos/10CG/todo-app/pulls/{pr_number}/merge" \
   -H "Authorization: token ${FORGEJO_TOKEN}" \
   -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
   -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json; charset=utf-8" \
   -d '{"Do": "squash"}'
 ```
 
