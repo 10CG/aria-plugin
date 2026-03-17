@@ -140,6 +140,8 @@ config:
    - 调用对应 Phase Skill
    - 传递 context_for_next 到下一 Phase
    - 收集执行结果
+   - 每个 Phase 完成后更新 workflow state (见 Workflow State Persistence)
+   - 如启用 auto-proceed 模式，Phase 完成后自动推进到下一 Phase (Gate 暂停除外)。详见 [references/auto-proceed.md](./references/auto-proceed.md)
 
 6. Post-Hook 清理 (v2.1.0):
    - 检测 Phase B 完成
@@ -148,63 +150,6 @@ config:
 7. 结果汇总:
    - 生成执行报告
    - 返回最终状态
-```
-
----
-
-## 工作流详情
-
-### quick-fix (快速修复)
-
-```yaml
-phases: [B, C]
-skip_in_B: [B.3]  # Phase B 内部跳过 B.3
-
-触发: "快速修复 Bug", "运行 quick-fix"
-适用: 简单 Bug 修复、typo、配置调整
-```
-
-### feature-dev (功能开发)
-
-```yaml
-phases: [A, B, C]
-skip_in_A: [A.1]  # 如果已有 OpenSpec
-with_brainstorm: true  # 可选: 如 state-scanner 推荐
-
-触发: "开发新功能", "运行 feature-dev"
-适用: 新功能、中等规模开发
-
-包含 A.0.5 (可选):
-  - 如果 state-scanner 推荐包含 brainstorm
-  - 在 Phase A 前执行头脑风暴
-  - 传递决策记录到 spec-drafter
-```
-
-### doc-update (文档更新)
-
-```yaml
-steps: [B.3, C.1]  # 直接指定步骤
-
-触发: "更新文档", "运行 doc-update"
-适用: 架构文档、README 更新
-```
-
-### full-cycle (完整循环)
-
-```yaml
-phases: [A, B, C, D]
-
-触发: "完整开发流程", "运行 full-cycle"
-适用: 重大功能、版本发布
-```
-
-### commit-only (仅提交)
-
-```yaml
-steps: [C.1]
-
-触发: state-scanner 检测已暂存变更
-适用: 变更已就绪，只需提交
 ```
 
 ---
@@ -247,6 +192,55 @@ context_merge:
 
 ---
 
+## Workflow State Persistence
+
+工作流执行期间，通过 `.aria/workflow-state.json` 跟踪状态，支持中断恢复和进度可视化。
+
+Schema 详见 [references/workflow-state-schema.md](./references/workflow-state-schema.md)
+
+### State Creation
+
+工作流启动时，创建初始状态文件:
+
+1. 确保 `.aria/` 目录存在 (`mkdir -p .aria`)
+2. 生成 `session_id` (格式: `sess-YYYYMMDD-XXXXXX`，X 为随机十六进制)
+3. 写入初始状态:
+   - `session.workflow_name`: 当前工作流名称
+   - `session.phases`: 计划执行的 Phase 列表
+   - `session.status`: `"running"`
+   - `git_context.branch`, `git_context.start_commit`: 当前分支和 HEAD SHA
+4. **原子写入**: 先写到 `.aria/workflow-state.json.tmp`，再 `rename` 覆盖正式文件
+
+### State Updates
+
+每个 Phase 完成后立即更新:
+
+- `execution.current_phase` / `current_step`: 推进到下一 Phase
+- `execution.phase_results.<phase>`: 记录该 Phase 输出 (status, context_for_next)
+- `session.last_active_at`: 更新为当前时间戳
+- `integrity.state_hash`: 重新计算 (SHA-256 of content without integrity block)
+
+### Gate State
+
+通过质量门时记录:
+
+- **Gate 1** (Spec 审批): 设置 `gates.gate1_spec_approved: true`
+- **Gate 2** (合并主干): 设置 `gates.gate2_merge_main: true`
+
+Gate 强制执行逻辑、手动/自动模式切换、失败恢复详见 [references/gate-enforcement.md](./references/gate-enforcement.md)
+
+### State Cleanup
+
+工作流结束时的清理策略:
+
+| 场景 | 动作 |
+|------|------|
+| 正常完成 | 删除 `.aria/workflow-state.json` |
+| 用户放弃 | 删除 `.aria/workflow-state.json` |
+| 执行失败 | 保留文件，设置 `session.status: "failed"` (供恢复使用) |
+
+---
+
 ## 错误处理
 
 ### Phase 级别
@@ -276,41 +270,7 @@ recovery:
 
 ## 输出格式
 
-### 执行计划
-
-```
-╔══════════════════════════════════════════════════════════════╗
-║              WORKFLOW EXECUTION PLAN                          ║
-╚══════════════════════════════════════════════════════════════╝
-
-Workflow: feature-dev
-Phases: A → B → C
-
-───────────────────────────────────────────────────────────────
-💡 A.0.5 brainstorm (可选) ← 新增
-   problem 模式            → 问题空间探索
-   requirements 模式       → 需求分解
-   technical 模式          → 技术方案设计
-
-📋 Phase A (规划)
-   A.1 spec-drafter      → Spec 管理 (基于决策预填充)
-   A.2 task-planner      → 任务规划
-   A.3 task-planner      → Agent 分配
-
-🔨 Phase B (开发)
-   B.1 branch-manager    → 分支创建
-   B.2 test-verifier     → 测试验证
-   B.3 arch-update       → 架构同步 (跳过)
-
-📦 Phase C (集成)
-   C.1 commit-msg-gen    → Git 提交
-   C.2 branch-manager    → PR 创建
-───────────────────────────────────────────────────────────────
-
-🤔 Execute this workflow? [Yes/No]
-```
-
-### 执行报告
+执行报告示例:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -319,67 +279,36 @@ Phases: A → B → C
 
 Workflow: feature-dev
 Duration: 2m 15s
-Status: ✅ SUCCESS
+Status: SUCCESS
 
 ───────────────────────────────────────────────────────────────
 PHASE RESULTS:
 
-  ✅ Phase A (规划) - 45s
+  Phase A (规划) - 45s
      spec_id: add-auth-feature
      tasks: 5
 
-  ✅ Phase B (开发) - 60s
+  Phase B (开发) - 60s
      branch: feature/add-auth
      tests: 15/15 passed (87.5% coverage)
 
-  ✅ Phase C (集成) - 30s
+  Phase C (集成) - 30s
      commit: abc1234
      pr: #123
 ───────────────────────────────────────────────────────────────
-
-🎉 Workflow completed successfully!
 ```
+
+完整输出格式（含执行计划、使用示例等）详见 [references/output-formats.md](./references/output-formats.md)
 
 ---
 
-## 使用示例
+## TDD 双保险 Pre-Hook (v2.1.0)
 
-### 示例 1: 接收推荐执行
+Phase B 执行时应用 TDD pre-hook 策略，在工作流级别自动启用 TDD 双保险机制：
+- **方案 A**: phase-b-developer 传递 TDD 配置给 Fresh Subagent
+- **方案 B**: workflow-runner 通过 Pre-Hook 启用主会话 TDD Hook
 
-```yaml
-# state-scanner 推荐
-recommendation:
-  workflow: quick-fix
-  reason: "检测到 3 个文件变更，类型为 bugfix"
-
-# workflow-runner 执行
-执行: Phase B → Phase C
-结果: commit_sha: "abc1234"
-```
-
-### 示例 2: 自定义 Phase 组合
-
-```yaml
-输入:
-  phases: [B, C]
-  config:
-    context:
-      branch_name: "existing-branch"
-
-执行:
-  Phase B: 使用现有分支，运行测试
-  Phase C: 提交代码
-```
-
-### 示例 3: 仅提交
-
-```yaml
-输入:
-  workflow: commit-only
-
-执行:
-  Phase C: 仅执行 C.1 (commit-msg-generator)
-```
+详见 [references/tdd-pre-hook.md](./references/tdd-pre-hook.md)
 
 ---
 
@@ -431,6 +360,12 @@ context:
 ## 相关文档
 
 - [WORKFLOWS.md](./WORKFLOWS.md) - 工作流详细定义
+- [MIGRATION.md](./MIGRATION.md) - v1.0 → v2.0 迁移指南
+- [references/tdd-pre-hook.md](./references/tdd-pre-hook.md) - TDD 双保险详细策略
+- [references/output-formats.md](./references/output-formats.md) - 完整输出格式定义
+- [references/workflow-state-schema.md](./references/workflow-state-schema.md) - 工作流状态 Schema
+- [references/auto-proceed.md](./references/auto-proceed.md) - Auto-Proceed 模式规范
+- [references/gate-enforcement.md](./references/gate-enforcement.md) - Gate 强制执行、手动回退、失败恢复
 - [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎 (新增 A.0.5)
 - [state-scanner](../state-scanner/SKILL.md) - 状态感知与推荐
 - [phase-a-planner](../phase-a-planner/SKILL.md) - Phase A
@@ -441,178 +376,5 @@ context:
 
 ---
 
-## TDD 双保险 Pre-Hook (v2.1.0 新增)
-
-> **设计目标**: 在工作流级别自动启用 TDD，保护主会话的代码编写
-
-### 方案 B 实现
-
-workflow-runner 是 TDD 双保险中"方案 B"的实现者：
-
-```yaml
-workflow-runner (方案 B)
-    │
-    ├── 检测工作流包含 Phase B
-    ├── Pre-Hook: 调用 tdd-enforcer
-    │   ├── 启用主会话 TDD Hook
-    │   └── 返回 tdd_session_id
-    │
-    ├──▶ phase-b-developer (方案 A)
-    │       └── 传递 TDD 给 subagent-driver
-    │           └── 保护 Fresh Subagent
-    │
-    └── Post-Hook: 可选关闭 TDD Hook
-```
-
-### Pre-Hook 触发条件
-
-```yaml
-触发条件:
-  - 工作流包含 Phase B
-  - phase_b_config.tdd.session_level.enabled = true
-  - 项目未禁用 TDD (.claude/tdd-config.json)
-
-不触发场景:
-  - 工作流不包含 Phase B (如 commit-only)
-  - 项目级配置禁用 TDD
-  - 文档类工作流 (doc-update)
-```
-
-### Pre-Hook 执行流程
-
-```yaml
-Pre-Hook 执行:
-  1. 检测工作流:
-     - 解析 phases 列表
-     - 检查是否包含 "B" 或 "phase-b-developer"
-
-  2. 读取 TDD 配置:
-     - 读取 .claude/tdd-config.json (如果存在)
-     - 或使用 phase_b_config.tdd.session_level
-
-  3. 启用 TDD Hook:
-     - 调用 tdd-enforcer skill
-     - 传递 strict_mode 和 skip_patterns
-     - 获取 tdd_session_id
-
-  4. 记录状态:
-     - 保存 tdd_session_id 到上下文
-     - 传递给 phase-b-developer
-```
-
-### Post-Hook 清理
-
-```yaml
-Post-Hook 执行:
-  1. 检测 Phase B 完成:
-     - phase-b-developer 返回成功状态
-
-  2. 决策 TDD Hook 去留:
-     - 默认: 关闭 Hook (释放资源)
-     - 可选: 保持 Hook (连续开发场景)
-
-  3. 清理或保持:
-     - 关闭: 调用 tdd-enforcer --disable
-     - 保持: 记录 tdd_session_id 供后续使用
-```
-
-### 配置示例
-
-```yaml
-# workflow-runner 输入
-workflow: feature-dev
-phases: [A, B, C]
-
-config:
-  tdd:
-    session_level:            # 方案 B 配置
-      enabled: true
-      strict_mode: false
-      skip_patterns:
-        - "**/*.md"
-        - "**/*.json"
-    persist_after_phase_b: false  # Phase B 后是否保持
-```
-
-### 执行报告增强
-
-```yaml
-执行报告 (v2.1.0):
-
-╔══════════════════════════════════════════════════════════════╗
-║              WORKFLOW EXECUTION REPORT                        ║
-╚══════════════════════════════════════════════════════════════╝
-
-Workflow: feature-dev
-Duration: 3m 45s
-Status: ✅ SUCCESS
-
-───────────────────────────────────────────────────────────────
-🔒 TDD 双保险状态:
-  方案 A (Fresh Subagent): ✅ 启用
-  方案 B (主会话):        ✅ 启用
-  tdd_session_id: sess-20260122-001
-
-───────────────────────────────────────────────────────────────
-PHASE RESULTS:
-
-  ✅ Phase A (规划) - 45s
-     spec_id: add-auth-feature
-     tasks: 5
-
-  ✅ Phase B (开发) - 120s
-     branch: feature/add-auth
-     tests: 15/15 passed (87.5% coverage)
-     tdd_compliance: passed
-
-  ✅ Phase C (集成) - 30s
-     commit: abc1234
-     pr: #123
-───────────────────────────────────────────────────────────────
-
-🎉 Workflow completed successfully!
-```
-
-### 双保险协作
-
-```yaml
-完整保护流程:
-
-  [用户] "开发新功能"
-     │
-     ▼
-  state-scanner
-     │ 推荐工作流: feature-dev (A→B→C)
-     ▼
-  workflow-runner
-     │
-     ├── [Pre-Hook] 方案 B: 启用主会话 TDD
-     │   └── tdd-enforcer --enable
-     │
-     ▼
-  phase-a-planner (规划)
-     │
-     ▼
-  phase-b-developer (开发)
-     │
-     ├── 方案 A: 传递 TDD 配置
-     │   └── subagent-driver (tdd_config)
-     │       └── Fresh Subagent (TDD 约束)
-     │
-     └── 用户直接编辑 ← 方案 B 保护
-         └── tdd-enforcer Hook 拦截
-     │
-     ▼
-  phase-c-integrator (集成)
-     │
-     ├── [Post-Hook] 可选关闭 TDD
-     │   └── tdd-enforcer --disable
-     │
-     ▼
-  完成
-```
-
----
-
-**最后更新**: 2026-02-05
-**Skill版本**: 2.2.0 (新增 A.0.5 brainstorm 步骤)
+**最后更新**: 2026-03-16
+**Skill版本**: 2.3.0

@@ -11,9 +11,9 @@ user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
-# 状态扫描与智能推荐 (State Scanner v2.0)
+# 状态扫描与智能推荐 (State Scanner v2.5)
 
-> **版本**: 2.1.0 | **角色**: 十步循环统一入口
+> **版本**: 2.4.0 | **角色**: 十步循环统一入口
 
 ## 快速开始
 
@@ -43,6 +43,12 @@ allowed-tools: Read, Glob, Grep, Bash
 ---
 
 ## 执行流程
+
+### 阶段 0: 中断检测 (Pre-flight)
+
+> 详细逻辑见 [interrupt-recovery.md](./references/interrupt-recovery.md) | 状态格式见 [workflow-state-schema.md](../workflow-runner/references/workflow-state-schema.md)
+
+检查 `.aria/workflow-state.json` — 不存在或损坏则跳过进入阶段 1 (损坏时备份并警告)。若 status=`in_progress`|`suspended`: (1) 验证 `git_anchor.branch` 匹配当前分支，不匹配仅 Abandon/Inspect; (2) 若 `session.last_active_at`<5min 且 `session_id` 不同，警告并发冲突; (3) 展示 **[1]Resume [2]Abandon [3]Inspect** — Resume→workflow-runner(resume=true)，Abandon→删除状态进入阶段1，Inspect→详情后重选。若 status=`failed`: 显示失败上下文，提供 **[1]Retry [2]Abandon [3]Inspect**。
 
 ### 阶段 1: 状态收集
 
@@ -239,71 +245,12 @@ openspec/
 
 ### 阶段 2: 推荐决策
 
-```yaml
-推荐规则 (按优先级):
-  1. commit_only:
-     条件: 已在功能分支 + 有暂存变更 + 无未暂存变更
-     推荐: [C.1]
-     理由: "变更已暂存，只需提交"
+基于阶段 1 收集的状态，按优先级匹配推荐规则 (第一个匹配的规则生效)。
 
-  2. quick_fix:
-     条件: 变更文件 <= 3 + 变更类型为 bugfix/typo/config
-     推荐: quick-fix
-     理由: "简单修复，使用快速流程"
+规则覆盖: commit_only → quick_fix → feature_with_spec → feature_new，
+以及需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec 等。
 
-  3. feature_with_spec:
-     条件: 有活跃 OpenSpec + 状态为 approved
-     推荐: feature-dev (跳过 Phase A)
-     理由: "已有 OpenSpec，跳过规划阶段"
-
-  4. feature_new:
-     条件: 复杂度 >= Level2 + 无 OpenSpec
-     推荐: full-cycle
-     理由: "新功能开发，建议完整流程"
-
-  # 需求相关规则
-  5. requirements_issues:
-     条件: requirements_status.validation.issues > 0
-     推荐: requirements-check
-     理由: "需求文档存在问题，建议先修复"
-
-  6. pending_stories:
-     条件: stories.ready > 0 + 无活跃开发
-     推荐: start-implementation
-     理由: "有 N 个就绪 Story 可开始实现"
-
-  7. missing_prd:
-     条件: !prd_exists + 复杂度 >= Level2
-     推荐: brainstorm.problem
-     理由: "复杂功能变更，建议先通过头脑风暴澄清问题空间"
-
-  8. missing_openspec:
-     条件: stories.ready > 0 + 无对应 OpenSpec
-     推荐: brainstorm.technical
-     理由: "有就绪 Story，建议先通过头脑风暴讨论技术方案"
-
-  9. forgejo_drift:
-     条件: forgejo.drift = true
-     推荐: sync-forgejo
-     理由: "Story 与 Issue 状态不一致，建议同步"
-
-  10. fuzziness_requirement:
-      条件: 用户输入模糊度 >= 0.6 + 无对应文档
-      推荐: brainstorm.problem
-      理由: "需求模糊，建议先进行问题空间探索"
-
-  11. prd_refinement:
-      条件: prd_exists + 无 User Stories
-      推荐: brainstorm.requirements
-      理由: "PRD 需要细化为 User Stories"
-
-  12. doc_only:
-      条件: 所有变更文件为 *.md + 无代码变更
-      推荐: doc-update
-      理由: "仅文档变更"
-
-详细规则: 见 RECOMMENDATION_RULES.md
-```
+详细规则定义、优先级和条件见 [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md)。
 
 ### 阶段 3: 用户确认
 
@@ -320,6 +267,8 @@ openspec/
   - 输入自定义 (如 "B.2 + C.1")
 ```
 
+高置信度 (>90%) 场景在 auto-proceed 模式下可自动执行，详见 [references/confidence-scoring.md](./references/confidence-scoring.md)。
+
 ### 阶段 4: 工作流启动
 
 ```yaml
@@ -335,6 +284,10 @@ openspec/
 ---
 
 ## 输出格式
+
+> 完整输出格式参见 [references/output-formats.md](./references/output-formats.md)
+
+### 标准输出示例
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -366,138 +319,24 @@ openspec/
 🏗️ 架构状态
 ───────────────────────────────────────────────────────────────
   System Architecture: ✅ 存在
-  路径: docs/architecture/system-architecture.md
-  状态: active
-  最后更新: 2026-01-01
-  需求链路: ✅ PRD → Architecture 完整
+  状态: active | 需求链路: ✅ 完整
 
 📋 OpenSpec 状态
 ───────────────────────────────────────────────────────────────
-  活跃变更: 2 个 (approved: 1, in_progress: 1)
-  已归档: 5 个
-  待归档: 0 个
+  活跃变更: 2 个 | 已归档: 5 个 | 待归档: 0 个
 
 🎯 推荐工作流
 ───────────────────────────────────────────────────────────────
   ➤ [1] feature-dev (推荐)
-      执行: B.1 → B.2 → C.1
-      跳过: A.* (已有 Spec), B.3 (无架构变更)
       理由: 已有 OpenSpec，代码和测试就绪
-
   ○ [2] quick-fix
-      执行: B.2 → C.1
-      理由: 如果只是小修复
-
   ○ [3] full-cycle
-      执行: A.0 → D.2 (完整)
-      理由: 如果需要完整流程
-
   ○ [4] 自定义组合
-      输入格式: "B.2 + C.1" 或 "Phase B"
 
 🤔 选择 [1-4] 或输入自定义:
 ```
 
-### 输出格式 (需求未配置时)
-
-```
-📄 需求状态
-───────────────────────────────────────────────────────────────
-  配置状态: ❌ 未配置需求追踪
-  期望路径: docs/requirements/
-  建议操作:
-    - 如需启用需求追踪，参考 standards/templates/prd-template.md
-    - 或使用 OpenSpec 作为轻量替代方案
-```
-
-### 输出格式 (架构未配置时)
-
-```
-🏗️ 架构状态
-───────────────────────────────────────────────────────────────
-  System Architecture: ❌ 不存在
-  期望路径: docs/architecture/system-architecture.md
-  建议操作:
-    - 如需启用架构追踪，创建 System Architecture 文档
-    - 参考 standards/core/documentation/system-architecture-spec.md
-```
-
-### 输出格式 (需求链路不完整时)
-
-```
-🏗️ 架构状态
-───────────────────────────────────────────────────────────────
-  System Architecture: ⚠️ 存在但链路不完整
-  路径: docs/architecture/system-architecture.md
-  状态: active
-  需求链路: ❌ 问题:
-    - Architecture 未引用 PRD
-    - PRD 更新时间晚于 Architecture
-```
-
-### 输出格式 (OpenSpec 未配置时)
-
-```
-📋 OpenSpec 状态
-───────────────────────────────────────────────────────────────
-  配置状态: ❌ 未配置 OpenSpec
-  期望路径: openspec/changes/, openspec/archive/
-  建议操作:
-    - 如需使用 OpenSpec，参考 standards/openspec/templates/
-    - 或使用 /spec-drafter 创建新的 proposal
-```
-
-### 输出格式 (有待归档 Spec 时)
-
-```
-📋 OpenSpec 状态
-───────────────────────────────────────────────────────────────
-  活跃变更: 3 个
-  已归档: 5 个
-  待归档: ⚠️ 1 个
-    - completed-feature (Status=Complete)
-  建议操作:
-    - 使用 /openspec-archive 归档已完成的 Spec
-```
-
-### 输出格式 (头脑风暴建议时)
-
-```
-💡 头脑风暴建议
-───────────────────────────────────────────────────────────────
-  检测到模糊需求 (fuzziness: 0.7)
-  建议先进行问题空间探索，澄清真需求 vs 伪需求
-
-  [1] 开始头脑风暴 (problem 模式)
-  [2] 直接创建 PRD
-  [3] 跳过，稍后处理
-```
-
-### 输出格式 (PRD 需要细化时)
-
-```
-💡 头脑风暴建议
-───────────────────────────────────────────────────────────────
-  PRD 已存在但缺少 User Stories
-  建议通过头脑风暴将 PRD 细化为 User Stories
-
-  [1] 开始头脑风暴 (requirements 模式)
-  [2] 手动创建 User Stories
-  [3] 跳过，稍后处理
-```
-
-### 输出格式 (需要技术方案时)
-
-```
-💡 头脑风暴建议
-───────────────────────────────────────────────────────────────
-  有就绪的 User Story 但缺少技术方案
-  建议先通过头脑风暴讨论技术方案
-
-  [1] 开始头脑风暴 (technical 模式)
-  [2] 直接创建 OpenSpec
-  [3] 跳过，稍后处理
-```
+各场景的输出变体 (未配置、链路不完整、待归档、头脑风暴建议等) 见 [references/output-formats.md](./references/output-formats.md)。
 
 ---
 
@@ -567,31 +406,7 @@ state-scanner 执行:
 
 ## 推荐规则配置
 
-详细推荐规则定义在 [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md)
-
-### 规则优先级
-
-```
-1.  commit_only           (最高 - 最简单场景)
-1.5 requirements_issues   (需求文档有错误)
-1.6 architecture_missing  (PRD 存在但无 Architecture)
-1.7 architecture_outdated (Architecture 状态为 outdated)
-1.8 architecture_chain_broken (需求链路不完整)
-2.  quick_fix
-3.  feature_with_spec
-3.5 pending_stories       (有就绪 Story)
-3.8 missing_openspec      (Story 无技术方案)
-4.  fuzziness_requirement  (模糊需求) ← 新增头脑风暴
-4.2 missing_prd           (缺少 PRD) ← 新增头脑风暴
-4.4 prd_refinement        (PRD 需细化) ← 新增头脑风暴
-5.  doc_only
-6.  feature_new           (兜底规则)
-6.5 requirements_info     (需求未配置提示)
-```
-
-### 自定义规则
-
-可在 RECOMMENDATION_RULES.md 中添加项目特定规则。
+详细推荐规则 (优先级、条件、自定义扩展) 见 [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md)。
 
 ---
 
@@ -657,32 +472,15 @@ workflow-runner v2.0
 
 ---
 
-## 迁移说明 (v1.0 → v2.0)
-
-### 变更点
-
-| v1.0 | v2.0 |
-|------|------|
-| 仅状态扫描 | 状态 + 推荐 + 确认 |
-| 方向选择 (A/B/C/D) | 工作流推荐 + 自定义 |
-| 输出报告后结束 | 输出到 workflow-runner |
-
-### 向后兼容
-
-- 原有的状态扫描功能完全保留
-- "只看不执行" 选项保持可用
-- UPM 解析逻辑不变
-
----
-
 ## 相关文档
 
-### 推荐规则
-- [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md) - 推荐规则定义
-
-### 跨平台参考
+### 参考文件
+- [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md) - 推荐规则定义 (含置信度评分)
+- [confidence-scoring.md](./references/confidence-scoring.md) - 置信度评分与自动执行策略
+- [interrupt-recovery.md](./references/interrupt-recovery.md) - 中断恢复详细逻辑
+- [output-formats.md](./references/output-formats.md) - 各场景输出格式定义
+- [migration-v1-to-v2.md](./references/migration-v1-to-v2.md) - v1.0 → v2.0 迁移说明
 - [cross-platform-commands.md](./references/cross-platform-commands.md) - 跨平台命令参考
-
 ### 工作流相关
 - [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎
 - [workflow-runner](../workflow-runner/SKILL.md) - 工作流执行器
@@ -693,5 +491,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-02-08
-**Skill版本**: 2.4.0 (新增 OpenSpec archive 扫描支持)
+**最后更新**: 2026-03-16
+**Skill版本**: 2.5.0 (新增中断恢复检测、置信度评分)
