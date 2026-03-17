@@ -4,20 +4,26 @@
 
 ## 规则概览
 
-| 规则 ID | 优先级 | 推荐工作流 | 触发条件 |
-|---------|--------|-----------|----------|
-| `commit_only` | 1 | C.1 only | 已暂存 + 无未暂存 |
-| `requirements_issues` | 1.5 | requirements-check | 需求文档验证有错误 |
-| `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture |
-| `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated |
-| `architecture_chain_broken` | 1.8 | fix-architecture | 需求链路不完整 |
-| `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 |
-| `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec |
-| `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 |
-| `missing_openspec` | 3.8 | create-openspec | Story 无技术方案 |
-| `doc_only` | 4 | doc-update | 仅 *.md 文件 |
-| `feature_new` | 5 | full-cycle | Level2+ 无 Spec |
-| `requirements_info` | 5.5 | (信息提示) | 需求追踪未配置 |
+| 规则 ID | 优先级 | 推荐工作流 | 触发条件 | 置信度 | 自动执行? |
+|---------|--------|-----------|----------|--------|----------|
+| `commit_only` | 1 | C.1 only | 已暂存 + 无未暂存 | 95% | Yes — 已暂存 + 无未暂存信号明确 |
+| `requirements_issues` | 1.5 | requirements-check | 需求文档验证有错误 | 85% | No — 用户可能希望延后处理 |
+| `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture | 80% | No |
+| `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated | 80% | No |
+| `architecture_chain_broken` | 1.8 | fix-architecture | 需求链路不完整 | 80% | No |
+| `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
+| `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
+| `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |
+| `missing_openspec` | 3.8 | create-openspec | Story 无技术方案 | 70% | No |
+| `fuzziness_requirement` | 4 | requirements-refine | 需求模糊需澄清 | 60% | No |
+| `missing_prd` | 4.2 | create-prd | 无 PRD 文档 | 65% | No |
+| `prd_refinement` | 4.4 | refine-prd | PRD 需细化 | 65% | No |
+| `doc_only` | 5 | doc-update | 仅 *.md 文件 | 93% | Yes — 纯文档变更风险低 |
+| `feature_new` | 6 | full-cycle | Level2+ 无 Spec | 70% | No — 完整循环需要规划 |
+| `requirements_info` | 6.5 | (信息提示) | 需求追踪未配置 | — | No |
+
+> **置信度评分方法**: 基于信号清晰度、风险等级、可逆性三维评估。详见 [references/confidence-scoring.md](./references/confidence-scoring.md)。
+> **自动执行策略**: 仅当置信度 >90% 且项目启用 `auto_proceed` 时，推荐可自动执行而无需用户确认。
 
 ---
 
@@ -107,11 +113,83 @@ recommendation:
   reason: "已有 OpenSpec，跳过规划阶段"
 ```
 
-### 4. doc_only
+### 4. fuzziness_requirement
+
+```yaml
+id: fuzziness_requirement
+priority: 4
+description: 需求描述模糊，需要澄清
+
+conditions:
+  all:
+    - requirements_configured: true
+    - requirement_fuzziness: high  # 需求文本含歧义关键词
+
+  fuzziness_detection:
+    indicators:
+      - vague_terms: ["可能", "大概", "也许", "待定", "TBD"]
+      - missing_acceptance_criteria: true
+      - no_examples: true
+
+recommendation:
+  workflow: requirements-refine
+  steps: [requirements-review, clarification]
+  reason: "需求描述模糊，建议先澄清再实现"
+```
+
+### 4.2 missing_prd
+
+```yaml
+id: missing_prd
+priority: 4.2
+description: 项目无 PRD 文档
+
+conditions:
+  all:
+    - requirements_configured: true
+    - prd_exists: false
+    - stories_total: > 0  # 有 Story 但无 PRD
+
+  detection:
+    check: "docs/requirements/prd-*.md" not exists
+
+recommendation:
+  workflow: create-prd
+  steps: [prd-drafting]
+  reason: "有 User Story 但缺少 PRD，建议创建产品需求文档"
+```
+
+### 4.4 prd_refinement
+
+```yaml
+id: prd_refinement
+priority: 4.4
+description: PRD 存在但需要细化
+
+conditions:
+  all:
+    - prd_exists: true
+    - prd_status: draft
+    - prd_completeness: < 70%  # PRD 关键章节不完整
+
+  completeness_check:
+    required_sections:
+      - objectives
+      - user_stories_link
+      - success_metrics
+      - constraints
+
+recommendation:
+  workflow: refine-prd
+  steps: [prd-review, prd-update]
+  reason: "PRD 关键章节不完整，建议细化"
+```
+
+### 5. doc_only
 
 ```yaml
 id: doc_only
-priority: 4
+priority: 5
 description: 仅文档变更
 
 conditions:
@@ -129,11 +207,11 @@ recommendation:
   reason: "仅文档变更"
 ```
 
-### 5. feature_new (兜底规则)
+### 6. feature_new (兜底规则)
 
 ```yaml
 id: feature_new
-priority: 5
+priority: 6
 description: 新功能开发，完整流程
 
 conditions:
@@ -316,11 +394,11 @@ recommendation:
     uncovered_stories: [US-001, US-003]
 ```
 
-### 5.5 requirements_info (信息提示)
+### 6.5 requirements_info (信息提示)
 
 ```yaml
 id: requirements_info
-priority: 5.5
+priority: 6.5
 description: 需求追踪未配置（仅信息提示，不阻塞）
 
 conditions:
@@ -612,9 +690,18 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-02-08
+**最后更新**: 2026-03-16
 
 ## 变更历史
+
+### v2.5.0 (2026-03-16)
+
+- **新增**: 置信度评分 (Confidence Scoring) — 每条规则附加置信度和自动执行标识
+- **新增**: 规则 `fuzziness_requirement` (优先级 4) — 需求模糊检测
+- **新增**: 规则 `missing_prd` (优先级 4.2) — 缺失 PRD 检测
+- **新增**: 规则 `prd_refinement` (优先级 4.4) — PRD 细化建议
+- **调整**: `doc_only` 优先级 4 → 5, `feature_new` 优先级 5 → 6, `requirements_info` 优先级 5.5 → 6.5
+- **参考**: 详细评分方法见 [references/confidence-scoring.md](./references/confidence-scoring.md)
 
 ### v2.4.0 (2026-02-08)
 
