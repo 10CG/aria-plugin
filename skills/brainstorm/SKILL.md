@@ -1,3 +1,13 @@
+---
+name: brainstorm
+description: |
+  AI-DDD 协作思考引擎，通过结构化头脑风暴澄清问题空间、分解需求、讨论技术方案。
+  支持 problem/requirements/technical 三种模式，生成决策记录供后续 Spec 引用。
+
+  使用场景："头脑风暴"、"讨论一下"、"brainstorm"、"需求不清楚"、"技术方案讨论"、
+  "问题分析"、"需要澄清需求"
+---
+
 # 头脑风暴引擎 (Brainstorm v2.0)
 
 > **版本**: 2.0.0 | **角色**: AI-DDD 协作思考的核心载体

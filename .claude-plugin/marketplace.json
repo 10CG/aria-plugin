@@ -12,7 +12,7 @@
   "plugins": [
     {
       "name": "aria",
-      "description": "Aria AI-DDD 方法论完整插件 - 26个 Skills + 11个 Agents + Hooks系统",
+      "description": "Aria AI-DDD 方法论完整插件 - 27个 Skills + 11个 Agents + Hooks系统",
       "version": "1.5.1",
       "author": {
         "name": "10CG"
