@@ -278,6 +278,65 @@ triggers:
 
 ---
 
+## Auto-Proceed Mode
+
+启用 `auto_proceed: true` 后，workflow-runner 在 Phase 完成时自动推进到下一 Phase，无需用户逐步确认。但在 Gate 暂停点仍然停下等待人工确认。
+
+详细规范见 [references/auto-proceed.md](./references/auto-proceed.md)。
+
+### 配置方式
+
+```yaml
+# 方式 1: 工作流输入中指定
+workflow: feature-dev
+auto_proceed: true
+
+# 方式 2: 项目级默认 (.aria/config.json)
+{
+  "workflow_runner": {
+    "auto_proceed": true
+  }
+}
+
+# 优先级: 工作流输入 > config.json > 内置默认 (false)
+```
+
+### 各预置工作流的 Auto-Proceed 行为
+
+| 工作流 | Gate 暂停点 | Auto-Proceed 行为 |
+|--------|------------|-------------------|
+| `quick-fix` | 无 | 全自动。无 Phase A，Gate 1 不适用；通常不合并到 main，Gate 2 不触发。 |
+| `feature-dev` | Gate 1 | 在 Gate 1 (A → B) 暂停等待 Spec 审批。B → C 自动推进。 |
+| `full-cycle` | Gate 1, Gate 2 | 在 Gate 1 (A → B) 暂停等待 Spec 审批；若合并目标为 main/master，在 Gate 2 (C → D) 暂停。 |
+| `commit-only` | 无 | 全自动。单步骤执行，无 Phase 转换。 |
+| `doc-update` | 无 | 全自动。无 Spec，无 main 合并。 |
+
+### Gate 说明
+
+**Gate 1 — Spec Approval (A → B)**:
+- 读取 `proposal.md` 的 Status 字段
+- Status = Approved → 自动通过，继续 Phase B
+- Status ≠ Approved → 暂停，等待用户审批
+
+**Gate 2 — Main Branch Merge (C → D)**:
+- 仅当合并目标为 `main` 或 `master` 时触发
+- 触发时暂停，等待用户确认
+- 合并到其他分支 → 自动通过
+
+### B → C 完成信号
+
+Phase B 到 Phase C 的自动推进依赖"开发完成"信号:
+
+```yaml
+条件 (必须同时满足):
+  1. phase-b-developer 输出 test_results.passed == true
+  2. git 工作区无未提交的非测试文件变更
+```
+
+若条件不满足，auto-proceed 暂停并报告原因。
+
+---
+
 ## 自定义组合语法
 
 ### Phase 组合
@@ -579,5 +638,5 @@ to_phase_skills:
 
 ---
 
-**最后更新**: 2025-12-25
-**版本**: 2.0.0
+**最后更新**: 2026-03-16
+**版本**: 2.3.0
