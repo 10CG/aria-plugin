@@ -42,6 +42,20 @@ allowed-tools: Read, Glob, Grep, Bash
 
 ---
 
+## 配置 (config-loader)
+
+执行前读取 `.aria/config.json`，缺失则使用默认值。参见 [config-loader](../config-loader/SKILL.md)。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `state_scanner.confidence_threshold` | `90` | 置信度阈值 (0-100) |
+| `state_scanner.auto_execute_enabled` | `false` | 高置信度自动执行 |
+| `state_scanner.auto_execute_rules` | `["commit_only", "quick_fix", "doc_only"]` | 允许自动执行的规则 |
+| `state_scanner.audit_log_path` | `".aria/audit.log"` | 审计日志路径 |
+| `workflow.auto_proceed` | `false` | Phase 间自动推进 |
+
+---
+
 ## 执行流程
 
 ### 阶段 0: 中断检测 (Pre-flight)

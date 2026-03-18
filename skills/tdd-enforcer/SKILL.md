@@ -34,6 +34,18 @@ user-invocable: true
 
 ---
 
+## 配置 (config-loader)
+
+执行前读取 `.aria/config.json`，缺失则使用默认值。参见 [config-loader](../config-loader/SKILL.md)。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `tdd.strictness` | `"advisory"` | 严格度: `advisory` / `strict` / `superpowers` |
+
+**优先级**: `.aria/config.json` > `.claude/tdd-config.json` > Skill 默认值。`.claude/tdd-config.json` 中的细粒度字段 (`skip_patterns`, `test_patterns`) 继续在原位生效。
+
+---
+
 ## 核心工作流
 
 ```

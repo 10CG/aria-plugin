@@ -34,6 +34,16 @@ allowed-tools: Bash, Read, Grep, Task
 
 ---
 
+## 配置 (config-loader)
+
+执行前读取 `.aria/config.json`，缺失则使用默认值。参见 [config-loader](../config-loader/SKILL.md)。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `benchmarks.require_before_merge` | `true` | 合并前是否要求 AB 基准测试 |
+
+---
+
 ## 核心功能
 
 | 功能 | 说明 |

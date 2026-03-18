@@ -31,6 +31,19 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task
 
 ---
 
+## 配置 (config-loader)
+
+执行前读取 `.aria/config.json`，缺失则使用默认值。参见 [config-loader](../config-loader/SKILL.md)。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `experiments.agent_team_audit` | `false` | 启用 Agent Team 审计 (实验功能) |
+| `experiments.agent_team_audit_points` | `["pre_merge"]` | 审计触发点 |
+
+当 `agent_team_audit=true` 且 `"pre_merge"` 在 `agent_team_audit_points` 中时，C.2 合并前触发 Agent Team 审计。
+
+---
+
 ## 核心功能
 
 | 步骤 | Skill | 职责 | 输出 |
