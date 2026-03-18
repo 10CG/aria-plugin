@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-03-18
+
+### Added
+
+- **workflow-runner auto-proceed 模式** - Phase 间自动推进，减少手动确认步骤
+  - 工作流状态持久化 (`.aria/workflow-state.json`)
+  - Gate 1 (Spec 审批) 和 Gate 2 (Main Merge) 不可跳过
+  - 失败时自动回退到手动模式
+- **state-scanner 置信度评分** - 基于三维模型 (信号清晰度/风险等级/可逆性) 量化推荐可信度
+  - 高置信度 (>90%) + auto_proceed 时可自动执行 (commit_only/quick_fix/doc_only)
+  - 审计日志记录所有自动执行操作
+- **SessionStart 中断恢复** - 检测未完成工作流并提示恢复/放弃/检查
+
+### Changed
+
+- **state-scanner** v2.5.0 - 新增置信度评分、自动执行策略、中断检测
+- **workflow-runner** - 新增 auto-proceed 模式、状态持久化、Gate 强制机制
+
+### Fixed
+
+- **state-scanner** - 修复置信度评分导致编号选项格式回归的问题
+  - 强制默认行为: 必须展示编号选项并等待用户选择
+  - 自动执行仅在 `.aria/config.json` 明确配置时触发
+
+### AB Test Verification
+
+- state-scanner: delta +0.165 (WITH_BETTER) — 修复后验证通过
+- workflow-runner: delta +0.33 (WITH_BETTER) — 新功能验证通过
+- 基线数据: aria-plugin-benchmarks/ab-results/2026-03-18-verification/
+
+---
+
 ## [1.5.1] - 2026-02-08
 
 ### Fixed
