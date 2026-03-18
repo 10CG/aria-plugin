@@ -267,7 +267,7 @@ openspec/
   - 输入自定义 (如 "B.2 + C.1")
 ```
 
-高置信度 (>90%) 场景在 auto-proceed 模式下可自动执行，详见 [references/confidence-scoring.md](./references/confidence-scoring.md)。
+**默认行为: 必须展示 [1]-[4] 编号选项并等待用户选择。** 高置信度自动执行仅在 `.aria/config.json` 中 `auto_proceed=true` 且置信度 >90% 时触发，否则始终展示编号选项。详见 [references/confidence-scoring.md](./references/confidence-scoring.md)。
 
 ### 阶段 4: 工作流启动
 
