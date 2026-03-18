@@ -108,13 +108,22 @@ C.2 - PR/合并:
   skip_if:
     - no_pr_needed: true
     - direct_push_allowed: true
+  pre_hook:                               # v1.7.0 新增
+    agent_team_audit:
+      trigger: pre_merge
+      condition: config.experiments.agent_team_audit == true
+                 AND "pre_merge" in config.experiments.agent_team_audit_points
+      on_fail: 阻塞合并, 输出审计报告
+      on_skip: 继续合并 (审计未启用或超时)
   action:
+    - (如启用审计) 触发 agent-team-audit (pre_merge)
     - 推送分支到远程
     - 创建 Pull Request
     - (可选) 自动合并
   output:
     pr_url: "https://..."
     pr_number: 123
+    audit_verdict: "PASS"                 # v1.7.0 新增 (如启用)
 
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。
 > 统一规范见 `../forgejo-sync/PRE_CHECK.md`

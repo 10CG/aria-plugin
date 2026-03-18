@@ -115,6 +115,28 @@ B.3 - 架构同步:
     files_modified: ["docs/ARCHITECTURE.md"]
 ```
 
+### Post-Implementation 审计 (v1.7.0 新增)
+
+```yaml
+B.post - Agent Team 审计 (可选):
+  skill: agent-team-audit
+  trigger: post_implementation
+  condition: config.experiments.agent_team_audit == true
+             AND "post_implementation" in config.experiments.agent_team_audit_points
+  skip_if:
+    - audit_not_enabled: true             # config 未启用
+    - post_implementation_not_in_points: true
+  action:
+    - 触发 QA Engineer + Code Reviewer 审计
+    - 收集去重后 issues
+    - 计算 verdict
+  on_fail: 阻塞进入 Phase C, 输出审计报告
+  on_skip: 继续到 Phase C (审计未启用或超时)
+  output:
+    audit_verdict: "PASS"                 # PASS | PASS_WITH_WARNINGS | FAIL
+    audit_issues: []
+```
+
 ### 输出
 
 ```yaml
