@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.6.0
-> **发布日期**: 2026-03-18
+> **版本**: 1.7.0
+> **发布日期**: 2026-03-19
 > **仓库**: https://forgejo.10cg.pub/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.6.0
+1.7.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (6)**: 工作流自动化增强 (auto-proceed, state persistence, confidence scoring)
+- **Minor (7)**: 项目配置基础设施 + state-scanner 增强 + Agent Team 审计实验
 - **Patch (0)**: 初始发布
 
 ## 包含内容
 
-### Skills (27个)
+### Skills (28个)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -38,6 +38,13 @@
 
 **需求管理 (4个)**
 - requirements-validator, requirements-sync, forgejo-sync, openspec-archive
+
+**基础设施 (1个)** ← v1.7.0 新增
+- config-loader (内部, non-user-invocable)
+
+### 实验功能 (1个) ← v1.7.0 新增
+
+- agent-team-audit (默认关闭, 需 config 启用)
 
 ### Agents (11个)
 

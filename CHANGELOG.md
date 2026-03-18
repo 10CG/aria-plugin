@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-03-19
+
+### Added
+
+- **项目级配置基础设施** (`.aria/config.json`)
+  - 新增 `config-loader` 内部 Skill — 统一配置加载、验证、默认值合并
+  - `config.template.json` 模板文件，含完整 schema 注释
+  - 6 个核心 Skills 集成配置读取 (state-scanner, workflow-runner, tdd-enforcer, branch-finisher, phase-c-integrator, phase-b-developer)
+  - 配置优先级: `.aria/config.json` > `.claude/tdd-config.json` > Skill 默认值
+- **state-scanner README 同步检查** (阶段 1.8)
+  - 检测 README.md 版本号与 VERSION/plugin.json 是否一致
+  - 检测最后更新日期与 CHANGELOG 最新条目是否一致
+  - 新增推荐规则: `readme_outdated` (优先级 1.3)
+- **state-scanner 插件依赖检测** (阶段 1.9)
+  - 三状态检测: 无条目 / 未初始化 / 正常
+  - 新增推荐规则: `standards_missing` (优先级 1.4, 建议性, 非阻塞)
+- **Agent Team 集体审计** (实验功能, 默认关闭)
+  - 新增 `agent-team-audit` Skill (experimental)
+  - 三个审计触发点: pre_merge, post_implementation, post_spec
+  - Verdict 系统: PASS / PASS_WITH_WARNINGS / FAIL
+  - 问题去重算法 (category + affected_file)
+  - 并发控制: max 2 parallel agents, 120s/300s 超时
+  - 集成到 phase-c-integrator (pre_merge) 和 phase-b-developer (post_implementation)
+
+### Changed
+
+- **state-scanner** v2.6.0 — 新增配置加载、README 同步、标准依赖检测
+- **RECOMMENDATION_RULES.md** v2.6.0 — 新增 readme_outdated + standards_missing 规则和检测方法
+- **.gitignore** — 新增 `.aria/` 运行时文件排除
+
+### Technical Debt (记录)
+
+- state-scanner 阶段号膨胀 (1.0 到 1.9)
+- `.claude/tdd-config.json` 与 `.aria/config.json` 长期并存需统一
+
+---
+
 ## [1.6.0] - 2026-03-18
 
 ### Added
