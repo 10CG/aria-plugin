@@ -7,6 +7,8 @@
 | 规则 ID | 优先级 | 推荐工作流 | 触发条件 | 置信度 | 自动执行? |
 |---------|--------|-----------|----------|--------|----------|
 | `commit_only` | 1 | C.1 only | 已暂存 + 无未暂存 | 95% | Yes — 已暂存 + 无未暂存信号明确 |
+| `readme_outdated` | 1.3 | doc-update | README 版本/日期不一致 | 85% | No — 用户可能有意延后 |
+| `standards_missing` | 1.4 | (建议性提示) | standards 子模块未初始化 | 80% | No — 非阻塞，仅提醒 |
 | `requirements_issues` | 1.5 | requirements-check | 需求文档验证有错误 | 85% | No — 用户可能希望延后处理 |
 | `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture | 80% | No |
 | `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated | 80% | No |
@@ -52,6 +54,58 @@ detection:
     - "git branch --show-current"   # 检查当前分支
     - "git diff --cached --name-only"  # 检查暂存区
     - "git diff --name-only"        # 检查未暂存
+```
+
+### 1.3 readme_outdated
+
+```yaml
+id: readme_outdated
+priority: 1.3
+description: README.md 版本号或日期与项目不一致
+
+conditions:
+  any:
+    - readme_version_mismatch: true   # VERSION/plugin.json 与 README 版本不同
+    - readme_date_mismatch: true      # CHANGELOG 最新日期与 README 日期不同
+
+  detection:
+    version_source:
+      - VERSION file
+      - aria/.claude-plugin/plugin.json (version field)
+    date_source:
+      - CHANGELOG.md (最新条目日期, 非 wall-clock)
+    readme_paths:
+      - README.md (根目录)
+      - aria/README.md (子模块)
+
+recommendation:
+  workflow: doc-update
+  steps: [update-readme]
+  reason: "README.md 版本信息过时，建议更新以保持一致"
+  non_blocking: true  # 不阻塞其他工作流
+```
+
+### 1.4 standards_missing
+
+```yaml
+id: standards_missing
+priority: 1.4
+description: standards 子模块已注册但未初始化
+
+conditions:
+  all:
+    - gitmodules_has_standards: true   # .gitmodules 有 standards 条目
+    - standards_dir_empty: true        # standards/ 目录不存在或为空
+
+  detection:
+    check_1: "grep -q 'standards' .gitmodules 2>/dev/null"
+    check_2: "ls standards/ 2>/dev/null | head -1"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅提示
+  info: "⚠️ aria-standards 子模块已注册但未初始化"
+  suggestion: "git submodule update --init standards"
+  non_blocking: true  # 建议性，不阻塞
 ```
 
 ### 2. quick_fix
@@ -506,6 +560,54 @@ openspec_detection:
       feature_name: "$2"      # feature 名称部分
 ```
 
+### README 同步检测
+
+```yaml
+readme_detection:
+  paths:
+    - README.md
+    - aria/README.md
+
+  version_extraction:
+    patterns:
+      - "Version.*: (v?[0-9]+\\.[0-9]+\\.[0-9]+)"
+      - "\\*\\*Version\\*\\*.*: (v?[0-9]+\\.[0-9]+\\.[0-9]+)"
+      - "version: (v?[0-9]+\\.[0-9]+\\.[0-9]+)"
+
+  version_source:
+    primary: "cat VERSION 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'"
+    fallback: "grep '\"version\"' aria/.claude-plugin/plugin.json 2>/dev/null"
+
+  date_extraction:
+    readme_pattern: "更新.*: ([0-9]{4}-[0-9]{2}-[0-9]{2})"
+    changelog_source: "head -20 CHANGELOG.md | grep -oP '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1"
+
+  comparison:
+    version_match: readme_version == source_version
+    date_match: readme_date == changelog_date
+```
+
+### Standards 子模块检测
+
+```yaml
+standards_detection:
+  step_1:
+    command: "grep -q 'standards' .gitmodules 2>/dev/null && echo 'REGISTERED' || echo 'NOT_REGISTERED'"
+    result: registered (boolean)
+
+  step_2:
+    condition: registered == true
+    command: "ls standards/ 2>/dev/null | head -1"
+    result:
+      empty_output: initialized = false
+      has_output: initialized = true
+
+  output:
+    state_1: { registered: false }                          # 无条目 → 不提示
+    state_2: { registered: true, initialized: false }       # 未初始化 → 警告
+    state_3: { registered: true, initialized: true }        # 正常 → 无提示
+```
+
 ### 复杂度评估
 
 ```yaml
@@ -693,6 +795,13 @@ debug_mode:
 **最后更新**: 2026-03-16
 
 ## 变更历史
+
+### v2.6.0 (2026-03-18)
+
+- **新增**: 规则 `readme_outdated` (优先级 1.3) — README 版本/日期同步检测
+- **新增**: 规则 `standards_missing` (优先级 1.4) — standards 子模块挂载检测
+- **新增**: README 同步检测方法 (version + date extraction)
+- **新增**: Standards 子模块检测方法 (三状态: 无条目/未初始化/正常)
 
 ### v2.5.0 (2026-03-16)
 

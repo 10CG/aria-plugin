@@ -257,6 +257,73 @@ openspec/
     suggestion: "建议创建 System Architecture 文档"
 ```
 
+### 阶段 1.8: README 同步检查
+
+**重要**: 此阶段始终执行，检测 README.md 版本信息是否与项目实际版本一致。
+
+```yaml
+检测路径:
+  - README.md (项目根目录)
+  - aria/README.md (插件子模块, 如存在)
+
+检查项:
+  - 版本号是否与 VERSION 文件或 plugin.json 一致
+  - 最后更新日期是否与 CHANGELOG 最新条目日期一致 (非 wall-clock)
+
+日期检查数据源: 以 CHANGELOG.md 最新条目日期为基准，非 wall-clock 时间。
+避免随时间推移产生误报。
+
+输出:
+  readme_status:
+    root:
+      exists: true
+      version_match: true | false
+      date_match: true | false
+      suggestion: "更新 README.md 版本号为 v1.7.0"  # 仅不一致时
+    submodules:
+      aria: { exists: true, version_match: true | false }
+
+输出 (README 不存在):
+  readme_status:
+    root:
+      exists: false
+      suggestion: "项目缺少 README.md"
+```
+
+### 阶段 1.9: 插件依赖检测
+
+**重要**: 此阶段始终执行，检测 aria-standards 子模块挂载状态。
+
+```yaml
+检查项:
+  - .gitmodules 中是否有 standards 条目
+  - standards/ 目录是否存在且非空
+
+三种状态:
+  1. .gitmodules 无 standards 条目 → 不提示 (项目不需要)
+  2. .gitmodules 有条目但 standards/ 为空 → 警告 (未初始化)
+  3. standards/ 正常存在 → 无提示
+
+输出 (状态 2 - 未初始化):
+  standards_status:
+    registered: true
+    initialized: false
+    suggestion: "⚠️ aria-standards 子模块已注册但未初始化。建议: git submodule update --init standards"
+
+输出 (状态 1 - 无需 standards):
+  standards_status:
+    registered: false
+
+输出 (状态 3 - 正常):
+  standards_status:
+    registered: true
+    initialized: true
+```
+
+**注意**: standards 对非 Aria 项目是**可选的**。检测结果为建议性提醒，不阻塞任何工作流。
+
+---
+
 ### 阶段 2: 推荐决策
 
 基于阶段 1 收集的状态，按优先级匹配推荐规则 (第一个匹配的规则生效)。
@@ -505,5 +572,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-03-16
-**Skill版本**: 2.5.0 (新增中断恢复检测、置信度评分)
+**最后更新**: 2026-03-18
+**Skill版本**: 2.6.0 (新增 README 同步检查、插件依赖检测、配置加载)
