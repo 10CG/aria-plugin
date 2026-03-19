@@ -1,5 +1,17 @@
 {
-  "description": "Aria 十步循环工作流 Hooks 元数据 (声明性，非执行文件)",
-  "version": "1.7.0",
-  "note": "实际 Hook 配置见 hooks/hooks.json (由 plugin.json 引用)"
+  "description": "Aria SessionStart Hook - detect interrupted workflows",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-check.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }
