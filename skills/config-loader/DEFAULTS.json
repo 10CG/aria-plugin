@@ -17,7 +17,8 @@
   },
 
   "benchmarks": {
-    "require_before_merge": true
+    "require_before_merge": true,
+    "skill_change_block_mode": "warn"
   },
 
   "experiments": {

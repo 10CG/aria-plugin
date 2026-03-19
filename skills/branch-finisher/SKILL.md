@@ -71,6 +71,13 @@ allowed-tools: Bash, Read, Grep, Task
 │     ├─ 检查测试覆盖率                                        │
 │     └─ 验证构建成功                                          │
 │                                                             │
+│  2.5 Skill 变更 AB 验证 (v1.7.0 新增)                        │
+│     ├─ 检测分支 diff 中是否包含 SKILL.md 变更                 │
+│     ├─ Zone 分类: 逻辑变更 vs 文档变更                        │
+│     ├─ 检查 ab-results/ 中是否有新鲜 AB 结果                  │
+│     └─ 缺失时: warn/block (由 config 控制)                    │
+│     详见 references/ab-benchmark-gate.md                      │
+│                                                             │
 │  3. 变更摘要                                                 │
 │     ├─ 收集所有变更文件                                      │
 │     ├─ 统计代码行数变化                                      │
@@ -107,6 +114,7 @@ allowed-tools: Bash, Read, Grep, Task
 | **Lint 检查** | ESLint/Pylint 等代码检查 | 警告 |
 | **构建验证** | 项目可以成功构建 | 阻塞 |
 | **覆盖率检查** | 测试覆盖率达标 (可选) | 警告 |
+| **Skill AB 验证** | SKILL.md 逻辑变更需要 AB 测试结果 ([详见](./references/ab-benchmark-gate.md)) | 可配置 (warn/block) |
 
 ### 验证流程
 

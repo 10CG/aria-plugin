@@ -55,6 +55,11 @@
 ───────────────────────────────────────────────────────────────
   standards 子模块: ✅ 正常
 
+🔬 Skill 变更 AB 状态
+───────────────────────────────────────────────────────────────
+  检测到 SKILL.md 变更: state-scanner
+  AB 验证: ✅ delta +0.375 (2026-03-19)
+
 🎯 推荐工作流
 ───────────────────────────────────────────────────────────────
   ➤ [1] feature-dev (推荐)
@@ -158,6 +163,21 @@
     - completed-feature (Status=Complete)
   建议操作:
     - 使用 /openspec-archive 归档已完成的 Spec
+```
+
+---
+
+## Skill 变更需要 AB 验证时
+
+```
+🔬 Skill 变更 AB 状态
+───────────────────────────────────────────────────────────────
+  检测到 SKILL.md 变更: state-scanner, workflow-runner
+  AB 验证:
+    ⚠️ state-scanner — 未找到新鲜结果
+    ✅ workflow-runner — delta +0.33 (2026-03-18)
+  建议操作: /skill-creator benchmark state-scanner
+  规则依据: CLAUDE.md 规则 #6
 ```
 
 ---

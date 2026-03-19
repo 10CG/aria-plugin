@@ -71,6 +71,11 @@ benchmarks.require_before_merge:
   type: boolean
   default: true
 
+benchmarks.skill_change_block_mode:
+  type: string
+  valid_values: [warn, block, off]
+  default: "warn"
+
 experiments.agent_team_audit:
   type: boolean
   default: false

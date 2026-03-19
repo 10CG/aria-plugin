@@ -86,6 +86,12 @@ allowed-tools: Read, Glob, Grep, Bash
     complexity: 变更复杂度评估 (Level1/Level2/Level3)
     architecture_impact: 是否影响架构文档
     test_coverage: 是否有对应测试文件
+    skill_changes:                    # v1.7.0 新增: Skill 变更检测
+      detected: 是否有 SKILL.md 变更
+      modified_skills: 变更的 Skill 列表
+      ab_status:                      # 各 Skill 的 AB 验证状态
+        verified: 有新鲜 AB 结果的 Skill 列表
+        needs_benchmark: 缺少 AB 结果的 Skill 列表
 
   requirements:                       # 新增: 需求状态
     configured: 是否配置需求追踪
