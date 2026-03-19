@@ -1,14 +1,17 @@
 {
-  "SessionStart": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-check.sh",
-          "timeout": 5
-        }
-      ]
-    }
-  ]
+  "description": "Aria SessionStart Hook - detect interrupted workflows",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-check.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }
