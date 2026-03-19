@@ -527,10 +527,15 @@ file_type_classification:
 
 ```yaml
 openspec_detection:
-  # 扫描活跃变更
+  # 扫描活跃变更 (三态检测)
   changes_scan:
     path: "openspec/changes/"
-    command: "find openspec/changes/ -name 'proposal.md' 2>/dev/null || echo 'NO_CHANGES'"
+    step_1: "[ -d openspec/changes/ ] && echo 'EXISTS' || echo 'NOT_EXISTS'"
+    step_2: "find openspec/changes/ -name 'proposal.md' 2>/dev/null"
+    states:
+      not_exists: configured = false                    # 目录不存在
+      exists_empty: configured = true, changes.total = 0  # 目录存在但无 proposal.md (干净状态)
+      exists_with_content: configured = true, scan proposals  # 正常扫描
 
   # 扫描已归档变更
   archive_scan:
@@ -690,9 +695,16 @@ requirements_detection:
     pattern: "docs/requirements/user-stories/US-*.md"
     extract:
       - story_id
-      - status
+      - status          # 使用多模式提取，见 SKILL.md Phase 1.5 Status 提取模式
       - priority
       - openspec_link
+    status_patterns:     # 按优先级尝试，首个匹配即停止
+      - /^Status:\s*(.+)/i                          # YAML-like header
+      - /\*\*Status\*\*:\s*(.+)/i                   # Markdown bold
+      - /\*\*状态\*\*:\s*(.+)/i                     # 中文键名
+      - />\s*.*(?:Status|状态)[：:]\s*(.+)/i        # Blockquote 内嵌
+      - /\|\s*(?:Status|状态)\s*\|\s*(.+?)\s*\|/i   # 表格列
+    on_no_match: "unknown"  # 不报错，标记为未知
     aggregate:
       total: count(*)
       ready: count(status = 'ready')

@@ -117,10 +117,20 @@ allowed-tools: Read, Glob, Grep, Bash
   2. 如果存在:
      - 扫描 prd-*.md 文件
      - 扫描 user-stories/US-*.md 文件
+     - 提取每个 Story 的 Status (见下方模式)
      - 调用 requirements-validator (check mode)
   3. 如果不存在:
      - 设置 configured: false
      - 输出未配置提示
+
+Status 提取模式 (按优先级尝试):
+  不同项目的 User Story 格式各异，必须覆盖以下常见变体:
+  1. YAML-like header:    /^Status:\s*(.+)/i
+  2. Markdown bold key:   /\*\*Status\*\*:\s*(.+)/i
+  3. 中文键名:            /\*\*状态\*\*:\s*(.+)/i
+  4. Blockquote 内嵌:     />\s*.*(?:Status|状态)[：:]\s*(.+)/i
+  5. 表格列:              /\|\s*(?:Status|状态)\s*\|\s*(.+?)\s*\|/i
+  提取到任一匹配即停止。未匹配到时标记为 "unknown" 而非报错。
 
 输出 (已配置):
   requirements_status:
@@ -169,8 +179,11 @@ openspec/
     - openspec/archive/      # 已完成变更
 
 检测步骤:
-  1. 检查 openspec/changes/ 目录是否存在
-  2. 如果存在:
+  1. 检查 openspec/changes/ 目录是否存在 (用 [ -d ] 而非 ls)
+     a. 不存在 → configured: false
+     b. 存在但无 */proposal.md → changes.total: 0 (干净状态，非错误)
+     c. 存在且有内容 → 扫描 proposal.md, 提取 Status
+  2. 如果存在且有内容 (1c):
      - 扫描所有 {feature}/proposal.md 文件
      - 提取 Status 字段 (Draft/Reviewed/Approved/In Progress/Complete)
      - 统计各状态的 Spec 数量
@@ -180,6 +193,8 @@ openspec/
      - 提取完成日期和功能名称
      - 统计已归档的 Spec 数量
   5. 检查是否有 Status=Complete 但未归档的 Spec
+  注意: 步骤 1b (目录存在但为空) 是合法状态，表示所有变更
+  已归档完毕。不应报告为 "未配置" 或错误。
 
 输出 (已配置):
   openspec_status:
@@ -211,7 +226,18 @@ openspec/
       - id: "completed-feature"
         reason: "Status=Complete but still in changes/"
 
-输出 (未配置):
+输出 (干净状态 — 目录存在但无活跃变更):
+  openspec_status:
+    configured: true
+    changes:
+      total: 0
+      note: "无活跃变更 (所有 Spec 已归档或尚未创建)"
+    archive:
+      total: 18
+      # ...归档条目同上
+    pending_archive: []
+
+输出 (未配置 — 目录不存在):
   openspec_status:
     configured: false
     expected_paths:
