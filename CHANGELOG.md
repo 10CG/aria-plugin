@@ -5,17 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.2] - 2026-03-20
-
-### Fixed
-
-- **hooks 重复加载** — 删除 `plugin.json` 中的 `"hooks"` 字段，`hooks/hooks.json` 由 Claude Code 自动加载，无需手动引用。修复 "Duplicate hooks file detected" 错误
-- **清理冗余文件** — 删除 `.claude-plugin/hooks.json`（冗余副本）
-
 ## [1.7.1] - 2026-03-19
 
 ### Fixed
 
+- **hooks.json 路径解析** — `plugin.json` 中的 hooks 路径从 `./hooks/hooks.json` 改为 `./hooks.json`，hooks.json 移至 `.claude-plugin/` 目录，修复 Claude Code 无法找到 hooks 配置的问题
 - **hooks.json 格式修正** — 添加 plugin 专用 `"hooks"` 包装对象和 `"matcher"` 字段
 
 ---
