@@ -1,6 +1,6 @@
 # Aria Plugin
 
-> **Version**: 1.7.1 | **Released**: 2026-03-19
+> **Version**: 1.7.2 | **Released**: 2026-03-20
 >
 > Aria AI-DDD 方法论完整插件 - 28个 Skills + 11个 Agents + Hooks系统
 
