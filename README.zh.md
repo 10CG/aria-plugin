@@ -24,11 +24,9 @@
 
 ### Hooks 系统（自动触发）
 
-| Hook 点 | 触发时机 | 对应 Skill | 功能 |
-|--------|----------|-----------|------|
-| `SessionStart` | 会话开始时 | `state-scanner` | 自动状态扫描和环境检查 |
-| `SessionEnd` | 会话结束时 | `progress-updater` | 检查进度更新和归档 |
-| `PreToolUse` | 工具调用前 | `tdd-enforcer` | 强制执行 TDD 规则 |
+| Hook 点 | 触发时机 | 功能 |
+|--------|----------|------|
+| `SessionStart` | 会话开始时 | 检测中断的工作流并提示恢复 |
 
 **禁用 Hooks**：
 ```bash
@@ -68,7 +66,7 @@ export ARIA_HOOKS_DISABLED=true
 - requesting-code-review — 两阶段代码审查（Phase 1: 规范合规性 → Phase 2: 代码质量）
 
 **架构文档**
-- arch-common — 架构工具共享组件
+- arch-common *（内部，非用户调用）* — 架构工具共享组件
 - arch-search — 搜索架构文档
 - arch-update — 更新架构文档
 - arch-scaffolder — 从 PRD 生成架构骨架
@@ -112,14 +110,8 @@ export ARIA_HOOKS_DISABLED=true
 安装后，hooks 会在关键节点自动触发：
 
 ```bash
-# 会话开始 - 自动执行状态扫描
-# → 等同于调用 /aria:state-scanner
-
-# 编写代码 - 自动检查 TDD 规则
-# → 等同于调用 /aria:tdd-enforcer
-
-# 会话结束 - 自动检查进度
-# → 等同于调用 /aria:progress-updater
+# 会话开始 - 检测中断的工作流
+# → 检查 .aria/workflow-state.json 中的未完成工作
 ```
 
 ### 手动调用

@@ -24,11 +24,9 @@
 
 ### Hooks (Auto-triggered)
 
-| Hook | Trigger | Skill | Purpose |
-|------|---------|-------|---------|
-| `SessionStart` | Session begins | `state-scanner` | Auto project scan and environment check |
-| `SessionEnd` | Session ends | `progress-updater` | Check progress updates and archival |
-| `PreToolUse` | Before tool calls | `tdd-enforcer` | Enforce TDD rules |
+| Hook | Trigger | Purpose |
+|------|---------|---------|
+| `SessionStart` | Session begins | Detect interrupted workflows and prompt recovery |
 
 **Disable Hooks**:
 ```bash
@@ -68,7 +66,7 @@ export ARIA_HOOKS_DISABLED=true
 - requesting-code-review — Two-phase code review (Phase 1: spec compliance → Phase 2: code quality)
 
 **Architecture Docs**
-- arch-common — Architecture tooling shared config
+- arch-common *(internal, non-user-invocable)* — Architecture tooling shared config
 - arch-search — Search architecture documentation
 - arch-update — Update architecture documentation
 - arch-scaffolder — Generate architecture skeleton from PRD
@@ -109,17 +107,11 @@ export ARIA_HOOKS_DISABLED=true
 
 ### Hooks (Auto-triggered)
 
-After installation, hooks fire automatically at key points:
+After installation, hooks fire automatically:
 
 ```bash
-# Session start — auto state scan
-# → equivalent to /aria:state-scanner
-
-# Writing code — auto TDD check
-# → equivalent to /aria:tdd-enforcer
-
-# Session end — auto progress check
-# → equivalent to /aria:progress-updater
+# Session start — detect interrupted workflows
+# → checks .aria/workflow-state.json for unfinished work
 ```
 
 ### Manual Invocation
