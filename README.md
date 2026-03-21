@@ -4,7 +4,7 @@
 
 > **Version**: 1.7.2 | **Released**: 2026-03-20
 >
-> AI-DDD methodology plugin for Claude Code — 28 Skills + 11 Agents + Hooks
+> AI-DDD methodology plugin for Claude Code — 27 Skills + 11 Agents + Hooks
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (28 user-facing + 1 internal)
+### Skills (27 user-facing + 2 internal)
 
 **Ten-Step Cycle Core**
 - state-scanner — Project state scan with intelligent workflow recommendations

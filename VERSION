@@ -14,7 +14,7 @@
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (7)**: 项目配置基础设施 + state-scanner 增强 + Agent Team 审计实验
-- **Patch (0)**: 初始发布
+- **Patch (2)**: hooks 路径修复 + 文档国际化
 
 ## 包含内容
 
@@ -54,9 +54,7 @@
 
 ### Hooks 系统
 
-- SessionStart → state-scanner (含中断恢复检测)
-- SessionEnd → progress-updater
-- PreToolUse → tdd-enforcer
+- SessionStart → 中断恢复检测 (session-start-check.sh)
 
 ## 版本更新记录
 
