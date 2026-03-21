@@ -130,8 +130,8 @@ export ARIA_HOOKS_DISABLED=true
 
 ## 相关项目
 
-- [aria-standards](https://forgejo.10cg.pub/10CG/aria-standards) - Aria 方法论规范
-- [Aria](https://forgejo.10cg.pub/10CG/Aria) - Aria 主项目
+- [aria-standards](https://github.com/10CG/aria-standards) - Aria 方法论规范
+- [Aria](https://github.com/10CG/Aria) - Aria 主项目
 
 ## License
 
