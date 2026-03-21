@@ -1,124 +1,135 @@
+**English** | [中文](README.zh.md)
+
 # Aria Plugin
 
 > **Version**: 1.7.2 | **Released**: 2026-03-20
 >
-> Aria AI-DDD 方法论完整插件 - 28个 Skills + 11个 Agents + Hooks系统
+> AI-DDD methodology plugin for Claude Code — 28 Skills + 11 Agents + Hooks
 
-## 安装
+## Prerequisites
+
+- [Claude Code](https://claude.ai/code) installed and authenticated
+
+## Installation
 
 ```bash
-# 添加 marketplace
+# Add marketplace
 /plugin marketplace add 10CG/aria-plugin
 
-# 安装
+# Install (Skills + Agents + Hooks included)
 /plugin install aria@10CG-aria-plugin
 ```
 
-## 包含内容
+## What's Included
 
-### Hooks 系统 (自动触发)
+### Hooks (Auto-triggered)
 
-| Hook 点 | 触发时机 | 对应 Skill | 功能 |
-|--------|----------|-----------|------|
-| `SessionStart` | 会话开始时 | `state-scanner` | 自动状态扫描和环境检查 |
-| `SessionEnd` | 会话结束时 | `progress-updater` | 检查进度更新和归档 |
-| `PreToolUse` | 工具调用前 | `tdd-enforcer` | 强制执行 TDD 规则 |
+| Hook | Trigger | Skill | Purpose |
+|------|---------|-------|---------|
+| `SessionStart` | Session begins | `state-scanner` | Auto project scan and environment check |
+| `SessionEnd` | Session ends | `progress-updater` | Check progress updates and archival |
+| `PreToolUse` | Before tool calls | `tdd-enforcer` | Enforce TDD rules |
 
-**禁用 Hooks**：
+**Disable Hooks**:
 ```bash
-# 设置环境变量
+# Set environment variable
 export ARIA_HOOKS_DISABLED=true
 
-# 或在插件设置中禁用
-/plugin disable aria@10cg-aria-plugin
+# Or disable the plugin
+/plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (27个)
+### Skills (28 user-facing + 1 internal)
 
-**十步循环核心**
-- state-scanner - 项目状态扫描与智能工作流推荐
-- workflow-runner - 十步循环轻量编排器
-- phase-a-planner - Phase A 规划阶段执行器
-- phase-b-developer - Phase B 开发阶段执行器
-- phase-c-integrator - Phase C 集成阶段执行器
-- phase-d-closer - Phase D 收尾阶段执行器
-- spec-drafter - 创建 OpenSpec proposal.md
-- task-planner - 将 OpenSpec 分解为可执行任务
-- progress-updater - 更新项目进度状态
+**Ten-Step Cycle Core**
+- state-scanner — Project state scan with intelligent workflow recommendations
+- workflow-runner — Lightweight ten-step cycle orchestrator
+- phase-a-planner — Phase A planning executor
+- phase-b-developer — Phase B development executor
+- phase-c-integrator — Phase C integration executor
+- phase-d-closer — Phase D closure executor
+- spec-drafter — Create OpenSpec proposal.md
+- task-planner — Break down OpenSpec into executable tasks
+- progress-updater — Update project progress state
 
-**协作思考**
-- brainstorm - AI 辅助的决策讨论和需求澄清 (problem/requirements/technical 模式)
+**Collaborative Thinking**
+- brainstorm — AI-assisted decision discussion and requirement clarification (problem/requirements/technical modes)
 
-**Git 工作流**
-- commit-msg-generator - 生成符合 Conventional Commits 的提交消息
-- strategic-commit-orchestrator - 跨模块/批量/里程碑提交编排
-- branch-manager - 分支创建与 PR 管理
-- branch-finisher - 分支完成收尾
+**Git Workflow**
+- commit-msg-generator — Generate Conventional Commits messages
+- strategic-commit-orchestrator — Cross-module / batch / milestone commit orchestration
+- branch-manager — Branch creation and PR management
+- branch-finisher — Branch completion and cleanup
 
-**开发工具**
-- subagent-driver - 子代理驱动开发 (SDD)，支持两阶段代码审查
-- agent-router - 任务到 Agent 的智能路由器
-- tdd-enforcer - 强制执行 TDD 工作流
-- requesting-code-review - 请求两阶段代码审查 (Phase 1: 规范合规性 → Phase 2: 代码质量)
+**Dev Tools**
+- subagent-driver — Subagent-Driven Development (SDD) with two-phase code review
+- agent-router — Intelligent task-to-agent routing
+- tdd-enforcer — Enforce TDD workflow
+- requesting-code-review — Two-phase code review (Phase 1: spec compliance → Phase 2: code quality)
 
-**架构文档**
-- arch-common - 架构工具共享组件
-- arch-search - 搜索架构文档
-- arch-update - 更新架构文档
-- arch-scaffolder - 从 PRD 生成架构骨架
-- api-doc-generator - API 文档生成
+**Architecture Docs**
+- arch-common — Architecture tooling shared config
+- arch-search — Search architecture documentation
+- arch-update — Update architecture documentation
+- arch-scaffolder — Generate architecture skeleton from PRD
+- api-doc-generator — API documentation generation
 
-**需求管理**
-- requirements-validator - PRD/Story/Architecture 验证
-- requirements-sync - Story ↔ UPM 状态同步
-- forgejo-sync - Story ↔ Issue 同步
+**Requirements**
+- requirements-validator — PRD / Story / Architecture validation
+- requirements-sync — Story ↔ UPM state sync
+- forgejo-sync — Story ↔ Issue sync
+- openspec-archive — Archive completed OpenSpec changes (auto-fixes CLI bugs)
 
-**OpenSpec**
-- openspec-archive - 归档已完成的 OpenSpec 变更 (自动修正 CLI bug)
+**Infrastructure**
+- config-loader *(internal, non-user-invocable)* — Configuration loading
 
-### Agents (11个)
+**Experimental**
+- agent-team-audit *(disabled by default, enable via `.aria/config.json`)* — Multi-agent team audit
 
-**核心管理**
-- tech-lead - 技术架构决策、任务规划、跨团队协调
-- context-manager - 多 Agent 协作、上下文管理
-- knowledge-manager - 知识库管理、文档同步
-- code-reviewer - 两阶段代码审查 (Phase 1: 规范合规性 + Phase 2: 代码质量)
+### Agents (11)
 
-**开发相关**
-- backend-architect - 后端架构、API 设计、数据库模式
-- mobile-developer - React Native/Flutter、离线同步
-- qa-engineer - 质量保证、代码审查、测试策略
+**Core Management**
+- tech-lead — Technical architecture decisions, task planning, cross-team coordination
+- context-manager — Multi-agent collaboration, context management
+- knowledge-manager — Knowledge base management, documentation sync
+- code-reviewer — Two-phase code review (Phase 1: spec compliance + Phase 2: code quality)
 
-**专业领域**
-- ai-engineer - LLM 应用、RAG 系统、Agent 编排
-- api-documenter - OpenAPI 规范、SDK 生成
-- ui-ux-designer - 界面设计、线框图、设计系统
-- legal-advisor - 隐私政策、服务条款、GDPR 合规
+**Development**
+- backend-architect — Backend architecture, API design, database schemas
+- mobile-developer — React Native / Flutter, offline sync
+- qa-engineer — Quality assurance, code review, test strategy
 
-## 使用方式
+**Specialized**
+- ai-engineer — LLM applications, RAG systems, agent orchestration
+- api-documenter — OpenAPI specs, SDK generation
+- ui-ux-designer — Interface design, wireframes, design systems
+- legal-advisor — Privacy policies, terms of service, GDPR compliance
 
-### Hooks 自动触发
+## Usage
 
-安装后，hooks 会在关键节点自动触发：
+### Hooks (Auto-triggered)
+
+After installation, hooks fire automatically at key points:
 
 ```bash
-# 会话开始 - 自动执行状态扫描
-# → 等同于调用 /aria:state-scanner
+# Session start — auto state scan
+# → equivalent to /aria:state-scanner
 
-# 编写代码 - 自动检查 TDD 规则
-# → 等同于调用 /aria:tdd-enforcer
+# Writing code — auto TDD check
+# → equivalent to /aria:tdd-enforcer
 
-# 会话结束 - 自动检查进度
-# → 等同于调用 /aria:progress-updater
+# Session end — auto progress check
+# → equivalent to /aria:progress-updater
 ```
 
-### 手动调用 Skills
+### Manual Invocation
 
 ```bash
 # Skills
 /aria:state-scanner
 /aria:spec-drafter
 /aria:workflow-runner
+/aria:brainstorm
 /aria:requesting-code-review
 
 # Agents
@@ -128,11 +139,11 @@ export ARIA_HOOKS_DISABLED=true
 /aria:knowledge-manager
 ```
 
-## 相关项目
+## Related Projects
 
-- [aria-standards](https://github.com/10CG/aria-standards) - Aria 方法论规范
-- [Aria](https://github.com/10CG/Aria) - Aria 主项目
+- [Aria](https://github.com/10CG/Aria) — Aria main project (methodology research)
+- [aria-standards](https://github.com/10CG/aria-standards) — Aria methodology standards
 
 ## License
 
-MIT - 10CG Lab
+MIT — [10CG Lab](https://github.com/10CG)
