@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **版本**: 1.7.2 | **发布日期**: 2026-03-20
+> **版本**: 1.8.0 | **发布日期**: 2026-03-27
 >
-> Claude Code 的 AI-DDD 方法论完整插件 — 27 个 Skills + 11 个 Agents + Hooks 系统
+> Claude Code 的 AI-DDD 方法论完整插件 — 28 个 Skills + 11 个 Agents + Hooks 系统
 
 ## 前置条件
 
@@ -37,7 +37,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills（27 个面向用户 + 2 个内部）
+### Skills（28 个面向用户 + 2 个内部）
 
 **十步循环核心**
 - state-scanner — 项目状态扫描与智能工作流推荐
@@ -81,6 +81,9 @@ export ARIA_HOOKS_DISABLED=true
 **基础设施**
 - config-loader *（内部，非用户调用）* — 配置加载
 
+**反馈与报告**
+- aria-report — 向 Aria 维护团队报告 Bug、提交功能建议或提问
+
 **实验功能**
 - agent-team-audit *（默认关闭，需通过 `.aria/config.json` 启用）* — 多 Agent 团队审计
 
@@ -123,6 +126,7 @@ export ARIA_HOOKS_DISABLED=true
 /aria:workflow-runner
 /aria:brainstorm
 /aria:requesting-code-review
+/aria:report bug
 
 # Agents
 /aria:tech-lead

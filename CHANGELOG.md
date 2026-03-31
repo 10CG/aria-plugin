@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-27
+
+### Added
+
+- **aria-report Skill** — 向 Aria 维护团队报告 Bug、提交功能建议或提问
+  - 三种 Issue 类型: Bug Report / Feature Request / Question
+  - 自动收集环境信息 (Plugin 版本、Skills 数量、OS、配置状态)
+  - 隐私审查: 提交前必须用户确认完整内容
+  - 三级提交路由: Forgejo (内部) → GitHub API → GitHub Pre-filled URL (降级)
+  - 目标仓库: Forgejo `10CG/Aria` / GitHub `10CG/aria-plugin`
+  - 与 state-scanner、agent-team-audit 集成建议
+
+### Changed
+
+- **Skills 总数**: 28 → 29 (27 → 28 user-facing)
+
+---
+
 ## [1.7.2] - 2026-03-20
 
 ### Fixed
