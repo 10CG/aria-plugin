@@ -1,0 +1,124 @@
+name: Adoption Report
+description: Report your experience adopting Aria methodology in a project
+title: "[Adoption] "
+labels: ["adoption-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying Aria! This report helps us understand how the methodology works across different projects and identify areas for improvement.
+
+  - type: input
+    id: project-type
+    attributes:
+      label: Project Type
+      description: What kind of project did you apply Aria to?
+      placeholder: "e.g., Web API (Python/FastAPI), Mobile App (React Native), CLI tool (Go)"
+    validations:
+      required: true
+
+  - type: input
+    id: team-size
+    attributes:
+      label: Team Size
+      description: How many people worked on the project?
+      placeholder: "e.g., 1 (solo), 3, 10+"
+    validations:
+      required: true
+
+  - type: input
+    id: ai-platform
+    attributes:
+      label: AI Platform
+      description: Which AI assistant did you use with Aria?
+      placeholder: "e.g., Claude Code, Claude.ai"
+    validations:
+      required: true
+
+  - type: input
+    id: duration
+    attributes:
+      label: Trial Duration
+      description: How long did you use Aria?
+      placeholder: "e.g., 1 week, 1 month, ongoing"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: components-used
+    attributes:
+      label: Components Used
+      description: Which Aria components did you use? (select all that apply)
+      multiple: true
+      options:
+        - aria-plugin (Skills + Agents)
+        - aria-standards (Ten-Step Cycle, OpenSpec)
+        - Ten-Step Cycle (workflow only)
+        - OpenSpec (spec-driven development only)
+        - Brainstorm Skill
+        - TDD Enforcer
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-worked
+    attributes:
+      label: What Worked Well
+      description: Which aspects of Aria improved your workflow?
+      placeholder: |
+        - Ten-Step Cycle helped structure our development flow
+        - OpenSpec reduced miscommunication between AI and human
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-didnt
+    attributes:
+      label: What Didn't Work / Needed Adaptation
+      description: What required changes or didn't fit your project?
+      placeholder: |
+        - Phase A was too heavy for small bug fixes
+        - Naming conventions conflicted with our existing standards
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: adaptations
+    attributes:
+      label: Adaptations Made
+      description: What did you change or skip to make Aria work for your project?
+      placeholder: |
+        - Simplified Ten-Step to 5 steps for hotfixes
+        - Skipped UPM, used GitHub Projects instead
+        - ...
+
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Impact Metrics (if available)
+      description: Any measurable improvements? (e.g., fewer regressions, faster onboarding, reduced context-switching)
+      placeholder: |
+        - AI context re-explanation reduced from ~5 min/session to ~1 min
+        - Spec-first approach caught 2 requirement gaps before coding
+        - ...
+
+  - type: textarea
+    id: recommendations
+    attributes:
+      label: Recommendations
+      description: What would you suggest we improve?
+
+  - type: dropdown
+    id: would-recommend
+    attributes:
+      label: Would you recommend Aria to other teams?
+      options:
+        - Yes, strongly
+        - Yes, with caveats
+        - Neutral
+        - No
+    validations:
+      required: true

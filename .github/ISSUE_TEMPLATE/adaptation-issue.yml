@@ -1,0 +1,81 @@
+name: Adaptation Issue
+description: Report a problem or friction point when adapting Aria to your project
+title: "[Adaptation] "
+labels: ["adaptation-issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report specific issues you encountered while adapting Aria methodology to your project. This helps us make Aria more portable.
+
+  - type: input
+    id: project-context
+    attributes:
+      label: Project Context
+      description: Brief description of your project type and tech stack
+      placeholder: "e.g., Django REST API, monorepo with 3 services"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of Aria caused the issue?
+      options:
+        - aria-plugin (installation/configuration)
+        - Ten-Step Cycle (workflow)
+        - OpenSpec (spec format)
+        - Skills (specific skill)
+        - Standards (conventions/naming)
+        - Documentation (unclear/missing)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description
+      description: What happened? What did you expect?
+      placeholder: |
+        When trying to use the Ten-Step Cycle for a hotfix, Phase A
+        required creating a full OpenSpec which was too heavy for a
+        one-line bug fix...
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround (if any)
+      description: How did you work around this issue?
+      placeholder: |
+        We skipped Phase A entirely for hotfixes and went straight
+        to Phase B with a commit message explaining the change...
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Impact on Adoption
+      description: How much did this issue affect your ability to use Aria?
+      options:
+        - Blocker — could not proceed without workaround
+        - Significant — had to substantially adapt the workflow
+        - Minor — small friction, easy to work around
+        - Suggestion — not blocking, but could be better
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: How do you think this could be fixed or improved?
+
+  - type: input
+    id: aria-version
+    attributes:
+      label: Aria Plugin Version
+      description: Which version of aria-plugin are you using?
+      placeholder: "e.g., 1.8.0 or N/A (standards only)"
