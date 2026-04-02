@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-04-02
+
+### Added
+
+- **audit-engine Skill** — 多轮收敛/挑战审计编排器
+  - convergence 模式: 全员讨论 → 结论提取 → 四元组收敛判定
+  - challenge 模式: 讨论组/挑战组对抗 → objections resolved 判定
+  - 结构化结论 schema `{type, severity, category, scope, summary}`
+  - 汇总引擎 (合并 + 去重 + 冲突标记)
+  - 振荡检测 + 未收敛三路径降级策略
+  - 审计报告生成 (含 Verdict 计算)
+  - AB benchmark: delta +0.5 (WITH_BETTER)
+- **7 个审计检查点** — 覆盖十步循环全流程
+  - 已有升级: post_spec, post_implementation, pre_merge → audit-engine
+  - 新增: post_brainstorm, post_planning, mid_implementation, post_closure
+- **config-loader 审计兼容层** — experiments.agent_team_audit 自动映射到 audit.*
+- **完整审计配置模板** — 11 Agents x 7 检查点默认分组
+- **state-scanner v2.7.0** — 审计状态扫描 + adaptive 路由 + audit_unconverged 推荐规则
+
+### Changed
+
+- **Skills 总数**: 29 → 31 (28 → 29 user-facing, 2 → 3 internal: +audit-engine)
+- **state-scanner** — 新增 Phase 1.10 审计状态扫描, Phase 4 adaptive 上下文传递
+- **config-loader** — 新增 audit 配置块默认值, 旧配置兼容映射
+
+---
+
 ## [1.8.0] - 2026-03-27
 
 ### Added

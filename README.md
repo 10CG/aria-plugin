@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.8.0 | **Released**: 2026-03-27
+> **Version**: 1.9.0 | **Released**: 2026-04-02
 >
-> AI-DDD methodology plugin for Claude Code — 28 Skills + 11 Agents + Hooks
+> AI-DDD methodology plugin for Claude Code — 29 Skills + 11 Agents + Hooks
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (28 user-facing + 2 internal)
+### Skills (28 user-facing + 3 internal)
 
 **Ten-Step Cycle Core**
 - state-scanner — Project state scan with intelligent workflow recommendations
@@ -84,8 +84,9 @@ export ARIA_HOOKS_DISABLED=true
 **Feedback & Reporting**
 - aria-report — Report bugs, feature requests, or questions to the Aria team
 
-**Experimental**
-- agent-team-audit *(disabled by default, enable via `.aria/config.json`)* — Multi-agent team audit
+**Audit System**
+- audit-engine *(internal, non-user-invocable)* — Multi-round convergence/challenge audit orchestrator
+- agent-team-audit *(disabled by default, enable via `.aria/config.json`)* — Single-round audit executor
 
 ### Agents (11)
 
