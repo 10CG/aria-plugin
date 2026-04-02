@@ -11,9 +11,9 @@ user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
-# 状态扫描与智能推荐 (State Scanner v2.5)
+# 状态扫描与智能推荐 (State Scanner v2.7)
 
-> **版本**: 2.4.0 | **角色**: 十步循环统一入口
+> **版本**: 2.7.0 | **角色**: 十步循环统一入口
 
 ## 快速开始
 
@@ -35,7 +35,7 @@ allowed-tools: Read, Glob, Grep, Bash
 
 | 功能 | 描述 |
 |------|------|
-| **状态感知** | 收集 Git 状态、UPM 进度、OpenSpec 状态、变更分析 |
+| **状态感知** | 收集 Git 状态、UPM 进度、OpenSpec 状态、审计状态、变更分析 |
 | **智能推荐** | 基于状态生成工作流推荐，附带理由说明 |
 | **用户确认** | 展示选项，让用户确认或自定义工作流 |
 | **工作流启动** | 将确认的工作流传递给 workflow-runner 执行 |
@@ -92,6 +92,19 @@ allowed-tools: Read, Glob, Grep, Bash
       ab_status:                      # 各 Skill 的 AB 验证状态
         verified: 有新鲜 AB 结果的 Skill 列表
         needs_benchmark: 缺少 AB 结果的 Skill 列表
+
+  audit:                              # 新增: 审计状态
+    enabled: true/false               # audit.enabled 配置值
+    mode: adaptive/convergence/challenge/manual  # audit.mode 配置值
+    active_checkpoints:               # 启用的检查点列表 (非 "off" 的)
+      - post_spec
+      - post_implementation
+      - pre_merge
+    last_audit:                       # 最近一次审计报告 (如有)
+      checkpoint: post_spec           # 检查点名称
+      timestamp: "2026-03-27T10:00:00Z"
+      verdict: PASS/PASS_WITH_WARNINGS/FAIL
+      converged: true/false
 
   requirements:                       # 新增: 需求状态
     configured: 是否配置需求追踪
@@ -354,6 +367,55 @@ openspec/
 
 **注意**: standards 对非 Aria 项目是**可选的**。检测结果为建议性提醒，不阻塞任何工作流。
 
+### 阶段 1.10: 审计状态扫描
+
+**重要**: 此阶段始终执行，检测审计系统配置和最近审计报告状态。
+
+```yaml
+检测步骤:
+  1. 通过 config-loader 读取 audit.* 配置块
+     - audit.enabled == false 或字段缺失 → enabled: false, 跳过后续步骤
+  2. 读取 audit.mode (adaptive/convergence/challenge/manual)
+  3. 扫描 audit.checkpoints，收集非 "off" 的检查点列表
+     - adaptive 模式下无显式 checkpoints 时，标注 "由 adaptive_rules 决定"
+  4. 扫描 .aria/audit-reports/ 目录
+     - 按文件名时间戳排序，取最新一份报告
+     - 解析 frontmatter: checkpoint, verdict, converged, timestamp
+  5. 检测未收敛报告:
+     - 最新报告 converged == false → 标记 has_unconverged: true
+
+输出 (已启用):
+  audit_status:
+    enabled: true
+    mode: adaptive
+    active_checkpoints:
+      - post_spec
+      - post_implementation
+      - pre_merge
+    last_audit:
+      checkpoint: post_spec
+      timestamp: "2026-03-27T10:00:00Z"
+      verdict: PASS
+      converged: true
+    has_unconverged: false
+
+输出 (已启用, 有未收敛报告):
+  audit_status:
+    enabled: true
+    mode: challenge
+    active_checkpoints: [post_spec, post_implementation, pre_merge]
+    last_audit:
+      checkpoint: post_implementation
+      timestamp: "2026-03-27T14:00:00Z"
+      verdict: PASS_WITH_WARNINGS
+      converged: false
+    has_unconverged: true
+
+输出 (未启用):
+  audit_status:
+    enabled: false
+```
+
 ---
 
 ### 阶段 2: 推荐决策
@@ -361,7 +423,12 @@ openspec/
 基于阶段 1 收集的状态，按优先级匹配推荐规则 (第一个匹配的规则生效)。
 
 规则覆盖: commit_only → quick_fix → feature_with_spec → feature_new，
-以及需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec 等。
+以及需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec 等，
+以及审计相关: audit_unconverged (当存在未收敛审计报告时提示)。
+
+当 `audit.enabled=true` 时，推荐输出中展示审计状态摘要:
+- 上次审计的 verdict 和收敛状态
+- 如果最新审计报告 `converged=false`，提示用户处理 (查看报告 / 重新审计 / 接受当前结论)
 
 详细规则定义、优先级和条件见 [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md)。
 
@@ -392,7 +459,14 @@ openspec/
     module: 活跃模块
     changed_files: 变更文件列表
     skip_steps: 智能跳过的步骤
+    complexity_level: Level1/Level2/Level3   # 传递给 workflow-runner
+    audit:                                   # 审计配置摘要 (仅 audit.enabled=true 时)
+      enabled: true
+      mode: adaptive                        # 当前审计模式
+      active_checkpoints: [post_spec, ...]  # 启用的检查点
 ```
+
+**adaptive 集成**: state-scanner 的复杂度评估 (`changes.complexity`) 通过 `context.complexity_level` 传递给 workflow-runner。workflow-runner 在调用 Phase Skills 时将 Level 信息传递给 audit-engine，用于 adaptive 模式下按 `adaptive_rules` 决定各检查点使用 convergence 还是 challenge 模式 (Level 1 = off, Level 2 = convergence, Level 3 = challenge，可通过 config 覆盖)。
 
 ---
 
@@ -437,6 +511,12 @@ openspec/
 📋 OpenSpec 状态
 ───────────────────────────────────────────────────────────────
   活跃变更: 2 个 | 已归档: 5 个 | 待归档: 0 个
+
+🛡️ 审计状态
+───────────────────────────────────────────────────────────────
+  审计系统: ✅ 已启用 (adaptive 模式)
+  活跃检查点: post_spec, post_implementation, pre_merge
+  上次审计: post_spec — PASS (收敛, 2 轮)
 
 🎯 推荐工作流
 ───────────────────────────────────────────────────────────────
@@ -594,6 +674,8 @@ workflow-runner v2.0
 - [output-formats.md](./references/output-formats.md) - 各场景输出格式定义
 - [migration-v1-to-v2.md](./references/migration-v1-to-v2.md) - v1.0 → v2.0 迁移说明
 - [cross-platform-commands.md](./references/cross-platform-commands.md) - 跨平台命令参考
+### 审计相关
+- [audit-engine](../audit-engine/SKILL.md) - 多轮收敛审计编排引擎
 ### 工作流相关
 - [brainstorm](../brainstorm/SKILL.md) - 头脑风暴引擎
 - [workflow-runner](../workflow-runner/SKILL.md) - 工作流执行器
@@ -604,5 +686,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-03-18
-**Skill版本**: 2.6.0 (新增 README 同步检查、插件依赖检测、配置加载)
+**最后更新**: 2026-03-27
+**Skill版本**: 2.7.0 (新增审计状态扫描、adaptive 集成、复杂度传递)

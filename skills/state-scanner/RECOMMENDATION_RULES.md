@@ -13,6 +13,7 @@
 | `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture | 80% | No |
 | `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated | 80% | No |
 | `architecture_chain_broken` | 1.8 | fix-architecture | 需求链路不完整 | 80% | No |
+| `audit_unconverged` | 1.9 | (建议性提示) | 最新审计报告未收敛 | 75% | No — 用户可能已知并选择接受 |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
 | `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |
@@ -373,6 +374,36 @@ recommendation:
 
 ---
 
+## 审计相关规则详情
+
+### 1.9 audit_unconverged
+
+```yaml
+id: audit_unconverged
+priority: 1.9
+description: 最新审计报告未收敛，建议处理
+
+conditions:
+  all:
+    - audit_enabled: true
+    - has_unconverged: true           # 最新审计报告 converged == false
+
+  detection:
+    config_check: "config-loader → audit.enabled"
+    report_scan: "ls .aria/audit-reports/*.md 2>/dev/null | sort | tail -1"
+    frontmatter_check: "converged: false"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅提示
+  info: "⚠️ 最新审计报告未收敛 ({checkpoint})"
+  suggestion:
+    - "查看报告: {report_path}"
+    - "workflow-runner 会在对应阶段自动重新触发审计"
+  non_blocking: true  # 建议性，不阻塞工作流
+```
+
+---
+
 ## 需求相关规则详情
 
 ### 1.5 requirements_issues (高优先级)
@@ -613,6 +644,36 @@ standards_detection:
     state_3: { registered: true, initialized: true }        # 正常 → 无提示
 ```
 
+### 审计状态检测
+
+```yaml
+audit_detection:
+  config_check:
+    source: "config-loader → audit.*"
+    fields:
+      enabled: boolean
+      mode: "adaptive | convergence | challenge | manual"
+      checkpoints: object (各检查点 off/convergence/challenge)
+
+  active_checkpoints:
+    filter: "checkpoint value != 'off'"
+    adaptive_note: "adaptive 模式下无显式 checkpoints 时由 adaptive_rules + complexity_level 决定"
+
+  last_audit_scan:
+    path: ".aria/audit-reports/"
+    command: "ls .aria/audit-reports/*.md 2>/dev/null | sort | tail -1"
+    frontmatter_fields:
+      - checkpoint
+      - verdict
+      - converged
+      - timestamp
+    on_empty: "last_audit: null"
+
+  unconverged_check:
+    condition: "last_audit.converged == false"
+    output: "has_unconverged: true"
+```
+
 ### 复杂度评估
 
 ```yaml
@@ -804,9 +865,14 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-03-16
+**最后更新**: 2026-03-27
 
 ## 变更历史
+
+### v2.7.0 (2026-03-27)
+
+- **新增**: 规则 `audit_unconverged` (优先级 1.9) -- 未收敛审计报告提示
+- **新增**: 审计状态检测方法 (config 读取 + 报告扫描 + 未收敛检查)
 
 ### v2.6.0 (2026-03-18)
 
