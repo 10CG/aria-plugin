@@ -23,9 +23,10 @@ allowed-tools: Read, Glob
 ```
 1. 查找 .aria/config.json (项目根目录)
 2. 如果存在 → 解析 JSON
-3. 验证字段类型和范围
-4. 与 DEFAULTS.json 合并 (用户值覆盖默认值)
-5. 返回完整配置对象
+3. 旧配置兼容映射 (见下方"旧配置兼容层"章节)
+4. 验证字段类型和范围
+5. 与 DEFAULTS.json 合并 (用户值覆盖默认值)
+6. 返回完整配置对象
 ```
 
 ## 错误处理
@@ -84,7 +85,76 @@ experiments.agent_team_audit_points:
   type: array of string
   valid_values: [pre_merge, post_implementation, post_spec]
   default: [pre_merge]
+
+audit.enabled:
+  type: boolean
+  default: false
+
+audit.mode:
+  type: string
+  valid_values: [adaptive, manual, convergence, challenge]
+  default: "adaptive"
+
+audit.max_rounds:
+  type: integer
+  range: [1, 20]
+  default: 5
+
+audit.checkpoints.*:
+  type: string
+  valid_values: [off, convergence, challenge]
+  valid_keys: [post_brainstorm, post_spec, post_planning, post_implementation,
+               mid_implementation, pre_merge, post_closure]
+  default: "off"
 ```
+
+## 旧配置兼容层
+
+在步骤 3（验证之前）执行以下检测和映射，确保旧配置用户无缝升级到新 `audit` 体系。
+
+### 触发条件
+
+同时满足以下两点时触发兼容映射：
+
+1. `experiments.agent_team_audit === true`
+2. 配置文件中不存在 `audit` 块（即 `audit` 字段为 `undefined`）
+
+### 映射规则
+
+```
+experiments.agent_team_audit: true
+  → audit.enabled: true
+  → audit.mode: "manual"
+
+experiments.agent_team_audit_points 数组元素映射:
+  "post_spec"            → audit.checkpoints.post_spec: "convergence"
+  "post_implementation"  → audit.checkpoints.post_implementation: "convergence"
+  "pre_merge"            → audit.checkpoints.pre_merge: "convergence"
+```
+
+未在 `agent_team_audit_points` 中出现的检查点保持默认值 `"off"`。
+
+新增的 4 个检查点（`post_brainstorm`, `post_planning`, `mid_implementation`, `post_closure`）不在旧配置中，映射后均为 `"off"`。
+
+### 迁移提示
+
+兼容映射生效时，必须向用户输出以下提示（仅在实际触发时显示，不影响正常加载）：
+
+```
+[config-loader] 检测到旧版审计配置 (experiments.agent_team_audit)。
+已自动映射到新配置格式:
+  audit.enabled: true
+  audit.mode: "manual"
+  audit.checkpoints: { <映射结果列表> }
+
+建议将 .aria/config.json 迁移到新格式以获得完整功能（7 个检查点、多轮收敛、挑战模式）。
+参考: openspec/changes/auto-audit-system/proposal.md
+```
+
+### 不触发条件
+
+- `experiments.agent_team_audit: false`（或缺失）→ 跳过兼容映射，正常加载
+- 已存在 `audit` 块 → 跳过兼容映射，用户显式配置优先
 
 ## 与 .claude/tdd-config.json 的优先级关系
 
@@ -116,8 +186,9 @@ experiments.agent_team_audit_points:
 | workflow-runner | `workflow.auto_proceed` |
 | tdd-enforcer | `tdd.strictness` |
 | branch-finisher | `benchmarks.require_before_merge` |
-| phase-c-integrator | `experiments.agent_team_audit*` |
-| phase-b-developer | `experiments.agent_team_audit*` |
+| phase-c-integrator | `experiments.agent_team_audit*`, `audit.*` |
+| phase-b-developer | `experiments.agent_team_audit*`, `audit.*` |
+| audit-engine | `audit.*` |
 
 ## 默认值文件
 
@@ -125,4 +196,4 @@ experiments.agent_team_audit_points:
 
 ---
 
-**最后更新**: 2026-03-18
+**最后更新**: 2026-03-27

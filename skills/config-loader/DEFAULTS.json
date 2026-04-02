@@ -24,5 +24,76 @@
   "experiments": {
     "agent_team_audit": false,
     "agent_team_audit_points": ["pre_merge"]
+  },
+
+  "audit": {
+    "enabled": false,
+    "mode": "adaptive",
+    "max_rounds": 5,
+
+    "convergence_criteria": {
+      "conclusion_match": true,
+      "unanimous_pass": true
+    },
+
+    "adaptive_rules": {
+      "level_1": "off",
+      "level_2": "convergence",
+      "level_3": "challenge"
+    },
+
+    "mid_implementation": {
+      "trigger": "task_progress",
+      "threshold": 50,
+      "unit": "percent_tasks_completed"
+    },
+
+    "checkpoints": {
+      "post_brainstorm": "off",
+      "post_spec": "off",
+      "post_planning": "off",
+      "mid_implementation": "off",
+      "post_implementation": "off",
+      "pre_merge": "off",
+      "post_closure": "off"
+    },
+
+    "teams": {
+      "post_brainstorm": {
+        "convergence": ["tech-lead", "backend-architect", "knowledge-manager"],
+        "discussion": ["tech-lead"],
+        "challenge": ["backend-architect", "qa-engineer", "knowledge-manager"]
+      },
+      "post_spec": {
+        "convergence": ["tech-lead", "backend-architect", "qa-engineer", "knowledge-manager", "context-manager", "api-documenter", "ui-ux-designer"],
+        "discussion": ["tech-lead", "backend-architect", "api-documenter"],
+        "challenge": ["qa-engineer", "knowledge-manager", "context-manager", "ai-engineer", "ui-ux-designer"]
+      },
+      "post_planning": {
+        "convergence": ["tech-lead", "qa-engineer", "context-manager"],
+        "discussion": ["tech-lead", "context-manager"],
+        "challenge": ["qa-engineer", "backend-architect"]
+      },
+      "mid_implementation": {
+        "convergence": ["tech-lead", "code-reviewer"],
+        "discussion": ["code-reviewer"],
+        "challenge": ["tech-lead"]
+      },
+      "post_implementation": {
+        "convergence": ["code-reviewer", "backend-architect", "qa-engineer", "ai-engineer", "api-documenter", "mobile-developer"],
+        "discussion": ["code-reviewer", "backend-architect", "api-documenter"],
+        "challenge": ["qa-engineer", "tech-lead", "ai-engineer", "mobile-developer"]
+      },
+      "pre_merge": {
+        "convergence": ["code-reviewer", "qa-engineer", "tech-lead", "knowledge-manager", "mobile-developer", "api-documenter", "ui-ux-designer"],
+        "discussion": ["code-reviewer", "qa-engineer", "api-documenter"],
+        "challenge": ["tech-lead", "knowledge-manager", "mobile-developer", "ui-ux-designer"]
+      },
+      "post_closure": {
+        "convergence": ["tech-lead", "knowledge-manager", "context-manager"],
+        "discussion": ["tech-lead", "context-manager"],
+        "challenge": ["knowledge-manager", "qa-engineer"]
+      }
+    }
   }
 }
