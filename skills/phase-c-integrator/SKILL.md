@@ -7,13 +7,13 @@ description: |
 argument-hint: "[--skip-pr]"
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
+allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 ---
 
 # Phase C - 集成阶段 (Integrator)
 
-> **版本**: 1.1.0 | **十步循环**: C.1-C.2
-> **更新**: 2026-01-21 - 集成 branch-finisher 完成流程
+> **版本**: 1.2.0 | **十步循环**: C.1-C.2
+> **更新**: 2026-03-27 - 升级审计触发从 agent-team-audit 改为 audit-engine
 
 ## 快速开始
 
@@ -37,10 +37,13 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `experiments.agent_team_audit` | `false` | 启用 Agent Team 审计 (实验功能) |
-| `experiments.agent_team_audit_points` | `["pre_merge"]` | 审计触发点 |
+| `audit.enabled` | `false` | 启用 audit-engine 审计 (新) |
+| `audit.checkpoints.pre_merge` | `"off"` | pre_merge 检查点模式 |
+| `experiments.agent_team_audit` | `false` | 旧配置 (向后兼容，自动映射到 audit.*) |
+| `experiments.agent_team_audit_points` | `["pre_merge"]` | 旧配置 (向后兼容) |
 
-当 `agent_team_audit=true` 且 `"pre_merge"` 在 `agent_team_audit_points` 中时，C.2 合并前触发 Agent Team 审计。
+当 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时，C.2 合并前触发 audit-engine (pre_merge 检查点)。
+旧配置 `experiments.agent_team_audit=true` 且 `"pre_merge" in agent_team_audit_points` 自动映射到新配置。
 
 ---
 
@@ -108,22 +111,38 @@ C.2 - PR/合并:
   skip_if:
     - no_pr_needed: true
     - direct_push_allowed: true
-  pre_hook:                               # v1.7.0 新增
-    agent_team_audit:
-      trigger: pre_merge
-      condition: config.experiments.agent_team_audit == true
-                 AND "pre_merge" in config.experiments.agent_team_audit_points
+  pre_hook:                               # audit-engine 检查点
+    audit_engine:
+      checkpoint: pre_merge
+      步骤:
+        1. 通过 config-loader 读取 .aria/config.json audit 块
+        2. 检查 audit.enabled — false 则跳过，保持现有行为不变
+        3. 检查 audit.checkpoints.pre_merge — "off" 则跳过
+        4. 如启用: 调用 audit-engine
+           - checkpoint: "pre_merge"
+           - mode: 来自配置 (convergence / challenge / adaptive)
+           - context: PR diff (branch_name vs base)
+        5. 处理 verdict:
+           - PASS / PASS_WITH_WARNINGS → 继续推送和创建 PR
+           - FAIL → 阻塞合并，输出审计报告
+      backward_compat:
+        audit.enabled=false: 完全跳过，Phase C 行为与之前完全相同
+        旧配置 experiments.agent_team_audit: 由 audit-engine 内部映射处理
+      fallback_description: |
+        audit-engine 内部通过 agent-team-audit 单轮引擎执行审计。
+        直接调用 agent-team-audit 已由 audit-engine 编排层取代。
       on_fail: 阻塞合并, 输出审计报告
-      on_skip: 继续合并 (审计未启用或超时)
+      on_skip: 继续合并 (审计未启用)
   action:
-    - (如启用审计) 触发 agent-team-audit (pre_merge)
+    - (如 audit.enabled) 触发 audit-engine (pre_merge 检查点)
     - 推送分支到远程
     - 创建 Pull Request
     - (可选) 自动合并
   output:
     pr_url: "https://..."
     pr_number: 123
-    audit_verdict: "PASS"                 # v1.7.0 新增 (如启用)
+    audit_verdict: "PASS"                 # 如审计启用 (PASS | PASS_WITH_WARNINGS | FAIL)
+    audit_report: ".aria/audit-reports/pre_merge-{timestamp}.md"
 
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。
 > 统一规范见 `../forgejo-sync/PRE_CHECK.md`
@@ -469,5 +488,5 @@ phase-d-closer
 
 ---
 
-**最后更新**: 2026-01-21
-**Skill版本**: 1.1.0
+**最后更新**: 2026-03-27
+**Skill版本**: 1.2.0

@@ -7,13 +7,13 @@ description: |
 argument-hint: "[--skip-tests]"
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
+allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 ---
 
 # Phase B - 开发阶段 (Developer)
 
-> **版本**: 1.3.0 | **十步循环**: B.1-B.3
-> **更新**: 2026-01-22 - 集成 TDD 双保险机制
+> **版本**: 1.4.0 | **十步循环**: B.1-B.3
+> **更新**: 2026-03-27 - 升级审计触发从 agent-team-audit 改为 audit-engine
 
 ## 快速开始
 
@@ -38,10 +38,13 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `experiments.agent_team_audit` | `false` | 启用 Agent Team 审计 (实验功能) |
-| `experiments.agent_team_audit_points` | `["pre_merge"]` | 审计触发点 |
+| `audit.enabled` | `false` | 启用 audit-engine 审计 (新) |
+| `audit.checkpoints.post_implementation` | `"off"` | post_implementation 检查点模式 |
+| `experiments.agent_team_audit` | `false` | 旧配置 (向后兼容，自动映射到 audit.*) |
+| `experiments.agent_team_audit_points` | `["pre_merge"]` | 旧配置 (向后兼容) |
 
-当 `agent_team_audit=true` 且 `"post_implementation"` 在 `agent_team_audit_points` 中时，B.2 完成后触发 Agent Team 审计。
+当 `audit.enabled=true` 且 `audit.checkpoints.post_implementation != "off"` 时，B.3 完成后触发 audit-engine (post_implementation 检查点)。
+旧配置 `experiments.agent_team_audit=true` 且 `"post_implementation" in agent_team_audit_points` 自动映射到新配置。
 
 ---
 
@@ -115,26 +118,75 @@ B.3 - 架构同步:
     files_modified: ["docs/ARCHITECTURE.md"]
 ```
 
-### Post-Implementation 审计 (v1.7.0 新增)
+### Mid-Implementation 审计检查点 (新增)
 
 ```yaml
-B.post - Agent Team 审计 (可选):
-  skill: agent-team-audit
-  trigger: post_implementation
-  condition: config.experiments.agent_team_audit == true
-             AND "post_implementation" in config.experiments.agent_team_audit_points
-  skip_if:
-    - audit_not_enabled: true             # config 未启用
-    - post_implementation_not_in_points: true
-  action:
-    - 触发 QA Engineer + Code Reviewer 审计
-    - 收集去重后 issues
-    - 计算 verdict
-  on_fail: 阻塞进入 Phase C, 输出审计报告
-  on_skip: 继续到 Phase C (审计未启用或超时)
+B.mid - 审计引擎 (条件触发):
+  checkpoint: mid_implementation
+  trigger: B.2 任务执行循环中，每个任务完成后检查进度阈值
+  condition: audit.enabled == true
+             AND audit.checkpoints.mid_implementation != "off"
+             AND tasks_completed_count >= total_tasks * (audit.mid_implementation.threshold / 100)
+
+  注意: 每次 Phase B 生命周期内仅触发一次 (触发后置标记，后续任务不再检查)
+        默认 threshold=50 (已完成任务数 >= 总任务数 × 50%)，来自 config.audit.mid_implementation
+
+  步骤:
+    1. 每个任务完成后更新 tasks_completed_count
+    2. 检查触发条件 (audit.enabled + checkpoint enabled + progress >= threshold)
+    3. 如已触发过 (mid_audit_fired=true) → 跳过
+    4. 如条件满足: 调用 audit-engine
+       - checkpoint: "mid_implementation"
+       - mode: 来自配置 (convergence / challenge / adaptive)
+       - context: 已完成任务的变更文件路径列表 (diff)
+    5. 处理 verdict:
+       - PASS / PASS_WITH_WARNINGS → 继续执行剩余任务
+       - FAIL → 阻塞，呈现审计报告，等待用户决策后再继续
+    6. 标记 mid_audit_fired=true
+
+  on_fail: 阻塞继续执行任务, 输出审计报告
+  on_skip: 继续任务执行循环
   output:
-    audit_verdict: "PASS"                 # PASS | PASS_WITH_WARNINGS | FAIL
-    audit_issues: []
+    mid_audit_verdict: "PASS"             # PASS | PASS_WITH_WARNINGS | FAIL (如触发)
+    mid_audit_report: ".aria/audit-reports/mid_implementation-{timestamp}.md"
+```
+
+### Post-Implementation 审计 (audit-engine)
+
+```yaml
+B.post - 审计引擎 (可选):
+  checkpoint: post_implementation
+  trigger: B.3 完成后 (实现验证通过后)
+  condition: 读取 .aria/config.json (via config-loader)
+             audit.enabled == true
+             AND checkpoints.post_implementation != "off"
+
+  步骤:
+    1. 通过 config-loader 读取 .aria/config.json audit 块
+    2. 检查 audit.enabled — false 则跳过，保持现有行为不变
+    3. 检查 audit.checkpoints.post_implementation — "off" 则跳过
+    4. 如启用: 调用 audit-engine
+       - checkpoint: "post_implementation"
+       - mode: 来自配置 (convergence / challenge / adaptive)
+       - context: 当前变更文件列表 (changed_files)
+    5. 处理 verdict:
+       - PASS / PASS_WITH_WARNINGS → 继续进入 Phase C
+       - FAIL → 阻塞，输出审计报告，不进入 Phase C
+
+  backward_compat:
+    audit.enabled=false: 完全跳过，Phase B 行为与之前完全相同
+    旧配置 experiments.agent_team_audit: 由 audit-engine 内部映射处理
+    旧字段 experiments.agent_team_audit_points: 兼容映射，"post_implementation" 检查保留
+
+  fallback_description: |
+    audit-engine 内部通过 agent-team-audit 单轮引擎执行审计。
+    直接调用 agent-team-audit 已由 audit-engine 编排层取代。
+
+  on_fail: 阻塞进入 Phase C, 输出审计报告
+  on_skip: 继续到 Phase C (审计未启用)
+  output:
+    audit_verdict: "PASS"                 # PASS | PASS_WITH_WARNINGS | FAIL (如启用)
+    audit_report: ".aria/audit-reports/post_implementation-{timestamp}.md"
 ```
 
 ### 输出
@@ -881,5 +933,5 @@ phase_b_config:
 
 ---
 
-**最后更新**: 2026-01-22
-**Skill版本**: 1.3.0
+**最后更新**: 2026-03-27
+**Skill版本**: 1.4.0

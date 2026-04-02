@@ -75,6 +75,26 @@ D.1 - 进度更新:
       cycle: 10
       completed_tasks: [TASK-001, ...]
 
+D.post - post_closure 审计检查点 (新增):
+  checkpoint: post_closure
+  trigger: D.1 完成后、D.2 归档前
+  condition: audit.enabled == true
+             AND audit.checkpoints.post_closure != "off"
+  限制: 仅使用 convergence 模式 + max_rounds=1 (侧重经验提取，非质量阻塞)
+
+  步骤:
+    1. 检查触发条件 (audit.enabled + checkpoint enabled)
+    2. 如启用: 调用 audit-engine
+       - checkpoint: "post_closure"
+       - mode: "convergence"  # 强制 convergence，忽略全局 mode 配置
+       - max_rounds: 1        # 强制单轮，忽略全局 max_rounds 配置
+       - context: 本次交付的 UPM 路径 (经验积累上下文)
+    3. 不阻塞: 无论 verdict 结果如何，均继续执行 D.2
+       (代码已合并，此检查点仅做经验提取，不做质量门禁)
+
+  on_fail: 记录审计报告但不阻塞，继续 D.2
+  on_skip: 直接进入 D.2
+
 D.2 - Spec 归档:
   skill: openspec-archive
   skip_if:

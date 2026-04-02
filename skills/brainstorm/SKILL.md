@@ -135,6 +135,23 @@ description: |
   AI: [回退澄清该组件]
 ```
 
+### 阶段 3 完成后: post_brainstorm 审计检查点
+
+```yaml
+触发条件: audit.enabled == true AND audit.checkpoints.post_brainstorm != "off"
+
+执行:
+  调用 audit-engine:
+    checkpoint: "post_brainstorm"
+    mode: 来自 config (audit.mode) 或 adaptive
+    context: 本次头脑风暴生成的决策记录路径
+
+  if verdict == FAIL:
+    → 阻塞输出文件写入，呈现审计报告，等待用户决策
+  else (PASS / PASS_WITH_WARNINGS):
+    → 继续写入输出文件
+```
+
 ---
 
 ## 不可协商规则

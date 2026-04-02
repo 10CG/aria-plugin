@@ -6,12 +6,12 @@ description: |
   使用场景："执行规划阶段"、"Phase A"、"创建 Spec 并规划任务"
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: Read, Write, Glob, Grep, Task
+allowed-tools: Read, Write, Glob, Grep, Task, Skill
 ---
 
 # Phase A - 规划阶段 (Planner)
 
-> **版本**: 1.0.0 | **十步循环**: A.1-A.3
+> **版本**: 1.1.0 | **十步循环**: A.1-A.3
 
 ## 快速开始
 
@@ -144,6 +144,43 @@ skip_evaluation:
       action: skip A.2 and A.3, use existing tasks
 ```
 
+### Post-Spec 审计 (audit-engine)
+
+```yaml
+A.post - 审计引擎 (可选):
+  checkpoint: post_spec
+  trigger: A.1 完成后 (Spec 创建或更新)
+  condition: 读取 .aria/config.json (via config-loader)
+             audit.enabled == true
+             AND checkpoints.post_spec != "off"
+
+  步骤:
+    1. 通过 config-loader 读取 .aria/config.json audit 块
+    2. 检查 audit.enabled — false 则跳过，保持现有行为不变
+    3. 检查 audit.checkpoints.post_spec — "off" 则跳过
+    4. 如启用: 调用 audit-engine
+       - checkpoint: "post_spec"
+       - mode: 来自配置 (convergence / challenge / adaptive)
+       - context: openspec/changes/{spec_id}/proposal.md
+    5. 处理 verdict:
+       - PASS / PASS_WITH_WARNINGS → 继续执行 A.2
+       - FAIL → 阻塞，输出审计报告，提示修订 Spec
+
+  backward_compat:
+    audit.enabled=false: 完全跳过，Phase A 行为与之前完全相同
+    旧配置 experiments.agent_team_audit: 由 audit-engine 内部映射处理
+
+  fallback_description: |
+    audit-engine 内部通过 agent-team-audit 单轮引擎执行审计。
+    直接调用 agent-team-audit 已由 audit-engine 编排层取代。
+
+  on_audit_fail: 阻塞进入 A.2，输出审计报告路径
+  on_skip: 继续执行 A.2 (审计未启用)
+  output:
+    audit_verdict: "PASS"         # PASS | PASS_WITH_WARNINGS | FAIL (如启用)
+    audit_report: ".aria/audit-reports/post_spec-{timestamp}.md"
+```
+
 ---
 
 ## 输出格式
@@ -265,5 +302,5 @@ phase-b-developer
 
 ---
 
-**最后更新**: 2025-12-25
-**Skill版本**: 1.0.0
+**最后更新**: 2026-03-27
+**Skill版本**: 1.1.0

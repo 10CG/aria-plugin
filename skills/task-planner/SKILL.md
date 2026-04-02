@@ -117,6 +117,25 @@ allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 
 **分配规则详情**: [AGENT_MAPPING.md](./AGENT_MAPPING.md)
 
+### A.2.7 - post_planning 审计检查点
+
+```yaml
+触发条件: audit.enabled == true AND audit.checkpoints.post_planning != "off"
+
+执行时机: detailed-tasks.yaml 已写入后
+
+执行:
+  调用 audit-engine:
+    checkpoint: "post_planning"
+    mode: 来自 config (audit.mode) 或 adaptive
+    context: "{spec_path}/detailed-tasks.yaml"
+
+  if verdict == FAIL:
+    → 阻塞，呈现审计报告，等待用户修订任务列表
+  else (PASS / PASS_WITH_WARNINGS):
+    → 继续，准备进入 B.1 分支创建
+```
+
 ---
 
 ## 输入参数
