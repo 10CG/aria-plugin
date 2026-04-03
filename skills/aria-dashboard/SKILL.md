@@ -10,11 +10,13 @@ user-invocable: true
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
-# 项目进度看板 (aria-dashboard v1.0.0)
+# 项目进度看板 (aria-dashboard v1.1.0)
 
-> **版本**: 1.0.0 | **角色**: 数据可视化
+> **版本**: 1.1.0 | **角色**: 数据可视化 + Issue 提交
 > **数据 schema**: [references/data-schema.md](./references/data-schema.md)
 > **HTML 模板**: [templates/dashboard.html](./templates/dashboard.html)
+> **Issue 存储设计**: [references/issue-storage.md](./references/issue-storage.md)
+> **部署指南**: [references/deploy-guide.md](./references/deploy-guide.md)
 
 ---
 
@@ -25,11 +27,13 @@ allowed-tools: Bash, Read, Write, Glob, Grep
 - 需要查看项目全局进度和状态
 - 向非 CLI 用户展示项目状态
 - 审阅 Spec 耗时、审计历史、AB 测试趋势
+- 通过看板表单提交 Issue (bug/feature/question)
 
 ### 不使用场景
 
 - 实时状态快照 (文本) -> 使用 `state-scanner`
 - 更新 UPM 进度数据 -> 使用 `progress-updater`
+- 已有 CLI 环境时直接提交 Issue -> 使用 `aria-report`
 
 ---
 
@@ -103,6 +107,35 @@ allowed-tools: Bash, Read, Write, Glob, Grep
   4. 组装完整 HTML
 ```
 
+### Step 2.5: Issue 表单注入
+
+在 HTML 生成时，将 Issue 提交表单区块注入到看板内容之后、页脚之前。
+
+```yaml
+表单区块: "提交反馈" section
+占位符: {{ISSUE_FORM_HTML}} (模板已内置，无需动态替换)
+
+表单字段:
+  title:       text input (必填, maxlength=100)
+  description: textarea (必填)
+  priority:    select (P0 | P1 | P2 | P3, 默认 P2)
+  type:        select (bug | feature | question, 默认 bug)
+
+交互模式 (静态 HTML, 无后端):
+  1. 用户填写表单
+  2. 点击 "生成 Issue Markdown" 按钮
+  3. JavaScript 在页面内生成 Issue Markdown 内容 (含 frontmatter)
+  4. 显示在只读文本框中，供用户手动复制
+  5. 用户可通过 CLI 或手动创建 .aria/issues/ISSUE-{timestamp}.md
+
+可部署模式 (Web 服务):
+  1. 表单 POST 到后端
+  2. 后端写入 .aria/issues/ 并 git commit
+  3. 详见 references/deploy-guide.md
+```
+
+**说明**: 静态 HTML 模式下无后端，Issue 表单仅生成 Markdown 供手动使用。需要直接提交功能时，参考部署指南启动 Web 服务。
+
 ### Step 3: 输出
 
 ```yaml
@@ -115,6 +148,44 @@ allowed-tools: Bash, Read, Write, Glob, Grep
      - Linux: xdg-open .aria/dashboard/index.html 2>/dev/null || true
      - 打开失败不报错 (可能在 headless 环境)
   4. 输出文件路径和数据摘要
+```
+
+### Step 4: Issue 存储 (Web 服务模式)
+
+当看板以 Web 服务模式运行时，处理 Issue 提交请求。静态 HTML 模式下此步骤不执行。
+
+```yaml
+触发: POST /api/issues (Web 服务模式)
+
+存储后端选择 (读取 .aria/config.json → dashboard.issue_backend):
+
+  Git 原生模式 (默认, issue_backend = "git"):
+    1. 生成 timestamp (UTC, ISO 8601, 冒号替换为连字符)
+       例: "2026-03-27T14-05-32Z"
+    2. 构造路径: .aria/issues/ISSUE-{timestamp}.md
+    3. mkdir -p .aria/issues/
+    4. 写入 Markdown 文件 (frontmatter + body)
+       格式见 references/issue-storage.md 第 1 节
+    5. git add .aria/issues/ISSUE-{timestamp}.md
+    6. git commit -m "chore(issues): add ISSUE-{timestamp} — {title_truncated}"
+       title 超过 50 字符时截断并加 "..."
+
+  GitHub API 模式 (issue_backend = "github"):
+    1. 读取 issue_repo 配置 (格式: owner/repo)
+    2. 认证: 环境变量 ARIA_GITHUB_TOKEN 或 config 中的 token
+    3. POST https://api.github.com/repos/{owner}/{repo}/issues
+       body: title + description + labels [type, priority]
+    4. 详见 references/issue-storage.md 第 3 节
+
+  Forgejo API 模式 (issue_backend = "forgejo"):
+    1. 读取 issue_repo + issue_api_url 配置
+    2. 通过 forgejo CLI wrapper 调用 API
+    3. forgejo POST /repos/{owner}/{repo}/issues -d '{...}'
+    4. 详见 references/issue-storage.md 第 3 节
+
+响应:
+  成功: 返回 Issue ID + 确认消息
+  失败: 返回错误信息 (文件写入失败 / API 调用失败 / 认证缺失)
 ```
 
 ---
@@ -366,8 +437,43 @@ delta == 0 时添加 class "zero"
 |------|--------|------|
 | `dashboard.project_name` | (auto-detect) | 覆盖项目名称 |
 | `dashboard.output_path` | `.aria/dashboard/index.html` | 输出文件路径 |
+| `dashboard.issue_backend` | `"git"` | Issue 存储后端: `git` / `github` / `forgejo` |
+| `dashboard.issue_repo` | `""` | API 模式目标仓库，格式 `owner/repo` |
+| `dashboard.issue_api_url` | `""` | Forgejo 自建实例 API 根地址，GitHub 留空 |
 
 配置缺失时使用默认值，无需 config.json 即可运行。
+
+### Issue 后端切换示例
+
+```json
+// Git 原生 (默认, 无需配置)
+{
+  "dashboard": {
+    "issue_backend": "git"
+  }
+}
+
+// GitHub Issues
+{
+  "dashboard": {
+    "issue_backend": "github",
+    "issue_repo": "10CG/aria-plugin"
+  }
+}
+// 需设置: export ARIA_GITHUB_TOKEN=ghp_xxxx
+
+// Forgejo 自建
+{
+  "dashboard": {
+    "issue_backend": "forgejo",
+    "issue_repo": "10CG/Aria",
+    "issue_api_url": "https://git.example.com/api/v1"
+  }
+}
+// 需设置: export ARIA_FORGEJO_TOKEN=xxxx
+```
+
+完整字段说明见 [references/issue-storage.md](./references/issue-storage.md) 第 5 节。
 
 ---
 
@@ -392,5 +498,7 @@ Dashboard generated successfully.
 ## 参考
 
 - [Data Schema Reference](./references/data-schema.md) -- 完整解析规则和输出格式
-- [HTML Template](./templates/dashboard.html) -- 单文件自包含模板
+- [HTML Template](./templates/dashboard.html) -- 单文件自包含模板 (含 Issue 表单)
+- [Issue Storage Design](./references/issue-storage.md) -- Issue 存储适配器设计 (格式/状态机/API)
+- [Deploy Guide](./references/deploy-guide.md) -- 部署指南 (静态/Git 服务/CI 集成)
 - [proposal.md](../../../openspec/changes/aria-dashboard/proposal.md) -- 功能规范

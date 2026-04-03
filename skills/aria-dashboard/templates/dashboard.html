@@ -612,6 +612,156 @@ body {
   box-shadow: var(--shadow-card);
 }
 
+/* === Issue Form === */
+.issue-form-section {
+  margin-bottom: 24px;
+}
+
+.issue-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 600px) {
+  .issue-form { grid-template-columns: 1fr; }
+}
+
+.issue-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.issue-form .form-group.full-width {
+  grid-column: 1 / -1;
+}
+
+.issue-form label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.issue-form input[type="text"],
+.issue-form textarea,
+.issue-form select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.issue-form input[type="text"]:focus,
+.issue-form textarea:focus,
+.issue-form select:focus {
+  border-color: var(--accent-blue);
+}
+
+.issue-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.issue-form select {
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239298a8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.issue-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.btn-generate {
+  background: var(--accent-blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.btn-generate:hover {
+  background: #4a7de0;
+}
+
+.btn-generate:active {
+  background: #3a6dd0;
+}
+
+.btn-copy {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition);
+  display: none;
+}
+
+.btn-copy:hover {
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
+}
+
+.issue-output {
+  grid-column: 1 / -1;
+  display: none;
+  margin-top: 4px;
+}
+
+.issue-output textarea {
+  width: 100%;
+  min-height: 160px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  color: var(--accent-green);
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 12px;
+  resize: vertical;
+  outline: none;
+}
+
+.issue-output .output-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.issue-form-notice {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
 /* === Footer === */
 .footer {
   text-align: center;
@@ -649,7 +799,7 @@ body {
       <div class="subtitle">Aria Dashboard — Project Progress Overview</div>
     </div>
     <div class="header-right">
-      <div>Aria Dashboard v1.0.0</div>
+      <div>Aria Dashboard v1.1.0</div>
       <div class="generated-at">Generated: {{GENERATED_AT}}</div>
     </div>
   </div>
@@ -785,9 +935,65 @@ body {
     </div>
   </div>
 
+  <!-- ================================================================ -->
+  <!-- Section 6: Issue Submission Form                                -->
+  <!-- ================================================================ -->
+  <div class="section issue-form-section">
+    <div class="section-header">
+      <span class="section-title">Submit Feedback</span>
+      <span class="section-badge">Issue Form</span>
+    </div>
+    <div class="card">
+      <div class="issue-form" id="issueForm">
+        <div class="form-group">
+          <label for="issue-title">Title *</label>
+          <input type="text" id="issue-title" maxlength="100" placeholder="Brief summary of the issue" required>
+        </div>
+        <div class="form-group">
+          <label for="issue-type">Type</label>
+          <select id="issue-type">
+            <option value="bug">Bug</option>
+            <option value="feature">Feature Request</option>
+            <option value="question">Question</option>
+          </select>
+        </div>
+        <div class="form-group full-width">
+          <label for="issue-desc">Description *</label>
+          <textarea id="issue-desc" placeholder="Detailed description, steps to reproduce, expected behavior..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="issue-priority">Priority</label>
+          <select id="issue-priority">
+            <option value="P0">P0 — Production blocker</option>
+            <option value="P1">P1 — Major impact</option>
+            <option value="P2" selected>P2 — Normal (default)</option>
+            <option value="P3">P3 — Low priority</option>
+          </select>
+        </div>
+        <div class="issue-form-actions">
+          <button class="btn-generate" id="btnGenerate" type="button">Generate Issue Markdown</button>
+          <button class="btn-copy" id="btnCopy" type="button">Copy to Clipboard</button>
+        </div>
+        <div class="issue-output" id="issueOutput">
+          <textarea id="issueMarkdown" readonly></textarea>
+          <div class="output-hint">
+            Save this content as <code>.aria/issues/ISSUE-{timestamp}.md</code> then run
+            <code>git add</code> + <code>git commit</code>.
+            For direct submission, see the deploy guide.
+          </div>
+        </div>
+        <div class="issue-form-notice">
+          Static mode: This form generates Markdown for manual use. To submit issues directly,
+          deploy the dashboard as a web service.
+          See <a href="https://github.com/10CG/aria-plugin" style="color:var(--accent-blue)">deploy guide</a> for details.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Footer -->
   <div class="footer">
-    Generated by <strong>aria-dashboard</strong> v1.0.0 — Aria AI-DDD Methodology
+    Generated by <strong>aria-dashboard</strong> v1.1.0 — Aria AI-DDD Methodology
   </div>
 
 </div>
@@ -821,6 +1027,74 @@ body {
       badge.classList.add(text);
     }
   });
+
+  // === Issue Form: Generate Markdown ===
+  var btnGenerate = document.getElementById('btnGenerate');
+  var btnCopy = document.getElementById('btnCopy');
+  var issueOutput = document.getElementById('issueOutput');
+  var issueMarkdown = document.getElementById('issueMarkdown');
+
+  if (btnGenerate) {
+    btnGenerate.addEventListener('click', function() {
+      var title = document.getElementById('issue-title').value.trim();
+      var desc = document.getElementById('issue-desc').value.trim();
+      var type = document.getElementById('issue-type').value;
+      var priority = document.getElementById('issue-priority').value;
+
+      if (!title) {
+        document.getElementById('issue-title').focus();
+        return;
+      }
+      if (!desc) {
+        document.getElementById('issue-desc').focus();
+        return;
+      }
+
+      var now = new Date();
+      var ts = now.toISOString().replace(/:/g, '-').replace(/\.\d+Z$/, 'Z');
+      var id = 'ISSUE-' + ts;
+      var isoFull = now.toISOString();
+
+      var md = '---\n'
+        + 'id: ' + id + '\n'
+        + 'title: "' + title.replace(/"/g, '\\"') + '"\n'
+        + 'type: ' + type + '\n'
+        + 'priority: ' + priority + '\n'
+        + 'status: open\n'
+        + 'created: "' + isoFull + '"\n'
+        + 'updated: "' + isoFull + '"\n'
+        + 'reporter: ""\n'
+        + 'assignee: ""\n'
+        + 'labels: []\n'
+        + 'resolution: ""\n'
+        + 'pr_link: ""\n'
+        + '---\n\n'
+        + '## Description\n\n'
+        + desc + '\n';
+
+      issueMarkdown.value = md;
+      issueOutput.style.display = 'block';
+      btnCopy.style.display = 'inline-block';
+    });
+  }
+
+  if (btnCopy) {
+    btnCopy.addEventListener('click', function() {
+      issueMarkdown.select();
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(issueMarkdown.value);
+        } else {
+          document.execCommand('copy');
+        }
+        btnCopy.textContent = 'Copied!';
+        setTimeout(function() { btnCopy.textContent = 'Copy to Clipboard'; }, 2000);
+      } catch (e) {
+        btnCopy.textContent = 'Copy failed';
+        setTimeout(function() { btnCopy.textContent = 'Copy to Clipboard'; }, 2000);
+      }
+    });
+  }
 })();
 </script>
 </body>
