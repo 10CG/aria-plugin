@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-04-03
+
+### Added
+
+- **aria-dashboard Skill** — 项目进度看板生成器
+  - 5 数据解析器: UPM, User Stories, OpenSpec, Audit Reports, AB Benchmark
+  - 单文件自包含 HTML 模板 (深色主题, 响应式, 零 CDN)
+  - 跨项目兼容: UPM 双格式 (HTML 注释 + YAML 代码块), Story 中英文字段
+  - Issue 存储适配器设计 (Git 原生 + GitHub/Forgejo API 双模式)
+  - Phase 1 完整看板交付, Phase 2-3 (Issue 提交 + 心跳 Agent) 待实施
+
+### Changed
+
+- **Skills 总数**: 32 → 33 (29 → 30 user-facing)
+
+---
+
 ## [1.9.0] - 2026-04-02
 
 ### Added
