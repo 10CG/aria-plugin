@@ -53,6 +53,13 @@
   活跃检查点: post_spec, post_implementation, pre_merge
   上次审计: post_spec — PASS (收敛, 2 轮)
 
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  ✅ db-migration-status: OK
+  ⚠️ benchmark-summary-freshness: STALE (warning)
+     修复建议: python3 scripts/aggregate-results.py
+  ✅ license-audit: OK
+
 📝 README 同步状态
 ───────────────────────────────────────────────────────────────
   README.md: ✅ 版本一致 (v1.7.0) | 日期一致 (2026-03-18)
@@ -311,4 +318,60 @@
 
 ---
 
-**最后更新**: 2026-03-27
+## 自定义检查未配置时
+
+此区块不输出 (`.aria/state-checks.yaml` 不存在时静默跳过)。
+
+---
+
+## 自定义检查配置解析失败时
+
+```
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  配置状态: ⚠️ .aria/state-checks.yaml 解析失败
+  错误: YAML syntax error at line 5
+  建议操作: 修复配置文件语法
+```
+
+---
+
+## 自定义检查全部通过时
+
+```
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  ✅ db-migration-status: OK
+  ✅ benchmark-summary-freshness: OK
+  ✅ license-audit: OK
+```
+
+---
+
+## 自定义检查有 error 级别失败时
+
+```
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  🔴 license-audit: EXPIRED (error)
+     修复建议: npm run license-check -- --fix
+  ⚠️ benchmark-summary-freshness: STALE (warning)
+     修复建议: python3 scripts/aggregate-results.py
+  ✅ db-migration-status: OK
+```
+
+---
+
+## 自定义检查超时时
+
+```
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  ✅ db-migration-status: OK
+  ⏱️ slow-integration-check: TIMEOUT (15s) (warning)
+  ✅ license-audit: OK
+```
+
+---
+
+**最后更新**: 2026-04-03

@@ -35,7 +35,7 @@ allowed-tools: Read, Glob, Grep, Bash
 
 | 功能 | 描述 |
 |------|------|
-| **状态感知** | 收集 Git 状态、UPM 进度、OpenSpec 状态、审计状态、变更分析 |
+| **状态感知** | 收集 Git 状态、UPM 进度、OpenSpec 状态、审计状态、自定义检查、变更分析 |
 | **智能推荐** | 基于状态生成工作流推荐，附带理由说明 |
 | **用户确认** | 展示选项，让用户确认或自定义工作流 |
 | **工作流启动** | 将确认的工作流传递给 workflow-runner 执行 |
@@ -105,6 +105,22 @@ allowed-tools: Read, Glob, Grep, Bash
       timestamp: "2026-03-27T10:00:00Z"
       verdict: PASS/PASS_WITH_WARNINGS/FAIL
       converged: true/false
+
+  custom_checks:                      # v2.8.0 新增: 项目级自定义检查
+    configured: true/false            # .aria/state-checks.yaml 是否存在
+    total: 3                          # 检查项总数
+    passed: 2                         # 通过数
+    failed: 1                         # 失败数
+    results:                          # 各检查结果
+      - name: "benchmark-summary-freshness"
+        status: fail                  # pass/fail/timeout/error
+        severity: warning             # info/warning/error
+        output: "STALE"               # stdout 首行
+        fix: "python3 scripts/aggregate-results.py"  # 修复建议 (如有)
+      - name: "db-migration-status"
+        status: pass
+        severity: info
+        output: "OK"
 
   requirements:                       # 新增: 需求状态
     configured: 是否配置需求追踪
@@ -416,6 +432,84 @@ openspec/
     enabled: false
 ```
 
+### 阶段 1.11: 项目级自定义健康检查
+
+**重要**: 此阶段始终执行，检测并运行项目级自定义健康检查。
+
+```yaml
+配置路径: .aria/state-checks.yaml
+
+检测步骤:
+  1. 检查 .aria/state-checks.yaml 是否存在 (用 [ -f ] 检测)
+     a. 不存在 → configured: false, 静默跳过
+     b. 存在但 YAML 解析失败 → 输出解析警告, 跳过
+     c. 存在且有效 → 读取 checks 列表
+  2. 验证 schema version 字段 (当前仅支持 "1")
+  3. 串行执行每个 enabled=true 的检查:
+     a. 工作目录: 项目根目录
+     b. 超时: timeout_seconds (默认 15, 上限 60)
+     c. 总超时: 60s (超出后跳过剩余检查并警告)
+     d. 捕获 exit code: 0=pass, 非 0=fail
+     e. 捕获 stdout 首行作为状态输出
+     f. 超时 → status: timeout
+     g. 命令不存在 (exit 127) → status: error
+  4. 汇总结果到 custom_checks 数据结构
+
+配置 Schema (.aria/state-checks.yaml):
+  version: "1"                      # 必填, schema 版本
+  checks:
+    - name: string                  # 必填, 唯一标识
+      description: string           # 必填, 人类可读描述 (AI 用于解释)
+      command: string               # 必填, shell 命令
+      severity: info|warning|error  # 必填, 影响推荐权重
+      fix: string                   # 选填, 修复命令提示 (不自动执行)
+      timeout_seconds: integer      # 选填, 默认 15, 上限 60
+      enabled: boolean              # 选填, 默认 true
+
+安全模型:
+  - 与 hooks.json 信任模型一致, 不做沙箱
+  - fix 命令仅作为建议展示, 需用户显式触发
+  - 检查失败不阻塞 state-scanner 主流程
+
+输出 (已配置, 有检查项):
+  custom_checks:
+    configured: true
+    total: 3
+    passed: 2
+    failed: 1
+    results:
+      - name: "benchmark-summary-freshness"
+        status: fail
+        severity: warning
+        output: "STALE"
+        fix: "python3 scripts/aggregate-results.py"
+      - name: "db-migration-status"
+        status: pass
+        severity: info
+        output: "OK"
+      - name: "license-audit"
+        status: pass
+        severity: error
+        output: "OK"
+
+输出 (已配置, 全部通过):
+  custom_checks:
+    configured: true
+    total: 3
+    passed: 3
+    failed: 0
+    results: [...]
+
+输出 (未配置):
+  custom_checks:
+    configured: false
+
+输出 (配置解析失败):
+  custom_checks:
+    configured: false
+    parse_error: "YAML syntax error at line 5"
+```
+
 ---
 
 ### 阶段 2: 推荐决策
@@ -424,7 +518,9 @@ openspec/
 
 规则覆盖: commit_only → quick_fix → feature_with_spec → feature_new，
 以及需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec 等，
-以及审计相关: audit_unconverged (当存在未收敛审计报告时提示)。
+以及审计相关: audit_unconverged (当存在未收敛审计报告时提示)，
+以及自定义检查: custom_check_failed (当 severity=error 的检查失败时阻断推荐)、
+custom_check_warning (当 severity=warning 的检查失败时降级推荐并附加 fix 提示)。
 
 当 `audit.enabled=true` 时，推荐输出中展示审计状态摘要:
 - 上次审计的 verdict 和收敛状态
@@ -517,6 +613,13 @@ openspec/
   审计系统: ✅ 已启用 (adaptive 模式)
   活跃检查点: post_spec, post_implementation, pre_merge
   上次审计: post_spec — PASS (收敛, 2 轮)
+
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  ✅ db-migration-status: OK
+  ⚠️ benchmark-summary-freshness: STALE (warning)
+     修复建议: python3 scripts/aggregate-results.py
+  ✅ license-audit: OK
 
 🎯 推荐工作流
 ───────────────────────────────────────────────────────────────
@@ -686,5 +789,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-03-27
-**Skill版本**: 2.7.0 (新增审计状态扫描、adaptive 集成、复杂度传递)
+**最后更新**: 2026-04-03
+**Skill版本**: 2.8.0 (新增项目级自定义健康检查 Phase 1.11)

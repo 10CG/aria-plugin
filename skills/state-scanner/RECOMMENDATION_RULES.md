@@ -14,6 +14,8 @@
 | `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated | 80% | No |
 | `architecture_chain_broken` | 1.8 | fix-architecture | 需求链路不完整 | 80% | No |
 | `audit_unconverged` | 1.9 | (建议性提示) | 最新审计报告未收敛 | 75% | No — 用户可能已知并选择接受 |
+| `custom_check_failed` | 1.95 | (阻断提示) | severity=error 的自定义检查失败 | 90% | No — 需用户确认修复 |
+| `custom_check_warning` | 1.96 | (降级提示) | severity=warning 的自定义检查失败 | 70% | No — 非阻塞，附加 fix 建议 |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
 | `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |
@@ -400,6 +402,95 @@ recommendation:
     - "查看报告: {report_path}"
     - "workflow-runner 会在对应阶段自动重新触发审计"
   non_blocking: true  # 建议性，不阻塞工作流
+```
+
+---
+
+## 自定义检查相关规则详情
+
+### 1.95 custom_check_failed
+
+```yaml
+id: custom_check_failed
+priority: 1.95
+description: severity=error 的自定义健康检查失败，阻断推荐
+
+conditions:
+  all:
+    - custom_checks_configured: true
+    - custom_checks_has_error_failure: true  # 至少一个 severity=error 的检查 fail
+
+  detection:
+    config_check: ".aria/state-checks.yaml exists"
+    result_scan: "custom_checks.results[].status == fail AND severity == error"
+
+recommendation:
+  workflow: null  # 阻断推荐，要求用户先修复
+  info: "🔴 自定义检查失败 ({failed_check_names})"
+  suggestion:
+    - "修复建议: {fix_command}"
+    - "跳过检查: 在 .aria/state-checks.yaml 中设置 enabled: false"
+  blocking: true  # 阻断其他推荐
+```
+
+### 1.96 custom_check_warning
+
+```yaml
+id: custom_check_warning
+priority: 1.96
+description: severity=warning 的自定义健康检查失败，降级推荐
+
+conditions:
+  all:
+    - custom_checks_configured: true
+    - custom_checks_has_warning_failure: true  # 至少一个 severity=warning 的检查 fail
+    - custom_checks_no_error_failure: true     # 无 severity=error 的失败 (否则由 1.95 处理)
+
+  detection:
+    config_check: ".aria/state-checks.yaml exists"
+    result_scan: "custom_checks.results[].status == fail AND severity == warning"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅提示
+  info: "⚠️ 自定义检查警告 ({warning_check_names})"
+  suggestion:
+    - "修复建议: {fix_command}"
+  non_blocking: true  # 不阻塞，附加到推荐输出
+```
+
+### 自定义检查状态检测
+
+```yaml
+custom_checks_detection:
+  config_path: ".aria/state-checks.yaml"
+
+  step_1:
+    command: "[ -f .aria/state-checks.yaml ] && echo 'EXISTS' || echo 'NOT_EXISTS'"
+    result: configured (boolean)
+
+  step_2:
+    condition: configured == true
+    action: "parse YAML, validate schema version == '1'"
+    on_parse_error: "configured = false, parse_error = message"
+
+  step_3:
+    condition: configured == true AND checks list non-empty
+    action: "串行执行每个 enabled != false 的检查"
+    execution:
+      working_dir: project root
+      timeout_per_check: timeout_seconds (default 15, max 60)
+      timeout_total: 60s
+      exit_code: 0 = pass, non-zero = fail
+      stdout: first line as output
+      on_timeout: status = timeout, severity treated as warning
+      on_command_not_found: status = error, severity treated as warning
+
+  aggregation:
+    total: count(all checks)
+    passed: count(status == pass)
+    failed: count(status != pass)
+    has_error_failure: any(status == fail AND severity == error)
+    has_warning_failure: any(status == fail AND severity == warning)
 ```
 
 ---
@@ -865,9 +956,15 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-04-03
 
 ## 变更历史
+
+### v2.8.0 (2026-04-03)
+
+- **新增**: 规则 `custom_check_failed` (优先级 1.95) — severity=error 自定义检查失败阻断
+- **新增**: 规则 `custom_check_warning` (优先级 1.96) — severity=warning 自定义检查降级提示
+- **新增**: 自定义检查状态检测方法 (YAML 解析 + 命令执行 + 结果聚合)
 
 ### v2.7.0 (2026-03-27)
 
