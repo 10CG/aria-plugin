@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{PROJECT_NAME}} — Aria Dashboard</title>
+<style>
+/* === Reset & Base === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-card: #21242f;
+  --bg-card-hover: #282c3a;
+  --bg-input: #2a2e3b;
+  --border: #2e3241;
+  --border-light: #3a3f52;
+  --text-primary: #e4e6ed;
+  --text-secondary: #9298a8;
+  --text-muted: #6b7185;
+  --accent-blue: #5b8def;
+  --accent-blue-dim: rgba(91,141,239,0.15);
+  --accent-green: #3dd68c;
+  --accent-green-dim: rgba(61,214,140,0.15);
+  --accent-yellow: #f0c351;
+  --accent-yellow-dim: rgba(240,195,81,0.15);
+  --accent-red: #ef6b6b;
+  --accent-red-dim: rgba(239,107,107,0.15);
+  --accent-purple: #a78bfa;
+  --accent-purple-dim: rgba(167,139,250,0.15);
+  --accent-orange: #f59e42;
+  --accent-orange-dim: rgba(245,158,66,0.15);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 2px 8px rgba(0,0,0,0.25);
+  --shadow-hover: 0 4px 16px rgba(0,0,0,0.35);
+  --transition: 0.2s ease;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* === Layout === */
+.dashboard {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+/* === Header === */
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
+}
+
+.header-left .subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.header-right {
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.header-right .generated-at {
+  margin-top: 4px;
+}
+
+/* === Phase Banner === */
+.phase-banner {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.phase-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.phase-name {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.in_progress, .status-badge.active, .status-badge.doing {
+  background: var(--accent-blue-dim);
+  color: var(--accent-blue);
+  border: 1px solid rgba(91,141,239,0.3);
+}
+
+.status-badge.completed, .status-badge.done {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+  border: 1px solid rgba(61,214,140,0.3);
+}
+
+.status-badge.blocked {
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+  border: 1px solid rgba(239,107,107,0.3);
+}
+
+.status-badge.unknown {
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.cycle-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.cycle-bar {
+  width: 120px;
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.cycle-bar-fill {
+  height: 100%;
+  background: var(--accent-blue);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+/* === KPI Row === */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.kpi-card:hover {
+  border-color: var(--border-light);
+  box-shadow: var(--shadow-hover);
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.kpi-target {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.kpi-progress {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.kpi-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+/* === Section === */
+.section {
+  margin-bottom: 24px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.section-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 2px 10px;
+  border-radius: 12px;
+}
+
+/* === Story Board (Three Columns) === */
+.story-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 768px) {
+  .story-board { grid-template-columns: 1fr; }
+}
+
+.story-column {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  min-height: 200px;
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.column-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.column-title.todo { color: var(--accent-yellow); }
+.column-title.wip { color: var(--accent-blue); }
+.column-title.done { color: var(--accent-green); }
+
+.column-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+.story-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  cursor: default;
+}
+
+.story-card:hover {
+  border-color: var(--border-light);
+  box-shadow: var(--shadow-card);
+}
+
+.story-card:last-child { margin-bottom: 0; }
+
+.story-id {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-blue);
+  margin-bottom: 3px;
+}
+
+.story-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.story-priority {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-top: 6px;
+}
+
+.story-priority.high {
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+}
+
+.story-priority.medium {
+  background: var(--accent-yellow-dim);
+  color: var(--accent-yellow);
+}
+
+.story-priority.low {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+}
+
+/* === Two-Column Layout (Specs + Audits) === */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .two-col { grid-template-columns: 1fr; }
+}
+
+/* === Spec Table === */
+.spec-table, .audit-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.spec-table th, .audit-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.spec-table td, .audit-table td {
+  font-size: 13px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.spec-table tr:last-child td,
+.audit-table tr:last-child td {
+  border-bottom: none;
+}
+
+.spec-table tr:hover td,
+.audit-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+
+.spec-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.spec-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.spec-status.approved {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+}
+
+.spec-status.draft {
+  background: var(--accent-yellow-dim);
+  color: var(--accent-yellow);
+}
+
+.spec-status.archived {
+  background: var(--bg-input);
+  color: var(--text-muted);
+}
+
+.spec-status.in-review {
+  background: var(--accent-blue-dim);
+  color: var(--accent-blue);
+}
+
+.spec-duration {
+  font-variant-numeric: tabular-nums;
+}
+
+/* === Audit Table Specifics === */
+.verdict-pass {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.verdict-revise {
+  color: var(--accent-yellow);
+  font-weight: 600;
+}
+
+.audit-checkpoint {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 12px;
+  color: var(--accent-purple);
+}
+
+/* === Stats Bar === */
+.stats-bar {
+  display: flex;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.stat-item strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* === Benchmark Section === */
+.benchmark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.benchmark-stat {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.benchmark-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.benchmark-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.benchmark-stat-value.positive { color: var(--accent-green); }
+.benchmark-stat-value.neutral { color: var(--text-secondary); }
+.benchmark-stat-value.negative { color: var(--accent-red); }
+
+.top-skills-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.skill-chip .delta {
+  font-weight: 600;
+  color: var(--accent-green);
+}
+
+.skill-chip .delta.zero {
+  color: var(--text-muted);
+}
+
+/* === Risks === */
+.risk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.risk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.risk-severity {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.risk-severity.critical { background: var(--accent-red); }
+.risk-severity.high { background: var(--accent-orange); }
+.risk-severity.medium { background: var(--accent-yellow); }
+.risk-severity.low { background: var(--accent-green); }
+
+.risk-desc {
+  flex: 1;
+  color: var(--text-secondary);
+}
+
+.risk-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.risk-status.open {
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+}
+
+.risk-status.mitigating {
+  background: var(--accent-yellow-dim);
+  color: var(--accent-yellow);
+}
+
+.risk-status.resolved {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+}
+
+/* === Empty State === */
+.empty-state {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.empty-state .empty-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+/* === Card wrapper for sections === */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+/* === Footer === */
+.footer {
+  text-align: center;
+  padding: 24px 0 0;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* === Responsive === */
+@media (max-width: 600px) {
+  .dashboard { padding: 16px 12px 32px; }
+  .header { flex-direction: column; gap: 12px; }
+  .header-right { text-align: left; }
+  .phase-banner { flex-direction: column; align-items: flex-start; }
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  .benchmark-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* === Scrollbar === */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <h1>{{PROJECT_NAME}}</h1>
+      <div class="subtitle">Aria Dashboard — Project Progress Overview</div>
+    </div>
+    <div class="header-right">
+      <div>Aria Dashboard v1.0.0</div>
+      <div class="generated-at">Generated: {{GENERATED_AT}}</div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Section 1: Progress Overview (Phase + KPI + Cycle)               -->
+  <!-- ================================================================ -->
+  <div class="phase-banner">
+    <div class="phase-info">
+      <span class="phase-name">{{PHASE_NAME}}</span>
+      <span class="status-badge {{PHASE_STATUS_CLASS}}">{{PHASE_STATUS}}</span>
+    </div>
+    <div class="cycle-info">
+      <span>Cycle #{{CYCLE_NUMBER}}</span>
+      <div class="cycle-bar">
+        <div class="cycle-bar-fill" style="width: {{CYCLE_PCT}}%"></div>
+      </div>
+      <span>{{CYCLE_PCT}}%</span>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    {{KPI_HTML}}
+  </div>
+
+  <!-- Risks -->
+  {{RISKS_SECTION}}
+
+  <!-- ================================================================ -->
+  <!-- Section 2: Story Board (Three Columns)                           -->
+  <!-- ================================================================ -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">User Stories</span>
+      <span class="section-badge">{{STORIES_TOTAL}} stories</span>
+    </div>
+    <div class="story-board">
+      <!-- TODO Column -->
+      <div class="story-column">
+        <div class="column-header">
+          <span class="column-title todo">TODO</span>
+          <span class="column-count">{{STORIES_TODO_COUNT}}</span>
+        </div>
+        {{STORIES_TODO_HTML}}
+      </div>
+      <!-- In Progress Column -->
+      <div class="story-column">
+        <div class="column-header">
+          <span class="column-title wip">In Progress</span>
+          <span class="column-count">{{STORIES_WIP_COUNT}}</span>
+        </div>
+        {{STORIES_WIP_HTML}}
+      </div>
+      <!-- Done Column -->
+      <div class="story-column">
+        <div class="column-header">
+          <span class="column-title done">Done</span>
+          <span class="column-count">{{STORIES_DONE_COUNT}}</span>
+        </div>
+        {{STORIES_DONE_HTML}}
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Section 3 & 4: OpenSpec + Audit History (Two Columns)            -->
+  <!-- ================================================================ -->
+  <div class="two-col section">
+    <!-- OpenSpec List -->
+    <div class="card">
+      <div class="section-header">
+        <span class="section-title">OpenSpec</span>
+        <span class="section-badge">{{SPECS_ACTIVE_COUNT}} active / {{SPECS_ARCHIVED_COUNT}} archived</span>
+      </div>
+      <div class="stats-bar">
+        <span class="stat-item">Avg duration: <strong>{{SPECS_AVG_DURATION}} days</strong></span>
+      </div>
+      {{SPECS_TABLE_HTML}}
+    </div>
+
+    <!-- Audit History -->
+    <div class="card">
+      <div class="section-header">
+        <span class="section-title">Audit History</span>
+        <span class="section-badge">{{AUDITS_TOTAL}} reports</span>
+      </div>
+      {{AUDITS_TABLE_HTML}}
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Section 5: AB Benchmark Summary                                  -->
+  <!-- ================================================================ -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">AB Benchmark Summary</span>
+      <span class="section-badge">{{BENCHMARK_DATE}}</span>
+    </div>
+    <div class="benchmark-grid">
+      <div class="benchmark-stat">
+        <div class="benchmark-stat-value neutral">{{BENCHMARK_TOTAL}}</div>
+        <div class="benchmark-stat-label">Skills Tested</div>
+      </div>
+      <div class="benchmark-stat">
+        <div class="benchmark-stat-value positive">+{{BENCHMARK_AVG_DELTA}}</div>
+        <div class="benchmark-stat-label">Avg Delta</div>
+      </div>
+      <div class="benchmark-stat">
+        <div class="benchmark-stat-value positive">{{BENCHMARK_WIN_RATE_PCT}}%</div>
+        <div class="benchmark-stat-label">Win Rate</div>
+      </div>
+      <div class="benchmark-stat">
+        <div class="benchmark-stat-value positive">{{BENCHMARK_WITH_BETTER}}</div>
+        <div class="benchmark-stat-label">WITH_BETTER</div>
+      </div>
+      <div class="benchmark-stat">
+        <div class="benchmark-stat-value neutral">{{BENCHMARK_EQUAL}}</div>
+        <div class="benchmark-stat-label">EQUAL</div>
+      </div>
+      <div class="benchmark-stat">
+        <div class="benchmark-stat-value neutral">{{BENCHMARK_MIXED}}</div>
+        <div class="benchmark-stat-label">MIXED</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-header">
+        <span class="section-title" style="font-size:13px;">Top Skills by Delta</span>
+      </div>
+      <div class="top-skills-list">
+        {{BENCHMARK_TOP_HTML}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    Generated by <strong>aria-dashboard</strong> v1.0.0 — Aria AI-DDD Methodology
+  </div>
+
+</div>
+
+<script>
+/* === Minimal JS for interactivity === */
+(function() {
+  'use strict';
+
+  // Collapse/Expand sections on title click
+  document.querySelectorAll('.section-header').forEach(function(header) {
+    header.style.cursor = 'pointer';
+    header.addEventListener('click', function() {
+      var section = this.parentElement;
+      var content = section.querySelectorAll(':scope > *:not(.section-header)');
+      content.forEach(function(el) {
+        if (el.style.display === 'none') {
+          el.style.display = '';
+        } else {
+          el.style.display = 'none';
+        }
+      });
+    });
+  });
+
+  // Highlight active phase status
+  var badges = document.querySelectorAll('.status-badge');
+  badges.forEach(function(badge) {
+    var text = badge.textContent.trim().toLowerCase();
+    if (!badge.classList.contains(text)) {
+      badge.classList.add(text);
+    }
+  });
+})();
+</script>
+</body>
+</html>
