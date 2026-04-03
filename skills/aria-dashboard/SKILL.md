@@ -42,15 +42,26 @@ allowed-tools: Bash, Read, Write, Glob, Grep
 ```yaml
 数据源:
   1. UPM (项目进度总览):
-     路径: Glob "**/unified-progress-management.md"
-     提取: HTML 注释中的 UPMv2-STATE YAML 区块
-     正则: /<!--\s*UPMv2-STATE\s*\n([\s\S]+?)\n-->/
+     路径: Glob "**/{unified-progress-management,UPM}.md"
+     提取: UPMv2-STATE YAML 区块 (两种格式)
+     正则 (优先级顺序):
+       1. HTML 注释: /<!--\s*UPMv2-STATE\s*\n([\s\S]+?)\n-->/
+       2. YAML 代码块: /```ya?ml\s*\n([\s\S]*?project:\s[\s\S]+?)\n```/
      输出: phase / status / KPI / cycle / risks
 
   2. User Stories (三列看板):
-     路径: docs/requirements/user-stories/*.md
+     路径: docs/requirements/user-stories/*.md (所有 .md 文件, 不限 US- 前缀)
      提取: 文件名 ID + 标题 + Status + Priority
-     分组: done|completed → 已完成, in_progress|active → 进行中, 其余 → TODO
+     ID 提取: 文件名去掉 .md 后缀 (支持 US-001, MEM-001, OPS-001 等任意前缀)
+     Status 字段匹配 (多语言, 按优先级):
+       1. /\*\*Status\*\*:\s*(.+)/i
+       2. /\*\*状态\*\*:\s*(.+)/i
+       3. /^Status:\s*(.+)/im
+       4. /^状态:\s*(.+)/im
+     Priority 字段匹配:
+       1. /\*\*Priority\*\*:\s*(.+)/i
+       2. /\*\*优先级\*\*:\s*(.+)/i
+     分组: done|completed|已完成 → 已完成, in_progress|active|进行中 → 进行中, 其余 → TODO
 
   3. OpenSpec (活跃 + 归档):
      活跃路径: openspec/changes/*/proposal.md
