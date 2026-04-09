@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-04-09
+
+### Added
+
+- **state-scanner v2.9.0** — 两个新子阶段扩展状态感知能力 (Forgejo Issue #6)
+  - **Phase 1.12 — 本地/远程同步检测** (`state_scanner.sync_check.*`, 默认开启)
+    - 主分支 upstream ahead/behind 计算 (修复 upstream 未配置场景 exit ≠ 0)
+    - Submodule 四级 fallback 链 (origin/HEAD → ls-remote → config_default → unavailable)
+    - 浅克隆检测 (git ≥ 2.15 `--is-shallow-repository` + `.git/shallow` 兼容 fallback)
+    - FETCH_HEAD 跨平台时间戳读取 (`git log -1 --format=%cr`)
+    - 不主动 `git fetch` (Tier 2 `ls-remote` 5s 超时例外)
+    - 新增推荐规则: `submodule_drift` + `branch_behind_upstream` (降级非阻断)
+  - **Phase 1.13 — Issue 感知扫描** (`state_scanner.issue_scan.*`, 默认关闭 opt-in)
+    - 平台检测 4 级优先级 (显式 config → hostname 映射 → URL 推断 → 兜底)
+    - Forgejo + GitHub CLI 适配 (复用 `forgejo` / `gh` wrapper, 不管理 token)
+    - IssueItem normalize 映射 (Forgejo `.labels[].name` vs GitHub `.labels[].name`)
+    - 启发式关联 US-NNN 和 OpenSpec change 名 (单词边界正则 + URL 保护)
+    - 10 个 `fetch_error` 枚举值统一 (network_unavailable / cli_missing / auth_missing / auth_failed / rate_limited / not_found_or_no_access / timeout / platform_unknown / parse_error / unknown)
+    - 15 分钟缓存 TTL (`.aria/cache/issues.json`) + 同步 refresh + 旧缓存 fallback
+    - 总阶段超时 12s (Forgejo + CF Access TLS 余量) + API 超时 5s
+    - 新增推荐规则: `open_blocker_issues` (降级非阻断)
+  - **SKILL.md 阶段数量上限规约** (D8): 当前 13/15 阶段，超过 15 必须重构为分组
+- **config-loader v2.9** — 14 个新字段 (sync_check 4 + issue_scan 10) 默认值与验证规则
+- **references/sync-detection.md** (新建) — Phase 1.12 完整实现逻辑
+- **references/issue-scanning.md** (新建) — Phase 1.13 完整实现逻辑
+
+### Changed
+
+- **state-scanner**: v2.8.0 → v2.9.0 (新增 2 个子阶段, 11 → 13)
+- **config.template.json**: 新增 `state_scanner.sync_check` 和 `state_scanner.issue_scan` 完整 block
+- **.gitignore**: 新增 `.aria/cache/` 和 `.aria/heartbeat-scan.json` 运行时目录/文件
+- **Skill 数量**: 33 (state-scanner 功能扩展，非新增 Skill)
+
+### Fixed
+
+- state-scanner 过去无法检测本地与远程的 sync 状态，容易在陈旧代码上做错推荐
+- state-scanner 过去无法感知 open issues，用户需手动轮询平台
+
+### Audit Process
+
+- **post_spec 检查点**: 2 轮 convergence 审计 (Round 1 REVISE 22 issues → Round 2 PASS 收敛)
+- **审计报告**: `.aria/audit-reports/post_spec-2026-04-09T1240Z.md` + `post_spec-2026-04-09T1315Z.md`
+- **OpenSpec 并行发布**:
+  - `openspec/changes/state-scanner-remote-sync-check/` (Level 2)
+  - `openspec/changes/state-scanner-issue-awareness/` (Level 3)
+
+---
+
 ## [1.10.0] - 2026-04-03
 
 ### Added

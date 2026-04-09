@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **版本**: 1.8.0 | **发布日期**: 2026-03-27
+> **版本**: 1.11.0 | **发布日期**: 2026-04-09
 >
-> Claude Code 的 AI-DDD 方法论完整插件 — 28 个 Skills + 11 个 Agents + Hooks 系统
+> Claude Code 的 AI-DDD 方法论完整插件 — 30 个 Skills + 11 个 Agents + Hooks 系统
 
 ## 前置条件
 
@@ -37,7 +37,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills（28 个面向用户 + 2 个内部）
+### Skills（30 个面向用户 + 3 个内部）
 
 **十步循环核心**
 - state-scanner — 项目状态扫描与智能工作流推荐
