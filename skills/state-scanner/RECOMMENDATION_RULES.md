@@ -14,6 +14,11 @@
 | `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated | 80% | No |
 | `architecture_chain_broken` | 1.8 | fix-architecture | 需求链路不完整 | 80% | No |
 | `audit_unconverged` | 1.9 | (建议性提示) | 最新审计报告未收敛 | 75% | No — 用户可能已知并选择接受 |
+| `custom_check_failed` | 1.95 | (阻断提示) | severity=error 的自定义检查失败 | 90% | No — 需用户确认修复 |
+| `custom_check_warning` | 1.96 | (降级提示) | severity=warning 的自定义检查失败 | 70% | No — 非阻塞，附加 fix 建议 |
+| `submodule_drift` | 1.97 | (降级提示) | 任一子模块 `tree_vs_remote == true` | 70% | No — 非阻塞，附加 update 建议 |
+| `branch_behind_upstream` | 1.98 | (降级提示) | 当前分支落后 upstream >= 5 commits | 65% | No — 非阻塞，附加 pull 建议 |
+| `open_blocker_issues` | 1.99 | (降级提示) | 存在 blocker/critical label 的 open issue | 70% | No — 仅 issue_scan.enabled=true 时触发 |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
 | `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |
@@ -400,6 +405,197 @@ recommendation:
     - "查看报告: {report_path}"
     - "workflow-runner 会在对应阶段自动重新触发审计"
   non_blocking: true  # 建议性，不阻塞工作流
+```
+
+---
+
+## 自定义检查相关规则详情
+
+### 1.95 custom_check_failed
+
+```yaml
+id: custom_check_failed
+priority: 1.95
+description: severity=error 的自定义健康检查失败，阻断推荐
+
+conditions:
+  all:
+    - custom_checks_configured: true
+    - custom_checks_has_error_failure: true  # 至少一个 severity=error 的检查 fail
+
+  detection:
+    config_check: ".aria/state-checks.yaml exists"
+    result_scan: "custom_checks.results[].status == fail AND severity == error"
+
+recommendation:
+  workflow: null  # 阻断推荐，要求用户先修复
+  info: "🔴 自定义检查失败 ({failed_check_names})"
+  suggestion:
+    - "修复建议: {fix_command}"
+    - "跳过检查: 在 .aria/state-checks.yaml 中设置 enabled: false"
+  blocking: true  # 阻断其他推荐
+```
+
+### 1.96 custom_check_warning
+
+```yaml
+id: custom_check_warning
+priority: 1.96
+description: severity=warning 的自定义健康检查失败，降级推荐
+
+conditions:
+  all:
+    - custom_checks_configured: true
+    - custom_checks_has_warning_failure: true  # 至少一个 severity=warning 的检查 fail
+    - custom_checks_no_error_failure: true     # 无 severity=error 的失败 (否则由 1.95 处理)
+
+  detection:
+    config_check: ".aria/state-checks.yaml exists"
+    result_scan: "custom_checks.results[].status == fail AND severity == warning"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅提示
+  info: "⚠️ 自定义检查警告 ({warning_check_names})"
+  suggestion:
+    - "修复建议: {fix_command}"
+  non_blocking: true  # 不阻塞，附加到推荐输出
+```
+
+### 1.97 submodule_drift
+
+```yaml
+id: submodule_drift
+priority: 1.97
+description: 子模块主仓库记录落后远程 (本地 behind remote), 建议更新后再做状态分析
+
+conditions:
+  any:
+    # **关键修复 (Round 1 pre_merge audit M1)**:
+    # 必须同时满足 tree_vs_remote==true AND behind_count > 0
+    # 理由: behind_count==0 表示 "本地领先远程" (aria-orchestrator 场景), 此时发出
+    # "git submodule update --remote" 是**破坏性**的, 会丢弃本地未推送的 commits.
+    # 单独 tree_vs_remote==true 只说明 tree_commit != remote_commit, 方向未明.
+    - sync_status.submodules[]:
+        all:
+          - drift.tree_vs_remote: true
+          - drift.behind_count: "> 0"  # 必须真正落后, 不是领先
+          - drift.behind_count: "!= null"
+
+  detection:
+    source: "Phase 1.12 sync_status.submodules[]"
+    field_check: "drift.tree_vs_remote == true AND drift.behind_count > 0"
+    prerequisite: "sync_status 存在且 has_remote: true"
+    direction_guard: |
+      drift.behind_count 是 "tree..remote" rev-list count,
+      表示 "主仓库记录落后远程多少 commits".
+      若 behind_count == 0 AND tree_vs_remote == true, 意味着本地领先远程
+      (local commits 未推送), 此时**不触发**本规则, 应走 submodule_ahead_unpushed 规则
+      (后续版本新增) 或仅作 info 级日志.
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅降级提示
+  info: "⚠️ 子模块 {path} 主仓库记录落后远程 {behind_count} commits, 建议: git submodule update --remote {path}"
+  suggestion:
+    - "git submodule update --remote {path}"  # 每个 drift 子模块一条
+  non_blocking: true  # 降级，不阻断任何现有推荐
+
+# === 补充规约 (Round 1 pre_merge audit M1 fix) ===
+safety_note: |
+  破坏性操作守卫: 本规则仅在 behind_count > 0 (真正落后) 时触发破坏性 hint.
+  当 behind_count == 0 (本地领先远程) 时, 应由 state-scanner 在 output 中
+  展示 "本地领先远程 N commits, 建议 git push" 的 info 级提示, 而非调用
+  submodule_drift 规则. 此行为需在 references/sync-detection.md 中同步实现.
+```
+
+### 1.98 branch_behind_upstream
+
+```yaml
+id: branch_behind_upstream
+priority: 1.98
+description: 当前分支落后 upstream，建议先拉取再开发
+
+conditions:
+  all:
+    - sync_status.current_branch.behind: ">= 5"
+    - sync_status.current_branch.upstream_configured: true
+
+  detection:
+    source: "Phase 1.12 sync_status.current_branch"
+    field_check: "behind >= 5"
+    skip_conditions:
+      - "behind == null"   # upstream 未配置或浅克隆，跳过
+      - "reason != null"   # detached_head / no_upstream / shallow_clone，跳过
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅降级提示
+  info: "⚠️ 当前分支落后 {upstream} {behind} commits, 建议先 git pull"
+  suggestion:
+    - "git pull"
+  non_blocking: true  # 降级，不阻断任何现有推荐
+```
+
+### 1.99 open_blocker_issues
+
+```yaml
+id: open_blocker_issues
+priority: 1.99
+description: 存在阻塞性 Issue，建议先 triage
+
+conditions:
+  all:
+    - issue_scan_enabled: true          # issue_scan.enabled == true (opt-in)
+    - issue_status.source: "!= unavailable"  # 数据可用 (非离线/平台未知)
+  any:
+    - issue_status.items[].labels: contains "blocker"
+    - issue_status.items[].labels: contains "critical"
+
+  detection:
+    source: "Phase 1.13 issue_status.items[]"
+    label_check: "any(labels contains 'blocker' OR labels contains 'critical')"
+    prerequisite: "issue_status.source in [cache, live]"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅降级提示
+  info: "⚠️ 存在 {N} 个阻塞性 Issue (blocker/critical), 建议先 triage"
+  context:
+    blocker_issues:
+      - "#{number} {title}"  # 每个匹配的 issue 一条
+  non_blocking: true  # 降级，不阻断任何现有推荐
+```
+
+### 自定义检查状态检测
+
+```yaml
+custom_checks_detection:
+  config_path: ".aria/state-checks.yaml"
+
+  step_1:
+    command: "[ -f .aria/state-checks.yaml ] && echo 'EXISTS' || echo 'NOT_EXISTS'"
+    result: configured (boolean)
+
+  step_2:
+    condition: configured == true
+    action: "parse YAML, validate schema version == '1'"
+    on_parse_error: "configured = false, parse_error = message"
+
+  step_3:
+    condition: configured == true AND checks list non-empty
+    action: "串行执行每个 enabled != false 的检查"
+    execution:
+      working_dir: project root
+      timeout_per_check: timeout_seconds (default 15, max 60)
+      timeout_total: 60s
+      exit_code: 0 = pass, non-zero = fail
+      stdout: first line as output
+      on_timeout: status = timeout, severity treated as warning
+      on_command_not_found: status = error, severity treated as warning
+
+  aggregation:
+    total: count(all checks)
+    passed: count(status == pass)
+    failed: count(status != pass)
+    has_error_failure: any(status == fail AND severity == error)
+    has_warning_failure: any(status == fail AND severity == warning)
 ```
 
 ---
@@ -865,9 +1061,21 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-04-09
 
 ## 变更历史
+
+### v2.9.0 (2026-04-09)
+
+- **新增**: 规则 `submodule_drift` (优先级 1.97) — Phase 1.12 子模块落后远程降级提示
+- **新增**: 规则 `branch_behind_upstream` (优先级 1.98) — Phase 1.12 分支落后 upstream >= 5 commits 降级提示
+- **新增**: 规则 `open_blocker_issues` (优先级 1.99) — Phase 1.13 blocker/critical Issue 存在降级提示 (仅 issue_scan.enabled=true 时触发)
+
+### v2.8.0 (2026-04-03)
+
+- **新增**: 规则 `custom_check_failed` (优先级 1.95) — severity=error 自定义检查失败阻断
+- **新增**: 规则 `custom_check_warning` (优先级 1.96) — severity=warning 自定义检查降级提示
+- **新增**: 自定义检查状态检测方法 (YAML 解析 + 命令执行 + 结果聚合)
 
 ### v2.7.0 (2026-03-27)
 

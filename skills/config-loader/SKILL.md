@@ -63,6 +63,68 @@ state_scanner.audit_log_path:
   type: string
   default: ".aria/audit.log"
 
+# Phase 1.12 — 本地/远程同步检测 (v2.9.0)
+state_scanner.sync_check.enabled:
+  type: boolean
+  default: true
+
+state_scanner.sync_check.check_submodules:
+  type: boolean
+  default: true
+
+state_scanner.sync_check.check_remote:
+  type: boolean
+  default: false
+
+state_scanner.sync_check.warn_after_hours:
+  type: integer
+  range: [1, 720]
+  default: 24
+
+# Phase 1.13 — Issue 感知扫描 (v2.9.0, opt-in)
+state_scanner.issue_scan.enabled:
+  type: boolean
+  default: false
+
+state_scanner.issue_scan.platform:
+  type: string | null
+  valid_values: [forgejo, github, null]
+  default: null
+
+state_scanner.issue_scan.platform_hostnames:
+  type: object
+  default:
+    forgejo: ["forgejo.10cg.pub"]
+    github: ["github.com"]
+
+state_scanner.issue_scan.cache_ttl_seconds:
+  type: integer
+  range: [60, 86400]
+  default: 900
+
+state_scanner.issue_scan.cache_path:
+  type: string
+  default: ".aria/cache/issues.json"
+
+state_scanner.issue_scan.stage_timeout_seconds:
+  type: integer
+  range: [3, 60]
+  default: 12
+
+state_scanner.issue_scan.api_timeout_seconds:
+  type: integer
+  range: [1, 30]
+  default: 5
+
+state_scanner.issue_scan.limit:
+  type: integer
+  range: [1, 100]
+  default: 20
+
+state_scanner.issue_scan.label_filter:
+  type: array of string
+  default: []
+
 tdd.strictness:
   type: string
   valid_values: [advisory, strict, superpowers]
@@ -196,4 +258,4 @@ experiments.agent_team_audit_points 数组元素映射:
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-04-09 (v2.9.0: 新增 state_scanner.sync_check.* 和 state_scanner.issue_scan.*)

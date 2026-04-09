@@ -11,9 +11,9 @@ user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
-# 状态扫描与智能推荐 (State Scanner v2.7)
+# 状态扫描与智能推荐 (State Scanner v2.9)
 
-> **版本**: 2.7.0 | **角色**: 十步循环统一入口
+> **版本**: 2.9.0 | **角色**: 十步循环统一入口
 
 ## 快速开始
 
@@ -35,7 +35,7 @@ allowed-tools: Read, Glob, Grep, Bash
 
 | 功能 | 描述 |
 |------|------|
-| **状态感知** | 收集 Git 状态、UPM 进度、OpenSpec 状态、审计状态、变更分析 |
+| **状态感知** | 收集 Git 状态、UPM 进度、OpenSpec 状态、审计状态、自定义检查、变更分析 |
 | **智能推荐** | 基于状态生成工作流推荐，附带理由说明 |
 | **用户确认** | 展示选项，让用户确认或自定义工作流 |
 | **工作流启动** | 将确认的工作流传递给 workflow-runner 执行 |
@@ -105,6 +105,22 @@ allowed-tools: Read, Glob, Grep, Bash
       timestamp: "2026-03-27T10:00:00Z"
       verdict: PASS/PASS_WITH_WARNINGS/FAIL
       converged: true/false
+
+  custom_checks:                      # v2.8.0 新增: 项目级自定义检查
+    configured: true/false            # .aria/state-checks.yaml 是否存在
+    total: 3                          # 检查项总数
+    passed: 2                         # 通过数
+    failed: 1                         # 失败数
+    results:                          # 各检查结果
+      - name: "benchmark-summary-freshness"
+        status: fail                  # pass/fail/timeout/error
+        severity: warning             # info/warning/error
+        output: "STALE"               # stdout 首行
+        fix: "python3 scripts/aggregate-results.py"  # 修复建议 (如有)
+      - name: "db-migration-status"
+        status: pass
+        severity: info
+        output: "OK"
 
   requirements:                       # 新增: 需求状态
     configured: 是否配置需求追踪
@@ -416,6 +432,213 @@ openspec/
     enabled: false
 ```
 
+### 阶段 1.11: 项目级自定义健康检查
+
+**重要**: 此阶段始终执行，检测并运行项目级自定义健康检查。
+
+```yaml
+配置路径: .aria/state-checks.yaml
+
+检测步骤:
+  1. 检查 .aria/state-checks.yaml 是否存在 (用 [ -f ] 检测)
+     a. 不存在 → configured: false, 静默跳过
+     b. 存在但 YAML 解析失败 → 输出解析警告, 跳过
+     c. 存在且有效 → 读取 checks 列表
+  2. 验证 schema version 字段 (当前仅支持 "1")
+  3. 串行执行每个 enabled=true 的检查:
+     a. 工作目录: 项目根目录
+     b. 超时: timeout_seconds (默认 15, 上限 60)
+     c. 总超时: 60s (超出后跳过剩余检查并警告)
+     d. 捕获 exit code: 0=pass, 非 0=fail
+     e. 捕获 stdout 首行作为状态输出
+     f. 超时 → status: timeout
+     g. 命令不存在 (exit 127) → status: error
+  4. 汇总结果到 custom_checks 数据结构
+
+配置 Schema (.aria/state-checks.yaml):
+  version: "1"                      # 必填, schema 版本
+  checks:
+    - name: string                  # 必填, 唯一标识
+      description: string           # 必填, 人类可读描述 (AI 用于解释)
+      command: string               # 必填, shell 命令
+      severity: info|warning|error  # 必填, 影响推荐权重
+      fix: string                   # 选填, 修复命令提示 (不自动执行)
+      timeout_seconds: integer      # 选填, 默认 15, 上限 60
+      enabled: boolean              # 选填, 默认 true
+
+安全模型:
+  - 与 hooks.json 信任模型一致, 不做沙箱
+  - fix 命令仅作为建议展示, 需用户显式触发
+  - 检查失败不阻塞 state-scanner 主流程
+
+输出 (已配置, 有检查项):
+  custom_checks:
+    configured: true
+    total: 3
+    passed: 2
+    failed: 1
+    results:
+      - name: "benchmark-summary-freshness"
+        status: fail
+        severity: warning
+        output: "STALE"
+        fix: "python3 scripts/aggregate-results.py"
+      - name: "db-migration-status"
+        status: pass
+        severity: info
+        output: "OK"
+      - name: "license-audit"
+        status: pass
+        severity: error
+        output: "OK"
+
+输出 (已配置, 全部通过):
+  custom_checks:
+    configured: true
+    total: 3
+    passed: 3
+    failed: 0
+    results: [...]
+
+输出 (未配置):
+  custom_checks:
+    configured: false
+
+输出 (配置解析失败):
+  custom_checks:
+    configured: false
+    parse_error: "YAML syntax error at line 5"
+```
+
+### 阶段 1.12: 本地/远程同步检测
+
+**重要**: 此阶段始终执行 (fail-soft)，检测本地与远程的同步状态。
+
+```yaml
+sync_status:
+  remote_refs_age: "2h"          # FETCH_HEAD 距今时长 (Nm|Nh|Nd|never)
+  has_remote: true               # 是否有 git remote
+  shallow: false                 # 是否为浅克隆
+  current_branch:
+    name: "master"
+    upstream: "origin/master"
+    upstream_configured: true
+    ahead: 0
+    behind: 3                    # null if upstream 缺失或 shallow
+    diverged: false
+    reason: null                 # "no_upstream"|"shallow_clone"|"detached_head"|null
+  submodules:
+    - path: "aria"
+      tree_commit: "abc1234"     # 主仓库 HEAD 记录的 commit
+      head_commit: "abc1234"     # 本地 checkout 的 commit
+      remote_commit: "def5678"   # 远程默认分支 commit
+      remote_commit_source: "ls-remote"
+      drift:
+        workdir_vs_tree: false
+        tree_vs_remote: true     # 方向由 behind_count/ahead_count 决定
+        behind_count: 4          # int | null: tree..remote (本地落后远程)
+        ahead_count: 0           # int | null: remote..tree (本地领先远程)
+        hint: "git submodule update --remote aria"
+        hint_type: "update"      # "update" | "push" | "manual_check" | null
+```
+
+**方向性守卫 (Phase 1.12 关键设计, pre_merge Round 1 M1 fix)**:
+- `behind_count > 0` → `hint_type: "update"` → **触发** `submodule_drift` 规则
+- `ahead_count > 0` → `hint_type: "push"` → **不触发** `submodule_drift` (info 级提示避免破坏性操作)
+- 两者都 = 0 但 `tree_vs_remote: true` → `hint_type: "manual_check"` (异常状态, 可能 shallow clone 计数失效)
+
+详细实现见 [`references/sync-detection.md`](./references/sync-detection.md) 步骤 5.
+
+**字段语义 (四状态)**:
+
+| 状态 | `shallow` | `behind` | `reason` |
+|------|-----------|----------|----------|
+| 正常 | false | 数字 | null |
+| 浅克隆 | true | null | `"shallow_clone"` |
+| 无 upstream | false | null | `"no_upstream"` |
+| detached HEAD | false | null | `"detached_head"` |
+
+**配置项** (`state_scanner.sync_check.*`):
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `enabled` | `true` | 主开关 (本地 git 操作，默认开启) |
+| `check_submodules` | `true` | 是否检测子模块偏差 |
+| `warn_after_hours` | `24` | FETCH_HEAD 陈旧度告警阈值 |
+
+**推荐规则联动**:
+- `submodule_drift`: 任一 submodule `tree_vs_remote=true` → 降级推荐 + `git submodule update --remote` 提示
+- `branch_behind_upstream`: `current_branch.behind >= 5` → 降级推荐 + "建议先 git pull" 提示
+
+两条规则均不阻断推荐，仅降级 + 附加提示 (fail-soft)。
+
+详细实现见 [references/sync-detection.md](./references/sync-detection.md)
+
+---
+
+### 阶段 1.13: Issue 感知扫描
+
+**重要**: 此阶段为 opt-in，默认关闭 (`issue_scan.enabled=false`)，需用户显式开启。
+
+```yaml
+issue_status:
+  fetched_at: "2026-04-09T10:23:00Z"
+  source: cache                  # cache | live | unavailable
+  fetch_error: null              # 见下方枚举表
+  platform: forgejo              # forgejo | github | null
+  open_count: 3
+  items:
+    - number: 6
+      title: "state-scanner: add issue scan and sync detection"
+      labels: ["enhancement", "skill"]
+      url: "https://forgejo.10cg.pub/10CG/Aria/issues/6"
+      linked_openspec: "state-scanner-issue-awareness"  # 启发式
+      linked_us: null
+  label_summary:
+    bug: 1
+    enhancement: 2
+```
+
+**`fetch_error` 枚举值速查表 (10 个)**:
+
+| # | 枚举值 | 场景 |
+|---|--------|------|
+| 1 | `network_unavailable` | 离线 / 网络不可达 |
+| 2 | `cli_missing` | CLI 未安装 (forgejo/gh) |
+| 3 | `auth_missing` | token 未配置 |
+| 4 | `auth_failed` | HTTP 401/403 |
+| 5 | `rate_limited` | HTTP 429 |
+| 6 | `not_found_or_no_access` | HTTP 404 或私有仓库无权限 |
+| 7 | `timeout` | API 响应 > 5s |
+| 8 | `platform_unknown` | 平台识别失败 |
+| 9 | `parse_error` | JSON 解析失败 |
+| 10 | `unknown` | 兜底未分类错误 |
+
+**平台检测优先级 (4 级)**:
+1. 显式声明: `state_scanner.issue_scan.platform` 非 null → 直接使用
+2. hostname 匹配: `git remote get-url origin` 与 `platform_hostnames` 配置对比
+3. 兜底推断: URL 包含 `github.com` → github；已知 Forgejo 域名 → forgejo
+4. 全失败: `fetch_error: "platform_unknown"` + 静默跳过
+
+**配置项** (`state_scanner.issue_scan.*`，9 个字段):
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `enabled` | `false` | 主开关，opt-in |
+| `platform` | `null` | 显式指定平台；null 则自动检测 |
+| `platform_hostnames` | `{forgejo:[...], github:[...]}` | hostname → 平台映射，可扩展 |
+| `cache_ttl_seconds` | `900` | 缓存 15 分钟 TTL |
+| `cache_path` | `.aria/cache/issues.json` | 缓存文件位置 |
+| `stage_timeout_seconds` | `12` | 整阶段超时 |
+| `api_timeout_seconds` | `5` | 单次 API 调用超时 |
+| `limit` | `20` | 单次拉取 Issue 上限 |
+| `label_filter` | `[]` | 空表示不过滤；可设 `["bug","blocker"]` |
+
+**推荐规则联动**:
+- `open_blocker_issues`: 存在 label 包含 `blocker`/`critical` 的 open issue → 降级推荐 + "先 triage N 个阻塞 Issue" 提示
+
+详细实现见 [references/issue-scanning.md](./references/issue-scanning.md)
+
 ---
 
 ### 阶段 2: 推荐决策
@@ -424,7 +647,11 @@ openspec/
 
 规则覆盖: commit_only → quick_fix → feature_with_spec → feature_new，
 以及需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec 等，
-以及审计相关: audit_unconverged (当存在未收敛审计报告时提示)。
+以及审计相关: audit_unconverged (当存在未收敛审计报告时提示)，
+以及自定义检查: custom_check_failed (当 severity=error 的检查失败时阻断推荐)、
+custom_check_warning (当 severity=warning 的检查失败时降级推荐并附加 fix 提示)，
+以及同步检测: submodule_drift (子模块落后远程时降级)、branch_behind_upstream (分支落后 upstream ≥5 commits 时降级)，
+以及 Issue 感知: open_blocker_issues (存在 blocker/critical label 的 open issue 时降级)。
 
 当 `audit.enabled=true` 时，推荐输出中展示审计状态摘要:
 - 上次审计的 verdict 和收敛状态
@@ -517,6 +744,29 @@ openspec/
   审计系统: ✅ 已启用 (adaptive 模式)
   活跃检查点: post_spec, post_implementation, pre_merge
   上次审计: post_spec — PASS (收敛, 2 轮)
+
+🔧 自定义检查
+───────────────────────────────────────────────────────────────
+  ✅ db-migration-status: OK
+  ⚠️ benchmark-summary-freshness: STALE (warning)
+     修复建议: python3 scripts/aggregate-results.py
+  ✅ license-audit: OK
+
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: master (落后 origin/master 3 commits)
+  远程引用: 2h 前同步
+  子模块:
+    ✅ standards: 同步
+    ⚠️  aria: 落后远程 4 commits
+        修复建议: git submodule update --remote aria
+
+🎫 Open Issues
+───────────────────────────────────────────────────────────────
+  平台: Forgejo (10CG/Aria) — 3 open
+  📌 #6  state-scanner issue scan         [enhancement]
+         → 已关联 OpenSpec: state-scanner-issue-awareness
+  数据来源: cache (2m ago) | ttl: 15m
 
 🎯 推荐工作流
 ───────────────────────────────────────────────────────────────
@@ -674,6 +924,8 @@ workflow-runner v2.0
 - [output-formats.md](./references/output-formats.md) - 各场景输出格式定义
 - [migration-v1-to-v2.md](./references/migration-v1-to-v2.md) - v1.0 → v2.0 迁移说明
 - [cross-platform-commands.md](./references/cross-platform-commands.md) - 跨平台命令参考
+- [sync-detection.md](./references/sync-detection.md) - 同步检测详细逻辑 (Phase 1.12)
+- [issue-scanning.md](./references/issue-scanning.md) - Issue 扫描详细逻辑 (Phase 1.13)
 ### 审计相关
 - [audit-engine](../audit-engine/SKILL.md) - 多轮收敛审计编排引擎
 ### 工作流相关
@@ -686,5 +938,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-03-27
-**Skill版本**: 2.7.0 (新增审计状态扫描、adaptive 集成、复杂度传递)
+**最后更新**: 2026-04-09
+**Skill版本**: 2.9.0 (新增 Phase 1.12 同步检测 + Phase 1.13 Issue 感知)

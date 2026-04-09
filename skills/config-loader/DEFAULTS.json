@@ -9,7 +9,29 @@
     "confidence_threshold": 90,
     "auto_execute_enabled": false,
     "auto_execute_rules": ["commit_only", "quick_fix", "doc_only"],
-    "audit_log_path": ".aria/audit.log"
+    "audit_log_path": ".aria/audit.log",
+
+    "sync_check": {
+      "enabled": true,
+      "check_submodules": true,
+      "check_remote": false,
+      "warn_after_hours": 24
+    },
+
+    "issue_scan": {
+      "enabled": false,
+      "platform": null,
+      "platform_hostnames": {
+        "forgejo": ["forgejo.10cg.pub"],
+        "github": ["github.com"]
+      },
+      "cache_ttl_seconds": 900,
+      "cache_path": ".aria/cache/issues.json",
+      "stage_timeout_seconds": 12,
+      "api_timeout_seconds": 5,
+      "limit": 20,
+      "label_filter": []
+    }
   },
 
   "tdd": {
