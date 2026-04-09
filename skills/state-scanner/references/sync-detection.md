@@ -42,10 +42,17 @@ sync_status:
       remote_commit_source: "ls-remote"
       drift:
         workdir_vs_tree: false       # 工作目录偏离主仓库记录
-        tree_vs_remote: true         # 主仓库记录落后远程
-        behind_count: 4              # int | null: null 表示 remote_commit 为 null
+        tree_vs_remote: true         # 主仓库记录与远程不一致 (方向由 behind/ahead_count 决定)
+        behind_count: 4              # int | null: tree..remote 的 commit 数 (本地落后远程)
+        ahead_count: 0               # int | null: remote..tree 的 commit 数 (本地领先远程)
         hint: "git submodule update --remote aria"
+        hint_type: "update"          # "update" | "push" | "manual_check" | null
 ```
+
+**方向性说明 (Round 1 M1 fix)**:
+- `behind_count > 0` → 本地落后远程 → `hint_type: "update"` → 触发 `submodule_drift` 规则
+- `ahead_count > 0` → 本地领先远程 → `hint_type: "push"` → **不触发** `submodule_drift`, 走 info 级输出
+- 两者都为 0 但 `tree_vs_remote: true` → `hint_type: "manual_check"` (异常状态, 可能 shallow clone 计数失效)
 
 ### 字段 null 语义
 
@@ -229,20 +236,50 @@ git submodule status 2>/dev/null | while read -r sha path extra; do
     workdir_vs_tree=false
   fi
 
-  # tree_vs_remote: 主仓库记录落后远程
+  # tree_vs_remote: 主仓库记录与远程不一致 (方向由 behind_count/ahead_count 决定)
   if [ "$remote_commit" != "null" ] && [ "$tree_commit" != "$remote_commit" ]; then
     tree_vs_remote=true
     behind_count=$(git -C "$path" rev-list --count "${tree_commit}..${remote_commit}" 2>/dev/null) || behind_count=null
-    hint="git submodule update --remote ${path}"
+    ahead_count=$(git -C "$path" rev-list --count "${remote_commit}..${tree_commit}" 2>/dev/null) || ahead_count=null
+
+    # **关键守卫 (Round 1 pre_merge audit M1 fix + Round 2 cr_r2_m2 fix)**:
+    # 只有当 behind_count > 0 (真正落后远程) 时, 才发出 "update --remote" 破坏性 hint.
+    # 若 behind_count == 0 AND ahead_count > 0, 表示本地领先远程 (local commits 未推送),
+    # 此时 "update --remote" 会丢弃本地 commits, 必须改为 "push" 提示.
+    #
+    # 空字符串守卫 (Round 2 cr_r2_m2): rev-list 可能返回空字符串而非 "null", 需 -n 检查
+    # 避免 `[ "" -gt 0 ]` 报 "integer expression expected"
+    is_positive_int() {
+      [ -n "$1" ] && [ "$1" != "null" ] && [ "$1" -gt 0 ] 2>/dev/null
+    }
+    if is_positive_int "$behind_count"; then
+      hint="git submodule update --remote ${path}"
+      hint_type="update"
+    elif is_positive_int "$ahead_count"; then
+      hint="cd ${path} && git push origin HEAD  # 本地领先远程 ${ahead_count} commits"
+      hint_type="push"
+    else
+      # tree_vs_remote==true 但双方计数均为 0/null/empty, 属异常状态 (如 shallow clone 计数不准)
+      hint="⚠️ ${path} tree_commit 与 remote_commit 不同但无法确定方向, 请手动检查"
+      hint_type="manual_check"
+    fi
   else
     tree_vs_remote=false
     behind_count=null
+    ahead_count=null
     hint=null
+    hint_type=null
   fi
 
   # 输出该子模块条目...
 done
 ```
+
+**字段新增**:
+- `ahead_count` (int | null): 表示 "本地领先远程多少 commits" (`remote..tree` 的 rev-list count)
+- `hint_type` (string): `"update"` | `"push"` | `"manual_check"` | null, 用于 UI 决定图标和严重度
+
+**联动 recommendation rule**: `submodule_drift` (RECOMMENDATION_RULES.md#1.97) 只在 `behind_count > 0` 时触发; `ahead_count > 0` 场景由 state-scanner 在 output 层直接 info 级提示, 不走规则引擎.
 
 ### 步骤 6: 计算 `diverged`
 

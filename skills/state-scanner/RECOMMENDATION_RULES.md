@@ -466,23 +466,45 @@ recommendation:
 ```yaml
 id: submodule_drift
 priority: 1.97
-description: 子模块落后远程，建议更新后再做状态分析
+description: 子模块主仓库记录落后远程 (本地 behind remote), 建议更新后再做状态分析
 
 conditions:
   any:
-    - sync_status.submodules[].drift.tree_vs_remote: true  # 任一子模块主仓库记录落后远程
+    # **关键修复 (Round 1 pre_merge audit M1)**:
+    # 必须同时满足 tree_vs_remote==true AND behind_count > 0
+    # 理由: behind_count==0 表示 "本地领先远程" (aria-orchestrator 场景), 此时发出
+    # "git submodule update --remote" 是**破坏性**的, 会丢弃本地未推送的 commits.
+    # 单独 tree_vs_remote==true 只说明 tree_commit != remote_commit, 方向未明.
+    - sync_status.submodules[]:
+        all:
+          - drift.tree_vs_remote: true
+          - drift.behind_count: "> 0"  # 必须真正落后, 不是领先
+          - drift.behind_count: "!= null"
 
   detection:
     source: "Phase 1.12 sync_status.submodules[]"
-    field_check: "drift.tree_vs_remote == true"
+    field_check: "drift.tree_vs_remote == true AND drift.behind_count > 0"
     prerequisite: "sync_status 存在且 has_remote: true"
+    direction_guard: |
+      drift.behind_count 是 "tree..remote" rev-list count,
+      表示 "主仓库记录落后远程多少 commits".
+      若 behind_count == 0 AND tree_vs_remote == true, 意味着本地领先远程
+      (local commits 未推送), 此时**不触发**本规则, 应走 submodule_ahead_unpushed 规则
+      (后续版本新增) 或仅作 info 级日志.
 
 recommendation:
   workflow: null  # 不推荐工作流，仅降级提示
-  info: "⚠️ 子模块 {path} 落后远程 {behind_count} commits, 建议: git submodule update --remote {path}"
+  info: "⚠️ 子模块 {path} 主仓库记录落后远程 {behind_count} commits, 建议: git submodule update --remote {path}"
   suggestion:
     - "git submodule update --remote {path}"  # 每个 drift 子模块一条
   non_blocking: true  # 降级，不阻断任何现有推荐
+
+# === 补充规约 (Round 1 pre_merge audit M1 fix) ===
+safety_note: |
+  破坏性操作守卫: 本规则仅在 behind_count > 0 (真正落后) 时触发破坏性 hint.
+  当 behind_count == 0 (本地领先远程) 时, 应由 state-scanner 在 output 中
+  展示 "本地领先远程 N commits, 建议 git push" 的 info 级提示, 而非调用
+  submodule_drift 规则. 此行为需在 references/sync-detection.md 中同步实现.
 ```
 
 ### 1.98 branch_behind_upstream

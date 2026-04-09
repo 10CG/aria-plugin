@@ -283,28 +283,96 @@ normalized=$(echo "$response" | jq '[.[] | {
 
 对每个 issue 的 `title` 和 `body` 字段执行正则匹配（不扫描 comments）。
 
-### US-NNN 匹配
+**跨平台策略** (Round 1 pre_merge M6 fix): 主流程**优先使用 awk** (POSIX 标准, 跨平台可用); `grep -P` / `grep -oP` 仅作为 fallback, 且始终探测可用性后再使用.
 
-正则: `\bUS-\d{3,}\b` (PCRE 兼容，单词边界，至少 3 位数字)
+### 能力探测 (执行前一次性检测)
 
 ```bash
-linked_us=$(echo "$title $body" | grep -oP '\bUS-\d{3,}\b' | head -1)
+# 一次性探测 grep -P 是否可用, 结果缓存在 $GREP_HAS_PCRE
+if echo "" | grep -qP "" 2>/dev/null; then
+  GREP_HAS_PCRE=1
+else
+  GREP_HAS_PCRE=0
+fi
+```
+
+### US-NNN 匹配
+
+**主流程 (awk, 跨平台)**:
+
+```bash
+linked_us=$(echo "$title $body" | awk '
+  {
+    while (match($0, /(^|[^A-Za-z0-9])US-[0-9][0-9][0-9]+([^A-Za-z0-9]|$)/)) {
+      token = substr($0, RSTART, RLENGTH)
+      gsub(/[^A-Za-z0-9-]/, "", token)
+      print token
+      exit
+    }
+  }
+' | head -1)
 [ -z "$linked_us" ] && linked_us="null"
+```
+
+**Fallback (grep -oP, 仅当 GREP_HAS_PCRE=1)**:
+```bash
+if [ "$GREP_HAS_PCRE" = "1" ] && [ -z "$linked_us" ]; then
+  linked_us=$(echo "$title $body" | grep -oP '\bUS-\d{3,}\b' | head -1)
+  [ -z "$linked_us" ] && linked_us="null"
+fi
 ```
 
 ### OpenSpec change 名称匹配
 
-扫描 `openspec/changes/*/` 目录，对每个 change 名称生成负向前后查找正则，防止 URL 路径误匹配：
+扫描 `openspec/changes/*/` 目录，对每个 change 名称生成单词边界正则，防止 URL 路径误匹配。
+
+**主流程 (awk, 跨平台)**:
 
 ```bash
 linked_openspec="null"
 if [ -d "openspec/changes" ]; then
   for change_dir in openspec/changes/*/; do
     change_name=$(basename "$change_dir")
-    # 正则元字符转义 (防止 . + ? 等误匹配, 修复 code-review minor)
-    escaped_name=$(printf '%s' "$change_name" | sed 's/[.[\*^$+?(){}|\\]/\\&/g')
-    # 负向查找: 前面不能有 [a-z0-9/-], 后面不能有 [a-z0-9/-]
-    # 保护: URL 路径如 .../openspec/changes/my-change/ 不会误匹配
+    # awk 不需要正则元字符转义 (literal string 模式), 但需要 ERE 字符类
+    found=$(echo "$title $body" | awk -v name="$change_name" '
+      BEGIN {
+        # 构造边界模式: 前面为 ^ 或非 [a-z0-9/-], 后面为 $ 或非 [a-z0-9/-]
+        # literal name 无需 escape (不走 ERE 编译路径, 用 index() 做子串定位 + 边界验证)
+      }
+      {
+        line = $0
+        name_len = length(name)
+        pos = 1
+        while ((idx = index(substr(line, pos), name)) > 0) {
+          absolute = pos + idx - 1
+          left_char = (absolute == 1) ? "" : substr(line, absolute - 1, 1)
+          right_char = substr(line, absolute + name_len, 1)
+          # 边界检查: 两侧不能是 [a-z0-9/-]
+          if (left_char !~ /[a-z0-9\/-]/ && right_char !~ /[a-z0-9\/-]/) {
+            print name
+            exit 0
+          }
+          pos = absolute + 1
+        }
+      }
+    ')
+    if [ -n "$found" ]; then
+      linked_openspec="$change_name"
+      break
+    fi
+  done
+fi
+```
+
+**Fallback (grep -P, 仅当 GREP_HAS_PCRE=1)**:
+
+```bash
+if [ "$GREP_HAS_PCRE" = "1" ] && [ "$linked_openspec" = "null" ] && [ -d "openspec/changes" ]; then
+  for change_dir in openspec/changes/*/; do
+    change_name=$(basename "$change_dir")
+    # 正则元字符转义 (防止 . + ? 等误匹配)
+    # Round 1 code-review fix: 补全 ] 和 - 转义
+    escaped_name=$(printf '%s' "$change_name" | sed 's/[].[\*^$+?(){}|\\/-]/\\&/g')
     pattern="(?<![a-z0-9/-])${escaped_name}(?![a-z0-9/-])"
     if echo "$title $body" | grep -qP "$pattern"; then
       linked_openspec="$change_name"
@@ -314,16 +382,10 @@ if [ -d "openspec/changes" ]; then
 fi
 ```
 
-**注意**: `grep -oP` 依赖 GNU grep PCRE 支持。在 BusyBox/Alpine 环境下不可用。跨平台 fallback:
-
-```bash
-# 若 grep -P 不可用, 可用 awk 实现单词边界:
-echo "$title $body" | awk -v name="$escaped_name" '
-  BEGIN { found=0 }
-  { if (match($0, "(^|[^a-z0-9/-])" name "([^a-z0-9/-]|$)")) found=1 }
-  END { exit (found ? 0 : 1) }
-'
-```
+**优势**:
+- awk 在 Git Bash / WSL / macOS / Linux / BusyBox / Alpine 全部可用, 是真正的跨平台主流程
+- 使用 `index()` + 边界字符检查而非正则编译, 自动规避元字符转义问题 (Round 1 code-review cr_m3 根因)
+- grep -P fallback 仅作为加速路径, 主流程不依赖它
 
 ### URL 路径保护测试 case
 

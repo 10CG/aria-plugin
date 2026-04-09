@@ -535,10 +535,19 @@ sync_status:
       remote_commit_source: "ls-remote"
       drift:
         workdir_vs_tree: false
-        tree_vs_remote: true
-        behind_count: 4
+        tree_vs_remote: true     # 方向由 behind_count/ahead_count 决定
+        behind_count: 4          # int | null: tree..remote (本地落后远程)
+        ahead_count: 0           # int | null: remote..tree (本地领先远程)
         hint: "git submodule update --remote aria"
+        hint_type: "update"      # "update" | "push" | "manual_check" | null
 ```
+
+**方向性守卫 (Phase 1.12 关键设计, pre_merge Round 1 M1 fix)**:
+- `behind_count > 0` → `hint_type: "update"` → **触发** `submodule_drift` 规则
+- `ahead_count > 0` → `hint_type: "push"` → **不触发** `submodule_drift` (info 级提示避免破坏性操作)
+- 两者都 = 0 但 `tree_vs_remote: true` → `hint_type: "manual_check"` (异常状态, 可能 shallow clone 计数失效)
+
+详细实现见 [`references/sync-detection.md`](./references/sync-detection.md) 步骤 5.
 
 **字段语义 (四状态)**:
 

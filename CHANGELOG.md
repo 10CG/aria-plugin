@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 总阶段超时 12s (Forgejo + CF Access TLS 余量) + API 超时 5s
     - 新增推荐规则: `open_blocker_issues` (降级非阻断)
   - **SKILL.md 阶段数量上限规约** (D8): 当前 13/15 阶段，超过 15 必须重构为分组
-- **config-loader v2.9** — 14 个新字段 (sync_check 4 + issue_scan 10) 默认值与验证规则
+- **config-loader v2.9** — 13 个新字段 (sync_check 4 + issue_scan 9) 默认值与验证规则
 - **references/sync-detection.md** (新建) — Phase 1.12 完整实现逻辑
 - **references/issue-scanning.md** (新建) — Phase 1.13 完整实现逻辑
 
