@@ -374,4 +374,153 @@
 
 ---
 
-**最后更新**: 2026-04-03
+---
+
+## 同步状态 (Phase 1.12, 始终展示)
+
+### 变体 1: 正常状态 (所有子模块同步，无 behind)
+
+```
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: master (最新，与 origin/master 同步)
+  远程引用: 45m 前同步
+  子模块:
+    ✅ standards: 同步
+    ✅ aria: 同步
+```
+
+---
+
+### 变体 2: 落后状态 (branch 落后 3 commits + 1 子模块 drift)
+
+```
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: master (⚠️ 落后 origin/master 3 commits)
+  远程引用: 2h 前同步
+  建议操作: git pull
+  子模块:
+    ✅ standards: 同步
+    ⚠️  aria: 落后远程 4 commits
+        修复建议: git submodule update --remote aria
+```
+
+---
+
+### 变体 3: 浅克隆 (shallow clone 降级)
+
+```
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: master (浅克隆 — 无法计算落后数)
+  远程引用: 3h 前同步
+  ⚠️ 浅克隆仓库: ahead/behind 信息不可用
+     如需完整历史: git fetch --unshallow
+  子模块:
+    ✅ standards: 同步
+    ✅ aria: 同步
+```
+
+---
+
+### 变体 4: 无 remote (纯本地仓库)
+
+```
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: master
+  远程引用: 无 remote (纯本地仓库)
+  ℹ️ 未配置远程仓库，跳过同步检测
+```
+
+---
+
+### 变体 5: Upstream 未配置 (detached HEAD 或 branch 无 upstream)
+
+```
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: feature/new-feature (upstream 未配置)
+  远程引用: 1d 前同步
+  ⚠️ 当前分支无 upstream 配置，无法计算 ahead/behind
+     如需配置: git branch --set-upstream-to=origin/feature/new-feature
+  子模块:
+    ✅ standards: 同步
+    ✅ aria: 同步
+```
+
+---
+
+## Open Issues (Phase 1.13, 仅 enabled=true 展示)
+
+### 变体 1: 正常 (3 open issues + 启发式关联成功)
+
+```
+🎫 Open Issues
+───────────────────────────────────────────────────────────────
+  平台: Forgejo (10CG/Aria) — 3 open
+  📌 #6  state-scanner: add issue scan and sync detection  [enhancement, skill]
+         → 已关联 OpenSpec: state-scanner-issue-awareness
+  📌 #5  Pulse 项目集成                                    [feature]
+  📌 #4  登录页面样式问题                                  [bug]
+  数据来源: live | 刚刚获取 | ttl: 15m
+```
+
+---
+
+### 变体 2: 离线降级 (fetch_error: network_unavailable)
+
+```
+🎫 Open Issues
+───────────────────────────────────────────────────────────────
+  平台: Forgejo (10CG/Aria)
+  ⚠️ 无法获取 Issues: 网络不可达 (network_unavailable)
+     跳过 Issue 感知 — 请检查网络连接后重试
+```
+
+---
+
+### 变体 3: Token 未配置 (fetch_error: auth_missing)
+
+```
+🎫 Open Issues
+───────────────────────────────────────────────────────────────
+  平台: Forgejo (10CG/Aria)
+  ⚠️ 未配置访问 Token (auth_missing)
+     跳过 Issue 感知 — 请配置 forgejo CLI token 后重试
+```
+
+---
+
+### 变体 4: 缓存命中 (source: cache, fresh)
+
+```
+🎫 Open Issues
+───────────────────────────────────────────────────────────────
+  平台: Forgejo (10CG/Aria) — 3 open
+  📌 #6  state-scanner: add issue scan and sync detection  [enhancement, skill]
+         → 已关联 OpenSpec: state-scanner-issue-awareness
+  📌 #5  Pulse 项目集成                                    [feature]
+  📌 #4  登录页面样式问题                                  [bug]
+  数据来源: cache (2m ago) | ttl: 15m
+```
+
+---
+
+### 变体 5: Rate limited (fetch_error: rate_limited, 使用旧缓存)
+
+```
+🎫 Open Issues
+───────────────────────────────────────────────────────────────
+  平台: Forgejo (10CG/Aria) — 3 open (缓存数据)
+  📌 #6  state-scanner: add issue scan and sync detection  [enhancement, skill]
+  📌 #5  Pulse 项目集成                                    [feature]
+  📌 #4  登录页面样式问题                                  [bug]
+  ⚠️ API 请求频率超限 (rate_limited) — 使用旧缓存 (18m ago)
+     数据来源: cache (stale) | 建议稍后重试
+```
+
+---
+
+**最后更新**: 2026-04-09

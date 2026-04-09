@@ -16,6 +16,9 @@
 | `audit_unconverged` | 1.9 | (建议性提示) | 最新审计报告未收敛 | 75% | No — 用户可能已知并选择接受 |
 | `custom_check_failed` | 1.95 | (阻断提示) | severity=error 的自定义检查失败 | 90% | No — 需用户确认修复 |
 | `custom_check_warning` | 1.96 | (降级提示) | severity=warning 的自定义检查失败 | 70% | No — 非阻塞，附加 fix 建议 |
+| `submodule_drift` | 1.97 | (降级提示) | 任一子模块 `tree_vs_remote == true` | 70% | No — 非阻塞，附加 update 建议 |
+| `branch_behind_upstream` | 1.98 | (降级提示) | 当前分支落后 upstream >= 5 commits | 65% | No — 非阻塞，附加 pull 建议 |
+| `open_blocker_issues` | 1.99 | (降级提示) | 存在 blocker/critical label 的 open issue | 70% | No — 仅 issue_scan.enabled=true 时触发 |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
 | `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |
@@ -456,6 +459,86 @@ recommendation:
   suggestion:
     - "修复建议: {fix_command}"
   non_blocking: true  # 不阻塞，附加到推荐输出
+```
+
+### 1.97 submodule_drift
+
+```yaml
+id: submodule_drift
+priority: 1.97
+description: 子模块落后远程，建议更新后再做状态分析
+
+conditions:
+  any:
+    - sync_status.submodules[].drift.tree_vs_remote: true  # 任一子模块主仓库记录落后远程
+
+  detection:
+    source: "Phase 1.12 sync_status.submodules[]"
+    field_check: "drift.tree_vs_remote == true"
+    prerequisite: "sync_status 存在且 has_remote: true"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅降级提示
+  info: "⚠️ 子模块 {path} 落后远程 {behind_count} commits, 建议: git submodule update --remote {path}"
+  suggestion:
+    - "git submodule update --remote {path}"  # 每个 drift 子模块一条
+  non_blocking: true  # 降级，不阻断任何现有推荐
+```
+
+### 1.98 branch_behind_upstream
+
+```yaml
+id: branch_behind_upstream
+priority: 1.98
+description: 当前分支落后 upstream，建议先拉取再开发
+
+conditions:
+  all:
+    - sync_status.current_branch.behind: ">= 5"
+    - sync_status.current_branch.upstream_configured: true
+
+  detection:
+    source: "Phase 1.12 sync_status.current_branch"
+    field_check: "behind >= 5"
+    skip_conditions:
+      - "behind == null"   # upstream 未配置或浅克隆，跳过
+      - "reason != null"   # detached_head / no_upstream / shallow_clone，跳过
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅降级提示
+  info: "⚠️ 当前分支落后 {upstream} {behind} commits, 建议先 git pull"
+  suggestion:
+    - "git pull"
+  non_blocking: true  # 降级，不阻断任何现有推荐
+```
+
+### 1.99 open_blocker_issues
+
+```yaml
+id: open_blocker_issues
+priority: 1.99
+description: 存在阻塞性 Issue，建议先 triage
+
+conditions:
+  all:
+    - issue_scan_enabled: true          # issue_scan.enabled == true (opt-in)
+    - issue_status.source: "!= unavailable"  # 数据可用 (非离线/平台未知)
+  any:
+    - issue_status.items[].labels: contains "blocker"
+    - issue_status.items[].labels: contains "critical"
+
+  detection:
+    source: "Phase 1.13 issue_status.items[]"
+    label_check: "any(labels contains 'blocker' OR labels contains 'critical')"
+    prerequisite: "issue_status.source in [cache, live]"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅降级提示
+  info: "⚠️ 存在 {N} 个阻塞性 Issue (blocker/critical), 建议先 triage"
+  context:
+    blocker_issues:
+      - "#{number} {title}"  # 每个匹配的 issue 一条
+  non_blocking: true  # 降级，不阻断任何现有推荐
 ```
 
 ### 自定义检查状态检测
@@ -956,9 +1039,15 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-04-03
+**最后更新**: 2026-04-09
 
 ## 变更历史
+
+### v2.9.0 (2026-04-09)
+
+- **新增**: 规则 `submodule_drift` (优先级 1.97) — Phase 1.12 子模块落后远程降级提示
+- **新增**: 规则 `branch_behind_upstream` (优先级 1.98) — Phase 1.12 分支落后 upstream >= 5 commits 降级提示
+- **新增**: 规则 `open_blocker_issues` (优先级 1.99) — Phase 1.13 blocker/critical Issue 存在降级提示 (仅 issue_scan.enabled=true 时触发)
 
 ### v2.8.0 (2026-04-03)
 
