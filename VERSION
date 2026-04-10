@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.11.0
-> **发布日期**: 2026-04-09
+> **版本**: 1.11.1
+> **发布日期**: 2026-04-10
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.11.0
+1.11.1
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (11)**: state-scanner v2.9.0 — Phase 1.12 同步检测 + Phase 1.13 Issue 感知 (Forgejo Issue #6)
-- **Patch (0)**: 无
+- **Patch (1)**: benchmark-transparency-enhancement — calc_dual_delta.py 定型 + ASSERTION_CATEGORY_GUIDE + HISTORICAL_CAVEATS (Aria#8 Phase 3 修正方案, 非 gate change)
 
 ## 包含内容
 

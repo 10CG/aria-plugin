@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1] - 2026-04-10
+
+### Added
+
+- **Dual Delta Reporting Tool** (`aria-plugin-benchmarks/tools/calc_dual_delta.py`)
+  定型自 Aria#8 spike (2026-04-10), 从 prototype 升格为正式 reporting 工具.
+  - 计算 `internal_delta` + `cross_project_delta` + `inflation_ratio` 的报告工具
+  - 支持 3 种 eval_metadata 格式 + 2 种 grading 字段名
+  - 通过 `category` 字段 (可选) 区分 aria_convention / generic_capability / behavior_contract assertions
+  - **不是 gate**: Rule #6 不变, 仅 informational
+  - 集成 `INFLATION_CAP_UPPER=1.0` 守卫, 病理性负 cross 自动 clamp + warning
+  - user-friendly 错误处理 (FileNotFoundError / JSONDecodeError / 格式校验)
+  - 9 个 pytest unit tests, 包含 cap 分支 + None 分支真实覆盖
+- **ASSERTION_CATEGORY_GUIDE.md** (`aria-plugin-benchmarks/`)
+  Category 字段标注指南, 3 个 enum 值 + 5 正反例 + 歧义默认规则
+- **HISTORICAL_CAVEATS.md** (`aria-plugin-benchmarks/`)
+  Skills 的 dual delta 实测数据存档. 透明度补充, 非警告:
+  - state-scanner v2.9.0: inflation 4.9% (VALIDATED)
+  - commit-msg-generator v2.0.1: inflation 11.3% (MOSTLY VALIDATED)
+- **AB_TEST_OPERATIONS.md "Dual Delta Reporting" 章节** — 两步运行示例 + inflation 解读指南 + 非 gate 声明
+
+### Changed
+
+- **aria-plugin**: v1.11.0 → **v1.11.1** (patch release, transparency enhancement)
+- CHANGELOG 注明: **无 breaking change**, 无 Rule #6 变更, 无发版门禁变更
+
+### Background (Why only a patch)
+
+Aria#8 原 RCA 基于纸面估算 ("state-scanner ~50% 虚高" / "commit-msg 100% 虚高") 立了 3 个 Level 3 Spec 计划 Rule #6 重构 + Release Gate 2.0 + Escape Valve. Spike (2026-04-10) 实测**证伪原假说**:
+
+- state-scanner v2.9.0 实测 inflation **4.9%** (噪音级别, 非 ~50%)
+- commit-msg-generator v2.0.1 实测 inflation **11.3%** (非 100%)
+- 3 个 Level 3 Spec 降级为 1 个 Level 2 Spec
+
+因此 v1.11.1 仅包含透明度工具, **不改变任何发版决策**. 见 `docs/analysis/spike-report-2026-04-10.md`.
+
+### Audit Process
+
+两个独立的审计流程都已通过:
+
+1. **post_spec convergence audit** (Phase A.1, 3 rounds, 4 agents):
+   - Agents: tech-lead + knowledge-manager + qa-engineer + code-reviewer
+   - Round 1: 1 PASS + 3 REVISE (35 findings: 1 CRITICAL + 13 major + 21 minor)
+   - Round 2: 4 PASS (3 new minor: km_n1 标签歧义 + qa nf_01/nf_02 test fixture)
+   - Round 3: 4 PASS (0 new findings, **严格收敛** ✅)
+
+2. **Phase B.2 Final Review** (code-reviewer 单 agent 两阶段审查):
+   - Phase 1 Spec Compliance: PASS (AC1-AC9 全部验证)
+   - Phase 2 Quality: PASS (0 critical, 0 important)
+   - Final Vote: **PASS, 0 blockers**
+
+### 已知偏差 (non-blocker, 透明度披露)
+
+- **ASSERTION_CATEGORY_GUIDE.md**: 实际 134 行, Spec AC3 原约束 "≤ 100 行".
+  超出的 34 行是 "External category_map files" 和 "How to add categories" JSON 示例,
+  显著提升文档实用性. code-reviewer Final Review 接受为 **non-blocking**,
+  将在 D.2 归档时 Spec AC3 追认上限为 "≤ 140 行".
+
+### Meta-Lesson
+
+`meta_lesson_spike_first`: 数据驱动的量化假说必须 spike-first 实测验证再立 Spec. 本次避免了 ~1600 行无用工作. 已沉淀到 `MEMORY.md` → `feedback_spike_first_for_data_hypotheses.md`.
+
+### References
+
+- Spec: `openspec/changes/benchmark-transparency-enhancement/proposal.md`
+- Spike: `docs/analysis/spike-report-2026-04-10.md`
+- Parent Issue: Forgejo Aria#8
+
+---
+
 ## [1.11.0] - 2026-04-09
 
 ### Added
