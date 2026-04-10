@@ -443,7 +443,9 @@ sync_status:
       drift:
         tree_vs_remote: true
         behind_count: 4
+        ahead_count: 0
         hint: "git submodule update --remote aria"
+        hint_type: "update"
 ```
 
 ### 场景 C: 浅克隆
