@@ -5,13 +5,13 @@
 
 ## Schema
 
-当 subagent-driver 调度多个 Agent 依��执行时,前一个 Agent 的输出应包含以下结构化上下文块,供后续 Agent 消费:
+当 subagent-driver 调度多个 Agent 依次执行时,前一个 Agent 的输出应包含以下结构化上下文块,供后续 Agent 消费:
 
 ```yaml
 handoff:
   task_id: "triage-engine-implementation"
   agent_from: "backend-architect"
-  agent_source: "plugin"          # "plugin" (内置) | "project" (项目��� .aria/agents/)
+  agent_source: "plugin"          # "plugin" (内置) | "project" (项目级 .aria/agents/)
   decisions_made:
     - "triage.sh 使用 bash + python3 heredoc 模式"
     - "配置走 orchestrator.dispatch_policy 独立节点"
