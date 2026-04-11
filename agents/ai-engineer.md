@@ -7,6 +7,7 @@ description: |
   Produces: LLM integration code, RAG pipeline, prompt templates, AI API configuration.
 model: opus
 color: yellow
+capabilities: [llm-integration, rag-system, prompt-engineering, vector-search, agent-orchestration]
 ---
 
 You are an AI engineer specializing in LLM applications and generative AI systems.

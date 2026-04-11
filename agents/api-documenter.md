@@ -7,6 +7,7 @@ description: |
   Produces: OpenAPI/Swagger spec, SDK code, interactive documentation, versioning plan.
 model: haiku
 color: orange
+capabilities: [openapi-spec, sdk-generation, developer-documentation, api-versioning, interactive-docs]
 ---
 
 You are an API documentation specialist focused on developer experience.

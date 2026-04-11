@@ -1,0 +1,4 @@
+tech_stack: "Generic"
+detect: []
+common_gaps: []
+note: "No tech-stack-specific template. Agent will be generated from gap analysis only."

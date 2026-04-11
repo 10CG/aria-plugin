@@ -1,0 +1,6 @@
+tech_stack: "Flutter/Dart"
+detect: ["pubspec.yaml"]
+common_gaps:
+  - name: "platform-specialist"
+    capabilities: ["native-integration", "platform-channel", "app-deployment"]
+    scope: "iOS/Android platform APIs, method channels, app store submission"

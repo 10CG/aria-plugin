@@ -1,0 +1,145 @@
+# Aria Agent Capabilities Taxonomy
+# Used by agent-gap-analyzer for deterministic tag matching
+# Tags use kebab-case; synonyms enable cross-vocabulary normalization
+version: "1"
+
+tags:
+  # Architecture & Design
+  system-architecture:
+    synonyms: ["architecture-design", "system-design"]
+  task-decomposition:
+    synonyms: ["task-breakdown", "epic-decomposition"]
+  engineering-process:
+    synonyms: ["dev-process", "workflow-design"]
+  cross-system-coordination:
+    synonyms: ["cross-team", "multi-service-coordination"]
+  architecture-decision:
+    synonyms: ["adr", "design-decision"]
+  api-design:
+    synonyms: ["rest-api", "endpoint-design", "api-architecture"]
+  database-schema:
+    synonyms: ["db-design", "data-modeling", "erd"]
+  microservice-architecture:
+    synonyms: ["service-architecture", "distributed-system"]
+  performance-optimization:
+    synonyms: ["perf-tuning", "optimization", "bottleneck-analysis"]
+  service-boundary:
+    synonyms: ["domain-boundary", "bounded-context"]
+
+  # AI & LLM
+  llm-integration:
+    synonyms: ["llm-api", "ai-integration", "model-integration"]
+  rag-system:
+    synonyms: ["retrieval-augmented-generation", "knowledge-retrieval"]
+  prompt-engineering:
+    synonyms: ["prompt-design", "prompt-optimization"]
+  vector-search:
+    synonyms: ["embedding-search", "semantic-search"]
+  agent-orchestration:
+    synonyms: ["multi-agent", "agent-coordination"]
+
+  # Code Quality
+  code-review:
+    synonyms: ["review", "pr-review", "merge-review"]
+  spec-compliance:
+    synonyms: ["requirements-verification", "plan-validation"]
+  security-audit:
+    synonyms: ["security-review", "vulnerability-check"]
+  test-coverage-review:
+    synonyms: ["test-review", "coverage-analysis"]
+  pre-merge-verification:
+    synonyms: ["merge-check", "integration-gate"]
+
+  # QA & Testing
+  test-strategy:
+    synonyms: ["testing-plan", "qa-strategy"]
+  defect-analysis:
+    synonyms: ["bug-analysis", "defect-investigation"]
+  quality-assessment:
+    synonyms: ["quality-review", "code-quality"]
+  risk-analysis:
+    synonyms: ["risk-assessment", "risk-evaluation"]
+  release-readiness:
+    synonyms: ["release-qa", "go-live-check"]
+
+  # Documentation
+  documentation-audit:
+    synonyms: ["doc-review", "docs-quality"]
+  knowledge-architecture:
+    synonyms: ["doc-structure", "information-architecture"]
+  doc-codebase-alignment:
+    synonyms: ["docs-sync", "documentation-sync"]
+  ai-ddd-methodology:
+    synonyms: ["aria-methodology", "ddd"]
+
+  # Context & Memory
+  multi-agent-context:
+    synonyms: ["cross-agent-context", "agent-context"]
+  session-synthesis:
+    synonyms: ["context-summary", "session-summary"]
+  context-optimization:
+    synonyms: ["context-compression", "context-management"]
+  decision-distillation:
+    synonyms: ["decision-summary", "key-decisions"]
+
+  # UI/UX
+  interface-design:
+    synonyms: ["ui-design", "component-design"]
+  wireframing:
+    synonyms: ["mockup", "prototype"]
+  design-system:
+    synonyms: ["design-tokens", "component-library"]
+  user-research:
+    synonyms: ["ux-research", "user-testing"]
+  accessibility-audit:
+    synonyms: ["a11y", "accessibility-review"]
+
+  # Mobile
+  react-native:
+    synonyms: ["rn", "react-native-dev"]
+  flutter:
+    synonyms: ["flutter-dev", "dart"]
+  native-integration:
+    synonyms: ["native-bridge", "platform-api"]
+  offline-sync:
+    synonyms: ["offline-first", "local-storage-sync"]
+  push-notification:
+    synonyms: ["push", "notification"]
+  app-deployment:
+    synonyms: ["app-store", "play-store", "app-release"]
+
+  # API Documentation
+  openapi-spec:
+    synonyms: ["swagger", "api-spec"]
+  sdk-generation:
+    synonyms: ["client-generation", "api-client"]
+  developer-documentation:
+    synonyms: ["dev-docs", "api-docs"]
+  api-versioning:
+    synonyms: ["versioning", "api-version"]
+  interactive-docs:
+    synonyms: ["api-playground", "try-it"]
+
+  # Legal
+  privacy-policy:
+    synonyms: ["data-privacy", "privacy-notice"]
+  terms-of-service:
+    synonyms: ["tos", "user-agreement"]
+  gdpr-compliance:
+    synonyms: ["gdpr", "data-protection"]
+  data-processing-agreement:
+    synonyms: ["dpa", "data-processing"]
+  regulatory-notice:
+    synonyms: ["compliance-notice", "legal-notice"]
+
+  # Common cross-project needs (for gap detection)
+  orm-migration:
+    synonyms: ["database-migration", "schema-migration"]
+  query-optimization:
+    synonyms: ["sql-optimization", "query-tuning"]
+  ci-cd-pipeline:
+    synonyms: ["ci-cd", "continuous-integration", "devops"]
+  infrastructure:
+    synonyms: ["infra", "cloud-infra", "deployment"]
+  monitoring:
+    synonyms: ["observability", "logging", "alerting"]

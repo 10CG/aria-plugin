@@ -7,6 +7,7 @@ description: |
   Produces: wireframes, component specs, design system tokens, user flow diagrams, accessibility audit.
 model: sonnet
 color: purple
+capabilities: [interface-design, wireframing, design-system, user-research, accessibility-audit]
 ---
 
 You are a UI/UX designer specializing in user-centered design and interface systems.

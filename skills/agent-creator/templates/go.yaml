@@ -1,0 +1,9 @@
+tech_stack: "Go"
+detect: ["go.mod"]
+common_gaps:
+  - name: "infra-engineer"
+    capabilities: ["infrastructure", "ci-cd-pipeline", "monitoring"]
+    scope: "Infrastructure as code, CI/CD pipeline design, observability setup"
+  - name: "performance-specialist"
+    capabilities: ["performance-optimization", "profiling", "concurrency"]
+    scope: "Go profiling (pprof), goroutine optimization, memory management"
