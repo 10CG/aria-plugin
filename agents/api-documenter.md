@@ -1,6 +1,10 @@
 ---
 name: api-documenter
-description: Create OpenAPI/Swagger specs, generate SDKs, and write developer documentation. Handles versioning, examples, and interactive docs. Use PROACTIVELY for API documentation or client library generation.
+description: |
+  OpenAPI/Swagger spec creation, SDK generation, and developer documentation with versioning and examples.
+  Use when: creating API docs, generating client libraries, adding endpoint examples, versioning APIs. Use PROACTIVELY for API documentation or client library generation.
+  Expects: API source code or endpoint definitions; optionally existing OpenAPI spec.
+  Produces: OpenAPI/Swagger spec, SDK code, interactive documentation, versioning plan.
 model: haiku
 color: orange
 ---

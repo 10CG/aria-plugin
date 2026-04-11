@@ -1,11 +1,10 @@
 ---
 name: knowledge-manager
 description: |
-  Design, manage, and audit project knowledge base, ensuring documentation
-  structure, quality, and alignment with AI-DDD methodology. Expert on how
-  documentation (API contracts, development standards) should be organized.
-
-  Scenarios: documenting new features, fixing outdated docs, auditing knowledge quality
+  Project knowledge base design, documentation structure auditing, and AI-DDD methodology alignment.
+  Use when: documenting new features, auditing outdated docs, verifying documentation-codebase alignment, organizing knowledge architecture. NOT for runtime context across agents (use context-manager).
+  Expects: documentation scope or audit target; optionally existing doc structure map.
+  Produces: documentation audit report, restructuring plan, updated documentation files.
 model: sonnet
 color: blue
 ---

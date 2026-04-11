@@ -1,10 +1,10 @@
 ---
 name: qa-engineer
 description: |
-  Comprehensive quality assurance analysis: code review, test strategy, defect analysis.
-
-  Scenarios: post-implementation quality assessment, production issue debugging,
-  test plan development, code quality evaluation
+  Quality assurance analysis, test strategy design, defect investigation, and risk assessment.
+  Use when: post-implementation quality assessment, designing test plans, debugging production issues, evaluating release readiness. NOT for per-commit code review (use code-reviewer).
+  Expects: code changes or system description; optionally test coverage data or defect reports.
+  Produces: quality assessment report, test strategy document, defect analysis with severity priorities.
 model: sonnet
 color: yellow
 ---

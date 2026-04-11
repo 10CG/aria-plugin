@@ -1,6 +1,10 @@
 ---
 name: ai-engineer
-description: Build LLM applications, RAG systems, and prompt pipelines. Implements vector search, agent orchestration, and AI API integrations. Use PROACTIVELY for LLM features, chatbots, or AI-powered applications.
+description: |
+  LLM applications, RAG systems, prompt pipelines, vector search, and agent orchestration.
+  Use when: building AI features, integrating LLM APIs, designing retrieval systems, prompt engineering. Use PROACTIVELY for LLM features, chatbots, or AI-powered applications.
+  Expects: feature description or AI use case; optionally existing model/embedding setup.
+  Produces: LLM integration code, RAG pipeline, prompt templates, AI API configuration.
 model: opus
 color: yellow
 ---
