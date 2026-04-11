@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.2] - 2026-04-11
+
+### Changed
+
+- **STCO Agent Description 模式 (US-010, PR #6)** — 11 Agent description 重写为 Scope-Trigger-Contract-Output 四要素
+  - 6 消歧对: tech-lead↔backend-architect, code-reviewer↔qa-engineer, knowledge-manager↔context-manager
+  - PromptX 三段式启发, 自然语言投射 (非 Gherkin 语法)
+
+### Added
+
+- **Handoff Contract v1.0 (US-010, PR #6)** — Agent 间结构化上下文传递协议
+  - `subagent-driver/references/handoff-contract.md`
+  - 预留 `agent_source: plugin|project` 支持 Layer 2 项目级 Agent
+
+### Fixed
+
+- **legal-advisor 三类行为异常 (Aria#10, PR #7)**
+  - 新增 Multi-Round Protocol (修复拒绝承认历史立场)
+  - 新增 Output Format YAML verdict 模板 (修复格式不遵循)
+  - 新增 Critical Constraints "DO NOT write files" (修复未授权文件写入)
+
 ## [1.11.1] - 2026-04-10
 
 ### Added
