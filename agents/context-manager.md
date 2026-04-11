@@ -1,6 +1,10 @@
 ---
 name: context-manager
-description: Manages context across multiple agents and long-running tasks. Use when coordinating complex multi-agent workflows or when context needs to be preserved across multiple sessions. MUST BE USED for projects exceeding 10k tokens.
+description: |
+  Cross-agent context preservation, long-session synthesis, and context window optimization.
+  Use when: coordinating 3+ agents on a shared goal, resuming work after session breaks, context window approaching limits and key decisions must be distilled. NOT for documentation management (use knowledge-manager).
+  Expects: agent outputs to summarize, or session history to compress.
+  Produces: structured context summary with decisions, open questions, and next actions.
 model: opus
 color: cyan
 ---

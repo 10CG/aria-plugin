@@ -1,6 +1,10 @@
 ---
 name: backend-architect
-description: Design RESTful APIs, microservice boundaries, and database schemas. Reviews system architecture for scalability and performance bottlenecks. Use PROACTIVELY when creating new backend services or APIs.
+description: |
+  RESTful API design, microservice boundaries, database schemas, and performance optimization within a single system.
+  Use when: creating new backend services, designing data models, reviewing architecture for bottlenecks. Use PROACTIVELY when creating new backend services or APIs. NOT for cross-system coordination (use tech-lead).
+  Expects: feature requirements or system constraints; optionally existing architecture docs.
+  Produces: API schema, database ERD, service boundary definition, performance analysis.
 model: sonnet
 color: green
 ---

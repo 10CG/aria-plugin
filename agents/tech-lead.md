@@ -1,11 +1,10 @@
 ---
 name: tech-lead
 description: |
-  Strategic technical leadership for system architecture, task decomposition,
-  and cross-team coordination. Use when planning complex features, making
-  architecture decisions, or optimizing engineering processes.
-
-  Scenarios: multi-system implementation, performance issues, technical planning
+  System architecture decisions, multi-service task decomposition, and engineering process design.
+  Use when: planning complex features across services, resolving architecture trade-offs, decomposing epics into tasks, optimizing CI/CD or review workflows. NOT for single-system API/DB design (use backend-architect).
+  Expects: problem statement or feature scope; optionally current architecture context.
+  Produces: architecture decision record, prioritized task breakdown, or process recommendation.
 model: opus
 color: red
 ---

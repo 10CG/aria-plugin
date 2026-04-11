@@ -4,12 +4,9 @@ description: |
   Two-phase code review agent for production readiness verification.
   Phase 1: Specification compliance check against detailed-tasks.yaml or OpenSpec.
   Phase 2: Code quality check (style, testing, security, architecture).
-  Outputs issues categorized as Critical/Important/Minor with actionable feedback.
-
-  Use when: reviewing code changes, validating implementation against plan,
-  pre-merge verification, task completion check in subagent-driver.
-
-  Reference: obra/superpowers requesting-code-review implementation.
+  Use when: reviewing code changes, validating implementation against plan, pre-merge verification, task completion check. NOT for test strategy or release QA (use qa-engineer).
+  Expects: code diff (BASE_SHA..HEAD_SHA), plan or spec reference, implementation description.
+  Produces: issues categorized as Critical/Important/Minor with file:line references and fix guidance.
 model: inherit
 color: blue
 tools: ["Read", "Grep", "Glob", "Bash"]

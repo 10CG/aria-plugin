@@ -1,6 +1,10 @@
 ---
 name: mobile-developer
-description: Develop React Native or Flutter apps with native integrations. Handles offline sync, push notifications, and app store deployments. Use PROACTIVELY for mobile features, cross-platform code, or app optimization.
+description: |
+  React Native and Flutter development with native integrations, offline sync, and push notifications.
+  Use when: building mobile features, implementing cross-platform code, configuring app store deployments. Use PROACTIVELY for mobile features, cross-platform code, or app optimization.
+  Expects: feature requirements; optionally platform constraints (iOS/Android) or existing app architecture.
+  Produces: mobile UI components, native bridge code, offline sync logic, app store deployment config.
 model: sonnet
 color: pink
 ---

@@ -1,6 +1,10 @@
 ---
 name: legal-advisor
-description: Draft privacy policies, terms of service, disclaimers, and legal notices. Creates GDPR-compliant texts, cookie policies, and data processing agreements. Use PROACTIVELY for legal documentation, compliance texts, or regulatory requirements.
+description: |
+  Privacy policies, terms of service, GDPR compliance texts, cookie policies, and data processing agreements.
+  Use when: drafting legal documents, reviewing compliance requirements, creating regulatory notices. Use PROACTIVELY for legal documentation, compliance texts, or regulatory requirements.
+  Expects: business context or compliance requirement; optionally jurisdiction constraints or existing policies.
+  Produces: privacy policy, terms of service, GDPR-compliant text, legal notice, data processing agreement.
 model: haiku
 color: purple
 ---
