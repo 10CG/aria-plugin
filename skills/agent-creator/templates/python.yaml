@@ -1,0 +1,9 @@
+tech_stack: "Python"
+detect: ["requirements.txt", "pyproject.toml", "setup.py"]
+common_gaps:
+  - name: "data-engineer"
+    capabilities: ["data-pipeline", "etl", "data-modeling"]
+    scope: "Data pipeline design, ETL workflows, data warehouse modeling"
+  - name: "ml-ops"
+    capabilities: ["model-deployment", "experiment-tracking", "ml-pipeline"]
+    scope: "Model serving, MLflow/W&B integration, training pipeline orchestration"

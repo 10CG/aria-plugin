@@ -1,0 +1,9 @@
+tech_stack: "Node.js/TypeScript"
+detect: ["package.json", "tsconfig.json"]
+common_gaps:
+  - name: "testing-specialist"
+    capabilities: ["jest-testing", "e2e-testing", "test-strategy"]
+    scope: "Jest/Vitest configuration, mock strategies, E2E with Supertest/Playwright"
+  - name: "database-specialist"
+    capabilities: ["orm-migration", "query-optimization", "database-schema"]
+    scope: "Prisma/TypeORM/Drizzle schema design, migration planning, query optimization"

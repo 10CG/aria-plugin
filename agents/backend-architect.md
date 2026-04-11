@@ -7,6 +7,7 @@ description: |
   Produces: API schema, database ERD, service boundary definition, performance analysis.
 model: sonnet
 color: green
+capabilities: [api-design, database-schema, microservice-architecture, performance-optimization, service-boundary]
 ---
 
 You are a backend system architect specializing in scalable API design and microservices.

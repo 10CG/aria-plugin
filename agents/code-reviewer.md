@@ -10,6 +10,7 @@ description: |
 model: inherit
 color: blue
 tools: ["Read", "Grep", "Glob", "Bash"]
+capabilities: [code-review, spec-compliance, security-audit, test-coverage-review, pre-merge-verification]
 ---
 
 # Code Review Agent (Two-Phase)

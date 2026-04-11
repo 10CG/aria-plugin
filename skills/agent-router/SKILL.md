@@ -390,13 +390,60 @@ tasks:
 
 ---
 
+## 项目级 Agent 发现 (v1.1.0)
+
+### 机制
+
+agent-router 在执行路由决策时,**主动扫描 `.aria/agents/` 目录**,将发现的项目级 Agent 注入当前路由上下文。
+
+```
+路由决策流程:
+  1. 加载插件级 Agent 列表 (aria/agents/*.md)
+  2. 扫描项目级 Agent 目录 (.aria/agents/*.md)
+  3. 合并: 项目级 Agent 加入候选列表
+  4. 执行路由匹配 (FP/TT/关键词 + capabilities)
+  5. 输出推荐
+```
+
+**注意**: 这是 **Skill 层的运行时行为**,不是 Plugin 层的静态注册。Claude Code Plugin 不会自动加载 `.aria/agents/` 中的 Agent,但 agent-router Skill 在执行时会读取它们的 description 和 capabilities。
+
+### 缓存
+
+- 首次扫描结果缓存到 `.aria/cache/project-agents.json`
+- 缓存失效条件: `.aria/agents/` 目录 mtime 变化 或 文件数量变化
+- 强制刷新: 删除 `.aria/cache/project-agents.json`
+
+### 同名保护
+
+如果项目级 Agent 与插件级 Agent 同名:
+- 输出警告: `⚠️ 项目级 Agent '<name>' 覆盖了插件级路由`
+- 项目级优先 (用户显式创建的应优先)
+- 回退: 用户可在配置中设置 `plugin_only: true` 忽略项目级 Agent
+
+### 配置
+
+```json
+// .aria/config.json
+{
+  "agent_router": {
+    "scan_project_agents": true,    // 默认 true
+    "plugin_only": false,           // 设为 true 忽略项目级 Agent
+    "cache_ttl_seconds": 0          // 0 = 仅 mtime 失效, >0 = 时间失效
+  }
+}
+```
+
+---
+
 ## 相关文档
 
 - [subagent-driver](../subagent-driver/SKILL.md) - Fresh Subagent 执行器
-- [AGENTS_ARCHITECTURE.md](../../../.claude/agents/AGENTS_ARCHITECTURE.md) - Agent 架构
+- [agent-gap-analyzer](../agent-gap-analyzer/SKILL.md) - 覆盖度分析 (v1.13.0)
+- [agent-creator](../agent-creator/SKILL.md) - Agent 配置生成 (v1.13.0)
+- [capabilities-taxonomy](../../references/capabilities-taxonomy.yaml) - 能力标签词汇表
 - [phase-b-developer](../phase-b-developer/SKILL.md) - Phase B 开发
 
 ---
 
-**最后更新**: 2026-01-22
-**Skill版本**: 1.0.0
+**最后更新**: 2026-04-11
+**Skill版本**: 1.1.0 (新增项目级 Agent 发现)
