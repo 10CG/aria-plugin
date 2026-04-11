@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-04-11
+
+### Added
+
+- **project-analyzer Skill (US-011, PR #8)** — 扫描项目技术栈/框架/工作模式, 输出 project-profile.yaml
+  - Glob + Read 识别 7+ 技术栈 (Node.js/Python/Go/Flutter/Rust/Java/C++)
+  - monorepo 子包检测, 工具链识别 (CI/CD/ORM/测试)
+  - 降级: 无法识别时输出 unknown + 提示手工补充
+
+- **agent-gap-analyzer Skill (US-011, PR #8)** — 对比项目需求 vs Agent capabilities, 输出覆盖度报告
+  - capabilities 标签确定性匹配 (非 LLM 解析)
+  - capabilities-taxonomy.yaml 同义词规范化
+  - match_rate 标签重合率计算
+
+- **agent-creator Skill (US-011, PR #8)** — 基于缺口分析生成项目级 Agent 配置
+  - few-shot exemplar 生成 STCO frontmatter + capabilities + body
+  - 确认机制: 交互预览 / --dry-run / --confirm
+  - 同名覆盖保护 + 5 技术栈模板 (Node.js/Python/Go/Flutter/generic)
+
+- **capabilities 机读字段** — 11 Agent frontmatter 新增 capabilities 标签列表
+- **capabilities-taxonomy.yaml** — 54 个标签 + 同义词映射
+- **agent-router v1.1.0** — 运行时注入 .aria/agents/ 项目级 Agent (非 Plugin 静态注册)
+
+### AB Benchmark
+
+- 3 新 Skill with/without 对比: avg delta +0.15 (POSITIVE)
+  - project-analyzer: +0.00 (baseline 也能分析, Skill 提供标准 schema)
+  - agent-gap-analyzer: +0.25 (确定性匹配 vs 主观评分)
+  - agent-creator: +0.20 (dry-run + STCO 强制)
+
 ## [1.11.2] - 2026-04-11
 
 ### Changed

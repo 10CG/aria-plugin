@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.11.2
+> **版本**: 1.13.0
 > **发布日期**: 2026-04-11
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.11.2
+1.13.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (11)**: state-scanner v2.9.0 — Phase 1.12 同步检测 + Phase 1.13 Issue 感知
-- **Patch (2)**: US-010 STCO Agent description 质量强化 + Aria#10 legal-advisor 行为修复
+- **Minor (13)**: US-011 项目适配能力 — project-analyzer + agent-gap-analyzer + agent-creator (3 新 Skill)
+- **Patch (0)**: 新 minor, patch 归零
 
 ## 包含内容
 
-### Skills (33个, 30 面向用户 + 3 内部)
+### Skills (36个, 33 面向用户 + 3 内部)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
