@@ -488,10 +488,136 @@ Phase 1.12 输出直接驱动阶段 2 的两条推荐规则（均不阻断，仅
 
 两条规则定义详见 `RECOMMENDATION_RULES.md`（`submodule_drift` 和 `branch_behind_upstream` 条目）。
 
-子阶段数量追踪（Decision D8）：当前 12/15，超过 15 时须重构为分组（Git / Context / Quality）或合并语义相近阶段。
+子阶段数量追踪（Decision D8）：当前 14/15，超过 15 时须重构为分组（Git / Context / Quality）或合并语义相近阶段。
+
+---
+
+## 10. 多远程 Parity 检测 (v1.15.0+)
+
+> **对应 Spec**: `openspec/changes/state-scanner-multi-remote-parity/proposal.md`
+> **扩展方式**: Phase 1.12 原地扩展, 不消耗 D8 配额
+
+### 10.1 概览
+
+在单远程 (origin) 检测基础上, 扩展为对主仓库和每个子模块的**所有已配置远程**执行 parity 检查。典型场景: `origin` (Forgejo) + `github` (镜像) 双远程项目, 确保推送不遗漏任何远程。
+
+### 10.2 检测步骤
+
+**步骤 1: 枚举远程**
+
+对主仓库和每个子模块执行:
+
+```bash
+# 获取所有已配置 remote (默认: 自动发现)
+git -C <path> remote | sort -u
+```
+
+若 `state_scanner.multi_remote.enforced_remotes` 非 null, 则使用白名单代替自动发现。不存在的 remote 输出 `reachable: false, reason: not_found`。
+
+**步骤 2: 获取 remote HEAD**
+
+根据 `verify_mode` 选择策略:
+
+| verify_mode | 方法 | 标注 |
+|-------------|------|------|
+| `local_refs` (默认) | 读取 `refs/remotes/<remote>/<branch>` 本地缓存 | `method: "local_refs"` |
+| `ls_remote` | `timeout <N> git -C <path> ls-remote <remote> HEAD` | `method: "ls_remote"` |
+
+**步骤 3: 计算 parity**
+
+```bash
+local_head=$(git -C <path> rev-parse HEAD 2>/dev/null)
+remote_head=$(git -C <path> rev-parse refs/remotes/<remote>/<branch> 2>/dev/null)
+
+if [ "$local_head" = "$remote_head" ]; then
+  parity="equal"
+else
+  behind=$(git -C <path> rev-list --count HEAD..<remote>/<branch> 2>/dev/null)
+  ahead=$(git -C <path> rev-list --count <remote>/<branch>..HEAD 2>/dev/null)
+
+  if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
+    parity="diverged"
+  elif [ "$behind" -gt 0 ]; then
+    parity="behind"
+  elif [ "$ahead" -gt 0 ]; then
+    parity="ahead"
+  else
+    parity="unknown"
+  fi
+fi
+```
+
+**步骤 4: 汇总 overall_parity**
+
+```bash
+overall_parity=true
+has_unreachable_remote=false
+has_pending_push=false
+
+# 遍历所有 main_repo + submodules 的所有 remotes
+for each remote_entry:
+  if remote_entry.parity in ["behind", "diverged"]:
+    overall_parity=false
+  if remote_entry.reachable == false:
+    has_unreachable_remote=true
+  if remote_entry.parity == "ahead":
+    has_pending_push=true
+```
+
+### 10.3 helper 调用接口
+
+当 `git-remote-helper` 可用时 (`test -f aria/skills/git-remote-helper/SKILL.md`), state-scanner 调用:
+
+```
+check_parity(repo_path, branch?)  →  JSON (canonical multi_remote schema)
+```
+
+helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
+
+### 10.4 fallback 内联实现
+
+当 helper 不可用时, state-scanner 执行 §10.2 描述的内联 Bash 实现。fallback 必须产出与 helper canonical 完全一致的 JSON schema (字段名、枚举值、结构均相同), 以确保消费方无需写两套解析逻辑。
+
+### 10.5 四状态守卫 (扩展到多 remote)
+
+复用现有 Phase 1.12 守卫, 扩展到每个 remote 的 parity 计算:
+
+| 状态 | `reachable` | `parity` | `reason` |
+|------|-------------|----------|----------|
+| 正常, 本地 refs 命中 | `true` | `equal`/`ahead`/`behind`/`diverged` | `null` |
+| 本地无 tracking ref | `"unknown"` | `"unknown"` | `"no_local_tracking_ref"` |
+| shallow clone | `true` | `"unknown"` | `"shallow_clone"` |
+| detached HEAD | `true` | `"unknown"` | `"detached_head"` |
+| auth 失败 (ls_remote) | `false` | `"unknown"` | `"auth_failed"` |
+| URL 无效/仓库不存在 | `false` | `"unknown"` | `"not_found"` |
+| ls_remote 超时 | `false` | `"unknown"` | `"network_timeout"` |
+
+**fail-soft 原则**: 任一 remote 不可达 → 该条目 `parity: unknown, reachable: false` + `reason` 枚举, 不阻断扫描, 不影响其他 remote 的检测。
+
+### 10.6 Consumer Inventory (向后兼容验证清单)
+
+现有读取 `sync_status.submodules[]` 的 consumer:
+
+| Consumer | 消费字段 | 向后兼容要求 |
+|----------|---------|------------|
+| `RECOMMENDATION_RULES.md` → `submodule_drift` 规则 | `submodules[].drift.tree_vs_remote` | 字段保留不变 |
+| `aria-dashboard` (若消费) | `submodules[].remote_commit` | 保留, 值 = origin 的 remote_head |
+
+**语义锁定**: `submodules[].remote_commit` 始终映射 `multi_remote.submodules[path=X].remotes[name=origin].remote_head`。若 origin 不存在则为 `null`。此约定不随 v1.15.0 变更, 保持永久向后兼容。
+
+### 10.7 与推荐规则的联动
+
+| 规则 ID | 触发条件 | 动作 |
+|---------|---------|------|
+| `multi_remote_drift` (priority 1.35) | `multi_remote.overall_parity === false` | 降级置信度, 输出 per-remote 修复建议 |
+
+**不触发条件**:
+- `has_pending_push: true` (仅 ahead) — 正常待推送, 不报警
+- `has_unreachable_remote: true` (仅 unknown) — 临时网络故障, 不等于推送遗漏
 
 ---
 
 **创建**: 2026-04-09
-**版本**: 1.0.0
+**版本**: 1.0.0 (§10 新增: 2026-04-12, v1.15.0)
 **对应 Spec**: `openspec/changes/state-scanner-remote-sync-check/proposal.md`
+**多远程 Parity Spec**: `openspec/changes/state-scanner-multi-remote-parity/proposal.md`

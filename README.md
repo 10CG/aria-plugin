@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.14.0 | **Released**: 2026-04-12
+> **Version**: 1.15.0 | **Released**: 2026-04-12
 >
-> AI-DDD methodology plugin for Claude Code — 30 Skills + 11 Agents + Hooks
+> AI-DDD methodology plugin for Claude Code — 30 user-facing Skills + 6 internal + 11 Agents + Hooks
 
 ## Prerequisites
 
@@ -37,7 +37,9 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (33 user-facing + 3 internal)
+### Skills (30 user-facing + 6 internal = 36 total)
+
+> Internal skills (6, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1).
 
 **Ten-Step Cycle Core**
 - state-scanner — Project state scan with intelligent workflow recommendations
@@ -80,6 +82,7 @@ export ARIA_HOOKS_DISABLED=true
 
 **Infrastructure**
 - config-loader *(internal, non-user-invocable)* — Configuration loading
+- git-remote-helper *(internal, non-user-invocable)* — Git multi-remote parity detection and push verification shared infrastructure (US-012, Layer 3)
 
 **Visualization**
 - aria-dashboard — Project progress dashboard (UPM/Stories/OpenSpec/Audit/Benchmark)
