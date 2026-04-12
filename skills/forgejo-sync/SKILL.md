@@ -45,6 +45,56 @@ allowed-tools: Read, Glob, Grep, Edit, WebFetch
 
 ---
 
+## Forgejo 配置引导 (v1.14.0 新增)
+
+forgejo-sync 在 PRE_CHECK 步骤中自动检测 Forgejo 配置是否就位。
+
+### 触发条件
+
+- git remote URL 包含已知 Forgejo 实例 (`forgejo.10cg.pub`)
+- `CLAUDE.local.md` 不存在，**或**文件存在但缺少 `forgejo:` 配置块
+
+### 行为
+
+**文件不存在时**:
+1. 从 git remote URL 推断 `owner/repo` (支持 SSH `git@host:owner/repo.git` 和 HTTPS 格式)
+2. 对已知实例默认 `cloudflare_access.enabled: true`
+3. 展示将要生成的完整配置内容
+4. 提示用户确认 [y/N]
+5. 确认 → 创建 `CLAUDE.local.md`，继续后续步骤
+6. 拒绝 → 输出 "跳过配置创建，forgejo-sync 可能因 Cloudflare 拦截而失败"，继续执行
+
+**文件存在但缺少 forgejo 块时**:
+1. 展示将要追加的 forgejo 配置块
+2. 提示用户确认 [y/N]
+3. 确认 → 在文件末尾追加 forgejo 配置块
+4. 拒绝 → 同上，继续执行
+
+**已有 forgejo 配置时**: 不提示，直接进入原有 PRE_CHECK 流程。
+
+### 生成模板
+
+与现有配置 schema 字段一致:
+
+```yaml
+## Forgejo Integration
+forgejo:
+  url: "https://forgejo.10cg.pub"
+  repo: "{owner}/{repo}"
+  cloudflare_access:
+    enabled: true
+    client_id_env: "CF_ACCESS_CLIENT_ID"
+    client_secret_env: "CF_ACCESS_CLIENT_SECRET"
+```
+
+### 设计约束
+
+- 用户拒绝后不记忆状态，下次调用仍提示 (无状态设计)
+- 仅对已知实例 (`forgejo.10cg.pub`) 生效，硬编码白名单
+- 不修改已有 forgejo 配置块内容
+
+---
+
 ## 配置
 
 ### 必需配置

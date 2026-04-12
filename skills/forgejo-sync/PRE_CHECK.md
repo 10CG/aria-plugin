@@ -19,6 +19,38 @@ Forgejo_API_Call_Pre_Check:
 
 ## 执行流程 (AI 必须按顺序执行)
 
+### Step 0: Forgejo 配置检测与引导 (v1.14.0 新增)
+
+在执行原有 PRE_CHECK 步骤之前，先检测 Forgejo 配置是否就位。
+
+**检测流程**:
+1. 解析 `git remote -v` 输出，检查是否包含已知 Forgejo 实例 (`forgejo.10cg.pub`)
+   - 不包含 → 跳过本步骤，进入 Step 1
+2. 检查 `CLAUDE.local.md` 是否存在
+3. 如存在，检查是否包含 `forgejo:` 配置块 (grep "^forgejo:" 或 "^  url:")
+
+**引导行为**:
+
+| 状态 | 行为 |
+|------|------|
+| 文件不存在 | 展示完整模板 → 提示 [y/N] → 创建/跳过 |
+| 文件存在但无 forgejo 块 | 展示追加内容 → 提示 [y/N] → 追加/跳过 |
+| forgejo 配置已存在 | 静默通过，进入 Step 1 |
+
+**remote URL 解析**:
+- SSH 格式: `git@forgejo.10cg.pub:owner/repo.git` → `owner/repo`
+- HTTPS 格式: `https://forgejo.10cg.pub/owner/repo.git` → `owner/repo`
+- 去除 `.git` 后缀
+
+**生成模板字段** (与 Step 1 config schema 一致):
+- `forgejo.url`: `https://{instance}`
+- `forgejo.repo`: `{owner}/{repo}`
+- `forgejo.cloudflare_access.enabled`: `true` (已知实例默认)
+- `forgejo.cloudflare_access.client_id_env`: `CF_ACCESS_CLIENT_ID`
+- `forgejo.cloudflare_access.client_secret_env`: `CF_ACCESS_CLIENT_SECRET`
+
+---
+
 ```yaml
 Step_1_Config_Check:
   动作: 读取配置

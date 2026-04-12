@@ -330,9 +330,25 @@ openspec/
 检查项:
   - 版本号是否与 VERSION 文件或 plugin.json 一致
   - 最后更新日期是否与 CHANGELOG 最新条目日期一致 (非 wall-clock)
+  - aria/README.md 版本号是否与 aria/.claude-plugin/plugin.json 一致
+  - Skill 数量是否与 aria/README.md 声明一致 (排除 user-invocable: false 的目录)
+  - Skill 列表完整性 (info 级)
+  - Plugin badge 版本是否与 plugin.json 一致
 
 日期检查数据源: 以 CHANGELOG.md 最新条目日期为基准，非 wall-clock 时间。
 避免随时间推移产生误报。
+
+内部 Skill 排除标准:
+  以 user-invocable: false 判定为内部 Skill，不计入用户可见 Skill 数量。
+  当前已知内部 Skill (5 个): agent-router, agent-team-audit, arch-common, config-loader, audit-engine
+
+Skill 列表解析策略:
+  - 匹配 aria/README.md 中 Skills 表格或列表
+  - 格式无法识别时降级输出 info "无法解析 Skill 列表格式"，不报 warning/error
+
+Badge 解析策略:
+  - 匹配 README 中 Plugin-v[\d.]+ 模式
+  - 格式不匹配时降级为 info，不报 warning/error
 
 输出:
   readme_status:
@@ -342,7 +358,17 @@ openspec/
       date_match: true | false
       suggestion: "更新 README.md 版本号为 v1.7.0"  # 仅不一致时
     submodules:
-      aria: { exists: true, version_match: true | false }
+      aria:
+        exists: true
+        version_match: true | false
+        plugin_version: "v1.13.0"
+        readme_version: "v1.11.1"
+        skill_count_match: true | false
+        skill_count_actual: 33          # 排除 user-invocable: false 后的真实数量
+        skill_count_readme: 30          # README.md 中声明的数量
+        skill_list_missing: []          # info 级, 列出缺失 Skill 名
+    badge:
+      version_match: true | false
 
 输出 (README 不存在):
   readme_status:
@@ -638,6 +664,46 @@ issue_status:
 - `open_blocker_issues`: 存在 label 包含 `blocker`/`critical` 的 open issue → 降级推荐 + "先 triage N 个阻塞 Issue" 提示
 
 详细实现见 [references/issue-scanning.md](./references/issue-scanning.md)
+
+---
+
+### 阶段 1.14: Forgejo 配置检测
+
+**重要**: 此阶段始终执行 (fail-soft)，检测 Forgejo API 配置是否就位。
+
+**编号约束 (D8 遵从)**: 当前已用 14 个阶段 (0~1.13, 2~4)，本阶段消耗 1.14，剩余配额 1 (仅 1.15 可用)。
+
+```yaml
+检测步骤:
+  1. 检查 git remote URL 是否包含已知 Forgejo 实例 (forgejo.10cg.pub)
+     - 无 Forgejo remote → 静默跳过
+  2. 检查 CLAUDE.local.md 是否存在
+  3. 如存在，检查是否包含 forgejo: 配置块
+
+输出 (文件缺失):
+  forgejo_config:
+    forgejo_remote_detected: true
+    instance: "forgejo.10cg.pub"
+    config_status: "missing"         # CLAUDE.local.md 不存在
+    suggestion: "运行 /forgejo-sync 可引导创建配置 (需确认)"
+
+输出 (文件存在但缺少 forgejo 块):
+  forgejo_config:
+    forgejo_remote_detected: true
+    instance: "forgejo.10cg.pub"
+    config_status: "incomplete"      # 文件存在但无 forgejo: 块
+    suggestion: "运行 /forgejo-sync 可引导追加配置 (需确认)"
+
+输出 (配置完整):
+  forgejo_config:
+    forgejo_remote_detected: true
+    instance: "forgejo.10cg.pub"
+    config_status: "configured"
+
+输出 (非 Forgejo remote):
+  forgejo_config:
+    forgejo_remote_detected: false
+```
 
 ---
 

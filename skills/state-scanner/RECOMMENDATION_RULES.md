@@ -73,6 +73,8 @@ conditions:
   any:
     - readme_version_mismatch: true   # VERSION/plugin.json 与 README 版本不同
     - readme_date_mismatch: true      # CHANGELOG 最新日期与 README 日期不同
+    - readme_skill_count_mismatch: true  # aria/skills/ 目录计数与 README "N Skills" 不同
+    - readme_badge_mismatch: true     # plugin.json version 与 README badge URL 版本不同
 
   detection:
     version_source:
@@ -83,6 +85,10 @@ conditions:
     readme_paths:
       - README.md (根目录)
       - aria/README.md (子模块)
+    skill_count_source:
+      - "ls aria/skills/ (排除 user-invocable: false)"
+    badge_source:
+      - "README.md badge URL 中的版本号 (正则: Plugin-v[\\d.]+)"
 
 recommendation:
   workflow: doc-update
@@ -112,6 +118,31 @@ recommendation:
   info: "⚠️ aria-standards 子模块已注册但未初始化"
   suggestion: "git submodule update --init standards"
   non_blocking: true  # 建议性，不阻塞
+```
+
+### 1.45 forgejo_config_missing
+
+```yaml
+id: forgejo_config_missing
+priority: 1.45
+description: Forgejo 远程已配置但缺少 CLAUDE.local.md 中的 API 配置
+
+conditions:
+  all:
+    - forgejo_remote_detected: true
+    - forgejo_config_status: "missing" | "incomplete"
+
+  detection:
+    remote_check:
+      - "git remote -v | grep forgejo.10cg.pub"
+    config_check:
+      - "CLAUDE.local.md 存在性 + forgejo: 块检测"
+
+recommendation:
+  workflow: null  # 无自动工作流
+  steps: []
+  reason: "检测到 Forgejo 远程但缺少 API 配置。运行 /forgejo-sync 可引导创建 CLAUDE.local.md"
+  non_blocking: true
 ```
 
 ### 2. quick_fix

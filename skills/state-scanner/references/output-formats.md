@@ -62,11 +62,35 @@
 
 📝 README 同步状态
 ───────────────────────────────────────────────────────────────
-  README.md: ✅ 版本一致 (v1.7.0) | 日期一致 (2026-03-18)
+  ✅ 主项目版本号: 一致 (v1.5.0)
+  ✅ 主项目日期: 一致 (2026-04-12)
+  ✅ 子模块版本号: 一致 (v1.14.0)
+  ✅ Skill 数量: 一致 (33)
+  ℹ️ Skill 列表: 完整
+  ✅ Plugin badge: 一致
+
+# 有漂移时:
+  ⚠️ 子模块版本号: 不一致 (plugin.json: v1.14.0, aria/README: v1.13.0)
+  ⚠️ Skill 数量: 不一致 (实际: 36, README: 33)
+  ⚠️ Skill 列表: 缺失 3 项 (project-analyzer, agent-gap-analyzer, agent-creator)
+  ⚠️ Plugin badge: 不一致 (plugin.json: v1.14.0, badge: v1.13.0)
+  ℹ️ Skill 列表: 无法解析 Skill 列表格式
 
 📦 插件依赖状态
 ───────────────────────────────────────────────────────────────
   standards 子模块: ✅ 正常
+
+🔗 Forgejo 配置检查
+───────────────────────────────────────────────────────────────
+  ✅ Forgejo 配置: 已配置 (forgejo.10cg.pub)
+
+# 文件缺失时:
+  ⚠️ 检测到 Forgejo 远程 (forgejo.10cg.pub) 但缺少 CLAUDE.local.md
+     建议: 运行 /forgejo-sync 可引导创建配置 (需确认)
+
+# 文件存在但缺少 forgejo 块:
+  ⚠️ CLAUDE.local.md 存在但缺少 forgejo 配置块
+     建议: 运行 /forgejo-sync 可引导追加配置 (需确认)
 
 🔬 Skill 变更 AB 状态
 ───────────────────────────────────────────────────────────────
