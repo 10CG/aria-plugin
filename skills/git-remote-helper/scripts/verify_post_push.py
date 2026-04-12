@@ -38,7 +38,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--max-retries", type=int, default=3, dest="max_retries",
-        help="Number of retries after initial attempt (default: 3)"
+        help=(
+            "Number of retries after initial attempt (default: 3). "
+            "IMPORTANT: Total attempts = 1 initial + max_retries, so "
+            "max_retries=3 produces 4 attempts (schedule: 0s, 2s, 4s, 8s)."
+        )
     )
     parser.add_argument(
         "--initial-backoff", type=float, default=2.0, dest="initial_backoff",
@@ -46,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeout", type=float, default=15.0,
-        help="Timeout per ls-remote call in seconds (default: 5)"
+        help="Timeout per ls-remote call in seconds (default: 15, v1.15.1+)"
     )
     parser.add_argument(
         "--remotes", default="",

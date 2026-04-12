@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.2] - 2026-04-12
+
+### Fixed
+
+- **check_parity.sh shell injection 防护** — Python heredoc 内的 `$REPO` / `$REMOTE` / `$BRANCH` / `$TIMEOUT_SECONDS` 直接注入改为环境变量传参 + 单引号 heredoc (`<<'PYEOF'`), 防止路径含引号/反斜杠/换行时脚本破坏
+- **check_parity.sh 死代码清理** — 删除未使用的 TIMEOUT_CMD 变量构造 (L68-86), timeout 检测已在 ls_remote 调用处内联实现
+
+### Changed
+
+- **verify_post_push.py `--max-retries` 注释增强** — 明确指出 max_retries=3 产生 4 总 attempts (1 initial + 3 retries), 避免命名歧义
+- **fallback 路径可移植性文档** — state-scanner / phase-c-integrator / sync-detection.md 中的 `test -f aria/skills/...` 统一为 `test -f "${ARIA_PLUGIN_ROOT:-aria}/skills/..."`, 支持跨项目场景 (非 Aria 主项目时通过环境变量指定路径)
+
+### Notes
+
+- v1.15.2 为 Phase B Code Review 遗留 MINOR 项的集中清理, 无功能变更
+- Dogfood 闭环完整: v1.15.0 实施 → v1.15.1 timeout 调优 → v1.15.2 cleanup
+
 ## [1.15.1] - 2026-04-12
 
 ### Fixed
