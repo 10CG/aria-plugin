@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.13.0
-> **发布日期**: 2026-04-11
+> **版本**: 1.14.0
+> **发布日期**: 2026-04-12
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.13.0
+1.14.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (13)**: US-011 项目适配能力 — project-analyzer + agent-gap-analyzer + agent-creator (3 新 Skill)
+- **Minor (14)**: state-scanner Phase 1.8 README 检查增强 + Phase 1.14 Forgejo 配置检测 + forgejo-sync 主动引导
 - **Patch (0)**: 新 minor, patch 归零
 
 ## 包含内容
 
-### Skills (36个, 33 面向用户 + 3 内部)
+### Skills (35个, 30 面向用户 + 5 内部)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -30,23 +30,26 @@
 **Git 工作流 (4个)**
 - commit-msg-generator, strategic-commit-orchestrator, branch-manager, branch-finisher
 
-**开发工具 (4个)**
-- subagent-driver, agent-router, tdd-enforcer, requesting-code-review
+**开发工具 (3个)**
+- subagent-driver, tdd-enforcer, requesting-code-review
 
-**架构文档 (5个)**
-- arch-common, arch-search, arch-update, arch-scaffolder, api-doc-generator
+**架构文档 (4个)**
+- arch-search, arch-update, arch-scaffolder, api-doc-generator
 
 **需求管理 (4个)**
 - requirements-validator, requirements-sync, forgejo-sync, openspec-archive
 
 **反馈与报告 (1个)**
-- aria-report (Bug / Feature / Question Issue 报告)
+- aria-report
 
-**看板与可视化 (1个)** ← v1.10.0 新增
-- aria-dashboard (项目进度看板生成器)
+**看板与可视化 (1个)**
+- aria-dashboard
 
-**基础设施 (3个, 内部)**
-- config-loader, audit-engine, agent-team-audit
+**项目适配 (3个)**
+- project-analyzer, agent-gap-analyzer, agent-creator
+
+**基础设施 (5个, 内部)**
+- config-loader, audit-engine, agent-team-audit, agent-router, arch-common
 
 ### Agents (11个)
 
