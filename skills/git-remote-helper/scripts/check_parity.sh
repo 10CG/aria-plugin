@@ -15,7 +15,10 @@ set -euo pipefail
 REPO=""
 BRANCH="master"
 VERIFY_MODE="local_refs"
-TIMEOUT_SECONDS=5
+# v1.15.1: bumped default from 5s to 15s after dogfood discovery that Forgejo SSH
+# over Cloudflare Access requires ~8s for ls-remote. 15s provides 2x headroom.
+# For fast networks, override via --timeout=5.
+TIMEOUT_SECONDS=15
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 for arg in "$@"; do

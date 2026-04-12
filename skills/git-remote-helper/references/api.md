@@ -19,7 +19,7 @@ aria/skills/git-remote-helper/scripts/check_parity.sh
 | `--repo` | string | 是 | — | Git 仓库绝对路径 |
 | `--branch` | string | 否 | `master` | 目标分支名 |
 | `--verify-mode` | enum | 否 | `local_refs` | `local_refs` (快, 无网络) / `ls_remote` (准, 有网络) |
-| `--timeout` | integer | 否 | `5` | `ls_remote` 模式每个 remote 的超时秒数 |
+| `--timeout` | integer | 否 | `15` | `ls_remote` 模式每个 remote 的超时秒数 (v1.15.1: 从 5s 提升为 15s, 适配 Forgejo SSH over Cloudflare Access) |
 
 ### 调用示例
 
@@ -200,7 +200,7 @@ aria/skills/git-remote-helper/scripts/verify_post_push.py
 | `--expected-sha` | string | 是 | — | 期望的 commit SHA (push 前快照的 local HEAD) |
 | `--max-retries` | integer | 否 | `3` | 初次 attempt 后的最大重试次数 |
 | `--initial-backoff` | float | 否 | `2.0` | 初始 backoff 秒数, 每次翻倍 |
-| `--timeout` | float | 否 | `5.0` | 每次 ls-remote 的超时秒数 |
+| `--timeout` | float | 否 | `15.0` | 每次 ls-remote 的超时秒数 (v1.15.1 默认值) |
 | `--remotes` | string | 否 | 所有 remote | 逗号分隔的 remote 名称 |
 
 ### 调用示例
@@ -279,14 +279,14 @@ retry_schedule = [0] + [initial_backoff * (2**i) for i in range(max_retries)]
 
 每次 attempt:
 1. Sleep `schedule[i]` 秒
-2. `git ls-remote <remote> refs/heads/<branch>` (timeout=5s)
+2. `git ls-remote <remote> refs/heads/<branch>` (timeout=15s 默认, v1.15.1+)
 3. SHA 匹配 → 立即返回 `match: true`
 4. 全部 attempt 耗尽 → 返回 `match: false, reason: <last_error_or_sha_mismatch>`
 
 **per-remote 时间上界**:
-- 4 attempts × 5s timeout = 20s (网络)
+- 4 attempts × 15s timeout = 60s (网络, v1.15.1 默认)
 - sleep schedule = 0+2+4+8 = 14s
-- **合计上界 = 34s per remote**
+- **合计上界 = 74s per remote** (v1.15.1 默认). 快速网络可设 `--timeout=5` 回到 34s 上界.
 
 ### 错误处理 — `reason` 枚举 (match=false 时)
 

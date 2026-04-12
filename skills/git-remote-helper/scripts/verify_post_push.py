@@ -7,13 +7,15 @@
 # Usage:
 #   python3 verify_post_push.py \
 #     --repo=<path> --branch=<name> --expected-sha=<sha> \
-#     [--max-retries=3] [--initial-backoff=2] [--timeout=5] \
+#     [--max-retries=3] [--initial-backoff=2] [--timeout=15] \
 #     [--remotes=origin,github]
 #
 # Output: JSON (see references/schema.md for verify_parity_post_push schema)
 #
 # Retry schedule (default): [0, 2, 4, 8] seconds before each attempt
-# Per-remote time upper bound: 4 attempts x 5s timeout + 14s sleep = 34s
+# Per-remote time upper bound: 4 attempts x 15s timeout + 14s sleep = 74s (v1.15.1 default)
+# Rationale: Forgejo SSH over Cloudflare Access ~8s ls-remote latency (dogfood 2026-04-12).
+# For LAN/direct setups, override via --timeout=5 → bound 34s.
 #
 # Make executable: chmod +x verify_post_push.py
 
@@ -43,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         help="Initial backoff seconds, doubles each retry (default: 2)"
     )
     parser.add_argument(
-        "--timeout", type=float, default=5.0,
+        "--timeout", type=float, default=15.0,
         help="Timeout per ls-remote call in seconds (default: 5)"
     )
     parser.add_argument(
