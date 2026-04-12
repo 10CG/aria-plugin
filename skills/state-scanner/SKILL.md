@@ -595,10 +595,108 @@ sync_status:
 **推荐规则联动**:
 - `submodule_drift`: 任一 submodule `tree_vs_remote=true` → 降级推荐 + `git submodule update --remote` 提示
 - `branch_behind_upstream`: `current_branch.behind >= 5` → 降级推荐 + "建议先 git pull" 提示
+- `multi_remote_drift`: `multi_remote.overall_parity=false` → 降级推荐 + per-remote 修复建议 (v1.15.0+)
 
 两条规则均不阻断推荐，仅降级 + 附加提示 (fail-soft)。
 
 详细实现见 [references/sync-detection.md](./references/sync-detection.md)
+
+#### 多远程 Parity (v1.15.0+)
+
+**编号约束**: Phase 1.12 原地扩展, 不消耗 D8 配额 (14/15 保持)
+
+**Schema source of truth**: `git-remote-helper` SKILL.md 定义 canonical schema, 本 Phase 引用。
+
+**检测逻辑**:
+1. helper 可用 (`test -f aria/skills/git-remote-helper/SKILL.md`) → 调用 git-remote-helper 的 `check_parity()` 指令
+2. helper 不可用 → 降级内联实现 (产出完全相同的 JSON schema, 通过同一 schema validator)
+
+**verify_mode 触发协议**: CLI `--verify-mode=ls_remote` > 配置 `state_scanner.multi_remote.verify_mode` > 默认 `local_refs`
+
+**输出 schema 扩展**:
+
+```yaml
+sync_status:
+  # 现有 submodules[] 保留 — 语义锁定: remote_commit 字段始终映射 origin 的 remote_head
+  # 向后兼容保证: submodules[].drift.tree_vs_remote 及所有现有字段不变
+  submodules:
+    - path: "aria"
+      tree_commit: "19f2861"
+      head_commit: "19f2861"
+      remote_commit: "19f2861"       # 约定: 此字段 = multi_remote.submodules[path=aria].remotes[name=origin].remote_head
+      drift: { ... }
+
+  # 新增: 多远程 parity (canonical schema 来自 git-remote-helper)
+  multi_remote:
+    enabled: true
+    main_repo:
+      local_head: "5b7a5f7"
+      branch: "master"
+      remotes:
+        - name: "origin"
+          remote_head: "5b7a5f7"
+          parity: "equal"             # enum: equal | ahead | behind | diverged | unknown
+          behind_count: 0
+          ahead_count: 0
+          reachable: true
+          reason: null                # enum: null | auth_failed | not_found | network_timeout | no_local_tracking_ref | shallow_clone | detached_head
+          method: "local_refs"        # local_refs | ls_remote
+        - name: "github"
+          remote_head: "e476a2b"
+          parity: "behind"
+          behind_count: 1
+          ahead_count: 0
+          reachable: true
+          reason: null
+          method: "local_refs"
+    submodules:
+      - path: "aria"
+        local_head: "19f2861"
+        branch: "master"
+        remotes:
+          - name: "origin"
+            remote_head: "19f2861"
+            parity: "equal"
+            behind_count: 0
+            ahead_count: 0
+            reachable: true
+            reason: null
+            method: "local_refs"
+          - name: "github"
+            remote_head: "f55e130"
+            parity: "behind"
+            behind_count: 2
+            ahead_count: 0
+            reachable: true
+            reason: null
+            method: "local_refs"
+    overall_parity: false             # true = 所有 remotes parity=equal; false = 任一 parity∈{behind,diverged}
+    has_unreachable_remote: false     # 任一 reachable=false 时 true (网络故障, 不计入 overall_parity)
+    has_pending_push: false           # 任一 parity=ahead 时 true (正常待推送状态, 不计入 overall_parity)
+```
+
+**overall_parity 精确定义**:
+- `true`: 所有 remotes 的 `parity` 均为 `equal`
+- `false`: 任一 remote 的 `parity` ∈ {`behind`, `diverged`}
+- `parity: ahead` 不计入 `overall_parity` (正常"待推送"状态), 单独由 `has_pending_push` 承载
+- `parity: unknown` 不计入 `overall_parity` (网络故障不等于推送遗漏), 单独由 `has_unreachable_remote` 承载
+
+**Local refs staleness 处理**:
+1. ref 不存在 (新配置 remote 未 fetch) → `parity: unknown, reason: no_local_tracking_ref, reachable: unknown`
+2. `FETCH_HEAD` 陈旧 (> `warn_after_hours`, 默认 24h) → 输出标注 `local_refs_stale: true`, 建议 `git fetch`
+3. shallow clone → 复用现有 Phase 1.12 守卫, `parity: unknown, reason: shallow_clone, behind_count: null`
+4. detached HEAD → `parity: unknown, reason: detached_head`
+
+**配置项** (`state_scanner.multi_remote.*`):
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `enabled` | `true` | 主开关 (关闭则完全跳过) |
+| `verify_mode` | `local_refs` | `local_refs` (快) / `ls_remote` (准, 带网络) |
+| `timeout_seconds` | `5` | 单 remote ls-remote 超时 |
+| `enforced_remotes` | `null` | null = 继承顶层 `multi_remote.enforced_remotes`; 非 null = skill 级覆盖 |
+
+详细实现见 [references/sync-detection.md](./references/sync-detection.md) 多远程 Parity 章节
 
 ---
 

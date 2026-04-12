@@ -146,7 +146,60 @@ C.2 - PR/合并:
 
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。
 > 统一规范见 `../forgejo-sync/PRE_CHECK.md`
+
+C.2.5 - Multi-Remote Push Enforcement:
+  触发条件:
+    - Phase C.2 合并成功 (master 已 fast-forward)
+    - 配置 phase_c_integrator.multi_remote_push.enabled: true (默认)
+  skill: git-remote-helper (降级: 内联实现)
+  action: 见下方 ### C.2.5 详细说明
 ```
+
+### C.2.5 Multi-Remote Push Enforcement (v1.15.0+)
+
+**触发条件**:
+- Phase C.2 合并成功 (master 已 fast-forward)
+- 配置 `phase_c_integrator.multi_remote_push.enabled: true` (默认)
+
+**与 branch-manager 边界** (不重叠):
+| Skill | 职责 | Remote 范围 |
+|-------|------|-----------|
+| branch-manager (C.2 PR 发起前) | 推送 feature 分支 + 创建 PR | 仅 origin |
+| phase-c-integrator C.2.5 (PR 合并后) | 推送 master + 多 remote SHA 验证 | 所有 enforced remote |
+
+**执行流程**:
+1. 快照 `expected_sha = git rev-parse HEAD` (合并后本地 master HEAD)
+2. 枚举子模块: `git submodule status --recursive`
+3. 确定 `ENFORCED_REMOTES`: skill 级 `enforced_remotes == null` 时继承顶层 `multi_remote.enforced_remotes`, 空则自动发现所有 remote
+4. **Per-Remote Matrix Gating** (对每个 REMOTE ∈ ENFORCED_REMOTES):
+   - a. 遍历子模块, 调用 `git-remote-helper.push_all_remotes(SUBMODULE.path, SUBMODULE.branch, [REMOTE])`
+   - b. 子模块推 REMOTE 任一失败 → 按失败优先级决策 (见下), 阻断则跳过本 REMOTE 的主仓库推送
+   - c. 子模块全部成功 → 调用 helper.push_all_remotes(main_repo, branch, [REMOTE])
+   - d. 主仓库推送成功 → 调用 helper.verify_parity_post_push(main_repo, branch, expected_sha, [REMOTE])
+   - e. verify match=false → 同优先级决策
+5. 所有 REMOTE 处理完毕, 全部通过 → 进入 Phase D
+6. 任一阻断 → 输出具体失败 remote + 修复命令 (`git -C <path> push <remote> <branch>`)
+
+**失败优先级** (决策表):
+| 条件 | 行为 |
+|------|------|
+| remote ∈ `read_only_remotes` | warning 降级, 继续 (最高优先级) |
+| `fail_on_partial_push: false` + 非 read_only | warning, 继续 |
+| `fail_on_partial_push: true` + 非 read_only (默认) | **阻断**, 输出修复命令 |
+
+**Per-Remote Matrix 示例**:
+```
+origin: sub1 ✅ sub2 ✅ main ✅ (已推)
+github: sub1 ✅ sub2 ❌ (network timeout) → 跳过 main github; 但 origin 已完成
+```
+
+**子模块 detached HEAD**: 沿用 helper canonical (`detached_head: true` + HEAD SHA 比较), 警告但不阻断。
+
+**降级策略**: 检测 `test -f aria/skills/git-remote-helper/SKILL.md` 存在性。不可用时用内联降级 (不重试, 简化实现), schema 仍一致。
+
+**Race condition 处理**: verify 4 次 attempt 全部 match=false 默认阻断, 记录 "possible race condition"。
+
+---
 
 ### 输出
 

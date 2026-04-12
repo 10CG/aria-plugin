@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-04-12
+
+### Added
+
+- **git-remote-helper (US-012, Layer 3)** — 新 internal skill, 提供 Git 多远程 parity 检测与 push 验证的共享基础设施
+  - `check_parity` 指令块: per-remote SHA 对比 + shallow/detached/未 fetch refs 守卫
+  - `push_all_remotes` 指令块: 严格 post-push SHA 验证 (不依赖 "Everything up-to-date" message)
+  - `verify_parity_post_push` 指令块: Python 实现指数退避 [0, 2, 4, 8]s, 上界 34s/remote
+  - JSON schema canonical source, 跨平台兼容 (timeout/gtimeout/Python wrapper)
+
+- **state-scanner Phase 1.12 多远程扩展 (US-012, Layer 1)** — 原地扩展, 不消耗 D8 配额
+  - `sync_status.multi_remote.*` 新字段: 主仓库 + 子模块 per-remote parity
+  - `overall_parity` 精确定义: 排除 `ahead` (正常待推送) 和 `unknown` (网络故障)
+  - `multi_remote_drift` 推荐规则 (priority 1.35, warning 非阻塞)
+  - 向后兼容: `submodules[]` 现有字段保留, `remote_commit` = origin 的 remote_head
+
+- **phase-c-integrator C.2.5 Multi-Remote Push Enforcement (US-012, Layer 2)** — 合并 PR 后自动推送所有远程 + SHA 验证
+  - Per-Remote Matrix Gating: 子模块推 X 失败仅阻断主仓库推 X, 其他 remote 不受影响
+  - 失败优先级: `read_only_remotes` > `fail_on_partial_push` > 默认阻断
+  - 配置: `.aria/config.json` 顶层 `multi_remote.*` + skill 级 null 继承
+
+### Fixed
+
+- **2026-04-12 v1.14.0 发版事故根因修复** — aria 子模块推 origin 但遗漏 GitHub 的场景, 现由 C.2.5 post-push SHA 验证彻底阻断
+
+### Changed
+
+- `branch-manager` 与 `phase-c-integrator` 边界明确: branch-manager 仍仅推 origin (PR 阶段), 多远程语义在 C.2.5 合并后生效
+
+### AB Benchmark
+
+- eval-10 `multi-remote-parity-drift`: Layer 1 多远程漂移检测 (state-scanner)
+- eval-11 `submodule-push-github-sync-miss`: Layer 1 本次事件回归测试
+- eval-hlp-1~4: Layer 3 helper (parity check / push / verify retry)
+- eval-int-1: Layer 2 integrator (多远程合并推送)
+
 ## [1.14.0] - 2026-04-12
 
 ### Added

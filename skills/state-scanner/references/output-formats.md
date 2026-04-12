@@ -476,6 +476,74 @@
 
 ---
 
+## 多远程一致性 (Phase 1.12 v1.15.0+, enabled=true 时展示)
+
+### 变体 1: 所有远程一致
+
+```
+🌐 多远程一致性
+───────────────────────────────────────────────────────────────
+  ✅ 主仓库: 所有远程一致 (origin, github)
+  ✅ aria 子模块: 所有远程一致 (origin, github)
+  ✅ standards 子模块: 所有远程一致 (origin, github)
+```
+
+---
+
+### 变体 2: 子模块远程落后 (behind)
+
+```
+🌐 多远程一致性
+───────────────────────────────────────────────────────────────
+  ✅ 主仓库: 所有远程一致 (origin, github)
+  ⚠️ aria 子模块: github 落后 2 commits
+     修复: git -C aria push github master
+     当前: origin=19f2861 | github=f55e130 (behind 2)
+  ✅ standards 子模块: 所有远程一致 (origin, github)
+```
+
+---
+
+### 变体 3: 主仓库远程落后 + 子模块不可达
+
+```
+🌐 多远程一致性
+───────────────────────────────────────────────────────────────
+  ⚠️ 主仓库: github 落后 1 commit
+     修复: git push github master
+     当前: origin=5b7a5f7 | github=e476a2b (behind 1)
+  ✅ aria 子模块: 所有远程一致 (origin, github)
+  ❓ upstream 子模块: github 不可达 (auth_failed)
+     提示: 检查 CF_ACCESS_CLIENT_ID 环境变量
+```
+
+---
+
+### 变体 4: diverged (需人工决策)
+
+```
+🌐 多远程一致性
+───────────────────────────────────────────────────────────────
+  ✅ 主仓库: 所有远程一致 (origin, github)
+  ❗ aria 子模块: github 与本地分歧 (behind 2, ahead 3)
+     需人工决策: git -C aria pull/rebase 或 git -C aria push --force-with-lease github master
+     当前: local=abc1234 | github=def5678 (diverged)
+```
+
+---
+
+### 变体 5: 仅单远程 (不展示此区块或显示 N/A)
+
+当项目仅配置一个 remote 时, 此区块不输出 (避免单远程项目产生噪音)。
+
+---
+
+### 变体 6: multi_remote.enabled=false
+
+此区块不输出 (配置关闭时静默跳过)。
+
+---
+
 ## Open Issues (Phase 1.13, 仅 enabled=true 展示)
 
 ### 变体 1: 正常 (3 open issues + 启发式关联成功)

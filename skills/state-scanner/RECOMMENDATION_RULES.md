@@ -8,6 +8,7 @@
 |---------|--------|-----------|----------|--------|----------|
 | `commit_only` | 1 | C.1 only | 已暂存 + 无未暂存 | 95% | Yes — 已暂存 + 无未暂存信号明确 |
 | `readme_outdated` | 1.3 | doc-update | README 版本/日期不一致 | 85% | No — 用户可能有意延后 |
+| `multi_remote_drift` | 1.35 | (降级提示) | `multi_remote.overall_parity=false` | 75% | No — 非阻塞，附加 push 建议 |
 | `standards_missing` | 1.4 | (建议性提示) | standards 子模块未初始化 | 80% | No — 非阻塞，仅提醒 |
 | `requirements_issues` | 1.5 | requirements-check | 需求文档验证有错误 | 85% | No — 用户可能希望延后处理 |
 | `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture | 80% | No |
@@ -95,6 +96,30 @@ recommendation:
   steps: [update-readme]
   reason: "README.md 版本信息过时，建议更新以保持一致"
   non_blocking: true  # 不阻塞其他工作流
+```
+
+### 1.35 multi_remote_drift
+
+```yaml
+id: multi_remote_drift
+priority: 1.35
+description: 检测到多远程 HEAD 不一致, 存在推送遗漏风险
+
+conditions:
+  any:
+    - multi_remote.overall_parity: false   # 排除 ahead (has_pending_push) 和 unknown (has_unreachable_remote)
+
+  detection:
+    method: "per-remote SHA comparison across main + submodules"
+    source:
+      - sync_status.multi_remote.main_repo.remotes[*].parity
+      - sync_status.multi_remote.submodules[*].remotes[*].parity
+
+recommendation:
+  workflow: null
+  steps: []
+  reason: "检测到 HEAD 未同步到部分远程, 建议: git -C <path> push <remote> <branch>"
+  non_blocking: true
 ```
 
 ### 1.4 standards_missing

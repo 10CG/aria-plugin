@@ -5,6 +5,25 @@
     "auto_proceed": false
   },
 
+  "multi_remote": {
+    "enforced_remotes": [],
+    "read_only_remotes": []
+  },
+
+  "phase_c_integrator": {
+    "multi_remote_push": {
+      "enabled": true,
+      "enforced_remotes": null,
+      "fail_on_partial_push": true,
+      "post_push_verify": {
+        "enabled": true,
+        "max_retries": 3,
+        "initial_backoff_seconds": 2,
+        "max_per_remote_seconds": 34
+      }
+    }
+  },
+
   "state_scanner": {
     "confidence_threshold": 90,
     "auto_execute_enabled": false,
@@ -31,6 +50,13 @@
       "api_timeout_seconds": 5,
       "limit": 20,
       "label_filter": []
+    },
+
+    "multi_remote": {
+      "enabled": true,
+      "verify_mode": "local_refs",
+      "timeout_seconds": 5,
+      "enforced_remotes": null
     }
   },
 
