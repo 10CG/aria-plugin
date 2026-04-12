@@ -183,14 +183,17 @@ schedule = [0] + [initial_backoff * (2**i) for i in range(max_retries)]
 # 默认 max_retries=3, initial_backoff=2: [0, 2, 4, 8]
 ```
 
+v1.15.1 默认 timeout 从 5s 提升为 15s (适配 Forgejo SSH over Cloudflare Access):
+
 | attempt | sleep before (s) | timeout (s) | 累计上界 (s) |
 |---------|-----------------|-------------|-------------|
-| 1 | 0 | 5 | 5 |
-| 2 | 2 | 5 | 12 |
-| 3 | 4 | 5 | 21 |
-| 4 | 8 | 5 | 34 |
+| 1 | 0 | 15 | 15 |
+| 2 | 2 | 15 | 32 |
+| 3 | 4 | 15 | 51 |
+| 4 | 8 | 15 | 74 |
 
-**per-remote 时间上界 = 34s** (`max_per_remote_seconds` 配置项默认值)
+**per-remote 时间上界 = 74s** (`max_per_remote_seconds` 配置项默认值, v1.15.1)
+**快速网络优化**: 设 `--timeout=5` 回到 v1.15.0 的 34s 上界
 
 ---
 

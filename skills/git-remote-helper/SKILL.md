@@ -54,7 +54,7 @@ bash aria/skills/git-remote-helper/scripts/check_parity.sh \
   --repo=/home/dev/Aria/aria \
   --branch=master \
   --verify-mode=local_refs \
-  --timeout=5
+  --timeout=15  # v1.15.1 默认 (适配 Forgejo SSH over CF Access)
 ```
 
 **输出**: canonical JSON, schema 见 `references/schema.md`
@@ -101,12 +101,13 @@ python3 aria/skills/git-remote-helper/scripts/verify_post_push.py \
   --expected-sha=19f2861 \
   --max-retries=3 \
   --initial-backoff=2 \
-  --timeout=5 \
+  --timeout=15 \
   --remotes=origin,github
 ```
 
 **重试策略**: 立即 + 2s + 4s + 8s = 4 次 attempt
-**per-remote 时间上界**: 4 × 5s (ls-remote) + 14s (sleep) = **34s**
+**per-remote 时间上界** (v1.15.1 默认): 4 × 15s (ls-remote) + 14s (sleep) = **74s**
+**快速网络**: 设 `--timeout=5` 回到 v1.15.0 的 34s 上界
 
 ## 参考文档
 

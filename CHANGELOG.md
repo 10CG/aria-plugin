@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] - 2026-04-12
+
+### Fixed
+
+- **git-remote-helper timeout 默认值** (dogfood 发现) — 从 5s 提升为 15s
+  - Forgejo SSH over Cloudflare Access 实测 ls-remote ~8s, 5s 默认 4 次 attempt 全部超时
+  - `check_parity.sh --timeout` 默认: 5 → 15
+  - `verify_post_push.py --timeout` 默认: 5.0 → 15.0
+  - `config.state_scanner.multi_remote.timeout_seconds`: 5 → 15
+  - `config.phase_c_integrator.multi_remote_push.post_push_verify`: 新增 `timeout_seconds: 15` + `max_per_remote_seconds: 34 → 74`
+  - 快速网络可设 `--timeout=5` 回到 v1.15.0 的 34s 上界
+- 更新 schema.md / api.md / SKILL.md 中的 per-remote 时间上界描述 (34s → 74s)
+
+### Notes
+
+- v1.15.1 dogfooding 验证: 双仓库 (aria + 主) × 双远程 (origin + github) 全部 match, attempts=1 (15s 足够 1 次命中)
+
 ## [1.15.0] - 2026-04-12
 
 ### Added

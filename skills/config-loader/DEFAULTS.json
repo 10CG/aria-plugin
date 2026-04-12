@@ -19,7 +19,8 @@
         "enabled": true,
         "max_retries": 3,
         "initial_backoff_seconds": 2,
-        "max_per_remote_seconds": 34
+        "timeout_seconds": 15,
+        "max_per_remote_seconds": 74
       }
     }
   },
@@ -55,7 +56,7 @@
     "multi_remote": {
       "enabled": true,
       "verify_mode": "local_refs",
-      "timeout_seconds": 5,
+      "timeout_seconds": 15,
       "enforced_remotes": null
     }
   },
