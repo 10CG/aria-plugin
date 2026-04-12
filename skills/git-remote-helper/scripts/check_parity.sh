@@ -65,25 +65,9 @@ if [ -z "$LOCAL_HEAD" ]; then
   exit 1
 fi
 
-# ── Timeout command detection (cross-platform) ────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TIMEOUT_CMD=""
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout $TIMEOUT_SECONDS"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout $TIMEOUT_SECONDS"
-else
-  # Fallback: Python subprocess timeout wrapper (inline, no extra file needed)
-  TIMEOUT_CMD="python3 -c \"
-import subprocess, sys, shlex
-cmd = sys.argv[1:]
-try:
-    r = subprocess.run(cmd, timeout=$TIMEOUT_SECONDS, capture_output=False)
-    sys.exit(r.returncode)
-except subprocess.TimeoutExpired:
-    sys.exit(124)
-\" "
-fi
+# Note (v1.15.2): Timeout command detection is done inline at ls_remote invocation
+# site (see below), not via a TIMEOUT_CMD variable. The previous TIMEOUT_CMD
+# construction was dead code and has been removed.
 
 # ── Enumerate remotes ─────────────────────────────────────────────────────────
 REMOTES=$(git -C "$REPO" remote 2>/dev/null | sort -u)
@@ -221,12 +205,16 @@ while IFS= read -r REMOTE; do
       LS_OUTPUT=$(gtimeout "$TIMEOUT_SECONDS" git -C "$REPO" ls-remote "$REMOTE" "refs/heads/$BRANCH" 2>/dev/null) || LS_EXIT=$?
     else
       # Python subprocess timeout fallback
-      LS_RESULT=$(python3 - <<PYEOF 2>/dev/null
-import subprocess, sys, json
+      # v1.15.2: Pass values via env vars to prevent shell injection when repo
+      # paths / remote names / branches contain quotes, backslashes, or newlines.
+      # The heredoc is single-quoted (<<'PYEOF') so Bash does NOT expand variables.
+      LS_RESULT=$(REPO_ENV="$REPO" REMOTE_ENV="$REMOTE" BRANCH_ENV="$BRANCH" TIMEOUT_ENV="$TIMEOUT_SECONDS" python3 - <<'PYEOF' 2>/dev/null
+import subprocess, sys, json, os
 try:
     r = subprocess.run(
-        ["git", "-C", "$REPO", "ls-remote", "$REMOTE", "refs/heads/$BRANCH"],
-        capture_output=True, text=True, timeout=$TIMEOUT_SECONDS
+        ["git", "-C", os.environ["REPO_ENV"], "ls-remote",
+         os.environ["REMOTE_ENV"], f"refs/heads/{os.environ['BRANCH_ENV']}"],
+        capture_output=True, text=True, timeout=float(os.environ["TIMEOUT_ENV"])
     )
     result = {"rc": r.returncode, "out": r.stdout.strip()}
 except subprocess.TimeoutExpired:

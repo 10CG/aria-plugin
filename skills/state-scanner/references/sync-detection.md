@@ -566,7 +566,7 @@ for each remote_entry:
 
 ### 10.3 helper 调用接口
 
-当 `git-remote-helper` 可用时 (`test -f aria/skills/git-remote-helper/SKILL.md`), state-scanner 调用:
+当 `git-remote-helper` 可用时 (`test -f "${ARIA_PLUGIN_ROOT:-aria}/skills/git-remote-helper/SKILL.md"` — 路径相对项目根; `ARIA_PLUGIN_ROOT` 环境变量优先), state-scanner 调用:
 
 ```
 check_parity(repo_path, branch?)  →  JSON (canonical multi_remote schema)

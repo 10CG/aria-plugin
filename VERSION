@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.15.1
+> **版本**: 1.15.2
 > **发布日期**: 2026-04-12
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.15.1
+1.15.2
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (15)**: US-012 发版多远程一致性保障 (Layer 1+2+3)
-- **Patch (1)**: git-remote-helper timeout 默认值 5s → 15s (dogfood 发现 Forgejo SSH over Cloudflare Access ~8s)
+- **Patch (2)**: v1.15.1 timeout fix + v1.15.2 Review 遗留 MINOR 批量清理 (shell injection 防护 + 死代码 + 命名注释 + 路径可移植性)
 
 ## 包含内容
 

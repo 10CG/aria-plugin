@@ -608,7 +608,7 @@ sync_status:
 **Schema source of truth**: `git-remote-helper` SKILL.md 定义 canonical schema, 本 Phase 引用。
 
 **检测逻辑**:
-1. helper 可用 (`test -f aria/skills/git-remote-helper/SKILL.md`) → 调用 git-remote-helper 的 `check_parity()` 指令
+1. helper 可用 (`test -f "${ARIA_PLUGIN_ROOT:-aria}/skills/git-remote-helper/SKILL.md"` — 路径相对项目根; `ARIA_PLUGIN_ROOT` 环境变量优先用于跨项目场景) → 调用 git-remote-helper 的 `check_parity()` 指令
 2. helper 不可用 → 降级内联实现 (产出完全相同的 JSON schema, 通过同一 schema validator)
 
 **verify_mode 触发协议**: CLI `--verify-mode=ls_remote` > 配置 `state_scanner.multi_remote.verify_mode` > 默认 `local_refs`
