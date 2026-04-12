@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.14.0
+> **版本**: 1.15.0
 > **发布日期**: 2026-04-12
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.14.0
+1.15.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (14)**: state-scanner Phase 1.8 README 检查增强 + Phase 1.14 Forgejo 配置检测 + forgejo-sync 主动引导
+- **Minor (15)**: US-012 发版多远程一致性保障 — Layer 1 state-scanner Phase 1.12 多远程 parity + Layer 2 phase-c-integrator C.2.5 Multi-Remote Push Enforcement + Layer 3 git-remote-helper internal skill
 - **Patch (0)**: 新 minor, patch 归零
 
 ## 包含内容
 
-### Skills (35个, 30 面向用户 + 5 内部)
+### Skills (30 面向用户 + 6 内部 = 36 total)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -48,8 +48,9 @@
 **项目适配 (3个)**
 - project-analyzer, agent-gap-analyzer, agent-creator
 
-**基础设施 (5个, 内部)**
-- config-loader, audit-engine, agent-team-audit, agent-router, arch-common
+**基础设施 (6个, 内部, user-invocable: false)**
+- agent-router, agent-team-audit, arch-common, audit-engine, config-loader
+- git-remote-helper (v1.15.0 新增, US-012 Layer 3)
 
 ### Agents (11个)
 
@@ -60,6 +61,20 @@
 ### Hooks 系统
 
 - SessionStart → 中断恢复检测 (session-start-check.sh)
+
+## v1.15.0 核心成果 — US-012 多远程一致性保障
+
+**事件驱动**: 2026-04-12 v1.14.0 发版时 aria 子模块 GitHub 同步遗漏, 根因 "Everything up-to-date" 文本在多仓库并行场景下语义歧义 + 缺少 post-push SHA 验证。
+
+**三层架构彻底闭环**:
+
+- **Layer 3 (共享基础设施)**: `git-remote-helper` internal skill — canonical JSON schema + 3 个脚本 (check_parity / push_all_remotes / verify_post_push with Python 指数退避)
+- **Layer 1 (被动检测)**: state-scanner Phase 1.12 原地扩展多远程 parity, 保持 D8 配额 14/15
+- **Layer 2 (主动执行)**: phase-c-integrator C.2.5 Multi-Remote Push Enforcement + Per-Remote Matrix Gating
+
+**AB Benchmark**: delta +40.82% POSITIVE (49 assertions, state-scanner +59.8% / git-remote-helper +35.5% / phase-c-integrator +22.2%)
+
+**Dogfooding**: 本次 v1.15.0 发版使用新 helper 做 post-push SHA 验证, 双仓库双远程零差异。
 
 ## 版本更新记录
 
