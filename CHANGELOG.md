@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-04-12
+
+### Added
+
+- **state-scanner Phase 1.8 扩展 (aria-plugin#9, PR #11)** — README 检查增强
+  - 子模块 `aria/README.md` 版本号 vs `plugin.json` 检测
+  - Skill 数量一致性 (排除 `user-invocable: false`, 当前 5 个内部 Skill)
+  - Skill 列表完整性 (info 级)
+  - Plugin badge 版本检测
+  - `readme_outdated` 规则扩展: `readme_skill_count_mismatch` + `readme_badge_mismatch`
+
+- **state-scanner Phase 1.14 (aria-plugin#10, PR #11)** — Forgejo 配置检测
+  - 检测 Forgejo remote + `CLAUDE.local.md` 配置状态 (missing/incomplete/configured)
+  - `forgejo_config_missing` 推荐规则 (priority 1.45, non-blocking)
+
+- **forgejo-sync PRE_CHECK Step 0 (aria-plugin#10, PR #11)** — 主动引导创建 `CLAUDE.local.md`
+  - SSH/HTTPS remote URL 解析, owner/repo 推断
+  - 用户确认 [y/N] 后创建/追加, 无状态设计
+
+### Fixed
+
+- **Skill 数量修正**: 33+3=36 → 30+5=35 (agent-router, agent-team-audit 为 user-invocable: false)
+
+### AB Benchmark
+
+- 2 新 eval (readme-skill-count-badge + forgejo-config-detection): avg delta +46.7% (POSITIVE)
+
 ## [1.13.0] - 2026-04-11
 
 ### Added
