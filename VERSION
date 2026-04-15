@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.15.2
-> **发布日期**: 2026-04-12
+> **版本**: 1.16.0
+> **发布日期**: 2026-04-15
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.15.2
+1.16.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (15)**: US-012 发版多远程一致性保障 (Layer 1+2+3)
-- **Patch (2)**: v1.15.1 timeout fix + v1.15.2 Review 遗留 MINOR 批量清理 (shell injection 防护 + 死代码 + 命名注释 + 路径可移植性)
+- **Minor (16)**: state-scanner Phase 1.13 `scan_submodules` opt-in — meta-repo 模式下的 issue 扫描覆盖 (PR #19, 5 轮 pre_merge audit 收敛)
+- **Patch (0)**: 初始 MINOR 发版
 
 ## 包含内容
 
