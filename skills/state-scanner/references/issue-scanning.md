@@ -22,11 +22,13 @@ Phase 1.13 在阶段 1.12 (同步检测) 之后、阶段 2 (推荐决策) 之前
 
 ## 输出 Schema
 
-**v1.0.0 单 repo 格式** (默认 `scan_submodules=false`, 保持向后兼容):
+**v1.0.0 单 repo 格式** (历史格式 / pre-v1.16.0 cache 文件样例, 保持向后兼容):
+
+**重要** (R3 backend-architect 修复): v1.16.0 writer **始终写入** `schema_version: "1.1"`, **不按 scan_submodules 分支**。本 v1.0 示例块仅描述 **pre-v1.16.0 cache 文件落盘的历史格式**, 而非 v1.16.0 writer 的输出. v1.16.0 reader 接受 `{"1.0", "1.1"}` 均为兼容 schema, 见下方 §步骤 4 schema_version 语义. 当 v1.16.0 升级到已有 pre-v1.1 cache 的项目时, cold cache guard 会一次性 re-fetch, 下次写入的 cache 文件 `schema_version` 会变为 `"1.1"`。
 
 ```yaml
 issue_status:
-  schema_version: "1.0"                 # v1.1.0+ 新增, 标识 schema 版本
+  schema_version: "1.0"                 # 历史格式样例 (pre-v1.16.0); v1.16.0 writer 始终写 "1.1", 见 §步骤 5
   fetched_at: "2026-04-09T10:23:00Z"    # ISO 8601 UTC (聚合视图时间戳)
   source: cache | live | unavailable    # 数据来源
   fetch_error: null                     # 见 fetch_error 枚举表 (10 个值)
