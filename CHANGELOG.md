@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - TBD (Draft)
+
+### Added
+
+- **state-scanner Phase 1.13 `scan_submodules` opt-in** (Spec: `state-scanner-submodule-issue-scan`, PR #19)
+  - 新增配置项 `state_scanner.issue_scan.scan_submodules` (boolean, 默认 `false`)
+  - 启用时递归扫描 `.gitmodules` 中所有 submodule 的 Forgejo/GitHub issues, 每个 submodule 独立 fail-soft
+  - 新增 `issue_status.repos[]` 分组视图 + `schema_version` 字段 (v1.0 / v1.1)
+  - `items[]` / `open_issues[]` 同步双写, 保持对 v1.0 消费者的向后兼容
+  - 支持 meta-repo 模式 (如 Aria 主 repo + aria-plugin / aria-orchestrator / aria-standards submodule)
+- **state-scanner Phase 1.13 `stage_timeout_seconds` 自适应**:
+  - `scan_submodules=false` → **12s (不变, 向后兼容)**
+  - `scan_submodules=true` → `max(20, (N_submodules+1) × api_timeout_seconds)` 按 submodule 数自动扩展
+  - 用户显式设置时尊重覆盖值
+- **state-scanner cache schema_version 守卫**: reader 识别 pre-v1.1 旧缓存 → 一次性 cold re-fetch, 避免 silent schema corruption
+
+### Changed
+
+- **state-scanner SKILL.md 版本**: 2.9.0 → **2.10.0**
+- **state-scanner references/issue-scanning.md 版本**: 1.0.0 → **1.1.0**
+- **open_blocker_issues 推荐规则**: 语义升级为跨 repo 聚合 — 任一 repo (主 + submodule) 的 blocker/critical label 触发降级推荐, 扁平化 items[] 聚合
+
+### Backward Compatibility
+
+- **`scan_submodules=false` (默认)** 场景行为与 v1.15.2 字节级一致 — 相同 12s 超时 + 单 repo 扫描 + 相同输出 schema (不含 `repos` 字段)
+- **缓存 schema 迁移**: pre-v1.1 缓存文件被识别为 cold cache, 首次 v1.16.0 run 将一次性 re-fetch 所有 repo (无用户干预)
+- **输出 schema**: items[] 新增同步写入 open_issues[] 作为别名, v1.0 消费者不受影响
+
+### Related
+
+- Spec: `openspec/changes/state-scanner-submodule-issue-scan/proposal.md` (Level 2 Draft)
+- Parent Spec: `state-scanner-issue-awareness` (2026-04-09 archived) — 本 v1.16.0 扩展其 D6 决策, 不否定原决策
+- Sister Spec: `state-scanner-mechanical-enforcement` (Draft) — 独立关注"执行纪律", 单一焦点分离
+- Benchmark: `aria-plugin-benchmarks/ab-results/2026-04-15-state-scanner-submodule-issue-scan/` (+41.7pp pass rate)
+
 ## [1.15.2] - 2026-04-12
 
 ### Fixed

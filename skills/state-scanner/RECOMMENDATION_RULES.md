@@ -1121,9 +1121,16 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-04-09
+**最后更新**: 2026-04-15
 
 ## 变更历史
+
+### v2.10.0 (2026-04-15)
+
+- **修改**: 规则 `open_blocker_issues` (优先级 1.99) — 语义升级为**跨 repo 聚合**, 评估时遍历所有 `issue_status.items[]` (已扁平化, 每个 item 带 `repo` 字段). 任一 repo 的 blocker/critical label 触发降级, 不区分主 repo / submodule severity
+- **关联**: Spec `state-scanner-submodule-issue-scan` (Level 2, 2026-04-15 Draft)
+- **依赖**: 需配合 `state_scanner.issue_scan.scan_submodules=true` 才能真正看到 submodule 的 blocker; `scan_submodules=false` 时行为与 v2.9.0 一致 (仅主 repo 扫描)
+- **向后兼容**: `scan_submodules=false` 默认场景下, 本规则行为与 v2.9.0 字节级一致 — 因为 `items[]` 只含主 repo items, 聚合逻辑退化为单 repo 检查
 
 ### v2.9.0 (2026-04-09)
 
