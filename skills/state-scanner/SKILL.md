@@ -11,9 +11,9 @@ user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
-# 状态扫描与智能推荐 (State Scanner v2.9)
+# 状态扫描与智能推荐 (State Scanner v2.10)
 
-> **版本**: 2.9.0 | **角色**: 十步循环统一入口
+> **版本**: 2.10.0 | **角色**: 十步循环统一入口
 
 ## 快速开始
 
@@ -704,21 +704,37 @@ sync_status:
 
 **重要**: 此阶段为 opt-in，默认关闭 (`issue_scan.enabled=false`)，需用户显式开启。
 
+**v1.16.0+ 扩展** (Spec `state-scanner-submodule-issue-scan`): 当 `scan_submodules=true` 时, 额外扫描 `.gitmodules` 中注册的所有 submodule, 每个 submodule 独立扫描 + fail-soft, 结果聚合到同一 `issue_status.repos` 结构。此扩展为 opt-in, 保持对 v2.9.0 的字节级向后兼容。
+
 ```yaml
 issue_status:
   fetched_at: "2026-04-09T10:23:00Z"
   source: cache                  # cache | live | unavailable
-  fetch_error: null              # 见下方枚举表
-  platform: forgejo              # forgejo | github | null
-  open_count: 3
-  items:
+  fetch_error: null              # 见下方枚举表 (主 repo 的聚合错误)
+  platform: forgejo              # forgejo | github | null (主 repo 的平台)
+  open_count: 3                  # 所有 repo 的 items 聚合后的总数
+  items:                         # 聚合视图 — 所有 repo 的 items 合并 (含 repo 字段)
     - number: 6
       title: "state-scanner: add issue scan and sync detection"
       labels: ["enhancement", "skill"]
       url: "https://forgejo.10cg.pub/10CG/Aria/issues/6"
-      linked_openspec: "state-scanner-issue-awareness"  # 启发式
+      repo: "10CG/Aria"          # v1.16.0+ 新增: 来源 repo 标识
+      linked_openspec: "state-scanner-issue-awareness"  # 启发式 (主 repo openspec/changes/ 扫描)
       linked_us: null
-  label_summary:
+  repos:                         # v1.16.0+ 新增: 按 repo 分组视图
+    "10CG/Aria":
+      platform: forgejo
+      source: live
+      fetch_error: null
+      open_count: 2
+      items: [...]
+    "10CG/aria-plugin":          # 仅当 scan_submodules=true 时出现
+      platform: forgejo
+      source: live
+      fetch_error: null
+      open_count: 2
+      items: [...]
+  label_summary:                 # 跨所有 repo 聚合
     bug: 1
     enhancement: 2
 ```
@@ -744,24 +760,30 @@ issue_status:
 3. 兜底推断: URL 包含 `github.com` → github；已知 Forgejo 域名 → forgejo
 4. 全失败: `fetch_error: "platform_unknown"` + 静默跳过
 
-**配置项** (`state_scanner.issue_scan.*`，9 个字段):
+**配置项** (`state_scanner.issue_scan.*`，10 个字段，v1.16.0+ 新增 `scan_submodules`):
 
 | 字段 | 默认 | 说明 |
 |------|------|------|
 | `enabled` | `false` | 主开关，opt-in |
 | `platform` | `null` | 显式指定平台；null 则自动检测 |
 | `platform_hostnames` | `{forgejo:[...], github:[...]}` | hostname → 平台映射，可扩展 |
-| `cache_ttl_seconds` | `900` | 缓存 15 分钟 TTL |
+| `cache_ttl_seconds` | `900` | 缓存 15 分钟 TTL (所有 repo 共享) |
 | `cache_path` | `.aria/cache/issues.json` | 缓存文件位置 |
-| `stage_timeout_seconds` | `12` | 整阶段超时 |
-| `api_timeout_seconds` | `5` | 单次 API 调用超时 |
-| `limit` | `20` | 单次拉取 Issue 上限 |
-| `label_filter` | `[]` | 空表示不过滤；可设 `["bug","blocker"]` |
+| `stage_timeout_seconds` | `20` | 整阶段超时 (v1.16.0: 12→20, 为 submodule 扫描提供预算) |
+| `api_timeout_seconds` | `5` | 单次 API 调用超时 (每个 repo 独立) |
+| `limit` | `20` | 单次拉取 Issue 上限 (每个 repo 独立应用) |
+| `label_filter` | `[]` | 空表示不过滤；可设 `["bug","blocker"]` (全局应用到所有 repo) |
+| `scan_submodules` | `false` | **v1.16.0 新增**: 递归扫描 `.gitmodules` 中所有 submodule 的 issue; 默认 false 保持向后兼容 |
+
+**`scan_submodules` 使用场景**:
+
+- **启用** (`true`): Meta-repo 或 monorepo-of-submodules 模式, submodule 是同组织的一等协同开发 repo (如 Aria 项目的 `aria/` → `10CG/aria-plugin`, `aria-orchestrator/` → `10CG/aria-orchestrator`)
+- **禁用** (`false`, 默认): 传统 vendored submodule 场景, submodule 是第三方依赖 (如把 jquery 作为 submodule 引入)
 
 **推荐规则联动**:
-- `open_blocker_issues`: 存在 label 包含 `blocker`/`critical` 的 open issue → 降级推荐 + "先 triage N 个阻塞 Issue" 提示
+- `open_blocker_issues`: **v1.16.0+ 聚合所有 repos** 的 items, 任一 label 包含 `blocker`/`critical` 的 open issue → 降级推荐 + "先 triage N 个阻塞 Issue (跨 M 个 repo)" 提示
 
-详细实现见 [references/issue-scanning.md](./references/issue-scanning.md)
+详细实现见 [references/issue-scanning.md](./references/issue-scanning.md) §submodule 扫描流程
 
 ---
 
@@ -1102,5 +1124,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-04-09
-**Skill版本**: 2.9.0 (新增 Phase 1.12 同步检测 + Phase 1.13 Issue 感知)
+**最后更新**: 2026-04-15
+**Skill版本**: 2.10.0 (v1.16.0: Phase 1.13 扩展 scan_submodules 支持 meta-repo 模式)

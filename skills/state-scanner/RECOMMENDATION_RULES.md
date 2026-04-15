@@ -595,7 +595,7 @@ recommendation:
 ```yaml
 id: open_blocker_issues
 priority: 1.99
-description: 存在阻塞性 Issue，建议先 triage
+description: 存在阻塞性 Issue，建议先 triage (v1.1.0+ 聚合所有 repo)
 
 conditions:
   all:
@@ -606,16 +606,20 @@ conditions:
     - issue_status.items[].labels: contains "critical"
 
   detection:
-    source: "Phase 1.13 issue_status.items[]"
+    source: "Phase 1.13 issue_status.items[] (aggregated flat view, v1.1.0+ 含所有 repos)"
     label_check: "any(labels contains 'blocker' OR labels contains 'critical')"
     prerequisite: "issue_status.source in [cache, live]"
+    # v1.1.0+ 聚合语义:
+    #   - scan_submodules=false: items 仅含主 repo, 行为与 v1.0 一致
+    #   - scan_submodules=true: items 含所有 repos 的扁平化聚合, 每个 item 带 repo 字段
+    # 任一 repo 的 blocker/critical 触发本规则 (不区分主 repo / submodule 的 severity)
 
 recommendation:
   workflow: null  # 不推荐工作流，仅降级提示
-  info: "⚠️ 存在 {N} 个阻塞性 Issue (blocker/critical), 建议先 triage"
+  info: "⚠️ 存在 {N} 个阻塞性 Issue (blocker/critical), 跨 {M} 个 repo, 建议先 triage"
   context:
     blocker_issues:
-      - "#{number} {title}"  # 每个匹配的 issue 一条
+      - "#{number} [{repo}] {title}"  # v1.1.0+: 每个匹配的 issue 一条, 含 repo 来源
   non_blocking: true  # 降级，不阻断任何现有推荐
 ```
 

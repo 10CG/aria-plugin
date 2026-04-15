@@ -1,7 +1,9 @@
 # Phase 1.13: Issue 感知扫描 — 详细实现逻辑
 
-> **版本**: 1.0.0 | **适用于**: state-scanner 阶段 1.13
-> **关联 Spec**: `state-scanner-issue-awareness` (v2.9.0)
+> **版本**: 1.1.0 | **适用于**: state-scanner 阶段 1.13
+> **关联 Spec**:
+> - v1.0.0: `state-scanner-issue-awareness` (v2.9.0, 2026-04-09 归档)
+> - v1.1.0: `state-scanner-submodule-issue-scan` (v2.10.0 / aria-plugin v1.16.0, 2026-04-15 Draft)
 > **fail-soft 定义**: 锚定 `state-scanner-remote-sync-check/proposal.md#D9`
 
 ---
@@ -563,16 +565,19 @@ fi
 
 ## 超时设计
 
-| 层级 | 超时值 | 实现 |
-|------|--------|------|
-| 整阶段 (Phase 1.13) | 12s | `timeout 12 bash -c '...'` |
-| 单次 API 调用 | 5s | `timeout 5 forgejo GET ...` / `timeout 5 gh issue list ...` |
+| 层级 | 超时值 (v1.0) | 超时值 (v1.1+) | 实现 |
+|------|--------------|---------------|------|
+| 整阶段 (Phase 1.13) | 12s | **20s** (`scan_submodules=true` 时需求增长, 串行扫描预算) | `timeout 20 bash -c '...'` 或 SECONDS 早退 |
+| 单次 API 调用 | 5s | 5s (不变) | `timeout 5 forgejo GET ...` / `timeout 5 gh issue list ...` |
 
-**12s 设计依据** (D9): Forgejo 部署在 Cloudflare Access 后，首次 TLS 握手 + Access 验证约 3-4s，加上 API 响应 5s 和缓冲，原 8s 对 p95 场景过紧。
+**12s → 20s 依据** (v1.1 扩展): `scan_submodules=true` 场景下, 最坏情况是主 repo + N submodule 全部缓存 miss + API 响应接近 5s 上限。以 Aria 为例: 1 主 + 3 submodule = 4 × 5s = 20s 需求上限。总预算增长与串行扫描的 repo 数线性相关, 若项目 submodule 数 > 3, 应按公式 `(N+1) × api_timeout_seconds` 自行调整 `stage_timeout_seconds`。
+
+**向后兼容**: 当 `scan_submodules=false` 时, 仅扫描主 repo, 实际消耗通常 < 6s, 20s 预算对主 repo only 场景**完全不增加**延迟 (早退即可)。**原 D9 的 12s 设计对主 repo only 仍然有效**, 20s 只是"预算上限上调", 不是"实际耗时上调"。
 
 超时触发时:
 - 若缓存存在 (即使过期) → 沿用旧缓存 + `fetch_error: "timeout"` + `warning: "stale_cache_api_failed"`
 - 若无缓存 → `source: unavailable`, `fetch_error: "timeout"`
+- **v1.1**: submodule 部分超时时, 已完成扫描的 repo 结果保留, 未完成的 repo 记录 `fetch_error: "timeout"`, 聚合视图可能部分可用
 
 ---
 
@@ -698,13 +703,258 @@ issue_status:
 
 ---
 
+## submodule 扫描流程 (v1.1.0+)
+
+> **适用条件**: `state_scanner.issue_scan.scan_submodules == true`
+> **关联 Spec**: `state-scanner-submodule-issue-scan` (2026-04-15 Draft, aria-plugin v1.16.0)
+> **默认行为**: `scan_submodules=false` 时本章节**完全跳过**, 与 v1.0.0 行为字节级一致
+
+### 概览
+
+当启用时, Phase 1.13 在完成主 repo 扫描后, 继续扫描 `.gitmodules` 中注册的所有 submodule。每个 submodule 是独立扫描单元, **串行执行**, **独立 fail-soft**, 结果聚合到同一个 `issue_status.repos` 结构。
+
+### 适用场景判定
+
+| 场景 | 推荐 `scan_submodules` | 理由 |
+|------|----------------------|------|
+| Meta-repo (如 Aria: 主 repo 只是 meta, 实际开发在 submodule) | `true` | submodule 是一等协同开发 repo, 不看会盲区 |
+| Monorepo-of-submodules (同组织多仓库, 主 repo 协调) | `true` | 同上 |
+| 传统项目 + vendored 依赖 (如 jQuery 作为 submodule) | `false` | submodule 是第三方依赖, 看 issue 制造噪音 |
+| 纯应用项目, 无 submodule | `false` (不相关) | 无 `.gitmodules` 文件, 静默跳过 |
+
+### 执行流程
+
+```
+步骤 1: 前置检查 (scan_submodules 开关)
+步骤 2: 解析 .gitmodules 得到 submodule 列表
+步骤 3: 对每个 submodule 独立执行:
+  3.1: 进入 submodule 目录
+  3.2: 读取 origin remote URL
+  3.3: 解析 owner/repo
+  3.4: 独立 platform 检测 (4 级优先级, 复用主流程)
+  3.5: 独立 CLI 可用性检查
+  3.6: 检查 repo 级缓存命中 (TTL 复用全局设置)
+  3.7: API 调用 (timeout 5s)
+  3.8: JSON normalize
+  3.9: 启发式关联 (使用主 repo 的 openspec/changes/, D9 决策)
+  3.10: 写入 issue_status.repos[owner/repo]
+步骤 4: 聚合所有 repo 的 items 到 issue_status.items (flat 视图)
+步骤 5: 更新 label_summary 聚合统计
+步骤 6: 原子写回缓存 (单文件多 repo 结构)
+```
+
+### 步骤 1: 前置检查
+
+```bash
+scan_submodules=$(jq -r '.state_scanner.issue_scan.scan_submodules // false' .aria/config.json 2>/dev/null)
+if [ "$scan_submodules" != "true" ]; then
+  # 静默跳过 submodule 扫描, 仅返回主 repo 结果
+  # issue_status.repos 仅包含主 repo 条目
+  :  # 继续主流程的后续步骤
+fi
+```
+
+### 步骤 2: 解析 .gitmodules
+
+**首选方案** (POSIX, 跨平台):
+
+```bash
+if [ ! -f .gitmodules ]; then
+  # 无 submodule, 不报错, 主流程继续
+  submodule_paths=""
+else
+  # 从 .gitmodules 提取所有 path 字段
+  # 兼容路径含空格 (用 null-delimited 或 quote-aware 解析)
+  submodule_paths=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+    | awk '{$1=""; sub(/^ /,""); print}')
+fi
+```
+
+**备选方案** (纯 grep, 若 `git config --file` 不可用):
+
+```bash
+submodule_paths=$(awk -F= '/^\s*path\s*=/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}' .gitmodules)
+```
+
+**输出**: 每行一个 submodule 路径 (如 `aria`, `standards`, `aria-orchestrator`)。
+
+### 步骤 3: 逐 submodule 扫描
+
+```bash
+for submodule_path in $submodule_paths; do
+  # 3.1: 验证 submodule 已初始化 (目录存在且含 .git 引用)
+  if [ ! -d "$submodule_path" ]; then
+    # 未初始化, 记录错误但不阻塞
+    echo "[warning] submodule $submodule_path not initialized, skipping"
+    continue
+  fi
+
+  # 3.2: 读取 submodule 的 origin remote
+  sub_remote=$(git -C "$submodule_path" remote get-url origin 2>/dev/null)
+  if [ -z "$sub_remote" ]; then
+    echo "[warning] submodule $submodule_path has no origin, skipping"
+    continue
+  fi
+
+  # 3.3: 复用主流程的 owner/repo 提取逻辑
+  stripped=$(echo "$sub_remote" | sed -E 's|^[a-z]+://||; s|^[^@]+@||; s|^[^:/]+[:/]||')
+  sub_owner_repo=$(echo "$stripped" | sed -E 's|\.git([?#/].*)?$||; s|\.git$||; s|/$||')
+  if ! echo "$sub_owner_repo" | grep -qE '^[^/]+/[^/]+$'; then
+    # D11: 解析失败 → 跳过该 submodule, 不阻断整个 Phase 1.13
+    continue
+  fi
+
+  # 3.4: 独立 platform 检测 (复用 detect_platform 函数, 基于 submodule 的 remote URL)
+  sub_platform=$(detect_platform_for_url "$sub_remote")
+  if [ "$sub_platform" = "platform_unknown" ]; then
+    # 独立 fail-soft: 该 submodule 记录 platform_unknown, 继续下一个
+    record_repo_error "$sub_owner_repo" "platform_unknown"
+    continue
+  fi
+
+  # 3.5: CLI 可用性 (主流程已验证, 此处复用)
+
+  # 3.6: 缓存命中检查 (repo 级粒度)
+  cached=$(jq -r --arg key "$sub_owner_repo" '.repos[$key] // empty' "$cache_path" 2>/dev/null)
+  cached_fetched_at=$(echo "$cached" | jq -r '.fetched_at // empty' 2>/dev/null || echo "")
+  if [ -n "$cached_fetched_at" ]; then
+    cached_ts=$(date -d "$cached_fetched_at" +%s 2>/dev/null)
+    if [ -n "$cached_ts" ] && [ $((now_ts - cached_ts)) -lt "$ttl" ]; then
+      # 缓存命中, 跳过 API 调用
+      sub_items=$(echo "$cached" | jq '.items')
+      record_repo_cached "$sub_owner_repo" "$sub_items"
+      continue
+    fi
+  fi
+
+  # 3.7: API 调用 (5s 超时)
+  if [ "$sub_platform" = "forgejo" ]; then
+    sub_response=$(timeout 5 forgejo GET "/repos/${sub_owner_repo}/issues?state=open&limit=${limit}" 2>&1)
+    sub_exit=$?
+  elif [ "$sub_platform" = "github" ]; then
+    sub_response=$(cd "$submodule_path" && timeout 5 gh issue list --state open --json number,title,labels,url,body --limit "$limit" 2>&1)
+    sub_exit=$?
+  fi
+
+  # 3.8: 错误分类 (复用 10 个 fetch_error 枚举, D12)
+  if [ $sub_exit -ne 0 ]; then
+    sub_fetch_error=$(classify_error "$sub_exit" "$sub_response")
+    record_repo_error "$sub_owner_repo" "$sub_fetch_error"
+    continue
+  fi
+
+  # 3.9: JSON normalize (复用主流程)
+  sub_normalized=$(echo "$sub_response" | jq '[.[] | { number: (.number // 0), title: (.title // ""), labels: ([.labels[]?.name] // []), url: (.html_url // .url // ""), body: (.body // "") }]')
+
+  # 3.10: 启发式关联 (注: 使用 **主 repo 的** openspec/changes/ 扫描, 见 D9)
+  sub_items=$(apply_heuristic_linking "$sub_normalized")
+
+  # 3.11: 写入 repo 级结果
+  record_repo_success "$sub_owner_repo" "$sub_platform" "$sub_items"
+done
+```
+
+### 步骤 4: 聚合视图构造
+
+```bash
+# 从 repos 构造 flat items 视图 (带 repo 字段标注来源)
+flat_items=$(jq -n --argjson repos "$all_repos_json" '[
+  $repos | to_entries[] | .value.items[]? + {repo: .key}
+]')
+
+# open_count 是跨 repo 总和
+open_count=$(echo "$flat_items" | jq 'length')
+
+# label_summary 聚合
+label_summary=$(echo "$flat_items" | jq '[.[].labels[]?] | group_by(.) | map({(.[0]): length}) | add // {}')
+```
+
+### 步骤 5: 缓存写回 (多 repo 结构)
+
+```json
+{
+  "fetched_at": "2026-04-15T10:00:00Z",
+  "ttl_seconds": 900,
+  "scan_submodules": true,
+  "repos": {
+    "10CG/Aria": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "open_count": 2,
+      "items": [...]
+    },
+    "10CG/aria-plugin": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "open_count": 2,
+      "items": [...]
+    },
+    "10CG/aria-standards": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "open_count": 0,
+      "items": []
+    },
+    "10CG/aria-orchestrator": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "open_count": 1,
+      "items": [...]
+    }
+  }
+}
+```
+
+**原子写入** (复用主流程 `tmp + mv`):
+
+```bash
+tmp_path="${cache_path}.tmp.$$"
+jq -n ... > "$tmp_path" && mv "$tmp_path" "$cache_path"
+```
+
+### Fail-soft 矩阵扩展
+
+| 场景 | 行为 |
+|------|------|
+| `scan_submodules=false` | v1.0 行为, 仅扫主 repo |
+| `.gitmodules` 不存在 | 仅扫主 repo, 不报错 |
+| `.gitmodules` 存在但为空 | 仅扫主 repo, 不报错 |
+| 某 submodule 未初始化 (`.git` 目录缺失) | 跳过该 submodule, `issue_status.repos` 不包含该条目, warning 记录 |
+| 某 submodule 的 `origin` remote 缺失 | 跳过该 submodule, warning 记录 |
+| 某 submodule 的 owner/repo 解析失败 (D11) | 跳过该 submodule |
+| 某 submodule 的 platform 检测失败 | 记录 `repos[owner/repo].fetch_error: "platform_unknown"`, 继续下一个 |
+| 某 submodule 的 API 调用失败 | 记录 `repos[owner/repo].fetch_error: <具体枚举>`, 继续下一个 |
+| 某 submodule 缓存命中 | 跳过 API 调用, 读缓存 |
+| 整阶段 20s 超时 | 已完成的 repos 保留, 未完成标记 timeout, 聚合视图部分可用 |
+
+### 推荐规则 `open_blocker_issues` 聚合
+
+v1.1.0+ 该规则评估逻辑:
+
+```bash
+# 聚合所有 repo 的 items, 检查 blocker/critical label
+blocker_count=$(jq -r '.items[] | select(.labels | any(. == "blocker" or . == "critical")) | .number' "$issue_status" | wc -l)
+
+if [ "$blocker_count" -gt 0 ]; then
+  # 降级推荐 + 提示 (跨 repo)
+  blocker_repos=$(jq -r '.items[] | select(.labels | any(. == "blocker" or . == "critical")) | .repo' "$issue_status" | sort -u)
+  echo "降级: 检测到 $blocker_count 个 blocker issue, 分布在 $(echo "$blocker_repos" | wc -l) 个 repo"
+fi
+```
+
+---
+
 ## 安全边界
 
 Phase 1.13 严格只读，明确不做以下事项：
 
 - **不管理 API token**: 完全依赖已配置的 `forgejo` / `gh` CLI wrapper，skill 内部无 token 存储或传递
 - **不扫描 issue comments**: 首版仅扫描 `title` 和 `body`，避免大量 API 请求和噪音
-- **不递归子模块 issues**: 仅扫描主仓库 (`git remote get-url origin`)；子模块扫描为预留扩展点 (`scan_submodule_issues`)
+- **默认不递归子模块 issues**: 默认仅扫描主仓库 (`git remote get-url origin`), 避免 vendored submodule 噪音污染。**v1.1.0+** 新增 opt-in `state_scanner.issue_scan.scan_submodules: true` 支持 meta-repo 模式递归扫描, 详见下方 §submodule 扫描流程 章节
 - **不做写操作**: 不创建、评论、关闭 issue (这是 `forgejo-sync` skill 的职责)
 - **不扫描 PR**: PR 感知为独立功能，需单独 Spec
 - **不支持 GitLab**: 首版仅 Forgejo + GitHub，GitLab 预留 v2 扩展接口
@@ -712,6 +962,9 @@ Phase 1.13 严格只读，明确不做以下事项：
 ---
 
 **创建**: 2026-04-09
-**版本**: 1.0.0
-**关联 Spec**: `state-scanner-issue-awareness`
-**目标版本**: aria-plugin v2.9.0
+**更新**: 2026-04-15 (v1.1.0 — 新增 §submodule 扫描流程)
+**版本**: 1.1.0
+**关联 Spec**:
+- v1.0.0 `state-scanner-issue-awareness` (2026-04-09 归档)
+- v1.1.0 `state-scanner-submodule-issue-scan` (2026-04-15 Draft)
+**目标版本**: aria-plugin v2.10.0 / v1.16.0
