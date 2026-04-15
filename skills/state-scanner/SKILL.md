@@ -746,10 +746,12 @@ issue_status:
     enhancement: 2
 ```
 
-**向后兼容保证** (修复 R1 I1 / I3):
-- `scan_submodules=false` (默认) → 输出与 v2.9.0 字节级一致, **不含** `repos` 字段, `schema_version="1.0"`
+**向后兼容保证** (修复 R1 I1 / I3 + R2 schema_version writer 一致性):
+- `scan_submodules=false` (默认) → 输出与 v2.9.0 **行为**字节级一致: 同一扫描路径 (仅主 repo) + 同一超时预算 (12s) + 不含 `repos` 字段. **但 writer 统一写入 `schema_version="1.1"`** (含旧场景) 以简化 writer 实现; reader 接受 `"1.0"` 与 `"1.1"` 均为兼容, v1.0 消费者通过 `open_issues[]` 别名读取仍然工作, `schema_version` 字段对 v1.0 消费者是未知字段 (JSON 解析器自动忽略), 无兼容性破坏
 - 缓存文件 reader 若遇到 `schema_version` 缺失或 `<1.0` → 视为 cold cache, 一次性 re-fetch (避免 silent corruption)
 - `items` 与 `open_issues` 同步双写, v1.0 消费者读 `open_issues` 仍可用, v1.1 消费者优先 `items`
+
+**schema_version 语义澄清 (R2 backend-architect fix)**: writer 在所有场景下统一写入 `"1.1"`, 不按 scan_submodules 分支. 理由: (a) writer 分支增加实现复杂度而无收益; (b) v1.1 schema 是 v1.0 的严格超集 (只增不改), `"1.1"` 标签对单 repo 场景仍然正确; (c) reader 接受 `{"1.0", "1.1"}` 作为兼容集, 无论 writer 写什么值都不会触发 cold cache rebuild; (d) 未来 v1.2/v2.0 引入真正破坏性变更时再考虑 writer 分支。
 
 **`fetch_error` 枚举值速查表 (10 个)**:
 

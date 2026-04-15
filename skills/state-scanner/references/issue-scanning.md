@@ -1131,18 +1131,20 @@ jq -n \
 
 **v1.1 修复 R1 M3** — 失败 submodule 均记录 repos 条目 (而非 "不包含"), 保持 D10 "独立 fail-soft, 记录 fetch_error" 语义一致性:
 
-| 场景 | repos 条目行为 | fetch_error 值 |
+| 场景 | repos[key] 条目写入的 schema 字段 | fetch_error 值 |
 |------|-----------|------|
 | `scan_submodules=false` | 仅主 repo, 不扫 submodule (v1.0 行为) | N/A |
 | `.gitmodules` 不存在 | 仅主 repo 条目 | N/A |
 | `.gitmodules` 存在但为空 | 仅主 repo 条目 | N/A |
-| 某 submodule 未初始化 (`.git` 目录缺失) | **用路径作为临时 key 记录条目** | `"submodule_not_initialized"` |
-| 某 submodule 的 `origin` remote 缺失 | **用路径作为临时 key 记录条目** | `"no_origin_remote"` |
-| 某 submodule 的 owner/repo 解析失败 (D11) | **用路径作为临时 key 记录条目** | `"parse_error"` |
-| 某 submodule 的 platform 检测失败 | 记录条目 (sub_owner_repo 已知) | `"platform_unknown"` |
-| 某 submodule 的 API 调用失败 | 记录条目 | 具体枚举 (timeout / rate_limited / auth_failed / ...) |
-| 某 submodule 缓存命中 | 记录条目 (source: cache) | null |
+| 某 submodule 未初始化 (`.git` 目录缺失) | **用路径作为临时 key**, 写入 `{platform: null, source: "unavailable", fetch_error, fetched_at: null, open_count: 0, items: []}` | `"submodule_not_initialized"` |
+| 某 submodule 的 `origin` remote 缺失 | **同上** (path key) | `"no_origin_remote"` |
+| 某 submodule 的 owner/repo 解析失败 (D11) | **同上** (path key) | `"parse_error"` |
+| 某 submodule 的 platform 检测失败 | 完整记录 (sub_owner_repo 已知), 其余字段同上模板 | `"platform_unknown"` |
+| 某 submodule 的 API 调用失败 | 完整记录, `platform: $sub_platform`, 其余字段同上模板 | 具体枚举 (timeout / rate_limited / auth_failed / ...) |
+| 某 submodule 缓存命中 | 从缓存复制完整记录 (含 per-repo fetched_at) | null, `source: "cache"` |
 | 整阶段 20s 超时 | 已完成 repos 保留, 未完成 repos 不出现在 `repos` 中, 聚合视图含 `warning: "stage_timeout"` | 部分 |
+
+**字段名澄清 (R2 code-reviewer fix)**: 所有错误路径条目统一使用 `open_count` (整数, 0 表示零 open issue) 作为计数字段, **不使用** v1.0 `open_issues[]` 别名。`open_issues[]` 是 writer 在 **聚合视图** 步骤 4 对 `items[]` 的双写别名, 仅存在于顶层 `issue_status.open_issues`, **不出现** 在 `repos[key]` 条目内。这避免了消费者在 repo 级条目上误查 `open_issues` 字段。
 
 **聚合视图的失败过滤**: 步骤 4 的 `flat_items` 聚合只包含 `fetch_error == null` 的 repo, 失败 repo 的空 `items: []` 不污染聚合 `items[]`, 但**分组视图 `repos{}`** 保留全部记录 (含失败), 让消费者可以看到哪个 repo 失败了以及原因。
 
