@@ -1,7 +1,9 @@
 # Phase 1.13: Issue 感知扫描 — 详细实现逻辑
 
-> **版本**: 1.0.0 | **适用于**: state-scanner 阶段 1.13
-> **关联 Spec**: `state-scanner-issue-awareness` (v2.9.0)
+> **版本**: 1.1.0 | **适用于**: state-scanner 阶段 1.13
+> **关联 Spec**:
+> - v1.0.0: `state-scanner-issue-awareness` (v2.9.0, 2026-04-09 归档)
+> - v1.1.0: `state-scanner-submodule-issue-scan` (v2.10.0 / aria-plugin v1.16.0, 2026-04-15 Draft)
 > **fail-soft 定义**: 锚定 `state-scanner-remote-sync-check/proposal.md#D9`
 
 ---
@@ -20,27 +22,70 @@ Phase 1.13 在阶段 1.12 (同步检测) 之后、阶段 2 (推荐决策) 之前
 
 ## 输出 Schema
 
+**v1.0.0 单 repo 格式** (历史格式 / pre-v1.16.0 cache 文件样例, 保持向后兼容):
+
+**重要** (R3 backend-architect 修复): v1.16.0 writer **始终写入** `schema_version: "1.1"`, **不按 scan_submodules 分支**。本 v1.0 示例块仅描述 **pre-v1.16.0 cache 文件落盘的历史格式**, 而非 v1.16.0 writer 的输出. v1.16.0 reader 接受 `{"1.0", "1.1"}` 均为兼容 schema, 见下方 §步骤 4 schema_version 语义. 当 v1.16.0 升级到已有 pre-v1.1 cache 的项目时, cold cache guard 会一次性 re-fetch, 下次写入的 cache 文件 `schema_version` 会变为 `"1.1"`。
+
 ```yaml
 issue_status:
-  fetched_at: "2026-04-09T10:23:00Z"   # ISO 8601 UTC
+  schema_version: "1.0"                 # 历史格式样例 (pre-v1.16.0); v1.16.0 writer 始终写 "1.1", 见 §步骤 5
+  fetched_at: "2026-04-09T10:23:00Z"    # ISO 8601 UTC (聚合视图时间戳)
   source: cache | live | unavailable    # 数据来源
   fetch_error: null                     # 见 fetch_error 枚举表 (10 个值)
   warning: null                         # 可选警告，如 "stale_cache_api_failed"
   platform: forgejo | github | null     # 检测到的平台
   open_count: 3                         # open issues 总数
-  items:
+  items:                                # v1.0/v1.1 共有: 扁平 items 列表
     - number: 6
       title: "state-scanner: add issue scan and sync detection"
-      labels:
-        - "enhancement"
-        - "skill"
+      labels: ["enhancement", "skill"]
       url: "https://forgejo.10cg.pub/10CG/Aria/issues/6"
       linked_openspec: "state-scanner-issue-awareness"  # 启发式，null 表示无匹配
       linked_us: null                                    # 启发式，null 表示无匹配
       heuristic: true                                    # 标注为启发式结果
-  label_summary:                        # 按 label 聚合统计
+      repo: "10CG/Aria"                                  # v1.1.0+ 新增 — 来源 repo (v1.0 场景下固定为主 repo)
+  # v1.1.0+ 新增: 向后兼容别名 (写入时同步写, 读取时优先 items, fallback open_issues)
+  open_issues:                          # 别名: 指向同一份 items 列表, 避免 v1.0 消费者 break
+  # ^ 实际实现上, open_issues 与 items 指向同一数组 (jq '.open_issues = .items')
+  label_summary:                        # 按 label 聚合统计 (全局, 跨 repo)
     bug: 1
     enhancement: 2
+```
+
+**v1.1.0+ 多 repo 格式** (`scan_submodules=true`):
+
+```yaml
+issue_status:
+  schema_version: "1.1"                 # v1.1.0 固定
+  fetched_at: "2026-04-15T10:00:00Z"    # 聚合 fetched_at (最后一次全量 refresh 时间)
+  source: live                          # 以主 repo 为准
+  fetch_error: null                     # 聚合 error (任一 repo 失败则降级显示)
+  warning: null
+  platform: forgejo                     # 以主 repo 为准
+  open_count: 5                         # 所有 repos 的 items 聚合总数
+  items:                                # 聚合扁平视图 — 每个 item 带 repo 字段
+    - { number: 16, title: "...", repo: "10CG/Aria", ... }
+    - { number: 18, title: "...", repo: "10CG/aria-plugin", ... }
+    # ...
+  open_issues:                          # 向后兼容别名 (同上, 指向 items)
+  repos:                                # v1.1.0+ 分组视图 — 按 repo key 隔离
+    "10CG/Aria":
+      platform: forgejo
+      source: live
+      fetch_error: null
+      fetched_at: "2026-04-15T10:00:00Z"   # v1.1.0+ 修复 C2 — 每 repo 独立时间戳
+      open_count: 2
+      items: [...]
+    "10CG/aria-plugin":
+      platform: forgejo
+      source: live
+      fetch_error: null
+      fetched_at: "2026-04-15T10:00:00Z"
+      open_count: 2
+      items: [...]
+  label_summary:                        # 跨 repo 聚合
+    bug: 1
+    enhancement: 4
 ```
 
 **字段规则**:
@@ -48,6 +93,9 @@ issue_status:
 - `labels` 缺失时降级为空数组 `[]`
 - `fetch_error` 为 `null` 表示成功，否则为 10 个枚举值之一
 - `source: unavailable` 时 `items` 为空数组，`open_count` 为 0
+- **v1.1.0+ 向后兼容**: `open_issues` 与 `items` 始终指向同一份数据 (writer 同步双写). v1.0 消费者读 `open_issues` 仍然可用, v1.1 消费者应优先读 `items`. 未来 v2.x 可移除 `open_issues` 别名 (deprecation 至少跨 2 个 MINOR 版本)
+- **v1.1.0+ schema_version**: 必填字段. `"1.0"` = 仅主 repo 扁平结构, `"1.1"` = 含 `repos` 分组视图. 读取端应先判断 `schema_version` 再决定消费策略
+- **v1.1.0+ per-repo fetched_at**: `repos[owner/repo].fetched_at` 独立, 允许部分 refresh (某 repo 缓存命中, 其他 repo live fetch). 聚合视图 `issue_status.fetched_at` = 所有 repo 中 **最早** 的 `fetched_at` (保守, 表达"整体新鲜度下限")
 
 ---
 
@@ -97,25 +145,71 @@ CLI 未找到时 exit code 为 127，判定为 `cli_missing`，判定顺序在 `
 
 ### 步骤 4: 缓存读取
 
+**v1.1.0+ (修复 R1 C1 cache_schema_migration_gap)**: 读取前必须检查 `schema_version` 字段, 若缺失或低于当前版本则视为**冷缓存** (cold cache), 强制 invalidate 并重新 fetch。这避免了从 pre-v1.1 升级的用户静默读到旧 schema。
+
 ```bash
 cache_path=$(jq -r '.state_scanner.issue_scan.cache_path // ".aria/cache/issues.json"' .aria/config.json)
 ttl=$(jq -r '.state_scanner.issue_scan.cache_ttl_seconds // 900' .aria/config.json)
+# 统一初始化 now_ts (v1.1 修复 M2 now_ts 未定义):
+now_ts=$(date +%s)
+
+# v1.1.0+ 初始化 all_repos_json 聚合器 (修复 R1 M4):
+all_repos_json=$(jq -n '{}')
+
+# 跨平台 date → epoch 解析函数 (v1.1 修复 R1 I5 GNU-date-only):
+parse_iso8601_to_epoch() {
+  local ts="$1"
+  # 优先 python3 (POSIX-ubiquitous), fallback 到 GNU date / BSD date
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import sys,datetime; print(int(datetime.datetime.fromisoformat(sys.argv[1].replace('Z','+00:00')).timestamp()))" "$ts" 2>/dev/null && return 0
+  fi
+  date -d "$ts" +%s 2>/dev/null && return 0          # GNU date (Linux/WSL)
+  date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null && return 0  # BSD date (macOS)
+  echo ""  # 无法解析 → 返回空, 调用方应将其视为 cache miss
+}
 
 if [ -f "$cache_path" ]; then
-  fetched_at=$(jq -r '.fetched_at' "$cache_path")
-  cache_ts=$(date -d "$fetched_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$fetched_at" +%s)
-  now_ts=$(date +%s)
-  age=$((now_ts - cache_ts))
-  if [ "$age" -lt "$ttl" ]; then
-    # 缓存命中，source: cache
-    source="cache"
-    issues_json=$(jq '.open_issues' "$cache_path")
-    # 跳转至步骤 7
+  # v1.1 修复 C1: schema_version 守卫
+  cache_schema=$(jq -r '.schema_version // "0.0"' "$cache_path" 2>/dev/null)
+  case "$cache_schema" in
+    "1.0"|"1.1")
+      : # 兼容, 继续
+      ;;
+    *)
+      # 未知或 pre-v1.1 schema → 冷缓存, 跳过本次读取, 下次写入时重建
+      echo "[info] cache schema $cache_schema < 1.0, treating as cold cache (one-time re-fetch)"
+      # 不 rm, 让 step 8 原子覆写; 继续到 API 调用
+      schema_invalid=1
+      ;;
+  esac
+
+  if [ -z "$schema_invalid" ]; then
+    fetched_at=$(jq -r '.fetched_at // ""' "$cache_path")
+    cache_ts=$(parse_iso8601_to_epoch "$fetched_at")
+    if [ -n "$cache_ts" ]; then
+      age=$((now_ts - cache_ts))
+      if [ "$age" -lt "$ttl" ]; then
+        # 缓存命中，source: cache
+        source="cache"
+        # v1.1 向后兼容: 优先读 items, fallback 到 open_issues 别名
+        issues_json=$(jq '.items // .open_issues // []' "$cache_path")
+        # 跳转至步骤 7
+      fi
+    fi
   fi
 fi
 ```
 
 缓存命中时跳过 API 调用，直接进入启发式关联步骤。
+
+**schema_version 语义**:
+
+| cache 中 schema_version | reader 行为 |
+|---|---|
+| 缺失 / `"0.0"` / `"0.x"` | 视为 pre-v1.1 旧 cache, **忽略内容**, 一次性 re-fetch, 下次写回时附带 `"1.1"` |
+| `"1.0"` | 兼容读取 (仅 `items[]` + `open_issues` 别名) |
+| `"1.1"` | 完整读取 (`items[]` + `repos{}` 分组视图) |
+| `"1.2"` 或未来更高 | 未来版本, 视为 downgrade 场景, 保守 fail-soft 重新 fetch + warning |
 
 ### 步骤 5: API 调用
 
@@ -563,16 +657,44 @@ fi
 
 ## 超时设计
 
-| 层级 | 超时值 | 实现 |
-|------|--------|------|
-| 整阶段 (Phase 1.13) | 12s | `timeout 12 bash -c '...'` |
-| 单次 API 调用 | 5s | `timeout 5 forgejo GET ...` / `timeout 5 gh issue list ...` |
+**v1.1 修复 R1 I2 + I3**: 总阶段超时**按 scan_submodules 分档 + 按 N 自适应**, 而非硬编码 20s。
 
-**12s 设计依据** (D9): Forgejo 部署在 Cloudflare Access 后，首次 TLS 握手 + Access 验证约 3-4s，加上 API 响应 5s 和缓冲，原 8s 对 p95 场景过紧。
+| 层级 | 默认值 | 计算公式 | 实现 |
+|------|--------|---------|------|
+| 整阶段 `scan_submodules=false` | **12s** | 常量 (主 repo only, 复用 v1.0 D9 预算, **对现有用户零影响**) | `timeout 12 bash -c '...'` |
+| 整阶段 `scan_submodules=true` | **自适应** | `max(20, (N_submodules + 1) × api_timeout_seconds)` | 启动时动态计算, 记录实际值 |
+| 单次 API 调用 | 5s (不变) | 常量 | `timeout 5 forgejo GET ...` / `timeout 5 gh -C ...` |
+
+**分档设计理由**:
+
+1. **向后兼容保证 (修复 I3)**: `scan_submodules=false` 用户的行为与 v1.0 **完全一致** — 相同 12s 预算, 相同单 repo 扫描路径。tech-lead 在 Round 1 指出的"非 opt-in 副作用"被消除。
+2. **自适应扩展 (修复 I2)**: `scan_submodules=true` 时, 预算从 `max(20, (N+1)×5s)` 自动计算, 其中 `max(20, ...)` 保证小项目有至少 20s 的合理 floor, `(N+1)×5s` 保证大项目 (如 N=10) 有足够预算扫完。backend-architect 在 Round 1 指出的"hardcoded 20s not scaling with N"被消除。
+3. **AI 实现提示**: 启动 Phase 1.13 时, bash skill 应:
+   ```bash
+   if [ "$scan_submodules" = "true" ]; then
+     n_subs=${#submodule_paths[@]}
+     stage_budget=$(( (n_subs + 1) * 5 ))  # (N+1) × api_timeout_seconds
+     if [ "$stage_budget" -lt 20 ]; then stage_budget=20; fi
+   else
+     stage_budget=12  # v1.0 常量, 向后兼容
+   fi
+   # 允许 config 显式覆盖 (例如降低 timeout 以 fast-fail)
+   stage_budget=$(jq -r --argjson default "$stage_budget" '.state_scanner.issue_scan.stage_timeout_seconds // $default' .aria/config.json)
+   ```
+
+**配置项语义 (v1.1 澄清)**:
+- `stage_timeout_seconds` 若用户显式设置 → 尊重用户值, **禁用自适应**, 用户自负其责 (可能太紧或太松)
+- `stage_timeout_seconds` 若未设置 → 按 scan_submodules 分档默认值
+
+**向后兼容保证 (精确)**: 一个 v1.15.2 用户升级到 v1.16.0:
+- 不开启 `scan_submodules` → stage_timeout 仍为 12s, behaviour 完全一致
+- 开启 `scan_submodules` 且未覆盖 `stage_timeout_seconds` → 自适应 (Aria 3 submodule → 20s, 其他项目按实际)
+- 显式设置了 `stage_timeout_seconds: 12` → 尊重, 即使 scan_submodules=true 时也是 12s (用户可能需要 fast-fail)
 
 超时触发时:
 - 若缓存存在 (即使过期) → 沿用旧缓存 + `fetch_error: "timeout"` + `warning: "stale_cache_api_failed"`
 - 若无缓存 → `source: unavailable`, `fetch_error: "timeout"`
+- **v1.1**: submodule 部分超时时, 已完成扫描的 repo 结果保留, 未完成的 repo 不出现在 `repos` 中 (非 timeout 错误码, 因为没调用过), 聚合视图附加 `warning: "stage_timeout"` 提示用户预算不足
 
 ---
 
@@ -698,13 +820,360 @@ issue_status:
 
 ---
 
+## submodule 扫描流程 (v1.1.0+)
+
+> **适用条件**: `state_scanner.issue_scan.scan_submodules == true`
+> **关联 Spec**: `state-scanner-submodule-issue-scan` (2026-04-15 Draft, aria-plugin v1.16.0)
+> **默认行为**: `scan_submodules=false` 时本章节**完全跳过**, 与 v1.0.0 行为字节级一致
+
+### 概览
+
+当启用时, Phase 1.13 在完成主 repo 扫描后, 继续扫描 `.gitmodules` 中注册的所有 submodule。每个 submodule 是独立扫描单元, **串行执行**, **独立 fail-soft**, 结果聚合到同一个 `issue_status.repos` 结构。
+
+### 适用场景判定
+
+| 场景 | 推荐 `scan_submodules` | 理由 |
+|------|----------------------|------|
+| Meta-repo (如 Aria: 主 repo 只是 meta, 实际开发在 submodule) | `true` | submodule 是一等协同开发 repo, 不看会盲区 |
+| Monorepo-of-submodules (同组织多仓库, 主 repo 协调) | `true` | 同上 |
+| 传统项目 + vendored 依赖 (如 jQuery 作为 submodule) | `false` | submodule 是第三方依赖, 看 issue 制造噪音 |
+| 纯应用项目, 无 submodule | `false` (不相关) | 无 `.gitmodules` 文件, 静默跳过 |
+
+### 执行流程
+
+```
+步骤 1: 前置检查 (scan_submodules 开关)
+步骤 2: 解析 .gitmodules 得到 submodule 列表
+步骤 3: 对每个 submodule 独立执行:
+  3.1: 进入 submodule 目录
+  3.2: 读取 origin remote URL
+  3.3: 解析 owner/repo
+  3.4: 独立 platform 检测 (4 级优先级, 复用主流程)
+  3.5: 独立 CLI 可用性检查
+  3.6: 检查 repo 级缓存命中 (TTL 复用全局设置)
+  3.7: API 调用 (timeout 5s)
+  3.8: JSON normalize
+  3.9: 启发式关联 (使用主 repo 的 openspec/changes/, D9 决策)
+  3.10: 写入 issue_status.repos[owner/repo]
+步骤 4: 聚合所有 repo 的 items 到 issue_status.items (flat 视图)
+步骤 5: 更新 label_summary 聚合统计
+步骤 6: 原子写回缓存 (单文件多 repo 结构)
+```
+
+### 步骤 1: 前置检查
+
+```bash
+scan_submodules=$(jq -r '.state_scanner.issue_scan.scan_submodules // false' .aria/config.json 2>/dev/null)
+if [ "$scan_submodules" != "true" ]; then
+  # 静默跳过 submodule 扫描, 仅返回主 repo 结果
+  # issue_status.repos 仅包含主 repo 条目
+  :  # 继续主流程的后续步骤
+fi
+```
+
+### 步骤 2: 解析 .gitmodules
+
+**首选方案** (POSIX, 跨平台, **v1.1 修复 R1 I4** 路径含空格):
+
+将 submodule 路径写入 bash 数组而非 IFS-split 字符串, 避免路径含空格时 for-loop 错误分词 (AC-2 兼容性要求)。
+
+```bash
+submodule_paths=()
+if [ -f .gitmodules ]; then
+  # 用 while IFS= read -r 读取 git config 输出, 每行一路径, 保留空格
+  while IFS= read -r path_line; do
+    [ -n "$path_line" ] && submodule_paths+=("$path_line")
+  done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+    | awk '{$1=""; sub(/^ /,""); print}')
+fi
+```
+
+**备选方案** (若 `git config --file` 不可用):
+
+```bash
+submodule_paths=()
+if [ -f .gitmodules ]; then
+  while IFS= read -r path_line; do
+    [ -n "$path_line" ] && submodule_paths+=("$path_line")
+  done < <(awk -F= '/^[[:space:]]*path[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2}' .gitmodules)
+fi
+```
+
+**输出**: `${submodule_paths[@]}` 数组, 每元素是一个完整路径 (支持空格, 如 `my lib`)。后续迭代必须使用 `"${submodule_paths[@]}"` (带引号) 保持分词完整。
+
+### 步骤 3: 逐 submodule 扫描
+
+**关键变量约定** (v1.1 修复 R1 M2/M4):
+- `now_ts` — 在步骤 4 开头已初始化为 `$(date +%s)`, 本循环复用
+- `all_repos_json` — 在步骤 4 开头初始化为 `$(jq -n '{}')`, 本循环通过 `jq --argjson` 增量追加
+- `submodule_paths` — 步骤 2 产出的 bash 数组 (支持空格)
+- `helper functions` (record_repo_success / record_repo_error / classify_error / apply_heuristic_linking / detect_platform_for_url) — 逻辑占位符, AI 执行时应内联实现等效 jq 操作 (见下方各示例)
+
+```bash
+# 使用 "${submodule_paths[@]}" 带引号展开, 保留含空格路径完整性 (修复 R1 I4)
+for submodule_path in "${submodule_paths[@]}"; do
+  # 3.1: 验证 submodule 已初始化 (目录存在且含 .git 引用)
+  if [ ! -d "$submodule_path" ] || [ ! -e "$submodule_path/.git" ]; then
+    # v1.1 修复 R1 M3: fail-soft 矩阵一致性 — 未初始化 submodule 也记录条目
+    # 用 path 作为临时 key (owner/repo 未知), 标记 fetch_error
+    all_repos_json=$(echo "$all_repos_json" | jq --arg key "$submodule_path" '
+      .[$key] = {
+        platform: null,
+        source: "unavailable",
+        fetch_error: "submodule_not_initialized",
+        fetched_at: null,
+        open_count: 0,
+        items: []
+      }')
+    continue
+  fi
+
+  # 3.2: 读取 submodule 的 origin remote
+  sub_remote=$(git -C "$submodule_path" remote get-url origin 2>/dev/null)
+  if [ -z "$sub_remote" ]; then
+    all_repos_json=$(echo "$all_repos_json" | jq --arg key "$submodule_path" '
+      .[$key] = { platform: null, source: "unavailable", fetch_error: "no_origin_remote", fetched_at: null, open_count: 0, items: [] }')
+    continue
+  fi
+
+  # 3.3: 复用主流程的 owner/repo 提取逻辑
+  stripped=$(echo "$sub_remote" | sed -E 's|^[a-z]+://||; s|^[^@]+@||; s|^[^:/]+[:/]||')
+  sub_owner_repo=$(echo "$stripped" | sed -E 's|\.git([?#/].*)?$||; s|\.git$||; s|/$||')
+  if ! echo "$sub_owner_repo" | grep -qE '^[^/]+/[^/]+$'; then
+    # D11: 解析失败 → 跳过该 submodule, 不阻断整个 Phase 1.13
+    all_repos_json=$(echo "$all_repos_json" | jq --arg key "$submodule_path" '
+      .[$key] = { platform: null, source: "unavailable", fetch_error: "parse_error", fetched_at: null, open_count: 0, items: [] }')
+    continue
+  fi
+
+  # 3.4: 独立 platform 检测
+  sub_platform=$(detect_platform_for_url "$sub_remote")
+  if [ "$sub_platform" = "platform_unknown" ]; then
+    all_repos_json=$(echo "$all_repos_json" | jq --arg key "$sub_owner_repo" '
+      .[$key] = { platform: null, source: "unavailable", fetch_error: "platform_unknown", fetched_at: null, open_count: 0, items: [] }')
+    continue
+  fi
+
+  # 3.5: CLI 可用性 (主流程已验证, 此处复用)
+
+  # 3.6: 缓存命中检查 (repo 级粒度, v1.1 修复 R1 C2 — 使用 per-repo fetched_at)
+  # 注: v1.1 schema 中每个 repo 条目携带自己的 fetched_at, 支持部分 refresh
+  cached=$(jq -r --arg key "$sub_owner_repo" '.repos[$key] // empty' "$cache_path" 2>/dev/null)
+  if [ -n "$cached" ] && [ "$cached" != "null" ]; then
+    cached_fetched_at=$(echo "$cached" | jq -r '.fetched_at // ""')
+    if [ -n "$cached_fetched_at" ]; then
+      # 使用跨平台 parse_iso8601_to_epoch (步骤 4 定义, 修复 R1 I5)
+      cached_ts=$(parse_iso8601_to_epoch "$cached_fetched_at")
+      if [ -n "$cached_ts" ] && [ $((now_ts - cached_ts)) -lt "$ttl" ]; then
+        # 缓存命中, 跳过 API 调用, 直接追加到聚合器
+        all_repos_json=$(echo "$all_repos_json" | jq --arg key "$sub_owner_repo" --argjson v "$cached" '
+          .[$key] = $v')
+        continue
+      fi
+    fi
+  fi
+
+  # 3.7: API 调用 (5s 超时)
+  # v1.1 修复 R1 I6: 使用 gh -C 而非 cd + gh, 避免改变外层 shell 状态且正确捕获 exit code
+  if [ "$sub_platform" = "forgejo" ]; then
+    sub_response=$(timeout 5 forgejo GET "/repos/${sub_owner_repo}/issues?state=open&limit=${limit}" 2>&1)
+    sub_exit=$?
+  elif [ "$sub_platform" = "github" ]; then
+    sub_response=$(timeout 5 gh -C "$submodule_path" issue list --state open --json number,title,labels,url,body --limit "$limit" 2>&1)
+    sub_exit=$?
+  fi
+
+  # 3.8: 错误分类 (复用 10 个 fetch_error 枚举, D12)
+  if [ $sub_exit -ne 0 ]; then
+    sub_fetch_error=$(classify_error "$sub_exit" "$sub_response")
+    all_repos_json=$(echo "$all_repos_json" | jq --arg key "$sub_owner_repo" --arg err "$sub_fetch_error" --arg plat "$sub_platform" '
+      .[$key] = { platform: $plat, source: "unavailable", fetch_error: $err, fetched_at: null, open_count: 0, items: [] }')
+    continue
+  fi
+
+  # 3.9: JSON normalize
+  sub_normalized=$(echo "$sub_response" | jq '[.[] | { number: (.number // 0), title: (.title // ""), labels: ([.labels[]?.name] // []), url: (.html_url // .url // ""), body: (.body // "") }]')
+
+  # 3.10: 启发式关联 (使用 **主 repo 的** openspec/changes/ 扫描, 见 D9)
+  sub_items=$(apply_heuristic_linking "$sub_normalized")
+
+  # 3.11: 写入 repo 级结果 (v1.1 修复 C2: 含 per-repo fetched_at)
+  sub_fetched_at_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  sub_open_count=$(echo "$sub_items" | jq 'length')
+  all_repos_json=$(echo "$all_repos_json" | jq --arg key "$sub_owner_repo" --arg plat "$sub_platform" --arg fa "$sub_fetched_at_iso" --argjson items "$sub_items" --argjson oc "$sub_open_count" '
+    .[$key] = {
+      platform: $plat,
+      source: "live",
+      fetch_error: null,
+      fetched_at: $fa,
+      open_count: $oc,
+      items: $items
+    }')
+done
+```
+
+### 步骤 4: 聚合视图构造
+
+聚合扁平 `items[]` 视图 (每个 item 附带 `repo` 字段) + 全局 `open_count` + 跨 repo `label_summary`:
+
+```bash
+# 从 repos 构造 flat items 视图 (带 repo 字段标注来源)
+# 只聚合 fetch_error == null 的 repo, 失败 repo 不污染聚合视图
+flat_items=$(echo "$all_repos_json" | jq '[
+  to_entries[]
+  | select(.value.fetch_error == null)
+  | .key as $repo_key
+  | .value.items[]?
+  | . + {repo: $repo_key}
+]')
+
+# open_count 是跨 repo 聚合总和
+open_count=$(echo "$flat_items" | jq 'length')
+
+# label_summary 聚合 (跨 repo, 见 D7)
+label_summary=$(echo "$flat_items" | jq '[.[].labels[]?] | group_by(.) | map({(.[0]): length}) | add // {}')
+
+# 聚合 fetched_at: 取所有 repo 中 **最早** 的时间戳 (保守估计, 表达"整体新鲜度下限")
+# 若某 repo 为 cache 命中 (旧时间戳), 聚合视图反映这个下限
+aggregate_fetched_at=$(echo "$all_repos_json" | jq -r '
+  [to_entries[] | .value.fetched_at // empty] | sort | .[0] // ""
+')
+```
+
+### 步骤 5: 缓存写回 (多 repo 结构 + v1.1 schema_version)
+
+写入时必须携带 `schema_version` 标识 + 每 repo 独立 `fetched_at` (修复 R1 C1/C2) + `open_issues` 别名 (修复 R1 I1 向后兼容):
+
+```json
+{
+  "schema_version": "1.1",
+  "fetched_at": "2026-04-15T10:00:00Z",
+  "ttl_seconds": 900,
+  "scan_submodules": true,
+  "platform": "forgejo",
+  "open_count": 5,
+  "items": [
+    { "number": 16, "title": "...", "repo": "10CG/Aria", "labels": [], "url": "...", "linked_us": "US-020", "linked_openspec": null },
+    { "number": 18, "title": "...", "repo": "10CG/aria-plugin", "labels": [], "url": "...", "linked_us": null, "linked_openspec": null }
+  ],
+  "open_issues": [],
+  "__comment_open_issues": "v1.0 backward-compat alias — writer duplicates items[] to open_issues[]. Deprecated, remove in v2.0.",
+  "label_summary": {},
+  "repos": {
+    "10CG/Aria": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "fetched_at": "2026-04-15T10:00:00Z",
+      "open_count": 2,
+      "items": [...]
+    },
+    "10CG/aria-plugin": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "fetched_at": "2026-04-15T10:00:00Z",
+      "open_count": 2,
+      "items": [...]
+    },
+    "10CG/aria-standards": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "fetched_at": "2026-04-15T10:00:00Z",
+      "open_count": 0,
+      "items": []
+    },
+    "10CG/aria-orchestrator": {
+      "platform": "forgejo",
+      "source": "live",
+      "fetch_error": null,
+      "fetched_at": "2026-04-15T10:00:00Z",
+      "open_count": 1,
+      "items": [...]
+    }
+  }
+}
+```
+
+**关键修复**:
+- `schema_version: "1.1"` — reader 在步骤 4 用此字段决定 schema 兼容策略
+- `repos[owner/repo].fetched_at` — 每 repo 独立时间戳, 支持部分 refresh (修复 C2)
+- `items[]` 与 `open_issues[]` 同步双写 (修复 I1 向后兼容)
+
+**原子写入** (复用主流程 `tmp + mv`):
+
+```bash
+tmp_path="${cache_path}.tmp.$$"
+# v1.1 writer: 同步双写 items + open_issues, 携带 schema_version
+jq -n \
+  --arg schema "1.1" \
+  --arg fetched_at "$aggregate_fetched_at" \
+  --argjson scan_sub "$scan_submodules" \
+  --arg plat "$platform" \
+  --argjson oc "$open_count" \
+  --argjson items "$flat_items" \
+  --argjson repos "$all_repos_json" \
+  --argjson label_sum "$label_summary" '
+  {
+    schema_version: $schema,
+    fetched_at: $fetched_at,
+    ttl_seconds: 900,
+    scan_submodules: $scan_sub,
+    platform: $plat,
+    open_count: $oc,
+    items: $items,
+    open_issues: $items,        # v1.0 向后兼容别名 (writer 同步双写, reader 优先 items)
+    label_summary: $label_sum,
+    repos: $repos
+  }' > "$tmp_path" && mv "$tmp_path" "$cache_path"
+```
+
+### Fail-soft 矩阵扩展
+
+**v1.1 修复 R1 M3** — 失败 submodule 均记录 repos 条目 (而非 "不包含"), 保持 D10 "独立 fail-soft, 记录 fetch_error" 语义一致性:
+
+| 场景 | repos[key] 条目写入的 schema 字段 | fetch_error 值 |
+|------|-----------|------|
+| `scan_submodules=false` | 仅主 repo, 不扫 submodule (v1.0 行为) | N/A |
+| `.gitmodules` 不存在 | 仅主 repo 条目 | N/A |
+| `.gitmodules` 存在但为空 | 仅主 repo 条目 | N/A |
+| 某 submodule 未初始化 (`.git` 目录缺失) | **用路径作为临时 key**, 写入 `{platform: null, source: "unavailable", fetch_error, fetched_at: null, open_count: 0, items: []}` | `"submodule_not_initialized"` |
+| 某 submodule 的 `origin` remote 缺失 | **同上** (path key) | `"no_origin_remote"` |
+| 某 submodule 的 owner/repo 解析失败 (D11) | **同上** (path key) | `"parse_error"` |
+| 某 submodule 的 platform 检测失败 | 完整记录 (sub_owner_repo 已知), 其余字段同上模板 | `"platform_unknown"` |
+| 某 submodule 的 API 调用失败 | 完整记录, `platform: $sub_platform`, 其余字段同上模板 | 具体枚举 (timeout / rate_limited / auth_failed / ...) |
+| 某 submodule 缓存命中 | 从缓存复制完整记录 (含 per-repo fetched_at) | null, `source: "cache"` |
+| 整阶段 20s 超时 | 已完成 repos 保留, 未完成 repos 不出现在 `repos` 中, 聚合视图含 `warning: "stage_timeout"` | 部分 |
+
+**字段名澄清 (R2 code-reviewer fix)**: 所有错误路径条目统一使用 `open_count` (整数, 0 表示零 open issue) 作为计数字段, **不使用** v1.0 `open_issues[]` 别名。`open_issues[]` 是 writer 在 **聚合视图** 步骤 4 对 `items[]` 的双写别名, 仅存在于顶层 `issue_status.open_issues`, **不出现** 在 `repos[key]` 条目内。这避免了消费者在 repo 级条目上误查 `open_issues` 字段。
+
+**聚合视图的失败过滤**: 步骤 4 的 `flat_items` 聚合只包含 `fetch_error == null` 的 repo, 失败 repo 的空 `items: []` 不污染聚合 `items[]`, 但**分组视图 `repos{}`** 保留全部记录 (含失败), 让消费者可以看到哪个 repo 失败了以及原因。
+
+### 推荐规则 `open_blocker_issues` 聚合
+
+v1.1.0+ 该规则评估逻辑:
+
+```bash
+# 聚合所有 repo 的 items, 检查 blocker/critical label
+blocker_count=$(jq -r '.items[] | select(.labels | any(. == "blocker" or . == "critical")) | .number' "$issue_status" | wc -l)
+
+if [ "$blocker_count" -gt 0 ]; then
+  # 降级推荐 + 提示 (跨 repo)
+  blocker_repos=$(jq -r '.items[] | select(.labels | any(. == "blocker" or . == "critical")) | .repo' "$issue_status" | sort -u)
+  echo "降级: 检测到 $blocker_count 个 blocker issue, 分布在 $(echo "$blocker_repos" | wc -l) 个 repo"
+fi
+```
+
+---
+
 ## 安全边界
 
 Phase 1.13 严格只读，明确不做以下事项：
 
 - **不管理 API token**: 完全依赖已配置的 `forgejo` / `gh` CLI wrapper，skill 内部无 token 存储或传递
 - **不扫描 issue comments**: 首版仅扫描 `title` 和 `body`，避免大量 API 请求和噪音
-- **不递归子模块 issues**: 仅扫描主仓库 (`git remote get-url origin`)；子模块扫描为预留扩展点 (`scan_submodule_issues`)
+- **默认不递归子模块 issues**: 默认仅扫描主仓库 (`git remote get-url origin`), 避免 vendored submodule 噪音污染。**v1.1.0+** 新增 opt-in `state_scanner.issue_scan.scan_submodules: true` 支持 meta-repo 模式递归扫描, 详见下方 §submodule 扫描流程 章节
 - **不做写操作**: 不创建、评论、关闭 issue (这是 `forgejo-sync` skill 的职责)
 - **不扫描 PR**: PR 感知为独立功能，需单独 Spec
 - **不支持 GitLab**: 首版仅 Forgejo + GitHub，GitLab 预留 v2 扩展接口
@@ -712,6 +1181,9 @@ Phase 1.13 严格只读，明确不做以下事项：
 ---
 
 **创建**: 2026-04-09
-**版本**: 1.0.0
-**关联 Spec**: `state-scanner-issue-awareness`
-**目标版本**: aria-plugin v2.9.0
+**更新**: 2026-04-15 (v1.1.0 — 新增 §submodule 扫描流程)
+**版本**: 1.1.0
+**关联 Spec**:
+- v1.0.0 `state-scanner-issue-awareness` (2026-04-09 归档)
+- v1.1.0 `state-scanner-submodule-issue-scan` (2026-04-15 Draft)
+**目标版本**: aria-plugin v2.10.0 / v1.16.0

@@ -11,9 +11,9 @@ user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
-# 状态扫描与智能推荐 (State Scanner v2.9)
+# 状态扫描与智能推荐 (State Scanner v2.10)
 
-> **版本**: 2.9.0 | **角色**: 十步循环统一入口
+> **版本**: 2.10.0 | **角色**: 十步循环统一入口
 
 ## 快速开始
 
@@ -704,24 +704,54 @@ sync_status:
 
 **重要**: 此阶段为 opt-in，默认关闭 (`issue_scan.enabled=false`)，需用户显式开启。
 
+**v1.16.0+ 扩展** (Spec `state-scanner-submodule-issue-scan`): 当 `scan_submodules=true` 时, 额外扫描 `.gitmodules` 中注册的所有 submodule, 每个 submodule 独立扫描 + fail-soft, 结果聚合到同一 `issue_status.repos` 结构。此扩展为 opt-in, 保持对 v2.9.0 的字节级向后兼容。
+
+**schema_version 字段** (v1.16.0+ 新增): 用于消费者版本识别 + 缓存 migration 守卫。`"1.0"` = v1.0 单 repo 扁平格式, `"1.1"` = v1.1 多 repo 分组格式。详见 [references/issue-scanning.md](./references/issue-scanning.md) §Output Schema + §步骤 4 缓存读取。
+
 ```yaml
 issue_status:
-  fetched_at: "2026-04-09T10:23:00Z"
+  schema_version: "1.1"          # v1.16.0+ 新增, reader 用此决定消费策略
+  fetched_at: "2026-04-15T10:00:00Z"  # 聚合 fetched_at (所有 repo 中最早时间戳, 保守估计)
   source: cache                  # cache | live | unavailable
-  fetch_error: null              # 见下方枚举表
-  platform: forgejo              # forgejo | github | null
-  open_count: 3
-  items:
+  fetch_error: null              # 见下方枚举表 (主 repo 的聚合错误)
+  platform: forgejo              # forgejo | github | null (主 repo 的平台)
+  open_count: 3                  # 所有 repo 的 items 聚合后的总数
+  items:                         # 聚合扁平视图 — 所有 repo 的 items 合并 (每个 item 含 repo 字段)
     - number: 6
       title: "state-scanner: add issue scan and sync detection"
       labels: ["enhancement", "skill"]
       url: "https://forgejo.10cg.pub/10CG/Aria/issues/6"
-      linked_openspec: "state-scanner-issue-awareness"  # 启发式
+      repo: "10CG/Aria"          # v1.16.0+ 新增: 来源 repo 标识
+      linked_openspec: "state-scanner-issue-awareness"  # 启发式 (主 repo openspec/changes/ 扫描)
       linked_us: null
-  label_summary:
+  open_issues:                   # v1.16.0+ 向后兼容别名, 指向同一份 items 数组
+                                 # writer 同步双写, reader 应优先 items (未来 v2.x 移除别名)
+  repos:                         # v1.16.0+ 新增: 按 repo 分组视图
+    "10CG/Aria":
+      platform: forgejo
+      source: live
+      fetch_error: null
+      fetched_at: "2026-04-15T10:00:00Z"   # v1.16.0+ 修复: per-repo 独立时间戳
+      open_count: 2
+      items: [...]
+    "10CG/aria-plugin":          # 仅当 scan_submodules=true 时出现
+      platform: forgejo
+      source: live
+      fetch_error: null
+      fetched_at: "2026-04-15T10:00:00Z"
+      open_count: 2
+      items: [...]
+  label_summary:                 # 跨所有 repo 聚合
     bug: 1
     enhancement: 2
 ```
+
+**向后兼容保证** (修复 R1 I1 / I3 + R2 schema_version writer 一致性):
+- `scan_submodules=false` (默认) → 输出与 v2.9.0 **行为**字节级一致: 同一扫描路径 (仅主 repo) + 同一超时预算 (12s) + 不含 `repos` 字段. **但 writer 统一写入 `schema_version="1.1"`** (含旧场景) 以简化 writer 实现; reader 接受 `"1.0"` 与 `"1.1"` 均为兼容, v1.0 消费者通过 `open_issues[]` 别名读取仍然工作, `schema_version` 字段对 v1.0 消费者是未知字段 (JSON 解析器自动忽略), 无兼容性破坏
+- 缓存文件 reader 若遇到 `schema_version` 缺失或 `<1.0` → 视为 cold cache, 一次性 re-fetch (避免 silent corruption)
+- `items` 与 `open_issues` 同步双写, v1.0 消费者读 `open_issues` 仍可用, v1.1 消费者优先 `items`
+
+**schema_version 语义澄清 (R2 backend-architect fix)**: writer 在所有场景下统一写入 `"1.1"`, 不按 scan_submodules 分支. 理由: (a) writer 分支增加实现复杂度而无收益; (b) v1.1 schema 是 v1.0 的严格超集 (只增不改), `"1.1"` 标签对单 repo 场景仍然正确; (c) reader 接受 `{"1.0", "1.1"}` 作为兼容集, 无论 writer 写什么值都不会触发 cold cache rebuild; (d) 未来 v1.2/v2.0 引入真正破坏性变更时再考虑 writer 分支。
 
 **`fetch_error` 枚举值速查表 (10 个)**:
 
@@ -744,24 +774,37 @@ issue_status:
 3. 兜底推断: URL 包含 `github.com` → github；已知 Forgejo 域名 → forgejo
 4. 全失败: `fetch_error: "platform_unknown"` + 静默跳过
 
-**配置项** (`state_scanner.issue_scan.*`，9 个字段):
+**配置项** (`state_scanner.issue_scan.*`，10 个字段，v1.16.0+ 新增 `scan_submodules`):
 
 | 字段 | 默认 | 说明 |
 |------|------|------|
 | `enabled` | `false` | 主开关，opt-in |
 | `platform` | `null` | 显式指定平台；null 则自动检测 |
 | `platform_hostnames` | `{forgejo:[...], github:[...]}` | hostname → 平台映射，可扩展 |
-| `cache_ttl_seconds` | `900` | 缓存 15 分钟 TTL |
+| `cache_ttl_seconds` | `900` | 缓存 15 分钟 TTL (所有 repo 共享) |
 | `cache_path` | `.aria/cache/issues.json` | 缓存文件位置 |
-| `stage_timeout_seconds` | `12` | 整阶段超时 |
-| `api_timeout_seconds` | `5` | 单次 API 调用超时 |
-| `limit` | `20` | 单次拉取 Issue 上限 |
-| `label_filter` | `[]` | 空表示不过滤；可设 `["bug","blocker"]` |
+| `stage_timeout_seconds` | **自适应** (见下) | v1.16.0: **scan_submodules=false → 12s (不变)**; scan_submodules=true → `max(20, (N+1)×api_timeout_seconds)` 自动计算; 用户显式设置则覆盖自适应 |
+| `api_timeout_seconds` | `5` | 单次 API 调用超时 (每个 repo 独立) |
+| `limit` | `20` | 单次拉取 Issue 上限 (每个 repo 独立应用, 不是全局) |
+| `label_filter` | `[]` | 空表示不过滤；可设 `["bug","blocker"]` (全局应用到所有 repo) |
+| `scan_submodules` | `false` | **v1.16.0 新增**: 递归扫描 `.gitmodules` 中所有 submodule 的 issue; 默认 false 保持向后兼容 |
+
+**`stage_timeout_seconds` 自适应逻辑** (修复 R1 I2 + I3 backward compat):
+- `scan_submodules=false` → **12s** (v1.0 常量, 对现有用户零影响)
+- `scan_submodules=true` + 未显式设置 → `max(20, (N_submodules+1) × api_timeout_seconds)` 自动按 submodule 数线性扩展
+- 用户显式设置任何值 → 尊重用户值, **禁用自适应** (用户负责预算合理性)
+
+详细实现见 [references/issue-scanning.md](./references/issue-scanning.md) §超时设计。
+
+**`scan_submodules` 使用场景**:
+
+- **启用** (`true`): Meta-repo 或 monorepo-of-submodules 模式, submodule 是同组织的一等协同开发 repo (如 Aria 项目的 `aria/` → `10CG/aria-plugin`, `aria-orchestrator/` → `10CG/aria-orchestrator`)
+- **禁用** (`false`, 默认): 传统 vendored submodule 场景, submodule 是第三方依赖 (如把 jquery 作为 submodule 引入)
 
 **推荐规则联动**:
-- `open_blocker_issues`: 存在 label 包含 `blocker`/`critical` 的 open issue → 降级推荐 + "先 triage N 个阻塞 Issue" 提示
+- `open_blocker_issues`: **v1.16.0+ 聚合所有 repos** 的 items, 任一 label 包含 `blocker`/`critical` 的 open issue → 降级推荐 + "先 triage N 个阻塞 Issue (跨 M 个 repo)" 提示
 
-详细实现见 [references/issue-scanning.md](./references/issue-scanning.md)
+详细实现见 [references/issue-scanning.md](./references/issue-scanning.md) §submodule 扫描流程
 
 ---
 
@@ -1102,5 +1145,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-04-09
-**Skill版本**: 2.9.0 (新增 Phase 1.12 同步检测 + Phase 1.13 Issue 感知)
+**最后更新**: 2026-04-15
+**Skill版本**: 2.10.0 (v1.16.0: Phase 1.13 扩展 scan_submodules 支持 meta-repo 模式)
