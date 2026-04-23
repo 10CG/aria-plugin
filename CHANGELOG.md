@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.3] - 2026-04-23
+
+### Fixed
+
+- **state-scanner Phase 1.5 PRD Status 提取 + `prd_draft_blocking` 推荐规则** (Forgejo #18)
+  - Phase 1.5 新增 `prd_files[]` schema: `path` / `status` / `linked_stories` / `launch_date`
+  - Status 提取复用 v1.16.1 #17 修复的 Pattern 1-5 (heading-aware, case-insensitive)
+  - `linked_stories` 扫描 User Story 文件 `parent_prd:` frontmatter 或 `prd-{basename}` 引用
+  - 推荐规则新增 `prd_draft_blocking` (priority 5): Draft PRD + linked_stories ≥ 5 → 优先 "review-prd" 而非开发
+  - 输出格式新增 ⚠️ 标注, 无 Draft PRD 时 fallback 原格式 (backward-compat)
+  - 真实案例 (silknode Phase 3 Commercial Launch): 20 Story 阻塞不再静默
+
+### Documentation
+
+- **OpenSpec 与 Fission-AI upstream 分叉声明** (Forgejo #25, `standards/openspec/*`)
+  - `standards/openspec/VALIDATION.md`: 标记 `@openspec/cli` + `validate --sync/--numbering` 为 DEPRECATED, 指向 `aria:audit-engine` 原生 validator
+  - `standards/openspec/project.md`: 新增 "与 Fission-AI OpenSpec 的关系" 章节 (6 维对比表 + 4 条不跟随理由 + 3 类选型指南)
+  - `standards/openspec/templates/README.md`: 内联引用 project.md 分叉章节
+  - 核心陈述: aria 双层任务架构 (proposal.md + tasks.md + detailed-tasks.yaml) 与 upstream delta-based workflow 结构性不兼容, aria 不跟随 upstream
+  - Backward-compat: 所有现有 `openspec/changes/*` + `openspec/archive/*` 保持合法
+
+### Level 2 Patch Release 说明
+
+本 patch 涉及 state-scanner Skill 逻辑变更 (新增 schema + rule) → 延续 v1.16.1/v1.16.2 smoke benchmark 模式, full AB deferred.
+
+### Related
+
+- v1.16.1 + v1.16.2 (2026-04-23 同日): #17 regex / #24 命名约定 / #27 change_id validation / #26 checkpoint gate
+- v1.16.3 完成 state-scanner Phase 1.5 post-m0 bug 系列 (#17 + #18 两个 sister bug)
+- v1.16.3 完成 OpenSpec standards 文档同步 (#24 + #25 两个 sister issue)
+
+---
+
 ## [1.16.2] - 2026-04-23
 
 ### Fixed

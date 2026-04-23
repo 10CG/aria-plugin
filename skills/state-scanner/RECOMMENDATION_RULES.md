@@ -20,6 +20,7 @@
 | `submodule_drift` | 1.97 | (降级提示) | 任一子模块 `tree_vs_remote == true` | 70% | No — 非阻塞，附加 update 建议 |
 | `branch_behind_upstream` | 1.98 | (降级提示) | 当前分支落后 upstream >= 5 commits | 65% | No — 非阻塞，附加 pull 建议 |
 | `open_blocker_issues` | 1.99 | (降级提示) | 存在 blocker/critical label 的 open issue | 70% | No — 仅 issue_scan.enabled=true 时触发 |
+| `prd_draft_blocking` | 5 | review-prd | Draft PRD 且关联 ≥5 Story | 80% | No — 需 owner 拍板 |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
 | `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |
@@ -301,7 +302,43 @@ recommendation:
   reason: "PRD 关键章节不完整，建议细化"
 ```
 
-### 5. doc_only
+### 5. prd_draft_blocking (2026-04-23 新增, fix #18 PRD Status extraction)
+
+<!-- 优先级 5: 低于 custom_check_failed (p=1.95) / branch_behind_upstream (p=1.98) / submodule_drift (p=1.97) / audit_unconverged (p=1.9); 高于常规开发路径 feature_with_spec (p=3) / quick_fix (p=2) -->
+<!-- 与 #17 (v1.16.1 regex heading-aware) 复用 Pattern 1-5 提取 prd_files[].status -->
+
+```yaml
+id: prd_draft_blocking
+priority: 5
+description: "存在 Draft PRD 且关联 ≥5 Story 时, 优先推荐审阅 PRD 拍板"
+
+conditions:
+  any:
+    - requirements_status.prd_files[]:
+        all:
+          - status: { in: ["Draft", "draft", "draft (等待用户拍板)"] }  # 大小写不敏感匹配
+          - linked_stories: ">= 5"
+
+  detection:
+    source: "Phase 1.5 requirements_status.prd_files[]"
+    field_check: "status case-insensitive startsWith 'draft' AND linked_stories >= 5"
+    prerequisite: "requirements_status.configured == true AND prd_files 非空"
+
+recommendation:
+  workflow: null            # 不推荐开发工作流
+  recommendation_id: review-prd
+  title: "审阅 Draft PRD → 拍板"
+  reason_template: "Draft PRD {path} 关联 {linked_stories} 个 Story. 开发前建议先拍板, 避免 PRD 范围调整后返工."
+  non_blocking: false       # 阻断性降级 — 不触发常规 workflow 推荐; 用户须明确选择忽略
+  degradation: true         # 降级推荐优先级, 常规 feature/fix 推荐作为备选展示
+
+  output_example: |
+    ⚠️ Draft PRD 待拍板: docs/requirements/prd-phase3-commercial-launch.md
+       关联 20 个 Story. 建议先拍板, 再开始开发, 避免范围返工.
+    ○ [2] 忽略 PRD 状态, 继续开发
+```
+
+### 5. doc_only (原优先级 5, 与 prd_draft_blocking 同级, 后匹配)
 
 ```yaml
 id: doc_only
@@ -1121,9 +1158,15 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-04-15
+**最后更新**: 2026-04-23
 
 ## 变更历史
+
+### v2.10.1 (2026-04-23)
+
+- **新增**: 规则 `prd_draft_blocking` (优先级 5) — Phase 1.5 prd_files[] status 驱动; Draft PRD 关联 ≥5 Story 时阻断常规开发推荐, 建议 owner 先拍板 (fix #18)
+- **依赖**: 需配合 Phase 1.5 prd_files[] 数据 (同次 fix #18 新增); prd_files 为空或 configured=false 时规则自动跳过
+- **向后兼容**: prd_files 字段缺失 (旧数据) 时规则条件不满足, 不触发, 行为与 v2.10.0 一致
 
 ### v2.10.0 (2026-04-15)
 
