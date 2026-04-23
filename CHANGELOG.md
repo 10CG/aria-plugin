@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.2] - 2026-04-23
+
+### Fixed
+
+- **audit-engine pre_merge checkpoint 报告完整性 gate** (Forgejo #26)
+  - pre_merge audit 运行时新增 Checkpoint Report Completeness Gate
+  - 对 `audit.checkpoints.*: "on"` 的每个 checkpoint, 校验 `.aria/audit-reports/{checkpoint}-*.md` 必须存在 (`post_closure` 除外, post-hoc 审计)
+  - 缺失时拒绝 pre_merge 通过, 输出 ERROR 附 3 条修复路径
+  - 配置 `audit.allow_incomplete_checkpoints: false` (默认) 提供显式豁免, 豁免时强制 `[WARN] incomplete checkpoint gate bypassed: missing={names}` audit trail
+  - 与 Forgejo #27 (v1.16.1 修复) 互补: #26 = 横向完整性 (该跑的都跑了), #27 = 纵向真实性 (报告引的都真)
+  - 真实案例 (truffle-hound v0.3.0 2026-04-22): Claude + 用户跳过 Phase A, audit 链条静默断, 发版后 state-scanner 才发现
+
+### Level 2 Patch Release 说明
+
+本 patch 涉及 audit-engine 逻辑变更 (新增 gate) → Phase [2] benchmark 覆盖 #26 + #27 联合验证.
+
+### Related
+
+- v1.16.1 (2026-04-23) 同日发布, 含 #17 state-scanner regex + #27 audit-engine change_id validation + #24 openspec 命名约定
+- v1.16.2 是 v1.16.1 的 sister-bug 补丁, 同审计肌理完成
+
+---
+
 ## [1.16.1] - 2026-04-23
 
 ### Fixed

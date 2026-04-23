@@ -89,6 +89,70 @@ agent-team-audit (单轮执行引擎)
 4. 执行审计 (按模式分支)
 ```
 
+### Pre-merge: Checkpoint Report Completeness Gate
+
+> **新增**: 2026-04-23, 修复 Forgejo Issue #26 checkpoint 完整性 gate — 与 Issue #27
+> (change_id dangling reference gate, 见"审计报告生成 → Pre-write Validation"章节) 互补。
+>
+> **#26 + #27 互补说明**:
+> - **#26 (本节)** = 横向完整性 — 该跑的 checkpoint 都跑了 (completeness)
+> - **#27 (写盘前)** = 纵向真实性 — 报告引用的 change_id 都真实存在 (authenticity)
+> 两者均在 pre_merge 阶段运行，错误输出均走 audit trail。
+
+**触发条件**: 仅在 `checkpoint == "pre_merge"` 时执行，在调用任何 Agent 之前运行。
+
+```
+Checkpoint Report Completeness Gate (pre_merge 专属):
+
+  Step 1: 读取配置
+    config-loader → audit.checkpoints.*
+    config-loader → audit.allow_incomplete_checkpoints (默认 false)
+
+  Step 2: 豁免检查
+    如果 audit.allow_incomplete_checkpoints == true
+      → 跳过校验，继续执行 pre_merge 审计
+      → 记录 [WARN] incomplete checkpoint gate bypassed by config，写入 audit trail
+
+  Step 3: 枚举需校验的 checkpoint
+    对 audit.checkpoints 中每个 key，满足以下全部条件则纳入校验：
+      - value == "on"（字符串）或 value 为非 "off" 的模式字符串
+      - key != "pre_merge"（排除自身）
+      - key != "post_closure"（事后审计，不做前置依赖）
+
+  Step 4: 检查报告文件存在性
+    对每个纳入校验的 checkpoint_name：
+      扫描目录: {project_root}/.aria/audit-reports/
+      匹配模式:
+        - {checkpoint_name}-*.md         (无 change_id 变体)
+        - {checkpoint_name}-*-*.md       (含 change_id 变体)
+      任意文件匹配 → 该 checkpoint 通过
+      无文件匹配   → 记录为 missing_checkpoint
+
+  Step 5: 校验结果路由
+    missing_checkpoints 为空 → 校验通过，进入正常 pre_merge 审计流程
+    missing_checkpoints 非空 → 拒绝执行 pre_merge 审计，输出 ERROR (见下方)，中止
+```
+
+**校验失败输出**:
+
+```
+ERROR: pre_merge audit 前序 checkpoint 报告缺失:
+  - {checkpoint_name} 配置 "on" 但未找到 .aria/audit-reports/{checkpoint_name}-*.md
+  [若多个缺失则逐行列出]
+
+Fix 任一:
+  1. 补跑缺失 checkpoint 审计 (对应 Phase Skill 重新调用)
+  2. 在 .aria/config.json 将该 checkpoint 改为 "off" (若本轮确实不需要)
+  3. 在 .aria/config.json 设 audit.allow_incomplete_checkpoints: true
+     (不推荐, 豁免需 audit trail 记录 [WARN])
+```
+
+**豁免设计原则**: `allow_incomplete_checkpoints` 默认 `false`，需在 `.aria/config.json`
+显式声明才能开启。豁免模式下 pre_merge 审计继续执行，但 audit trail 必须记录
+`[WARN] incomplete checkpoint gate bypassed: missing={checkpoint_names}`。
+
+---
+
 ### Convergence 模式
 
 全员讨论 → 汇总引擎 → 结论提取 → 四元组比较 → 收敛/振荡检测。
@@ -424,6 +488,10 @@ agents: [{agent_list}]
                                             # 仅用于临时场景 (如遗留 change_id 迁移期)
                                             # 开启后写盘仍执行但记录 [WARN] 日志
                                             # (2026-04-23 新增, 修复 Issue #27)
+  audit.allow_incomplete_checkpoints: boolean  # 默认 false — 豁免 pre_merge 前序 checkpoint
+                                               # 报告完整性校验
+                                               # 开启后 pre_merge 仍执行但记录 [WARN] 日志
+                                               # (2026-04-23 新增, 修复 Issue #26)
 ```
 
 **优先级**: checkpoints 显式配置 > adaptive_rules 推导 > 默认 off
@@ -442,4 +510,4 @@ agents: [{agent_list}]
 
 ---
 
-**最后更新**: 2026-04-23 (Issue #27: change_id 锚点校验)
+**最后更新**: 2026-04-23 (Issue #26: checkpoint 完整性 gate + Issue #27: change_id 锚点校验)
