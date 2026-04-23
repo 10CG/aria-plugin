@@ -315,6 +315,53 @@ else → continue to Round N+1
 
 ## 审计报告生成
 
+### Pre-write Validation: change_id 锚点检查
+
+> **新增**: 2026-04-23, 修复 Forgejo Issue #27 dangling reference — 与 Issue #26 FR-1
+> (checkpoint 报告完整性 gate) 互补。
+
+在任何审计报告写盘前，必须先验证 `change_id` 有对应的 proposal.md 背书。
+验证在 verdict 计算完成后、文件 I/O 开始前执行。
+
+```
+Pre-write validation (写盘前强制执行):
+
+  输入: change_id (从调用方 context 读取)
+
+  Step 1: 检查豁免配置
+    config-loader → audit.allow_dangling_change_ids
+    如果 == true → 跳过校验, 直接写盘 (记录 warn 级日志)
+
+  Step 2: 查找活跃 Spec
+    路径: {project_root}/openspec/changes/{change_id}/proposal.md
+    存在 → 校验通过, 继续写盘
+
+  Step 3: 查找已归档 Spec (通配日期前缀)
+    路径: {project_root}/openspec/archive/*-{change_id}/proposal.md
+    任意匹配 → 校验通过, 继续写盘
+
+  Step 4: 校验失败
+    → 拒绝写盘
+    → 输出以下 ERROR 并中止:
+```
+
+```
+ERROR: change_id "{change_id}" 未在 openspec/changes/ 或 openspec/archive/ 找到对应 proposal.md
+Fix 任一:
+  1. 创建 openspec/changes/{change_id}/proposal.md 并 draft
+  2. 归档的 change 确认命名匹配 (archive/{YYYY-MM-DD}-{change_id}/)
+  3. 在 .aria/config.json 设 audit.allow_dangling_change_ids: true (不推荐, 仅临时)
+```
+
+**作用域**: 所有 checkpoint 均受此校验保护 (post_spec / pre_merge / post_closure 等)。
+审计 mode (convergence / challenge) 不影响校验逻辑。
+
+**豁免设计原则**: `allow_dangling_change_ids` 默认 `false`，需在 `.aria/config.json`
+显式声明才能开启。豁免不改变 ERROR 为 WARN 的语义 — 写盘仍执行，但日志必须记录
+`[WARN] dangling change_id allowed by config: {change_id}`，便于事后审计。
+
+---
+
 存储位置: `.aria/audit-reports/{checkpoint}-{timestamp}.md`
 
 ### Verdict 计算
@@ -373,6 +420,10 @@ agents: [{agent_list}]
   audit.teams: object           # 各检查点 Agent 分组
   audit.adaptive_rules: object  # Level → mode 映射
   audit.mid_implementation: object  # 条件触发配置
+  audit.allow_dangling_change_ids: boolean  # 默认 false — 豁免 change_id 锚点校验
+                                            # 仅用于临时场景 (如遗留 change_id 迁移期)
+                                            # 开启后写盘仍执行但记录 [WARN] 日志
+                                            # (2026-04-23 新增, 修复 Issue #27)
 ```
 
 **优先级**: checkpoints 显式配置 > adaptive_rules 推导 > 默认 off
@@ -391,4 +442,4 @@ agents: [{agent_list}]
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-04-23 (Issue #27: change_id 锚点校验)

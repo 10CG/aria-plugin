@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.1] - 2026-04-23
+
+### Fixed
+
+- **state-scanner Phase 1.5 Status heading regex** (Forgejo #17)
+  - Pattern 1 放宽为 `^(?:#{1,6}\s+)?Status:\s*(.+)` 支持 Markdown heading 前缀 (`## Status:`)
+  - Pattern 3 中文 `状态` 统一为 `^(?:#{1,6}\s+)?\*{0,2}状态\*{0,2}[：:]\s*(.+)` 覆盖 heading + bold + plain
+  - 影响: SilkNode 项目 13/77 Story 由 "unknown" 正确识别为实际状态
+
+- **audit-engine change_id 锚点校验** (Forgejo #27)
+  - 写盘前新增 Pre-write validation: change_id 必须对应 `openspec/changes/{id}/proposal.md` 或 `openspec/archive/*-{id}/proposal.md`
+  - 配置 `audit.allow_dangling_change_ids: false` (默认) 提供显式豁免路径, 豁免时强制记录 `[WARN]` audit trail
+  - 与 Forgejo #26 FR-1 (checkpoint 报告完整性 gate, 待修) 互补
+  - 真实案例 (truffle-hound v0.3.0 2026-04-22): change_id 从未有 proposal 背书, 两份 audit 报告 dangling reference
+
+### Documentation
+
+- **OpenSpec change id 命名约定** (Forgejo #24, `standards/openspec/templates/README.md`)
+  - 新增章节覆盖 5 维度: version 前缀 / topic 串联 / descriptor tail 枚举 / slug 长度 (硬 60, 软 40) / 多 feature 聚合
+  - 引用 truffle-hound 真实 drift 样例作对照
+  - 为 brainstorm / spec-drafter / state-scanner 消费者提供统一决策锚点
+
+### Level 2 Patch Release 说明
+
+本 patch 豁免自 `/skill-creator` 全量 benchmark (per `feedback_level2_patch_no_benchmark.md`),
+但 state-scanner + audit-engine 修改涉及 Skill 逻辑 → 本 session 后续 Phase [2] 补跑这 2 个 Skill 的针对性 benchmark。
+
+### Related
+
+- M1 MVP closeout (aria-2.0-m1-mvp) 同日完成, 归档位置: `openspec/archive/2026-04-23-aria-2.0-m1-mvp/`
+
+---
+
 ## [1.16.0] - 2026-04-15
 
 ### Added

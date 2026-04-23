@@ -160,9 +160,9 @@ allowed-tools: Read, Glob, Grep, Bash
 
 Status 提取模式 (按优先级尝试):
   不同项目的 User Story 格式各异，必须覆盖以下常见变体:
-  1. YAML-like header:    /^Status:\s*(.+)/i
+  1. YAML-like header:    /^(?:#{1,6}\s+)?Status:\s*(.+)/i        # 2026-04-23: 放宽支持 Markdown heading 前缀 (fix #17)
   2. Markdown bold key:   /\*\*Status\*\*:\s*(.+)/i
-  3. 中文键名:            /\*\*状态\*\*:\s*(.+)/i
+  3. 中文键名:            /^(?:#{1,6}\s+)?\*{0,2}状态\*{0,2}[：:]\s*(.+)/i  # 同步放宽支持 ## 状态: 及 **状态**: 两种形式
   4. Blockquote 内嵌:     />\s*.*(?:Status|状态)[：:]\s*(.+)/i
   5. 表格列:              /\|\s*(?:Status|状态)\s*\|\s*(.+?)\s*\|/i
   提取到任一匹配即停止。未匹配到时标记为 "unknown" 而非报错。
