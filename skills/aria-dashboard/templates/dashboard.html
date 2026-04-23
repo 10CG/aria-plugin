@@ -441,8 +441,25 @@ body {
 }
 
 .verdict-revise {
+  color: var(--accent-red);
+  font-weight: 600;
+}
+
+/* 2026-04-23 修复 #23 Major 2 — Minor 4-9 延期到 v1.17.x */
+.verdict-warning {
+  background: var(--accent-yellow-dim);
   color: var(--accent-yellow);
   font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.verdict-neutral {
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .audit-checkpoint {
@@ -762,6 +779,66 @@ body {
   border: 1px solid var(--border);
 }
 
+/* === Carry-forward Section === */
+/* 2026-04-23 修复 #23 Major 3 — Minor 4-9 延期到 v1.17.x */
+.carry-forward {
+  margin-bottom: 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.carry-forward h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+
+.cf-group {
+  margin-bottom: 16px;
+}
+
+.cf-group:last-child {
+  margin-bottom: 0;
+}
+
+.cf-group h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-blue);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cf-group ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.cf-group li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid var(--accent-yellow-dim);
+  margin-bottom: 4px;
+  line-height: 1.45;
+}
+
+.cf-group li:last-child {
+  margin-bottom: 0;
+}
+
+.cf-source {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
 /* === Footer === */
 .footer {
   text-align: center;
@@ -936,7 +1013,13 @@ body {
   </div>
 
   <!-- ================================================================ -->
-  <!-- Section 6: Issue Submission Form                                -->
+  <!-- Section 6: Carry-forward (2026-04-23 修复 #23 Major 3)         -->
+  <!-- Hidden when no data (backward-compat for non-polish projects)  -->
+  <!-- ================================================================ -->
+  {{CARRY_FORWARD_HTML}}
+
+  <!-- ================================================================ -->
+  <!-- Section 7: Issue Submission Form                                -->
   <!-- ================================================================ -->
   <div class="section issue-form-section">
     <div class="section-header">

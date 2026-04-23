@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.4] - 2026-04-23
+
+### Added
+
+- **phase-c-integrator C.2.6 — UPM Milestone Sub-progress Append** (Forgejo #22, opt-in)
+  - Config `upm.milestone_driven: false` (默认关闭, opt-in 设为 true)
+  - 启用时在 C.2.5 push 完成后追加 UPM sub-bullet: `YYYY-MM-DD: {sha} — {title} ({PR_URL})`, `[ ]` → `[~]`
+  - 解决 multi-PR cycle (e.g., schema expand-migrate-contract 3 PR) 下 D.1 前的 1-2 周信息盲区
+  - phase-d-closer D.1 新增 "Milestone-driven Mode" 子节: 启用时 D.1 只需 finalize (`[~]` → `[x]` + archive 路径)
+  - 源于 M1 closeout (2026-04-23) single-D.1 update 85 tasks 实际痛点 + silknode US-074 multi-PR migration 场景
+  - standards `phase-c-integration.md` + `phase-d-closure.md` 同步说明
+
+### Fixed
+
+- **aria-dashboard 3 Major bugs** (Forgejo #23)
+  - **M1 Archived spec duration "—"**: Created date 5-step fallback chain (frontmatter strict regex → frontmatter loose regex → git log 首次 commit → archive dir 前缀 YYYY-MM-DD → null)
+  - **M2 Audit verdict CSS mislabeling**: 增加 `verdict-warning` (黄色, 覆盖 PASS_WITH_*) + `verdict-neutral` (灰色, 未知 verdict), 修正既有 verdict-revise 色彩; 解析优先读 audit-engine frontmatter `verdict:` 字段
+  - **M3 无 Carry-forward 可视化**: 新增 `Carry-forward` HTML section, 数据源为 audit-reports frontmatter + proposal Out of Scope, 按 `target_release` 分组, 对 polish-heavy 工作流关键信息补齐
+  - **Minor 4-9 延期** 到 v1.17.x (归档 spec 元信息薄 / 双仓库感知 / docs/decisions 展示 / 审计表截断 / spec 链接 / banner fallback)
+  - 真实案例 (truffle-hound v0.2.1 dashboard): `PASS_WITH_POLISH` 不再误染红; v0.2.1 carry-forward 10 条不再丢失
+
+### Level 2 Patch Release 说明
+
+涉及 phase-c-integrator + phase-d-closer + aria-dashboard 3 个 Skill 逻辑变更. 延续 smoke benchmark 模式, full AB deferred.
+
+### Related
+
+- v1.16.4 完成 Phase D.1 milestone-driven 支持 + aria-dashboard Major bug cleanup
+- 本 session v1.16.1-v1.16.4 累计修复 8 个 Forgejo Issue
+
+---
+
 ## [1.16.3] - 2026-04-23
 
 ### Fixed

@@ -242,13 +242,25 @@ Priority: 按优先级 → frontmatter > Markdown 引用块 > 默认 P3
   Title:  第一个 # 标题
   Status: 引用块 />\s*\*\*Status\*\*:\s*(.+)/  (归档强制 "Archived")
   Level:  引用块 />\s*\*\*Level\*\*:\s*(.+)/
-  Created: 引用块 />\s*\*\*Created\*\*:\s*(.+)/
+  Created: 见下方 fallback chain
   Parent:  引用块 />\s*\*\*Parent Story\*\*:\s*\[(.+?)\]/
 
+# 2026-04-23 修复 #23 Major 1 — Minor 4-9 延期到 v1.17.x
+Created 日期 fallback chain (依次尝试, 第一个命中即返回):
+  1. 引用块 />\s*\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})/
+  2. 文件内任意位置 Created 日期: /\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})/
+  3. git log --follow --diff-filter=A --format=%aI <proposal.md 路径>
+     → 取输出首行, 截取前 10 字符 (YYYY-MM-DD)
+  4. 归档目录名前缀 YYYY-MM-DD (仅适用于 archive/ 条目)
+     → 同一目录名已用于 archived_date, Created 取相同值时 duration = 0 days
+  5. null → 显示 "—" (保持原有行为)
+
 耗时计算 (仅归档):
-  归档日期 = 目录名前 10 字符 (YYYY-MM-DD 格式)
-  duration_days = 归档日期 - Created 日期
-  avg_duration = sum(duration_days) / count(有效记录)
+  archived_date = 目录名前 10 字符 (YYYY-MM-DD 格式)
+  created_date  = 以上 fallback chain 得出
+  duration_days = (archived_date - created_date).days
+  仅当 archived_date 与 created_date 均非 null 时计算; 否则显示 "—"
+  avg_duration  = sum(duration_days) / count(有效记录)
 
 未找到时: 表格为空，计数显示 0
 ```
@@ -266,10 +278,22 @@ Priority: 按优先级 → frontmatter > Markdown 引用块 > 默认 P3
   timestamp: string (ISO 8601)
   context: string
   agents: [string]
+  verdict: string (可选, audit-engine 规范输出字段)
 
-verdict 推导:
-  converged == "true"  → PASS
-  converged == "false" → REVISE
+# 2026-04-23 修复 #23 Major 2 — Minor 4-9 延期到 v1.17.x
+verdict 解析优先级 (先读 frontmatter 显式字段, 再做 fallback 推导):
+  1. 若 frontmatter 存在 `verdict:` 字段, 直接使用其值
+  2. 否则从 converged 推导:
+       converged == "true"  → PASS
+       converged == "false" → REVISE
+
+verdict CSS class 映射 (规范化):
+  PASS                  → verdict-pass    (绿色)
+  PASS_WITH_* (任意后缀) → verdict-warning (黄色, 新增)
+    涵盖: PASS_WITH_WARNINGS / PASS_WITH_POLISH / PASS_WITH_MINOR / 未来扩展
+    匹配规则: /^PASS_WITH_/i
+  FAIL / REVISE         → verdict-revise  (红色)
+  未知值                 → verdict-neutral (灰色, 新增) 避免"未知=失败"误导
 
 排序: 按 timestamp 降序
 展示: 最近 5 条
@@ -367,7 +391,44 @@ STATUS_CLASS: Approved → approved, Draft → draft, Archived → archived, In 
   </tbody>
 </table>
 
-VERDICT_CLASS: PASS → verdict-pass, REVISE → verdict-revise
+# 2026-04-23 修复 #23 Major 2 — Minor 4-9 延期到 v1.17.x
+VERDICT_CLASS 映射:
+  PASS          → verdict-pass    (绿色)
+  PASS_WITH_*   → verdict-warning (黄色, 新增)
+  FAIL / REVISE → verdict-revise  (红色)
+  其他          → verdict-neutral (灰色, 新增)
+```
+
+### Carry-forward 区块
+
+```html
+<!-- 2026-04-23 修复 #23 Major 3 — Minor 4-9 延期到 v1.17.x -->
+<!-- 仅在存在 carry-forward 数据时渲染; 否则整个 section 隐藏 (backward-compat) -->
+<section class="carry-forward">
+  <h2>Carry-forward (polish 流动)</h2>
+  <div class="cf-group">
+    <h3>{TARGET_RELEASE} 候选 ({COUNT} 条)</h3>
+    <ul>
+      <li>CF-{N}: {ITEM_TEXT} (源: {SOURCE}, {DATE})</li>
+      ...
+    </ul>
+  </div>
+  ...
+</section>
+
+数据源 (依次扫描, 合并去重):
+  1. .aria/audit-reports/*.md frontmatter carry_forward: 字段 (列表)
+     target_release 字段用于分组; 缺失时归入 "未指定版本"
+  2. .aria/audit-reports/*.md body 中 "Carry-forward" H2/H3 章节下的列表项
+  3. openspec/changes/*/proposal.md "Out of Scope" 章节列表项
+     → 分组 key: proposal 目录名 + "(Active)"
+  4. openspec/archive/*/proposal.md "Out of Scope" 章节列表项
+     → 分组 key: proposal 目录名 + "(Archived)"
+
+分组 / 排序: 按 target_release 字母升序; 同组内按来源时间升序
+
+无数据时: section 完全隐藏 (display:none 或不生成 HTML)
+占位符: {{CARRY_FORWARD_HTML}} (模板中标记注入点)
 ```
 
 ### Benchmark Skill Chips
