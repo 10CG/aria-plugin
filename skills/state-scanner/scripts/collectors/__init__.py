@@ -15,6 +15,7 @@ from ._common import CollectorResult, log
 from .architecture import collect_architecture
 from .audit import collect_audit
 from .changes import collect_changes_analysis
+from .custom_checks import collect_custom_checks
 from .git import collect_git_state
 from .interrupt import collect_interrupt_state
 from .openspec import collect_openspec
@@ -29,6 +30,7 @@ __all__ = [
     "collect_architecture",
     "collect_audit",
     "collect_changes_analysis",
+    "collect_custom_checks",
     "collect_git_state",
     "collect_interrupt_state",
     "collect_openspec",

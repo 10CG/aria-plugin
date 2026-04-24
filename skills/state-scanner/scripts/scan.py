@@ -19,6 +19,7 @@ Coverage (schema v1.0):
 - Phase 1.8:  README sync (version + skill count consistency)
 - Phase 1.9:  standards submodule presence
 - Phase 1.10: audit reports latest
+- Phase 1.11: project-level custom health checks (.aria/state-checks.yaml)
 
 Invariants (do not break without schema bump):
 - Top-level field `snapshot_schema_version` is the ONLY version gate SKILL.md
@@ -43,6 +44,7 @@ from collectors import (
     collect_architecture,
     collect_audit,
     collect_changes_analysis,
+    collect_custom_checks,
     collect_git_state,
     collect_interrupt_state,
     collect_openspec,
@@ -77,6 +79,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_8_readme = collect_readme_sync(project_root)
     phase1_9_standards = collect_standards(project_root)
     phase1_10_audit = collect_audit(project_root)
+    phase1_11_custom = collect_custom_checks(project_root)
 
     for collector_name, result in [
         ("interrupt", phase0),
@@ -89,6 +92,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         ("readme", phase1_8_readme),
         ("standards", phase1_9_standards),
         ("audit", phase1_10_audit),
+        ("custom_checks", phase1_11_custom),
     ]:
         for err in result.errors:
             errors.append({"collector": collector_name, **err})
@@ -107,6 +111,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         "readme": phase1_8_readme.data,
         "standards": phase1_9_standards.data,
         "audit": phase1_10_audit.data,
+        "custom_checks": phase1_11_custom.data,
         "errors": errors,
     }
 
