@@ -20,6 +20,10 @@ Coverage (schema v1.0):
 - Phase 1.9:  standards submodule presence
 - Phase 1.10: audit reports latest
 - Phase 1.11: project-level custom health checks (.aria/state-checks.yaml)
+- Phase 1.12: local/remote sync + multi-remote parity (fail-soft, no network
+              for `local_refs` mode; optional `ls_remote` opt-in)
+- Phase 1.13: Issue awareness (opt-in via issue_scan.enabled; Forgejo/GitHub)
+- Phase 1.14: Forgejo CLAUDE.local.md config detection
 
 Invariants (do not break without schema bump):
 - Top-level field `snapshot_schema_version` is the ONLY version gate SKILL.md
@@ -45,12 +49,16 @@ from collectors import (
     collect_audit,
     collect_changes_analysis,
     collect_custom_checks,
+    collect_forgejo_config,
     collect_git_state,
     collect_interrupt_state,
+    collect_issue_scan,
+    collect_multi_remote,
     collect_openspec,
     collect_readme_sync,
     collect_requirements,
     collect_standards,
+    collect_sync_state,
     collect_upm_state,
     log,
 )
@@ -80,6 +88,15 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_9_standards = collect_standards(project_root)
     phase1_10_audit = collect_audit(project_root)
     phase1_11_custom = collect_custom_checks(project_root)
+    phase1_12_sync = collect_sync_state(project_root)
+    phase1_12_multi = collect_multi_remote(project_root)
+    phase1_13_issue = collect_issue_scan(project_root)
+    phase1_14_forgejo = collect_forgejo_config(project_root)
+
+    # T3.3 contract: multi_remote.data returns the inner block; nest under
+    # sync_status.multi_remote (overrides the T3.2 stub of {"enabled": false}).
+    if isinstance(phase1_12_sync.data, dict):
+        phase1_12_sync.data["multi_remote"] = phase1_12_multi.data
 
     for collector_name, result in [
         ("interrupt", phase0),
@@ -93,6 +110,10 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         ("standards", phase1_9_standards),
         ("audit", phase1_10_audit),
         ("custom_checks", phase1_11_custom),
+        ("sync", phase1_12_sync),
+        ("multi_remote", phase1_12_multi),
+        ("issue_scan", phase1_13_issue),
+        ("forgejo_config", phase1_14_forgejo),
     ]:
         for err in result.errors:
             errors.append({"collector": collector_name, **err})
@@ -112,8 +133,16 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         "standards": phase1_9_standards.data,
         "audit": phase1_10_audit.data,
         "custom_checks": phase1_11_custom.data,
+        "sync_status": phase1_12_sync.data,
+        "forgejo_config": phase1_14_forgejo.data,
         "errors": errors,
     }
+
+    # Phase 1.13 is opt-in: issue_status appears only when enabled=true per SKILL.md.
+    # `enabled: false` branch returns {"enabled": false} — omit issue_status entirely
+    # so schema validators can still treat presence as a signal, matching pre-T3.4 behavior.
+    if phase1_13_issue.data.get("enabled"):
+        snapshot["issue_status"] = phase1_13_issue.data.get("issue_status")
 
     if not phase1_git.data.get("is_git_repo", False):
         return snapshot, EXIT_HARD_PRECONDITION
