@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from ._common import CollectorResult, _run
+from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 _DEFAULT_TIMEOUT = 5
 _DEFAULT_WARN_AFTER_HOURS = 24
@@ -86,21 +87,11 @@ def _load_config(project_root: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Git helpers (local to this collector — sync.py may or may not exist yet)
+# Git helpers (repo-local only — shared helpers live in .git)
 # ---------------------------------------------------------------------------
-def _current_branch(repo_dir: Path, timeout: int) -> str | None:
-    rc, out, _ = _run(["git", "branch", "--show-current"], repo_dir, timeout=timeout)
-    if rc != 0:
-        return None
-    branch = out.strip()
-    return branch or None
-
-
-def _is_shallow(repo_dir: Path, timeout: int) -> bool:
-    rc, out, _ = _run(
-        ["git", "rev-parse", "--is-shallow-repository"], repo_dir, timeout=timeout
-    )
-    return rc == 0 and out.strip() == "true"
+# T3.6 consolidation: `_current_branch` / `_is_shallow` / `_enumerate_submodule_paths`
+# are imported from .git with timeout support added in T3.6. Local helpers below
+# are specific to multi_remote (need short-sha output, per-repo-dir context).
 
 
 def _head_commit(repo_dir: Path, timeout: int) -> str | None:
@@ -116,24 +107,6 @@ def _list_remotes(repo_dir: Path, timeout: int) -> list[str]:
     if rc != 0:
         return []
     return [line.strip() for line in out.splitlines() if line.strip()]
-
-
-def _list_submodules(project_root: Path, timeout: int) -> list[str]:
-    """Return submodule paths from `.gitmodules` (order preserved)."""
-    rc, out, _ = _run(
-        ["git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
-        project_root,
-        timeout=timeout,
-    )
-    if rc != 0:
-        return []
-    paths: list[str] = []
-    for line in out.splitlines():
-        # Format: "submodule.<name>.path <path>"
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2:
-            paths.append(parts[1])
-    return paths
 
 
 def _gitdir_for(repo_dir: Path, timeout: int) -> Path | None:
@@ -489,7 +462,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
 
     # --- Submodules
     submodule_blocks: list[dict[str, Any]] = []
-    for rel_path in _list_submodules(project_root, timeout):
+    for rel_path in _enumerate_submodule_paths(project_root, timeout=timeout):
         sm_dir = project_root / rel_path
         if not sm_dir.exists() or not (sm_dir / ".git").exists():
             # Uninitialized submodule — skip (SKILL.md §1.12 fail-soft philosophy).

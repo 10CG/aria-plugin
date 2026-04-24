@@ -11,17 +11,61 @@ from ._common import CollectorResult, _run
 _COMMIT_LINE = re.compile(r"^([0-9a-f]{7,40})\s+(.*)$")
 
 
-def _current_branch(project_root: Path) -> str | None:
-    rc, out, _ = _run(["git", "branch", "--show-current"], project_root)
+def _current_branch(project_root: Path, timeout: int = 5) -> str | None:
+    """Return the checked-out branch name, or None when detached / on non-branch.
+
+    T3.6 consolidation (4-agent audit consensus): added optional `timeout` for
+    collectors with their own budget (e.g. multi_remote.py's ls-remote path).
+    Default preserves the pre-T3.6 behavior.
+    """
+    rc, out, _ = _run(["git", "branch", "--show-current"], project_root, timeout=timeout)
     if rc != 0:
         return None
     branch = out.strip()
     return branch or None
 
 
-def _is_shallow(project_root: Path) -> bool:
-    rc, out, _ = _run(["git", "rev-parse", "--is-shallow-repository"], project_root)
+def _is_shallow(project_root: Path, timeout: int = 5) -> bool:
+    """Return True if the repo is a shallow clone. T3.6: optional timeout."""
+    rc, out, _ = _run(
+        ["git", "rev-parse", "--is-shallow-repository"], project_root, timeout=timeout
+    )
     return rc == 0 and out.strip() == "true"
+
+
+_SUBMODULE_PATH_PAT = re.compile(r"^submodule\..+\.path\s+(.+)$")
+
+
+def _enumerate_submodule_paths(
+    project_root: Path, timeout: int = 5, r: CollectorResult | None = None
+) -> list[str]:
+    """Return submodule paths from `.gitmodules` (initialized or not).
+
+    T3.6 consolidation (TL-I2 / BA-M1 / QA-I5 / CR-I1): single source of truth
+    for submodule enumeration. Fails soft — missing `.gitmodules` or parse
+    failure yields `[]`. Passing a CollectorResult lets callers surface the
+    parse failure as a soft_error without changing the return contract.
+    """
+    gitmodules = project_root / ".gitmodules"
+    if not gitmodules.exists():
+        return []
+    rc, out, _err = _run(
+        ["git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..+\.path$"],
+        project_root,
+        timeout=timeout,
+    )
+    if rc != 0:
+        if r is not None:
+            r.soft_error("gitmodules_parse_failed", f"rc={rc}")
+        return []
+    paths: list[str] = []
+    for line in out.splitlines():
+        m = _SUBMODULE_PATH_PAT.match(line.strip())
+        if m:
+            path = m.group(1).strip()
+            if path:
+                paths.append(path)
+    return paths
 
 
 def _parse_porcelain_z(raw: str) -> tuple[list[str], list[str], list[str]]:

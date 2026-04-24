@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ._common import CollectorResult, _run
-from .git import _current_branch, _is_shallow
+from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 
 # Remote-commit fallback chain order for submodules
@@ -195,33 +195,6 @@ def _collect_current_branch(
         "diverged": diverged,
         "reason": None,
     }
-
-
-def _enumerate_submodule_paths(project_root: Path, r: CollectorResult) -> list[str]:
-    """Return submodule paths from .gitmodules (initialized or not).
-
-    Uses `git config -f .gitmodules --get-regexp path` for robust parsing.
-    Returns [] if no .gitmodules or parsing fails (fail-soft).
-    """
-    gitmodules = project_root / ".gitmodules"
-    if not gitmodules.exists():
-        return []
-
-    rc, out, err = _run(
-        ["git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..+\.path$"],
-        project_root,
-    )
-    if rc != 0:
-        r.soft_error("submodule_enum_failed", err.strip() or f"rc={rc}")
-        return []
-
-    paths: list[str] = []
-    for line in out.splitlines():
-        # Line form: `submodule.<name>.path <path>`
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2:
-            paths.append(parts[1])
-    return paths
 
 
 def _collect_submodule_entry(
@@ -425,7 +398,7 @@ def collect_sync_state(project_root: Path) -> CollectorResult:
     current_branch = _collect_current_branch(project_root, branch, shallow, has_remote, r)
 
     submodules: list[dict[str, Any]] = []
-    for sub_path in _enumerate_submodule_paths(project_root, r):
+    for sub_path in _enumerate_submodule_paths(project_root, r=r):
         submodules.append(_collect_submodule_entry(project_root, sub_path, r))
 
     r.data = {

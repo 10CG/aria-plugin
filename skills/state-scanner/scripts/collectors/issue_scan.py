@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from ._common import CollectorResult, _run, log
+from .git import _enumerate_submodule_paths
 
 # ----- Constants ------------------------------------------------------------
 
@@ -505,25 +506,7 @@ def _fetch_repo(
 
 
 # ----- Submodule enumeration ------------------------------------------------
-
-
-def _enumerate_submodules(project_root: Path) -> list[str]:
-    """Return ordered list of submodule paths from .gitmodules."""
-    gm = project_root / ".gitmodules"
-    if not gm.is_file():
-        return []
-    rc, out, _err = _run(
-        ["git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..+\.path$"],
-        project_root,
-    )
-    if rc != 0:
-        return []
-    paths: list[str] = []
-    for line in out.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2:
-            paths.append(parts[1])
-    return paths
+# T3.6 consolidation: uses shared helper from .git instead of redefining.
 
 
 def _submodule_remote_url(project_root: Path, sub_path: str) -> str | None:
@@ -594,7 +577,7 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
     # Submodule list (needed for budget calc even when disabled, to keep a
     # consistent `n_submodules=0` path).
     scan_subs = bool(cfg.get("scan_submodules"))
-    submodule_paths = _enumerate_submodules(project_root) if scan_subs else []
+    submodule_paths = _enumerate_submodule_paths(project_root) if scan_subs else []
     stage_budget = _stage_budget(cfg, len(submodule_paths))
 
     def _budget_left() -> float:
