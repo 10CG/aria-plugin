@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1] - 2026-04-25
+
+### Fixed
+
+- **state-scanner readme.py blockquote regex** (Level 1 hygiene patch, 3-agent parallel review)
+  - `_VERSION_PAT` 锚点 `^\s*\*\*` 不允许 `>` 字符, 导致 `> **Version**: ...` 形式 (实际 aria/README.md L5 + root README.md 都用此形式) 无法匹配
+  - 后果: `readme.submodules.aria.version_match` 自 v1.16.0 起静默 None, 即便版本完全一致
+  - 修复: 改为 `^>?\s*\*\*` 与 `architecture.py` 风格一致 (允许可选 blockquote 前缀)
+  - 漏测原因: smoke benchmark eval-3 仅验证字段存在, 未验证 truthiness (field-presence-only false-pass pattern)
+
+### Added
+
+- **6 regression tests in `test_readme.py::TestVersionPatternBlockquote`**:
+  - blockquote + match 检测
+  - blockquote + mismatch 检测
+  - 无 prefix 形式 regression baseline
+  - blockquote + v-prefix 组合
+  - blockquote + 中文 key
+  - field-presence-only false-pass guard (catches the v1.17.0 missed-bug pattern)
+
+### Why patch instead of minor
+
+- 单行 collector 正则 fix, 零 API 变更, 零 schema 变更 (Level 1 hygiene)
+- 3-agent (backend-architect / qa-engineer / code-reviewer) 并行 1 轮 APPROVE_WITH_NOTES
+- v1.17.0 latent bug 不能等到 next minor (`version_match` 已静默错误数月)
+- 与 v1.16.2/3/4 patch 模式一致 (`feedback_smoke_vs_full_ab_benchmark.md`)
+
+---
+
 ## [1.17.0] - 2026-04-25
 
 ### Added — state-scanner v3.0.0 机械化模式 (state-scanner-mechanical-enforcement Spec)

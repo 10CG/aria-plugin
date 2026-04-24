@@ -9,7 +9,7 @@ from pathlib import Path
 from ._common import CollectorResult
 
 _VERSION_PAT = re.compile(
-    r"^\s*\*\*(?:版本|Version)\*\*[:：]\s*v?([\d.]+)", re.IGNORECASE | re.MULTILINE
+    r"^>?\s*\*\*(?:版本|Version)\*\*[:：]\s*v?([\d.]+)", re.IGNORECASE | re.MULTILINE
 )
 
 
