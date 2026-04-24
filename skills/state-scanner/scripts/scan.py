@@ -677,7 +677,10 @@ def collect_requirements(project_root: Path) -> CollectorResult:
 
     stories_dir = req_dir / "user-stories"
     story_items: list[dict[str, Any]] = []
-    by_status = {"ready": 0, "in_progress": 0, "done": 0, "pending": 0, "unknown": 0}
+    # R3-BA1 fix: do NOT pre-seed by_status with 5 fixed keys; honor the docstring
+    # contract that this is an open-ended dynamic map populated only with states
+    # actually observed. Consumers must not assume any specific key presence.
+    by_status: dict[str, int] = {}
     if stories_dir.is_dir():
         for us_path in sorted(stories_dir.glob("US-*.md")):
             try:
