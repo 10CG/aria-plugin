@@ -404,7 +404,8 @@ workflow-runner v2.0
 
 | 错误 | 原因 | 解决方案 |
 |------|------|----------|
-| scan.py exit 2 | 非 git repo / 配置无效 / 输出路径写入失败 | 根据 stderr 提示修复, 重跑 |
+| scan.py exit 20 | 非 git repo / 输出路径写入失败 (硬前置失败) | 根据 stderr 提示修复, 重跑 |
+| scan.py exit 30 | 未捕获异常 (scan.py 内部 bug) | 收集 stderr 提交 issue, 临时 opt-out `mechanical_mode=false` |
 | snapshot 文件缺失 | Step 0 未执行或被中断 | 重跑 `/state-scanner` |
 | snapshot_schema_version 不匹配 | scan.py 与 SKILL.md 版本漂移 | 升级 aria-plugin 至匹配版本 |
 | 推荐冲突 | 多规则同时匹配 | 按优先级选择第一个 (见 RECOMMENDATION_RULES.md) |
@@ -419,7 +420,7 @@ workflow-runner v2.0
 - [ ] 了解大致想做什么
 
 ### 使用后
-- [ ] Step 0 scan.py 成功 (exit 0/1) 产出 snapshot
+- [ ] Step 0 scan.py 成功 (exit 0/10) 产出 snapshot
 - [ ] 已了解当前项目状态 (读 snapshot)
 - [ ] 已确认执行的工作流
 - [ ] workflow-runner 已接收执行计划
