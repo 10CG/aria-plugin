@@ -436,6 +436,7 @@ workflow-runner v2.0
 - [interrupt-recovery.md](./references/interrupt-recovery.md) - 中断恢复详细逻辑
 - [output-formats.md](./references/output-formats.md) - 各场景输出格式定义
 - [migration-v1-to-v2.md](./references/migration-v1-to-v2.md) - v1.0 → v2.0 迁移说明
+- [migration-v2.9-to-v3.0.md](./references/migration-v2.9-to-v3.0.md) - v2.9 → v3.0 机械化迁移 (含 mechanical_mode opt-out 说明)
 - [cross-platform-commands.md](./references/cross-platform-commands.md) - 跨平台命令参考
 - [sync-detection.md](./references/sync-detection.md) - 同步检测详细逻辑 (Phase 1.12)
 - [issue-scanning.md](./references/issue-scanning.md) - Issue 扫描详细逻辑 (Phase 1.13)
