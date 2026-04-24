@@ -5,7 +5,7 @@ T4.3 deliverable (Spec CF-4 decision: schema.md is source-of-truth + manual
 maintenance + this consistency validator replaces the earlier auto-generation
 approach).
 
-Three checks:
+Three checks (all TOP-LEVEL KEY GRANULARITY):
 
 1. `SNAPSHOT_SCHEMA_VERSION` constant in `scan.py` matches the `Schema version`
    line in `state-snapshot-schema.md`.
@@ -15,12 +15,20 @@ Three checks:
 3. Every top-level key emitted by scan.py on a real project is documented in
    schema.md (detects forgotten additions).
 
+**Scope limitation** (pre_merge R1 QA-T4-R1-I2): nested field completeness is
+NOT checked. A collector can emit a new nested key that is undocumented in
+schema.md and this validator will pass. Nested schema drift must be caught by
+human review or a future extension (T6 scope). Example: `issue_status.warning`
+was emitted but undocumented for one PR cycle before pre_merge audit caught it.
+
 Exits 0 on success, 1 on any mismatch. Non-fatal — intended to run in CI or
 manually before doc / scan changes merge.
 
 Usage:
     python3 aria/skills/state-scanner/scripts/validate_schema_doc.py
-        [--project-root PATH]   # default cwd
+        [--project-root PATH]   # default cwd (must be inside a git repo;
+                                # scan.py exits rc=20 otherwise and the
+                                # validator aborts with a setup error)
         [--quiet]               # only print on failure
 """
 

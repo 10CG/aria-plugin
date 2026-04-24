@@ -319,6 +319,7 @@ repos: dict[str, {              # v1.1+: grouped by "owner/repo" key
   items: list[IssueItem]
 }]
 label_summary: dict[str, int]   # label → count across all repos
+warning: str|null               # "stage_timeout" when submodule scan was interrupted by total budget exhaustion; null otherwise. Unconditionally emitted (even on cache hits) per issue_scan.py:722.
 
 IssueItem:
   number: int
