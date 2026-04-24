@@ -1,0 +1,722 @@
+{
+  "architecture": {
+    "chain_valid": true,
+    "exists": true,
+    "last_updated": "<timestamp>",
+    "parent_prd": "[prd-aria-v1.md](../requirements/prd-aria-v1.md)",
+    "path": "docs/architecture/system-architecture.md",
+    "status": "Active"
+  },
+  "audit": {
+    "enabled": true,
+    "last_audit": {
+      "checkpoint": "pre_merge",
+      "converged": true,
+      "path": ".aria/audit-reports/pre_merge-R1-2026-04-24T2330Z-state-scanner-mechanical-t9.md",
+      "timestamp": "<timestamp>",
+      "verdict": "MERGE_NOW"
+    }
+  },
+  "changes": {
+    "architecture_impact": false,
+    "change_count": 0,
+    "complexity": "Level 1",
+    "file_types": {
+      "code": 0,
+      "config": 0,
+      "docs": 0,
+      "other": 0,
+      "test": 0
+    },
+    "skill_changes": {
+      "ab_status": {
+        "needs_benchmark": [],
+        "verified": []
+      },
+      "detected": false,
+      "modified_skills": []
+    },
+    "test_coverage": false
+  },
+  "custom_checks": {
+    "configured": true,
+    "failed": 0,
+    "passed": 1,
+    "results": [
+      {
+        "fix": "rm .aria/cache/issues.json && 重跑 /state-scanner 触发 Phase 1.13 live fetch",
+        "name": "issue-cache-freshness",
+        "output": "OK",
+        "severity": "warning",
+        "status": "pass"
+      }
+    ],
+    "total": 1
+  },
+  "errors": [],
+  "forgejo_config": {
+    "config_status": "missing",
+    "forgejo_remote_detected": true,
+    "instance": "forgejo.10cg.pub",
+    "suggestion": "运行 /forgejo-sync 可引导创建配置 (需确认)"
+  },
+  "generated_by": "scan.py",
+  "git": {
+    "current_branch": "master",
+    "detached_head": false,
+    "is_git_repo": true,
+    "shallow": false,
+    "staged_files": [],
+    "uncommitted_count": 0,
+    "unstaged_files": [],
+    "untracked_files": [],
+    "upstream": {
+      "ahead": 0,
+      "behind": 0,
+      "configured": true,
+      "name": "origin/master"
+    }
+  },
+  "interrupt": {
+    "present": false,
+    "status": "none"
+  },
+  "issue_status": {
+    "fetched_at": "<timestamp>",
+    "items": [],
+    "label_summary": {},
+    "open_count": 0,
+    "open_issues": [],
+    "platform": "forgejo",
+    "repos": {
+      "10CG/Aria": {
+        "fetched_at": "<timestamp>",
+        "items": [],
+        "open_count": 0,
+        "platform": "forgejo",
+        "source": "cache"
+      },
+      "10CG/aria-orchestrator": {
+        "fetched_at": "<timestamp>",
+        "items": [],
+        "open_count": 0,
+        "platform": "forgejo",
+        "source": "cache"
+      },
+      "10CG/aria-plugin": {
+        "fetched_at": "<timestamp>",
+        "items": [],
+        "open_count": 0,
+        "platform": "forgejo",
+        "source": "cache"
+      },
+      "10CG/aria-standards": {
+        "fetched_at": "<timestamp>",
+        "items": [],
+        "open_count": 0,
+        "platform": "forgejo",
+        "source": "cache"
+      }
+    },
+    "schema_version": "1.1",
+    "source": "cache"
+  },
+  "openspec": {
+    "archive": {
+      "items": [
+        {
+          "date": "2025-12-16",
+          "feature": "spec-drafter",
+          "path": "openspec/archive/2025-12-16-spec-drafter"
+        },
+        {
+          "date": "2025-12-16",
+          "feature": "task-planner",
+          "path": "openspec/archive/2025-12-16-task-planner"
+        },
+        {
+          "date": "2025-12-17",
+          "feature": "branch-manager",
+          "path": "openspec/archive/2025-12-17-branch-manager"
+        },
+        {
+          "date": "2025-12-17",
+          "feature": "progress-query-assistant",
+          "path": "openspec/archive/2025-12-17-progress-query-assistant"
+        },
+        {
+          "date": "2025-12-17",
+          "feature": "progress-updater",
+          "path": "openspec/archive/2025-12-17-progress-updater"
+        },
+        {
+          "date": "2025-12-19",
+          "feature": "clarify-phase-a-task-pipeline",
+          "path": "openspec/archive/2025-12-19-clarify-phase-a-task-pipeline"
+        },
+        {
+          "date": "2025-12-19",
+          "feature": "phase-a-integration",
+          "path": "openspec/archive/2025-12-19-phase-a-integration"
+        },
+        {
+          "date": "2025-12-22",
+          "feature": "optimize-phase-a-with-dual-layer-architecture",
+          "path": "openspec/archive/2025-12-22-optimize-phase-a-with-dual-layer-architecture"
+        },
+        {
+          "date": "2025-12-23",
+          "feature": "git-commit-convention",
+          "path": "openspec/archive/2025-12-23-git-commit-convention"
+        },
+        {
+          "date": "2025-12-23",
+          "feature": "reduce-context-token-overhead",
+          "path": "openspec/archive/2025-12-23-reduce-context-token-overhead"
+        },
+        {
+          "date": "2025-12-23",
+          "feature": "refactor-skill-structure",
+          "path": "openspec/archive/2025-12-23-refactor-skill-structure"
+        },
+        {
+          "date": "2025-12-23",
+          "feature": "ten-step-restructure",
+          "path": "openspec/archive/2025-12-23-ten-step-restructure"
+        },
+        {
+          "date": "2025-12-24",
+          "feature": "add-composite-skills",
+          "path": "openspec/archive/2025-12-24-add-composite-skills"
+        },
+        {
+          "date": "2025-12-24",
+          "feature": "add-test-verification-skill",
+          "path": "openspec/archive/2025-12-24-add-test-verification-skill"
+        },
+        {
+          "date": "2025-12-24",
+          "feature": "refactor-workflow-architecture",
+          "path": "openspec/archive/2025-12-24-refactor-workflow-architecture"
+        },
+        {
+          "date": "2025-12-25",
+          "feature": "update-composite-workflow-v2",
+          "path": "openspec/archive/2025-12-25-update-composite-workflow-v2"
+        },
+        {
+          "date": "2025-12-27",
+          "feature": "validate-documentation-integrity",
+          "path": "openspec/archive/2025-12-27-validate-documentation-integrity"
+        },
+        {
+          "date": "2025-12-28",
+          "feature": "architecture-docs-separation",
+          "path": "openspec/archive/2025-12-28-architecture-docs-separation"
+        },
+        {
+          "date": "2026-01-01",
+          "feature": "enhance-submodule-commit-orchestration",
+          "path": "openspec/archive/2026-01-01-enhance-submodule-commit-orchestration"
+        },
+        {
+          "date": "2026-01-01",
+          "feature": "evolve-ai-ddd-system",
+          "path": "openspec/archive/2026-01-01-evolve-ai-ddd-system"
+        },
+        {
+          "date": "2026-01-03",
+          "feature": "fix-aria-requirements-model",
+          "path": "openspec/archive/2026-01-03-fix-aria-requirements-model"
+        },
+        {
+          "date": "2026-01-20",
+          "feature": "aria-workflow-enhancement",
+          "path": "openspec/archive/2026-01-20-aria-workflow-enhancement"
+        },
+        {
+          "date": "2026-01-20",
+          "feature": "standards-docs-sync",
+          "path": "openspec/archive/2026-01-20-standards-docs-sync"
+        },
+        {
+          "date": "2026-01-22",
+          "feature": "enforcement-mechanism-redesign",
+          "path": "openspec/archive/2026-01-22-enforcement-mechanism-redesign"
+        },
+        {
+          "date": "2026-02-05",
+          "feature": "brainstorm-skill",
+          "path": "openspec/archive/2026-02-05-brainstorm-skill"
+        },
+        {
+          "date": "2026-02-05",
+          "feature": "tdd-strictness-enhancement",
+          "path": "openspec/archive/2026-02-05-tdd-strictness-enhancement"
+        },
+        {
+          "date": "2026-02-06",
+          "feature": "version-standardization",
+          "path": "openspec/archive/2026-02-06-version-standardization"
+        },
+        {
+          "date": "2026-02-07",
+          "feature": "superpowers-two-phase-review",
+          "path": "openspec/archive/2026-02-07-superpowers-two-phase-review"
+        },
+        {
+          "date": "2026-03-13",
+          "feature": "aria-plugin-benchmarks",
+          "path": "openspec/archive/2026-03-13-aria-plugin-benchmarks"
+        },
+        {
+          "date": "2026-03-17",
+          "feature": "workflow-automation-enhancement",
+          "path": "openspec/archive/2026-03-17-workflow-automation-enhancement"
+        },
+        {
+          "date": "2026-03-19",
+          "feature": "aria-plugin-v1.7-enhancements",
+          "path": "openspec/archive/2026-03-19-aria-plugin-v1.7-enhancements"
+        },
+        {
+          "date": "2026-03-19",
+          "feature": "strengthen-rule-6-enforcement",
+          "path": "openspec/archive/2026-03-19-strengthen-rule-6-enforcement"
+        },
+        {
+          "date": "2026-03-21",
+          "feature": "readme-i18n-upgrade",
+          "path": "openspec/archive/2026-03-21-readme-i18n-upgrade"
+        },
+        {
+          "date": "2026-03-27",
+          "feature": "aria-report-skill",
+          "path": "openspec/archive/2026-03-27-aria-report-skill"
+        },
+        {
+          "date": "2026-04-01",
+          "feature": "cross-project-validation",
+          "path": "openspec/archive/2026-04-01-cross-project-validation"
+        },
+        {
+          "date": "2026-04-02",
+          "feature": "auto-audit-system",
+          "path": "openspec/archive/2026-04-02-auto-audit-system"
+        },
+        {
+          "date": "2026-04-03",
+          "feature": "aria-dashboard",
+          "path": "openspec/archive/2026-04-03-aria-dashboard"
+        },
+        {
+          "date": "2026-04-03",
+          "feature": "custom-health-checks",
+          "path": "openspec/archive/2026-04-03-custom-health-checks"
+        },
+        {
+          "date": "2026-04-09",
+          "feature": "aria-orchestrator-divestiture",
+          "path": "openspec/archive/2026-04-09-aria-orchestrator-divestiture"
+        },
+        {
+          "date": "2026-04-09",
+          "feature": "heartbeat-observability",
+          "path": "openspec/archive/2026-04-09-heartbeat-observability"
+        },
+        {
+          "date": "2026-04-09",
+          "feature": "scan-complexity-security-fix",
+          "path": "openspec/archive/2026-04-09-scan-complexity-security-fix"
+        },
+        {
+          "date": "2026-04-09",
+          "feature": "state-scanner-issue-awareness",
+          "path": "openspec/archive/2026-04-09-state-scanner-issue-awareness"
+        },
+        {
+          "date": "2026-04-09",
+          "feature": "state-scanner-remote-sync-check",
+          "path": "openspec/archive/2026-04-09-state-scanner-remote-sync-check"
+        },
+        {
+          "date": "2026-04-10",
+          "feature": "benchmark-transparency-enhancement",
+          "path": "openspec/archive/2026-04-10-benchmark-transparency-enhancement"
+        },
+        {
+          "date": "2026-04-11",
+          "feature": "agent-project-adapter",
+          "path": "openspec/archive/2026-04-11-agent-project-adapter"
+        },
+        {
+          "date": "2026-04-11",
+          "feature": "agent-team-quality",
+          "path": "openspec/archive/2026-04-11-agent-team-quality"
+        },
+        {
+          "date": "2026-04-11",
+          "feature": "aria-orchestrator",
+          "path": "openspec/archive/2026-04-11-aria-orchestrator"
+        },
+        {
+          "date": "2026-04-12",
+          "feature": "forgejo-sync-local-md-guide",
+          "path": "openspec/archive/2026-04-12-forgejo-sync-local-md-guide"
+        },
+        {
+          "date": "2026-04-12",
+          "feature": "phase-c-integrator-push-enforcement",
+          "path": "openspec/archive/2026-04-12-phase-c-integrator-push-enforcement"
+        },
+        {
+          "date": "2026-04-12",
+          "feature": "state-scanner-multi-remote-parity",
+          "path": "openspec/archive/2026-04-12-state-scanner-multi-remote-parity"
+        },
+        {
+          "date": "2026-04-12",
+          "feature": "state-scanner-readme-enhancement",
+          "path": "openspec/archive/2026-04-12-state-scanner-readme-enhancement"
+        },
+        {
+          "date": "2026-04-15",
+          "feature": "state-scanner-submodule-issue-scan",
+          "path": "openspec/archive/2026-04-15-state-scanner-submodule-issue-scan"
+        },
+        {
+          "date": "2026-04-16",
+          "feature": "aria-2.0-m0-spike-hermes",
+          "path": "openspec/archive/2026-04-16-aria-2.0-m0-spike-hermes"
+        },
+        {
+          "date": "2026-04-17",
+          "feature": "aria-2.0-m0-prerequisite",
+          "path": "openspec/archive/2026-04-17-aria-2.0-m0-prerequisite"
+        },
+        {
+          "date": "2026-04-23",
+          "feature": "aria-2.0-m1-mvp",
+          "path": "openspec/archive/2026-04-23-aria-2.0-m1-mvp"
+        }
+      ],
+      "total": 55
+    },
+    "changes": {
+      "items": [
+        {
+          "id": "aria-2.0-silknode-integration-contract",
+          "path": "openspec/changes/aria-2.0-silknode-integration-contract/proposal.md",
+          "raw_status": "Draft (预留, 等待 US-022+ 消费)",
+          "status": "pending"
+        },
+        {
+          "id": "state-scanner-mechanical-enforcement",
+          "path": "openspec/changes/state-scanner-mechanical-enforcement/proposal.md",
+          "raw_status": "Approved (2026-04-23, Activation Gate 条件 2 用户显式请求触发, post_spec Agent Team 4/4 一致 PASS_WITH_WARNINGS + activate_with_revisions)",
+          "status": "approved"
+        }
+      ],
+      "total": 2
+    },
+    "configured": true,
+    "pending_archive": []
+  },
+  "project_root": "<project_root>",
+  "readme": {
+    "root": {
+      "exists": true
+    },
+    "submodules": {
+      "aria": {
+        "exists": true,
+        "plugin_version": "1.16.4"
+      }
+    }
+  },
+  "requirements": {
+    "configured": true,
+    "prd": [
+      {
+        "path": "docs/requirements/prd-aria-v1.md",
+        "raw_status": "Active",
+        "status": "active"
+      },
+      {
+        "path": "docs/requirements/prd-aria-v2.md",
+        "raw_status": "Approved (Draft → Approved 2026-04-11, 讨论组+挑战组 4 轮收敛)",
+        "status": "approved"
+      }
+    ],
+    "stories": {
+      "by_status": {
+        "done": 12,
+        "in_progress": 1,
+        "pending": 2
+      },
+      "items": [
+        {
+          "id": "US-001",
+          "path": "docs/requirements/user-stories/US-001.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-002",
+          "path": "docs/requirements/user-stories/US-002.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-003",
+          "path": "docs/requirements/user-stories/US-003.md",
+          "raw_status": "pending",
+          "status": "pending"
+        },
+        {
+          "id": "US-004",
+          "path": "docs/requirements/user-stories/US-004.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-005",
+          "path": "docs/requirements/user-stories/US-005.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-006",
+          "path": "docs/requirements/user-stories/US-006.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-007",
+          "path": "docs/requirements/user-stories/US-007.md",
+          "raw_status": "in_progress",
+          "status": "in_progress"
+        },
+        {
+          "id": "US-008",
+          "path": "docs/requirements/user-stories/US-008.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-009",
+          "path": "docs/requirements/user-stories/US-009.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-010",
+          "path": "docs/requirements/user-stories/US-010.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-011",
+          "path": "docs/requirements/user-stories/US-011.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-012",
+          "path": "docs/requirements/user-stories/US-012.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
+          "id": "US-020",
+          "path": "docs/requirements/user-stories/US-020.md",
+          "raw_status": "done (2026-04-17, M0 schema final 态, T1 Legal final signoff 作为 awaiting_external 独立跟踪)",
+          "status": "done"
+        },
+        {
+          "id": "US-021",
+          "path": "docs/requirements/user-stories/US-021.md",
+          "raw_status": "done (M1 T6 closeout 2026-04-23, go_decision=Go-with-revision, e2e_demo_passed=true, 85/85 tasks)",
+          "status": "done"
+        },
+        {
+          "id": "US-022",
+          "path": "docs/requirements/user-stories/US-022.md",
+          "raw_status": "pending (placeholder, 待 US-021 M1 MVP Go 决议后起草 Spec)",
+          "status": "pending"
+        }
+      ],
+      "total": 15
+    }
+  },
+  "snapshot_schema_version": "1.0",
+  "standards": {
+    "initialized": true,
+    "registered": true
+  },
+  "sync_status": {
+    "current_branch": {
+      "ahead": 0,
+      "behind": 0,
+      "diverged": false,
+      "name": "master",
+      "upstream": "origin/master",
+      "upstream_configured": true
+    },
+    "has_remote": true,
+    "multi_remote": {
+      "enabled": true,
+      "has_pending_push": true,
+      "has_unreachable_remote": false,
+      "main_repo": {
+        "branch": "master",
+        "local_head": "49a0427",
+        "path": ".",
+        "remotes": [
+          {
+            "ahead_count": 2,
+            "behind_count": 0,
+            "method": "local_refs",
+            "name": "github",
+            "parity": "ahead",
+            "reachable": true,
+            "remote_head": "0d49942"
+          },
+          {
+            "ahead_count": 0,
+            "behind_count": 0,
+            "method": "local_refs",
+            "name": "origin",
+            "parity": "equal",
+            "reachable": true,
+            "remote_head": "49a0427"
+          }
+        ]
+      },
+      "overall_parity": true,
+      "submodules": [
+        {
+          "branch": "master",
+          "local_head": "e6cb261",
+          "path": "aria",
+          "remotes": [
+            {
+              "ahead_count": 0,
+              "behind_count": 0,
+              "method": "local_refs",
+              "name": "github",
+              "parity": "equal",
+              "reachable": true,
+              "remote_head": "e6cb261"
+            },
+            {
+              "ahead_count": 0,
+              "behind_count": 0,
+              "method": "local_refs",
+              "name": "origin",
+              "parity": "equal",
+              "reachable": true,
+              "remote_head": "e6cb261"
+            }
+          ]
+        },
+        {
+          "branch": "master",
+          "local_head": "b2254db",
+          "path": "aria-orchestrator",
+          "remotes": [
+            {
+              "ahead_count": 0,
+              "behind_count": 0,
+              "method": "local_refs",
+              "name": "github",
+              "parity": "equal",
+              "reachable": true,
+              "remote_head": "b2254db"
+            },
+            {
+              "ahead_count": 0,
+              "behind_count": 0,
+              "method": "local_refs",
+              "name": "origin",
+              "parity": "equal",
+              "reachable": true,
+              "remote_head": "b2254db"
+            }
+          ]
+        },
+        {
+          "branch": "master",
+          "local_head": "5b56dd4",
+          "path": "standards",
+          "remotes": [
+            {
+              "ahead_count": 0,
+              "behind_count": 0,
+              "method": "local_refs",
+              "name": "github",
+              "parity": "equal",
+              "reachable": true,
+              "remote_head": "5b56dd4"
+            },
+            {
+              "ahead_count": 0,
+              "behind_count": 0,
+              "method": "local_refs",
+              "name": "origin",
+              "parity": "equal",
+              "reachable": true,
+              "remote_head": "5b56dd4"
+            }
+          ]
+        }
+      ]
+    },
+    "remote_refs_age": "4m",
+    "shallow": false,
+    "submodules": [
+      {
+        "drift": {
+          "ahead_count": 0,
+          "behind_count": 0,
+          "tree_vs_remote": false,
+          "workdir_vs_tree": false
+        },
+        "head_commit": "e6cb261",
+        "path": "aria",
+        "remote_commit": "e6cb261",
+        "remote_commit_source": "local_ref",
+        "tree_commit": "e6cb261"
+      },
+      {
+        "drift": {
+          "ahead_count": 0,
+          "behind_count": 0,
+          "tree_vs_remote": false,
+          "workdir_vs_tree": false
+        },
+        "head_commit": "b2254db",
+        "path": "aria-orchestrator",
+        "remote_commit": "b2254db",
+        "remote_commit_source": "local_ref",
+        "tree_commit": "b2254db"
+      },
+      {
+        "drift": {
+          "ahead_count": 0,
+          "behind_count": 0,
+          "tree_vs_remote": false,
+          "workdir_vs_tree": false
+        },
+        "head_commit": "5b56dd4",
+        "path": "standards",
+        "remote_commit": "5b56dd4",
+        "remote_commit_source": "local_ref",
+        "tree_commit": "5b56dd4"
+      }
+    ]
+  },
+  "upm": {
+    "configured": false
+  }
+}
