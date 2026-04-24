@@ -195,7 +195,9 @@ def collect_git_state(project_root: Path) -> CollectorResult:
         data["staged_files"] = staged
         data["unstaged_files"] = unstaged
         data["untracked_files"] = untracked
-        data["uncommitted_count"] = len(staged) + len(unstaged) + len(untracked)
+        # R1-I4 fix: dedupe by file path so MM entries (staged+unstaged both) count once
+        unique_paths = set(staged) | set(unstaged) | set(untracked)
+        data["uncommitted_count"] = len(unique_paths)
 
     data["upstream"] = _collect_upstream(project_root, branch, data["shallow"])
     data["recent_commits"] = _collect_recent_commits(project_root, r)
@@ -264,8 +266,10 @@ def _collect_upstream(
             "reason": "detached_head",
         }
     if shallow:
+        # R2-N2 fix: shallow repos cannot compute ahead/behind; return configured=False
+        # (not None) to keep the "configured" field strictly bool per docstring contract.
         return {
-            "configured": None,
+            "configured": False,
             "name": None,
             "ahead": None,
             "behind": None,
@@ -518,10 +522,12 @@ def collect_changes_analysis(git_state: dict[str, Any]) -> CollectorResult:
       - L3: >10 files OR arch docs touched OR SKILL.md modified
     """
     r = CollectorResult()
-    all_files = (
-        list(git_state.get("staged_files", []))
-        + list(git_state.get("unstaged_files", []))
-        + list(git_state.get("untracked_files", []))
+    # R2-N3 fix: dedupe by file path so change_count aligns with uncommitted_count
+    # (MM status files appear in both staged and unstaged lists).
+    all_files = sorted(
+        set(git_state.get("staged_files", []))
+        | set(git_state.get("unstaged_files", []))
+        | set(git_state.get("untracked_files", []))
     )
     file_types = {"code": 0, "test": 0, "docs": 0, "config": 0, "other": 0}
     for f in all_files:
@@ -569,11 +575,13 @@ def collect_changes_analysis(git_state: dict[str, Any]) -> CollectorResult:
 # ----------------------------------------------------------------------------
 
 # 5 Status extraction regex variants per SKILL.md Phase 1.5
+# R1-I7 fix: pattern 4 now allows optional Markdown heading prefix `#{1,6} ` to
+# align with SKILL.md Phase 1.5 spec. This preserves matches like `## Status: Active`.
 _STATUS_PATTERNS = [
     re.compile(r"^\*\*Status\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^\*\*状态\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^>\s*\*\*Status\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^Status:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^(?:#{1,6}\s+)?Status:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^\|\s*(?:Status|状态)\s*\|\s*(.+?)\s*\|", re.IGNORECASE | re.MULTILINE),
 ]
 
@@ -591,13 +599,20 @@ def _extract_status(text: str) -> str | None:
 def _normalize_status(raw: str | None) -> str:
     """Normalize Status string to OpenSpec-aligned lifecycle states.
 
-    Preserves semantic distinction between Draft/Reviewed/Approved/In Progress/Done
-    per OpenSpec standard. `ready` is for User Stories with explicit `ready` marker only.
+    Preserves semantic distinction between Draft / Reviewed / Approved / In Progress
+    / Done / Active / Deprecated / Archived per OpenSpec + PRD standard (R1-I5 fix).
+    `ready` is for User Stories with explicit `ready` marker only.
     """
     if raw is None:
         return "unknown"
     low = raw.lower()
     # Order matters: check specific states before generic ones
+    for token in ("archived",):
+        if token in low:
+            return "archived"
+    for token in ("deprecated",):
+        if token in low:
+            return "deprecated"
     for token in ("done", "complete"):
         if token in low:
             return "done"
@@ -608,6 +623,8 @@ def _normalize_status(raw: str | None) -> str:
         return "approved"
     if "reviewed" in low:
         return "reviewed"
+    if "active" in low:
+        return "active"
     if "ready" in low:
         return "ready"
     for token in ("draft", "pending", "placeholder"):
@@ -619,13 +636,15 @@ def _normalize_status(raw: str | None) -> str:
 def collect_requirements(project_root: Path) -> CollectorResult:
     """Scan docs/requirements/ for PRD + User Stories with Status extraction.
 
-    Output shape:
+    Output shape (R2-TL-3 + R2-NF-1 fix: by_status is OPEN-ENDED, not 5 fixed keys):
       {
         "configured": bool,
         "prd": [{"path": str, "status": str, "raw_status": str | null}, ...],
         "stories": {
           "total": int,
-          "by_status": {"ready": int, "in_progress": int, "done": int, "pending": int, "unknown": int},
+          "by_status": {<status>: int, ...},  // keys ∈ {archived,deprecated,done,
+              //  in_progress,approved,reviewed,active,ready,pending,unknown}
+              // Dict is dynamically populated; consumers must not assume 5-key shape.
           "items": [{"id": str, "path": str, "status": str, "raw_status": str | null}, ...]
         }
       }
@@ -953,7 +972,15 @@ def collect_audit(project_root: Path) -> CollectorResult:
             if ":" not in line:
                 continue
             k, _, v = line.partition(":")
-            meta[k.strip()] = v.strip().strip("\"'")
+            raw_v = v.strip().strip("\"'")
+            # R1-I6 fix: coerce YAML-like booleans to Python bool so consumers comparing
+            # `converged == True` do not get a truthy string fallback.
+            if raw_v.lower() in ("true", "yes"):
+                meta[k.strip()] = True
+            elif raw_v.lower() in ("false", "no"):
+                meta[k.strip()] = False
+            else:
+                meta[k.strip()] = raw_v
 
     r.data = {
         "enabled": True,
@@ -1063,9 +1090,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_INTERNAL_BUG
 
     rendered = json.dumps(snapshot, indent=2, ensure_ascii=False, sort_keys=True)
+    # R1-I3 fix: --output is exclusive with stdout to keep shell pipes clean.
+    # Consumers that want both can redirect stdout (e.g. `tee`).
     if args.output:
         args.output.write_text(rendered + "\n", encoding="utf-8")
-    print(rendered)
+    else:
+        print(rendered)
     return exit_code
 
 
