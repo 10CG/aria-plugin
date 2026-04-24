@@ -1,19 +1,19 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.16.4
-> **发布日期**: 2026-04-23
+> **版本**: 1.17.0
+> **发布日期**: 2026-04-25
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.16.4
+1.17.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (16)**: state-scanner Phase 1.13 `scan_submodules` opt-in — meta-repo 模式下的 issue 扫描覆盖 (PR #19, 5 轮 pre_merge audit 收敛)
+- **Minor (17)**: state-scanner v3.0.0 机械化模式 — Phase 1 数据采集由 `scripts/scan.py` (stdlib-only) 机械产出 JSON snapshot, AI 读 snapshot 进入推荐路径; SKILL.md 1178→454 行 (-724 净删减); 17 collectors + 215 stdlib unittest tests; T7 canonical normalizer + golden baseline; opt-out `mechanical_mode=false` 过渡至 v1.18.0 移除 (AD-SSME-5)
 - **Patch (0)**: 初始 MINOR 发版
 
 ## 包含内容

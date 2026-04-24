@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-04-25
+
+### Added — state-scanner v3.0.0 机械化模式 (state-scanner-mechanical-enforcement Spec)
+
+- **Step 0 hard constraint** (SKILL.md L63-95): Phase 1 数据采集只能通过 `python3 scripts/scan.py --output .aria/state-snapshot.json`. AI 不得用 Bash/Grep 逐字段重建状态. 退出码契约 0/10/20/30 (见 schema.md §Exit code consumer contract)
+- **17 collectors 包** (`scripts/collectors/`, stdlib-only Python):
+  - Phase 0: interrupt
+  - Phase 1: git, upm, changes
+  - Phase 1.5-1.10: requirements, openspec, architecture, readme, standards, audit
+  - Phase 1.11-1.14 (opt-in): custom_checks, sync, multi_remote, issue_scan, forgejo_config
+- **JSON snapshot schema v1.0**: 17 顶层字段, source-of-truth = `references/state-snapshot-schema.md`, validator = `scripts/validate_schema_doc.py` 断言 doc/code 一致
+- **Canonical normalizer** (T7.0): `scripts/normalize_snapshot.py` (10 rules) + `references/json-diff-normalizer.md`. T7.2 live dogfood DIFF_EXIT=0 (两次 scan.py + normalize 字节级一致)
+- **Stdlib unittest test suite** (T6): 215 tests, 1.6s runtime, 0 third-party deps. 9 collectors ≥70% coverage; 6 I/O-heavy <70% (T6.5-followup tracked)
+- **Migration guide** (`references/migration-v2.9-to-v3.0.md`): Why / Step 0 contract / D1-D5 / opt-out lifecycle / upgrade checklist / rollback
+- **Golden baseline fixture**: `tests/fixtures/reference-snapshot-aria.json` (722 行 normalized snapshot of Aria master 2026-04-25)
+
+### D1-D5 Intentional Divergences (preserved as v2.9 → v3.0 fixes)
+
+- **D1**: `Status: Approved` → `approved` (NOT collapsed to `ready`)
+- **D2**: `Status: Reviewed` → `reviewed` (NOT collapsed to `pending`)
+- **D3**: `Parent PRD: TBD/(pending)/N/A` → `chain_valid: false` (NOT silently true)
+- **D4**: YAML `key: |` block scalar → `None` (NOT literal `"|"`)
+- **D5**: `Active/Deprecated/Archived` → 3 distinct states (NOT all `unknown`)
+
+每条都有专门 regression test 守护 (test_openspec/_architecture/_upm).
+
+### Changed — SKILL.md condensed (1178 → 454 lines, -724 net)
+
+- Phase 1.x 14 子阶段 prose 合并为 collector 职责表 (语义委托 schema.md)
+- Phase 2 入口断言: snapshot 缺失 / `snapshot_schema_version != "1.0"` 直接 abort
+- Step 0 + AI 禁区表 (✅/❌ 矩阵) 强约束机械路径
+
+### Deprecated
+
+- **prose path opt-out** (`.aria/config.json` 设 `state_scanner.mechanical_mode: false`): 仍受支持, 但 v1.18.0 移除 (AD-SSME-5). v1.17.x cycle 监测使用量, 零告警 = 安全移除信号
+
+### Quality Gates Met
+
+- T6 stdlib unittest: **215/215 PASS**, 1.6s
+- T7 stability dogfood: **DIFF_EXIT=0** (字节级)
+- Smoke benchmark v1.17.0: **35/35 (100%) structural assertions** across 11 ab-suite eval cases (`ab-plugin-benchmarks/ab-results/2026-04-25-state-scanner-v1.17.0/benchmark.md`)
+- 8 audit reports across T1-T9 (4-agent × 4-round → 1-agent × 1-round proportionality 实证)
+- 9 partial-merge cycles all 4-remote parity 同步
+
+### Migration
+
+升级路径见 `aria/skills/state-scanner/references/migration-v2.9-to-v3.0.md`. TL;DR:
+- Python 3.8+ 必需 (AD-SSME-1)
+- 添加 `.aria/state-snapshot.json` 到 `.gitignore` (session artifact)
+- 跨项目消费者: 从读取 AI narrative 切换为读 `.aria/state-snapshot.json`
+- 临时回退: 设 `state_scanner.mechanical_mode: false` (v1.18.0 失效)
+
+---
+
 ## [1.16.4] - 2026-04-23
 
 ### Added
