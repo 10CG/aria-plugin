@@ -692,16 +692,19 @@ sync_status:
             reachable: true
             reason: null
             method: "local_refs"
-    overall_parity: false             # true = 所有 remotes parity=equal; false = 任一 parity∈{behind,diverged}
+    overall_parity: false             # 见下方 "精确定义" (需 positive equal evidence)
     has_unreachable_remote: false     # 任一 reachable=false 时 true (网络故障, 不计入 overall_parity)
     has_pending_push: false           # 任一 parity=ahead 时 true (正常待推送状态, 不计入 overall_parity)
 ```
 
-**overall_parity 精确定义**:
-- `true`: 所有 remotes 的 `parity` 均为 `equal`
-- `false`: 任一 remote 的 `parity` ∈ {`behind`, `diverged`}
+**overall_parity 精确定义** (post-QA-C1 / BA-R1-C1 alignment, pre_merge R1 audit):
+- `true`: **至少一个** remote 的 `parity == equal` **且** 没有 remote 的 `parity ∈ {behind, diverged}`. (positive-evidence + no-blockers 规则)
+- `false`: 零个 `equal` 证据 **或** 任一 remote 的 `parity ∈ {behind, diverged}`
+- **zero-info 输入** (所有 remote 都 unknown / 空 remote 列表 / not-a-git-repo) → `false` (无法主张 "parity ok")
 - `parity: ahead` 不计入 `overall_parity` (正常"待推送"状态), 单独由 `has_pending_push` 承载
-- `parity: unknown` 不计入 `overall_parity` (网络故障不等于推送遗漏), 单独由 `has_unreachable_remote` 承载
+- `parity: unknown` 不计入 `overall_parity` (网络故障不等于推送遗漏), 单独由 `has_unreachable_remote` 承载; **也不构成 `equal` 证据**
+
+**变更原因**: 原定义 "所有 parity=equal → true" 在 zero-info (例如 feature 分支未推送 → 所有 remote 都 `no_local_tracking_ref`) 场景下会把 "无证据" 误判为 "同步良好", 从而抑制 push 提醒. 新定义要求至少一条正向 `equal` 证据, 与 `_aggregate_flags` 实现一致.
 
 **Local refs staleness 处理**:
 1. ref 不存在 (新配置 remote 未 fetch) → `parity: unknown, reason: no_local_tracking_ref, reachable: unknown`

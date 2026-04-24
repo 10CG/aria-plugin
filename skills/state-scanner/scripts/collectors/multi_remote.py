@@ -14,11 +14,16 @@ Design invariants (do not break without a snapshot_schema_version bump):
   `state_scanner.multi_remote.timeout_seconds`).
 - Disabled mode (`state_scanner.multi_remote.enabled: false`) emits
   `{"enabled": false}` and nothing else.
-- `overall_parity` semantics (explicit):
-    * true  = all per-remote `parity == equal`
-    * false = any per-remote `parity ∈ {behind, diverged}`
+- `overall_parity` semantics (explicit, post-QA-C1 + BA-R1-C1):
+    * true  = at least one remote has `parity == equal` AND no remote has
+              `parity ∈ {behind, diverged}`. Positive-evidence + no-blockers
+              rule — zero-info inputs (all unknown, empty list, not-a-git-repo)
+              yield `False`.
+    * false = zero `equal` evidence OR any `parity ∈ {behind, diverged}`
     * `parity: ahead`   does NOT count (→ `has_pending_push`)
-    * `parity: unknown` does NOT count (→ `has_unreachable_remote`)
+    * `parity: unknown` does NOT contribute evidence (→ `has_unreachable_remote`
+                         when the reason is network-class)
+    SKILL.md §1.12 spec text is kept in sync with this definition.
 
 Output shape (conformant to SKILL.md §1.12 schema):
 
@@ -447,11 +452,16 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     )
     if rc != 0:
         r.soft_error("multi_remote_not_a_git_repo", f"rc={rc}")
+        # pre_merge R1 fix (QA-R1-C1 / CR-R1-m1 / BA-R1-I1, 3/4 agent consensus):
+        # emit overall_parity=False for the not-a-git-repo fallback. The prior
+        # value True reinstated the pre-QA-C1 behaviour on this error path
+        # because _aggregate_flags is never reached. Zero remotes = zero positive
+        # evidence = overall_parity must be False (matches `_aggregate_flags([])`).
         r.data = {
             "enabled": True,
             "main_repo": None,
             "submodules": [],
-            "overall_parity": True,
+            "overall_parity": False,
             "has_unreachable_remote": False,
             "has_pending_push": False,
         }
