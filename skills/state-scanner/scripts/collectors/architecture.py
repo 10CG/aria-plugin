@@ -1,4 +1,14 @@
-"""Phase 1.7 — Architecture status collector."""
+"""Phase 1.7 — Architecture status collector.
+
+Regex hardening (Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
+- 3 field-extractor patterns widened to accept BOTH halfwidth `:` (U+003A)
+  and fullwidth `：` (U+FF1A) via `[：:]` character class — fullwidth is the
+  default produced by Chinese IMEs in markdown documents.
+- Optional heading prefix `(?:#{1,6}\\s+)?` allows `## Status: Active` form
+  alongside the existing `**Status**: Active` and `> **Status**: Active`.
+- Pattern is `^(?:#{1,6}\\s+)?\\s*>?\\s*\\*\\*<KEY>\\*\\*[：:]\\s*<VAL>` —
+  the union of: optional heading + optional blockquote + bold key + dual colon.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +17,18 @@ from pathlib import Path
 
 from ._common import CollectorResult
 
-_ARCH_STATUS_PAT = re.compile(r"^>?\s*\*\*Status\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-_ARCH_LAST_UPD = re.compile(r"^>?\s*\*\*Last Updated\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-_ARCH_PRD = re.compile(r"^>?\s*\*\*Parent PRD\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_ARCH_STATUS_PAT = re.compile(
+    r"^(?:#{1,6}\s+)?\s*>?\s*(?:\*\*)?Status(?:\*\*)?[：:]\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ARCH_LAST_UPD = re.compile(
+    r"^(?:#{1,6}\s+)?\s*>?\s*(?:\*\*)?Last Updated(?:\*\*)?[：:]\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ARCH_PRD = re.compile(
+    r"^(?:#{1,6}\s+)?\s*>?\s*(?:\*\*)?Parent PRD(?:\*\*)?[：:]\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 _PRD_PLACEHOLDER_MARKERS = {
     "tbd", "pending", "(pending)", "(tbd)", "n/a", "todo", "(todo)", "placeholder",

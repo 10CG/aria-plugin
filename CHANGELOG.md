@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.3] - 2026-04-25
+
+### Added
+
+- **state-scanner collector field-extractor 正则鲁棒性补强** (Spec `state-scanner-collector-regex-hardening`, Level 2 patch)
+  - **architecture.py** 3 patterns (`Status` / `Last Updated` / `Parent PRD`): 加 heading prefix `(?:#{1,6}\s+)?` + fullwidth colon `[：:]` + optional bold `(?:\*\*)?`. 现在支持所有形式: `**Status**: A` / `**Status**：A` / `## Status: A` / `> **Status**: A` / `## **Status**: A`
+  - **forgejo_config.py** 2 patterns: `_FORGEJO_YAML_KEY` 加 fullwidth colon + blockquote prefix; `_FORGEJO_HEADING` 加 blockquote prefix
+  - **readme.py** `_VERSION_PAT`: 加 heading prefix + optional bold (i18n fullwidth 已在 v1.17.1 fix)
+  - 100% 向后兼容 (regex 字符类 + optional prefix 都是严格超集)
+  - 触发: 2026-04-25 主动 latent bug audit (3 个并行 Explore agent dispatch). 复合应用 v1.17.1 anchor narrowness + v1.17.2 i18n fullwidth colon 教训作为 lint 标准
+
+- **9 新单元测试**:
+  - `test_architecture.py::TestRegexHardening` (6 tests): fullwidth colon × 3 fields, heading prefix × 3 fields, heading + bold combined, blockquote + fullwidth, baseline regression
+  - `test_forgejo_config.py::TestRegexHardening` (2 tests): fullwidth colon + blockquote prefix
+  - `test_readme.py::TestRegexHardeningHeading` (1 test): `## Version: v1.2.3` 形式
+
+- **`references/state-snapshot-schema.md`** 新增 architecture / forgejo_config / readme 三段落各加 union form 文档 + Spec ID 引用 (v3.0 SoT 同步)
+
+### Changed
+
+- 3 collector 模块 docstring 注明 i18n + heading hardening Spec 引用
+- `state-scanner/SKILL.md` **不变** (mechanical-mode 后 prose 已最小化, 仅指向 schema.md)
+
+### Acceptance verified
+
+- 371/371 stdlib unittest PASS (was 362, +9 net)
+- Smoke benchmark: 12/12 (100%) PASS — `aria-plugin-benchmarks/ab-results/2026-04-25-state-scanner-regex-hardening-v1.17.3/`
+- Kairos cross-project retest: zero regression (parity preserved, 7/15 stories still resolve)
+- 100% backward compatible
+
+### Why patch instead of minor
+
+- 跨 collector 共享 lint rule, 3 文件 ~30 行 regex + 9 unit tests + schema doc
+- 实施工时 ~1.5h, 与 Spec 估时一致
+- 与 v1.16.2/3/4 + v1.17.1 + v1.17.2 patch 模式一致 (`feedback_smoke_vs_full_ab_benchmark.md`)
+- 主动 latent bug audit 路径,无外部 issue 触发
+
+---
+
 ## [1.17.2] - 2026-04-25
 
 ### Added

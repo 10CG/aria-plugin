@@ -159,5 +159,16 @@ class TestAriaSubmoduleVersionMatch(unittest.TestCase):
             self.assertEqual(len(r.errors), 1)
 
 
+class TestRegexHardeningHeading(unittest.TestCase):
+    """Spec `state-scanner-collector-regex-hardening` (2026-04-25): heading
+    prefix support for `## Version: v1.2.3` form (no bold)."""
+
+    def test_heading_prefix_version(self):
+        with tmp_project() as root:
+            write_file(root / "README.md", "## Version: 1.2.3\n")
+            r = collect_readme_sync(root)
+            self.assertEqual(r.data["root"]["version"], "1.2.3")
+
+
 if __name__ == "__main__":
     unittest.main()

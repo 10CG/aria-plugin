@@ -176,6 +176,25 @@ parent_prd: str|null            # Parent PRD: header
 chain_valid: bool|null          # placeholder strings rejected (IMP-2)
 ```
 
+**Field extractor patterns** (`collectors/architecture.py`, regex hardening Spec
+`state-scanner-collector-regex-hardening`, 2026-04-25):
+
+3 fields (`Status` / `Last Updated` / `Parent PRD`) accept the union form:
+
+```
+^(?:#{1,6}\s+)?\s*>?\s*(?:\*\*)?<KEY>(?:\*\*)?[：:]\s*<VAL>
+```
+
+i.e. **optional heading prefix** (`## `, `### `, ...) + **optional blockquote
+prefix** (`>`) + **optional bold wrapper** (`**...**`) + **dual colon** (halfwidth
+`:` and fullwidth `：` for Chinese IME). Real-world patterns supported:
+
+- `**Status**: Active` (baseline bold)
+- `**Status**：Active` (i18n fullwidth colon)
+- `## Status: Active` (heading-prefixed, no bold)
+- `> **Status**: Active` (blockquote)
+- `## **Status**: Active` (heading + bold combined)
+
 ## `readme` (Phase 1.8)
 
 ```yaml
@@ -189,6 +208,12 @@ submodules:
     plugin_version: str|null    # from aria/.claude-plugin/plugin.json
     version_match: bool|null    # null if either side missing
 ```
+
+**Version pattern** (`collectors/readme.py::_VERSION_PAT`): same union form as
+architecture (heading prefix + blockquote prefix + optional bold + dual colon).
+Per Spec `state-scanner-collector-regex-hardening` (2026-04-25), supports
+`## Version: v1.2.3` form alongside `**Version**: v1.2.3` and
+`> **Version**: v1.2.3`. i18n fullwidth colon already supported since v1.17.1.
 
 ## `standards` (Phase 1.9)
 
@@ -382,6 +407,16 @@ Four output states per SKILL.md §1.14:
 2. `{forgejo_remote_detected: true, instance: "forgejo.10cg.pub", config_status: "missing", suggestion: "..."}` — no CLAUDE.local.md
 3. Same shape but `config_status: "incomplete"` — file exists, no `forgejo:` block
 4. `{forgejo_remote_detected: true, instance: "forgejo.10cg.pub", config_status: "configured"}` — no suggestion
+
+**`forgejo:` block detection patterns** (`collectors/forgejo_config.py`, regex
+hardening Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
+
+- `_FORGEJO_YAML_KEY = ^\s*>?\s*forgejo\s*[：:]` — accepts halfwidth + fullwidth
+  colon (Chinese IME default `forgejo：`) + optional blockquote prefix
+  (`> forgejo:` form found in mixed prose+config CLAUDE.local.md)
+- `_FORGEJO_HEADING = ^\s*>?\s*#{1,3}\s+forgejo\b` — accepts blockquote-prefixed
+  headings (`> ### forgejo`)
+- Fenced code blocks (```yaml ... ```) are masked before matching (QA-I3 fix)
 
 **QA-I3 fix**: `_has_forgejo_block` masks fenced code blocks (` ``` ... ``` `) before running YAML-key + heading heuristics to avoid false-positive "configured" on documentation examples.
 

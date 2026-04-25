@@ -8,8 +8,13 @@ from pathlib import Path
 
 from ._common import CollectorResult
 
+# Regex hardening (Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
+# - Optional heading prefix `(?:#{1,6}\s+)?` allows `## Version: v1.2.3` form
+#   alongside existing `**Version**: v1.2.3` and `> **Version**: v1.2.3`
+# - i18n fullwidth colon `[：:]` already supported (v1.17.1 fix)
 _VERSION_PAT = re.compile(
-    r"^>?\s*\*\*(?:版本|Version)\*\*[:：]\s*v?([\d.]+)", re.IGNORECASE | re.MULTILINE
+    r"^(?:#{1,6}\s+)?\s*>?\s*(?:\*\*)?(?:版本|Version)(?:\*\*)?[:：]\s*v?([\d.]+)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
