@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.17.1
+> **版本**: 1.17.2
 > **发布日期**: 2026-04-25
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.17.1
+1.17.2
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (17)**: state-scanner v3.0.0 机械化模式 — Phase 1 数据采集由 `scripts/scan.py` (stdlib-only) 机械产出 JSON snapshot, AI 读 snapshot 进入推荐路径; SKILL.md 1178→454 行 (-724 净删减); 17 collectors + 215 stdlib unittest tests; T7 canonical normalizer + golden baseline; opt-out `mechanical_mode=false` 过渡至 v1.18.0 移除 (AD-SSME-5)
-- **Patch (0)**: 初始 MINOR 发版
+- **Patch (2)**: state-scanner Status 正则中文 i18n 增强 (Spec `state-scanner-i18n-status-regex`) — patterns 1-4 加 fullwidth colon `[：:]` + Pattern 6 inline blockquote 多 meta. Kairos 跨项目 dogfooding 7/15 stories 现可识别 (was 0/15)
 
 ## 包含内容
 
