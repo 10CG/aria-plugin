@@ -26,6 +26,17 @@ class TestStatusExtraction(unittest.TestCase):
     def test_yaml_like(self):
         self.assertEqual(_extract_status("Status: Done"), "Done")
 
+    def test_i18n_fullwidth_colon_cn(self):
+        """Spec state-scanner-i18n-status-regex: openspec collector also benefits."""
+        self.assertEqual(_extract_status("**状态**：pending"), "pending")
+
+    def test_i18n_inline_blockquote_multi_meta(self):
+        """Pattern 6 propagates to openspec via shared _status module."""
+        self.assertEqual(
+            _extract_status("> **优先级**：P0 | **状态**：approved | **里程碑**：M3"),
+            "approved",
+        )
+
     def test_markdown_heading_r1_i7(self):
         # R1-I7 fix: heading-prefixed Status
         self.assertEqual(_extract_status("## Status: Active"), "Active")

@@ -139,6 +139,19 @@ stories:
 
 **Status normalization** preserves: `archived` / `deprecated` / `done` / `in_progress` / `approved` / `reviewed` / `active` / `ready` / `pending` / `unknown` (R1-I5). **`by_status` is NOT a fixed-key dict** (R3-BA1) — consumers must not assume specific keys present.
 
+**Status extraction patterns** (`collectors/_status.py::_STATUS_PATTERNS`, applied in order, first match wins):
+
+| # | Pattern | Sample |
+|---|---------|--------|
+| 1 | `^**Status**[：:]\s*(.+)` | `**Status**: Active` |
+| 2 | `^**状态**[：:]\s*(.+)` | `**状态**：pending` |
+| 3 | `^>\s***Status**[：:]\s*(.+)` | `> **Status**: done` |
+| 4 | `^(?:#{1,6}\s+)?Status[：:]\s*(.+)` | `## Status: Reviewed` |
+| 5 | `^\|\s*(?:Status\|状态)\s*\|\s*(.+)\s*\|` | `\| Status \| active \|` |
+| 6 | `^>\s*.*?**(Status\|状态)**[：:]\s*([^\|\n]+?)(?=\s*(?:\|\|$))` | `> **优先级**：P0 \| **状态**：pending` |
+
+**i18n note** (Spec `state-scanner-i18n-status-regex`, 2026-04-25): patterns 1-4 accept BOTH halfwidth `:` (U+003A) and fullwidth `：` (U+FF1A) via `[：:]` character class — fullwidth colon is the default produced by Chinese IMEs. Pattern 6 captures inline blockquote multi-meta lines (e.g. Kairos `US-009-tts-voice-clone.md` real-world sample) where status is not the first key. Negative cases (prose mention of `状态` outside `**...**` bold inside blockquote) do NOT match — pattern 6 requires both `>` blockquote anchor AND `**...**` bold wrapper to fire.
+
 ## `openspec` (Phase 1.6)
 
 ```yaml

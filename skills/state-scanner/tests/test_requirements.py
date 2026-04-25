@@ -84,5 +84,73 @@ class TestUserStories(unittest.TestCase):
             self.assertEqual(r.data["stories"]["items"][0]["status"], "unknown")
 
 
+class TestI18nStatusRegex(unittest.TestCase):
+    """Spec: state-scanner-i18n-status-regex (2026-04-25).
+
+    Cross-project T8 Kairos validation surfaced that Chinese markdown habit
+    (fullwidth colon `：` + inline blockquote multi-meta) was not covered by
+    the original 5 patterns. Pattern 2/3/4 widened to `[：:]`; pattern 6
+    added for inline blockquote multi-meta.
+    """
+
+    def test_fullwidth_colon_bold_status_cn(self):
+        """Pattern 3 widened: `**状态**：pending` (fullwidth colon)."""
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "requirements" / "user-stories" / "US-100.md",
+                "# US-100\n\n**状态**：pending\n",
+            )
+            r = collect_requirements(root)
+            self.assertEqual(r.data["stories"]["items"][0]["status"], "pending")
+            self.assertEqual(r.data["stories"]["items"][0]["raw_status"], "pending")
+
+    def test_inline_blockquote_multi_meta_kairos_us009(self):
+        """Pattern 6 added: real-world Kairos US-009 sample.
+
+        This is the regression case T8.2 surfaced — verifies it now resolves.
+        """
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "requirements" / "user-stories" / "US-009-tts-voice-clone.md",
+                "# US-009: TTS 语音克隆\n\n"
+                "> **优先级**：P0 | **里程碑**：M3 | **状态**：pending\n\n"
+                "## 用户故事\n",
+            )
+            r = collect_requirements(root)
+            self.assertEqual(r.data["stories"]["items"][0]["status"], "pending")
+            self.assertEqual(r.data["stories"]["items"][0]["raw_status"], "pending")
+
+    def test_inline_blockquote_status_at_end(self):
+        """Pattern 6: status as last meta key."""
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "requirements" / "user-stories" / "US-101.md",
+                "> **A**: 1 | **状态**: done\n",
+            )
+            r = collect_requirements(root)
+            self.assertEqual(r.data["stories"]["items"][0]["status"], "done")
+
+    def test_inline_blockquote_status_in_middle_english(self):
+        """Pattern 6: English Status mid-line, halfwidth colon."""
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "requirements" / "user-stories" / "US-102.md",
+                "> **A**: 1 | **Status**: in progress | **B**: 2\n",
+            )
+            r = collect_requirements(root)
+            self.assertEqual(r.data["stories"]["items"][0]["status"], "in_progress")
+
+    def test_negative_prose_mention_not_matched(self):
+        """Pattern 6 must NOT match prose containing the word 状态 outside blockquote bold."""
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "requirements" / "user-stories" / "US-103.md",
+                "# US-103\n\n## 用户故事\n\n用户期望知道当前状态：可能 pending 状态.\n",
+            )
+            r = collect_requirements(root)
+            self.assertEqual(r.data["stories"]["items"][0]["status"], "unknown")
+            self.assertIsNone(r.data["stories"]["items"][0]["raw_status"])
+
+
 if __name__ == "__main__":
     unittest.main()
