@@ -115,5 +115,18 @@ class TestCollectorStates(unittest.TestCase):
             self.assertEqual(r.data["config_status"], "configured")
 
 
+class TestRegexHardening(unittest.TestCase):
+    """Spec `state-scanner-collector-regex-hardening` (2026-04-25): blockquote
+    prefix + fullwidth colon support for forgejo_config field detector."""
+
+    def test_fullwidth_colon_yaml_key(self):
+        """i18n: Chinese IME default `forgejo：` (fullwidth) must count as configured."""
+        self.assertTrue(_has_forgejo_block("forgejo：\n  url: real\n"))
+
+    def test_blockquote_prefix_yaml_key(self):
+        """`> forgejo:` (Chinese-author docs habit) must work."""
+        self.assertTrue(_has_forgejo_block("> forgejo:\n>   url: real\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

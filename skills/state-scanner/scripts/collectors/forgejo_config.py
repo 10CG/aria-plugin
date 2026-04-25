@@ -35,12 +35,16 @@ from ._common import CollectorResult, _run
 _KNOWN_FORGEJO_HOSTS: tuple[str, ...] = ("forgejo.10cg.pub",)
 
 # Matches, in order:
-#   1. YAML top-level key:     ^forgejo:        (possibly with trailing space/comment)
-#   2. Markdown heading:       ^#{1,3} forgejo  (case-insensitive)
-#   3. Fenced YAML line:       ^forgejo:        (same as #1; substring via MULTILINE)
-# All three are covered by two MULTILINE regexes — #1 and #3 share the same form.
-_FORGEJO_YAML_KEY = re.compile(r"^\s*forgejo\s*:", re.MULTILINE)
-_FORGEJO_HEADING = re.compile(r"^\s*#{1,3}\s+forgejo\b", re.MULTILINE | re.IGNORECASE)
+#   1. YAML top-level key:     ^forgejo:                  (or fullwidth `：`)
+#   2. Markdown heading:       ^#{1,3} forgejo            (case-insensitive)
+#   3. Fenced YAML line:       ^forgejo:                  (same as #1; substring via MULTILINE)
+#   4. Blockquote-prefixed:    ^> forgejo:                (Chinese-author docs habit)
+# i18n hardening (Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
+# - YAML key accepts BOTH halfwidth `:` (U+003A) and fullwidth `：` (U+FF1A)
+#   via `[：:]` — fullwidth is Chinese IME default
+# - Optional `>?` blockquote prefix allows config to live inside markdown blockquotes
+_FORGEJO_YAML_KEY = re.compile(r"^\s*>?\s*forgejo\s*[：:]", re.MULTILINE)
+_FORGEJO_HEADING = re.compile(r"^\s*>?\s*#{1,3}\s+forgejo\b", re.MULTILINE | re.IGNORECASE)
 _FENCED_BLOCK = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 
 
