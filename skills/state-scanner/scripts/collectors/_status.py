@@ -1,7 +1,14 @@
 """Shared Status extraction + normalization used by requirements + openspec collectors.
 
-5 regex variants per SKILL.md Phase 1.5. R1-I7 fix: pattern 4 allows optional
+6 regex variants per SKILL.md Phase 1.5. R1-I7 fix: pattern 4 allows optional
 Markdown heading prefix `#{1,6} ` to catch `## Status: Active`.
+
+i18n enhancement (Spec `state-scanner-i18n-status-regex`, 2026-04-25): patterns
+2/3/4 widened to accept BOTH halfwidth `:` (U+003A) and fullwidth `：` (U+FF1A)
+via `[：:]` character class — fullwidth colon is the default produced by
+Chinese IMEs in markdown documents. Pattern 6 (NEW) captures inline blockquote
+multi-meta lines like `> **优先级**：P0 | **状态**：pending` where status is
+not the first key on the line. Pattern 5 (table) already supported `[：:]`.
 """
 
 from __future__ import annotations
@@ -9,11 +16,18 @@ from __future__ import annotations
 import re
 
 _STATUS_PATTERNS = [
-    re.compile(r"^\*\*Status\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\*\*状态\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^>\s*\*\*Status\*\*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^(?:#{1,6}\s+)?Status:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^\*\*Status\*\*[：:]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^\*\*状态\*\*[：:]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^>\s*\*\*Status\*\*[：:]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^(?:#{1,6}\s+)?Status[：:]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^\|\s*(?:Status|状态)\s*\|\s*(.+?)\s*\|", re.IGNORECASE | re.MULTILINE),
+    # Pattern 6 (i18n, 2026-04-25): inline blockquote multi-meta. Matches
+    # `> ... **状态**：pending | ...` regardless of position. Bounded right
+    # side by `|` separator OR end-of-line so adjacent meta keys don't bleed in.
+    re.compile(
+        r"^>\s*.*?\*\*(?:Status|状态)\*\*[：:]\s*([^|\n]+?)(?=\s*(?:\||$))",
+        re.IGNORECASE | re.MULTILINE,
+    ),
 ]
 
 
