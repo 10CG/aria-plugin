@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.2] - 2026-04-25
+
+### Added
+
+- **state-scanner i18n Status 正则增强** (Spec `state-scanner-i18n-status-regex`, Level 2 patch)
+  - Patterns 1-4 加 fullwidth colon `[：:]` 字符类 — 中文 IME 默认产生全角冒号 `：` (U+FF1A), 之前仅匹配半角 `:`
+  - Pattern 6 NEW: inline blockquote 多 meta 匹配 — `> **优先级**：P0 | **状态**：pending` 中 status 不在行内首键的情形
+  - Pattern 5 (table) 已支持 `[：:]`, 不变
+  - 100% 向后兼容 (regex 字符类扩展是严格超集)
+  - 触发: 2026-04-25 state-scanner-mechanical-enforcement T8 Kairos 跨项目验证发现, Kairos `US-009-tts-voice-clone.md` 用 `> **优先级**：P0 | **里程碑**：M3 | **状态**：pending` 格式被漏检
+
+- **7 新单元测试**:
+  - `test_requirements.py::TestI18nStatusRegex` (5 tests): fullwidth colon CN / Kairos US-009 实样 / inline blockquote at-end / inline blockquote middle EN / 负样 prose 不匹配
+  - `test_openspec.py` (2 tests): _extract_status 共享模块 i18n 跨 collector 传播验证
+
+- **`references/state-snapshot-schema.md`** 新增 "Status extraction patterns" 表 (6 patterns × Sample) + i18n note. 文档落到 schema.md (v3.0 SoT, AD-SSME-6) 而非 SKILL.md, 避免 mechanical-mode Spec 已消除的 prose-vs-code 重复定义
+
+### Changed
+
+- `collectors/_status.py` 模块 docstring 注明 i18n enhancement Spec 引用 + 6 patterns 设计
+- `state-scanner/SKILL.md` **不变** (mechanical-mode 后 Phase 1.5 prose 已最小化, 仅指向 schema.md)
+
+### Acceptance verified
+
+- 362/362 stdlib unittest PASS (was 355, +7 net)
+- Smoke regex 测试: 12/12 cases (P1-P5 × halfwidth/fullwidth + P6 NEW + 1 negative prose). 见 `aria-plugin-benchmarks/ab-results/2026-04-25-state-scanner-i18n-v1.17.2/`
+- Kairos T8 retest: US-009 `raw_status: null → "pending"` ✅; 7/15 stories 现可解析 (was 0/15)
+- 100% backward compatible
+
+### Why patch instead of minor
+
+- 跨 collector 共享模块 (_status.py) 单文件 ~25 行 regex 改动 + tests + schema doc
+- 实施工时实测 ~45 min vs Spec 估时 ~1h
+- 与 v1.16.2/3/4 + v1.17.1 patch 模式一致 (`feedback_smoke_vs_full_ab_benchmark.md`)
+- aria:code-reviewer 单轮 MERGE_NOW + 2 Important + 3 Minor 全数已修
+
+---
+
 ## [1.17.1] - 2026-04-25
 
 ### Fixed
