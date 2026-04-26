@@ -98,7 +98,7 @@ success = (exit_code == 0) AND (post_remote_head == pre_local_head)
 python3 aria/skills/git-remote-helper/scripts/verify_post_push.py \
   --repo=/home/dev/Aria/aria \
   --branch=master \
-  --expected-sha=19f2861 \
+  --expected-sha=19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9 \
   --max-retries=3 \
   --initial-backoff=2 \
   --timeout=15 \

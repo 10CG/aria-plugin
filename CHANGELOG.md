@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.6] - 2026-04-26
+
+### Added
+
+- **verify_post_push.py SHA prefix-match (Spec `verify-post-push-sha-prefix-match`)** — Round-2 audit P2.2 spike-verified real bug
+
+#### Script changes
+
+- **File**: `aria/skills/git-remote-helper/scripts/verify_post_push.py`
+- 新增 `_sha_match(actual, expected) -> bool` 辅助函数 + `_MIN_SHA_PREFIX = 7` 常量
+- 第 147 行 `if sha == expected_sha:` 改为 `if _sha_match(sha, expected_sha):`
+- 语义: `actual.startswith(expected.lower()) AND len(expected) >= 7`
+- 短于 7 字符 → reject as False (避免 collision 假阳性)
+- full 40-char happy path 字节级一致 (40-char.startswith(40-char) ⇔ ==)
+
+#### Doc changes
+
+- `aria/skills/git-remote-helper/SKILL.md:101`: 示例 `--expected-sha=19f2861` → full 40-char
+- `aria/skills/git-remote-helper/references/api.md`: 4 处示例 `19f2861a3b4c5d6e7f8a9b0c` (24-char) → full 40-char; `--expected-sha` 字段说明追加 prefix 兼容性
+
+#### Bug 来源
+
+- doc 自爆: SKILL.md/api.md 示例本身用短 SHA, 用户照抄触发 script 严格 `==` mismatch
+- production safety: Aria phase-c-integrator C.2.5 调用流程用 `git rev-parse HEAD` (full 40-char), happy path 不触发, 但新用户 onboarding 是 trap
+
+### P2.1 closed as FALSE POSITIVE
+
+- Round-2 catalog P2.1 (verify_post_push.py 早退 vs all_match) 经 spike 证伪
+- script line 147 早退在 per-remote retry loop (line 138) 内, 不跨 outer `target_remotes` loop (line 186); line 198 `all_match=all(...)` 正确聚合
+- catalog 自标 verifiability=LOW, spike 闭环
+
+### Changed
+
+- 单 Spec patch (sister-bug bundle 因 P2.1 证伪缩水到单 Spec, 适用 `feedback_level2_patch_no_benchmark.md`)
+- 100% 向后兼容 (full SHA happy path 字节级不变; 仅放宽 short prefix 接受度)
+
+### Migration
+
+- 现有 caller 用 full 40-char SHA → 行为不变
+- 新 caller 可用 ≥7-char prefix (与 `git show`/`git checkout` 习惯一致)
+- 现有 caller 用 <7-char SHA → **会变为 reject**, 需升级到 ≥7-char (实际上 Aria 流程没人这么传)
+
 ## [1.17.5] - 2026-04-26
 
 ### Added

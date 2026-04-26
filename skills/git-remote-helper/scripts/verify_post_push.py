@@ -111,6 +111,32 @@ def ls_remote(
         return None, "error"
 
 
+# Minimum SHA prefix length for safe matching (v1.17.6+).
+# Git default short SHA is 7 chars; below 7 is technically allowed but ambiguous.
+# 7 chars gives ~16^7 = 268M unique prefixes, collision negligible for typical repos.
+_MIN_SHA_PREFIX = 7
+
+
+def _sha_match(actual: str | None, expected: str) -> bool:
+    """
+    Compare actual full SHA (from git ls-remote, always 40-char) against expected SHA,
+    which may be a prefix (>= _MIN_SHA_PREFIX chars) or full 40-char SHA.
+
+    Returns True iff actual.startswith(expected.lower()) AND len(expected) >= _MIN_SHA_PREFIX.
+
+    Empty/None actual → False (no match against absent remote SHA).
+    Short expected (< 7 chars) → False (rejected as ambiguous).
+
+    Why startswith: Git ecosystem accepts short SHA prefix (git show, git checkout);
+    full SHA caller path retains byte-equivalent behavior (40-char.startswith(40-char) == ==).
+    """
+    if not actual or not expected:
+        return False
+    if len(expected) < _MIN_SHA_PREFIX:
+        return False
+    return actual.startswith(expected.lower())
+
+
 def verify_remote(
     repo: str,
     remote: str,
@@ -144,8 +170,8 @@ def verify_remote(
         actual_sha = sha
         last_reason = err
 
-        if sha == expected_sha:
-            # Early exit on match
+        if _sha_match(sha, expected_sha):
+            # Early exit on match (per-remote retry loop only; outer remotes loop continues)
             total_seconds = round(time.monotonic() - start_time, 2)
             return {
                 "remote": remote,

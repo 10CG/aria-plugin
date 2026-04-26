@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.17.5
+> **版本**: 1.17.6
 > **发布日期**: 2026-04-26
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.17.5
+1.17.6
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (17)**: state-scanner v3.0.0 机械化模式 — Phase 1 数据采集由 `scripts/scan.py` (stdlib-only) 机械产出 JSON snapshot, AI 读 snapshot 进入推荐路径; SKILL.md 1178→454 行 (-724 净删减); 17 collectors + 215 stdlib unittest tests; T7 canonical normalizer + golden baseline; opt-out `mechanical_mode=false` 过渡至 v1.18.0 移除 (AD-SSME-5)
-- **Patch (5)**: Round-2 audit P1.3 + P2.3 sister-bug bundling — audit-engine 子系统机械确定性补强: (a) finding ID 哈希函数显式规范化 `sha256(category:scope:severity:type)[:8]`, 跨 agent 跨轮稳定 (Spec `audit-engine-finding-id-determinism`); (b) 首个 0-finding 轮强制 stability confirmation 轮, 修复假阴性收敛 latent bug, 与 v1.16.0 实战 24→2→1→0→0 trajectory 文档对齐 (Spec `audit-engine-zero-finding-stability-gate`, P2.3 spike-verified). 双 doc-only 改动, 同 audit-engine 子系统的第二批 sister-bug bundling (前批 v1.17.4 P0.2 文件名)
+- **Patch (6)**: Round-2 audit P2.2 spike-verified — `verify_post_push.py` SHA 比较从严格 `==` 升级为 `startswith` prefix-match (≥7-char), 修复 doc 自爆 bug (SKILL.md/api.md 示例用短 SHA 用户照抄静默 mismatch). full 40-char happy path 字节级一致, short SHA prefix 用法与 git 生态对齐 (Spec `verify-post-push-sha-prefix-match`). 同 commit 声明 P2.1 (早退 vs all_match) FALSE POSITIVE — script line 147 早退在 per-remote retry loop 内不影响 outer remotes loop 聚合. 单 Spec patch (sister-bug bundle 因 P2.1 证伪缩水到单 Spec)
 
 ## 包含内容
 

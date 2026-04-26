@@ -44,13 +44,13 @@ bash aria/skills/git-remote-helper/scripts/check_parity.sh \
 {
   "repo_path": "/home/dev/Aria/aria",
   "branch": "master",
-  "local_head": "19f2861a3b4c5d6e7f8a9b0c",
+  "local_head": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
   "detached_head": false,
   "shallow": false,
   "remotes": [
     {
       "name": "origin",
-      "remote_head": "19f2861a3b4c5d6e7f8a9b0c",
+      "remote_head": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
       "parity": "equal",
       "behind_count": 0,
       "ahead_count": 0,
@@ -137,14 +137,14 @@ bash aria/skills/git-remote-helper/scripts/push_all_remotes.sh \
 {
   "repo_path": "/home/dev/Aria/aria",
   "branch": "master",
-  "pre_local_head": "19f2861a3b4c5d6e7f8a9b0c",
+  "pre_local_head": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
   "results": [
     {
       "remote": "origin",
       "exit_code": 0,
       "success": true,
-      "pre_remote_head": "19f2861a3b4c5d6e7f8a9b0c",
-      "post_remote_head": "19f2861a3b4c5d6e7f8a9b0c",
+      "pre_remote_head": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+      "post_remote_head": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
       "message": "Everything up-to-date"
     },
     {
@@ -152,7 +152,7 @@ bash aria/skills/git-remote-helper/scripts/push_all_remotes.sh \
       "exit_code": 0,
       "success": true,
       "pre_remote_head": "f55e130a1b2c3d4e5f6a7b8c",
-      "post_remote_head": "19f2861a3b4c5d6e7f8a9b0c",
+      "post_remote_head": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
       "message": "f55e130..19f2861  master -> master"
     }
   ],
@@ -197,7 +197,7 @@ aria/skills/git-remote-helper/scripts/verify_post_push.py
 |------|------|------|--------|------|
 | `--repo` | string | 是 | — | Git 仓库绝对路径 |
 | `--branch` | string | 是 | — | 验证的分支名 |
-| `--expected-sha` | string | 是 | — | 期望的 commit SHA (push 前快照的 local HEAD) |
+| `--expected-sha` | string | 是 | — | 期望的 commit SHA (push 前快照的 local HEAD); 接受 full 40-char 或 ≥7-char prefix (基于 startswith 匹配, v1.17.6+); 短于 7 字符将被拒绝以避免 collision |
 | `--max-retries` | integer | 否 | `3` | 初次 attempt 后的最大重试次数 |
 | `--initial-backoff` | float | 否 | `2.0` | 初始 backoff 秒数, 每次翻倍 |
 | `--timeout` | float | 否 | `15.0` | 每次 ls-remote 的超时秒数 (v1.15.1 默认值) |
@@ -210,13 +210,13 @@ aria/skills/git-remote-helper/scripts/verify_post_push.py
 python3 aria/skills/git-remote-helper/scripts/verify_post_push.py \
   --repo=/home/dev/Aria/aria \
   --branch=master \
-  --expected-sha=19f2861a3b4c5d6e7f8a9b0c
+  --expected-sha=19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9
 
 # Bash — 验证指定 remote, 自定义重试
 python3 aria/skills/git-remote-helper/scripts/verify_post_push.py \
   --repo=/home/dev/Aria/aria \
   --branch=master \
-  --expected-sha=19f2861a3b4c5d6e7f8a9b0c \
+  --expected-sha=19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9 \
   --max-retries=3 \
   --initial-backoff=2 \
   --timeout=5 \
@@ -232,7 +232,7 @@ result = subprocess.run(
         "python3", "aria/skills/git-remote-helper/scripts/verify_post_push.py",
         "--repo=/home/dev/Aria/aria",
         "--branch=master",
-        "--expected-sha=19f2861a3b4c5d6e7f8a9b0c",
+        "--expected-sha=19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
         "--remotes=origin,github",
     ],
     capture_output=True, text=True
@@ -247,20 +247,20 @@ print(data["all_match"])  # True / False
 {
   "repo_path": "/home/dev/Aria/aria",
   "branch": "master",
-  "expected_sha": "19f2861a3b4c5d6e7f8a9b0c",
+  "expected_sha": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
   "max_retries": 3,
   "retry_schedule_seconds": [0, 2, 4, 8],
   "results": [
     {
       "remote": "origin",
-      "actual_sha": "19f2861a3b4c5d6e7f8a9b0c",
+      "actual_sha": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
       "match": true,
       "attempts": 1,
       "total_seconds": 0.31
     },
     {
       "remote": "github",
-      "actual_sha": "19f2861a3b4c5d6e7f8a9b0c",
+      "actual_sha": "19f2861a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
       "match": true,
       "attempts": 2,
       "total_seconds": 2.43
