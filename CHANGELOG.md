@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.5] - 2026-04-26
+
+### Added
+
+- **Round-2 audit P1.3 + P2.3 sister-bug bundling** — 双 Level 2 micro-Spec 打包发版, audit-engine 子系统第二批 sister-bug (前批 v1.17.4 P0.2 文件名 uniqueness)
+
+#### P1.3: audit-engine finding ID determinism
+
+- **File**: `aria/skills/audit-engine/SKILL.md` 第 220-233 行 + `references/convergence-algorithm.md` 第 28-42 行
+- **改动**: finding `id` 字段从 prose 占位符 `"auto-generated-hash"` 显式规范化为 `sha256(category:scope:severity:type)[:8]` 8-char hex prefix; 与 4-tuple `comparison_key` 同步 (4-tuple 相等 ⇔ ID 相等)
+- **跨轮稳定性**: 同 finding 在 R1/R2/RN 由不同 agent 报告 → 同 ID; severity 升级 → ID 改变 (符合 comparison_key 不收敛逻辑)
+- **触发**: 2026-04-26 Round-2 latent-bug audit P1.3 (catalog `openspec/archive/2026-04-25-round-2-latent-bug-audit-findings/proposal.md`)
+- **价值**: audit-driven fix inline 注释 `R1-a3f2c9b1 fix:` 跨轮稳定可追溯; 4 agent 同时报相同 finding 不重复计数
+
+#### P2.3: audit-engine 0-finding stability gate
+
+- **File**: `aria/skills/audit-engine/references/convergence-algorithm.md` 第 44-52 行边界条件表
+- **Spike Result**: 真 bug 验证 ✓ — 文档 line 48 "空结论集 (两轮都无结论) | 视为收敛" 与 memory `feedback_audit_convergence_pattern.md` + `project_premerge_iteration_pattern.md` 实战教训冲突
+- **改动**: 边界条件表加 stability gate 行: 首轮 0-finding 不视为收敛, 必须进入 Round 2 作 stability confirmation. 等价表达式 `converged = (current_set == previous_set) AND (current_set != ∅ OR round_number >= 2)`
+- **经验来源**: aria-plugin v1.16.0 trajectory 24→2→1→0→0 (R5=∅ 后仍跑 R6=∅ 才声称收敛)
+- **触发**: Round-2 audit P2.3 spike-first 调查 (符合 `feedback_spike_first_for_data_hypotheses.md`)
+- **价值**: 消除 agent context 异常导致首轮 0-finding 假阴性收敛风险
+
+### Changed
+
+- 双 doc-only 改动 (无 scripts 修改), 100% 向后兼容
+- audit-engine 子系统连续两批 sister-bug bundling (v1.17.4 文件名 + v1.17.5 ID/stability), 验证 sister-bug 模式在同子系统多 micro-bug 场景的可重复性
+
+### Migration
+
+- 现有 audit 报告: 旧 finding `id` 字段保留, 不强制重新计算 (向后兼容); 新报告按 sha256 规范生成
+- 现有 0-finding 收敛历史: 已成功收敛的 audit 不回溯; 新 audit 按 stability gate 规则执行
+
 ## [1.17.4] - 2026-04-25
 
 ### Added

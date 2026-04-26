@@ -223,7 +223,7 @@ Round N (一个完整周期):
 
 ```json
 {
-  "id": "auto-generated-hash",
+  "id": "<sha256(category + ':' + scope + ':' + severity + ':' + type)[:8]>",
   "type": "decision | issue | risk",
   "severity": "critical | major | minor",
   "category": "architecture | implementation | testing | documentation",
@@ -231,6 +231,36 @@ Round N (一个完整周期):
   "summary": "truncated to 50 words"
 }
 ```
+
+**`id` 字段哈希规范** (mechanical determinism, v1.17.5+):
+
+```python
+import hashlib
+def finding_id(category: str, scope: str, severity: str, type: str) -> str:
+    canonical = f"{category}:{scope}:{severity}:{type}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
+```
+
+**输入字段** (与 4-tuple `comparison_key` 对齐, 顺序固定):
+1. `category` (architecture | implementation | testing | documentation)
+2. `scope` (affected module or file path)
+3. `severity` (critical | major | minor)
+4. `type` (decision | issue | risk)
+
+**输入字段不包括**: `summary` (LLM 措辞每轮不同, 哈希污染), `timestamp` (轮次间漂移),
+`agent_role` (跨 agent 同 finding 应同 ID).
+
+**输出**: 8 字符 hex prefix (e.g. `a3f2c9b1`), 足够 4-tuple 笛卡尔积去重 (~10^4 量级远低于 16^8 = ~4.3×10^9).
+
+**为何 SHA-256**: 跨语言/跨 agent 可复现 (Python stdlib + JS crypto + LLM 心算近似都能产生一致结果);
+truncate to 8 chars 兼顾可读性 (报告文件名 + inline fix 引用 `R1-a3f2c9b1`).
+
+**跨轮稳定性保证**:
+- 同一 finding 在 R1 / R2 / RN 由不同 agent 报告 → 同 8-char ID
+- finding 升级 severity (minor → major) → ID 改变 (符合 4-tuple `comparison_key` 不收敛逻辑)
+- finding 改 category/scope → ID 改变 (设计如此, 表示语义变化)
+
+详见 `references/convergence-algorithm.md` "comparison_key 与 finding.id 关系" 章节。
 
 ### 四元组 (比较键)
 

@@ -27,6 +27,17 @@ comparison_key = (type, severity, category, scope)
 **为何排除 summary**: AI 每轮措辞不同但含义相同，summary 参与比较会导致
 永远无法收敛。四元组捕获结论的结构化本质。
 
+**`finding.id` 与 `comparison_key` 的关系** (v1.17.5+):
+
+`finding.id = sha256(category:scope:severity:type)[:8]` 是 `comparison_key` 的
+**确定性投影**, 两者同步: 4-tuple 相等 ⇔ ID 相等。
+
+这意味着:
+- 集合比较可用 ID 集合 (更快, O(N) 哈希查找) 或 4-tuple 集合 (更显式) 任选其一
+- 跨 agent 报相同 finding → 同 ID, 不重复计数
+- audit-driven fix inline 注释 `R1-a3f2c9b1 fix: ...` 跨轮稳定可追溯
+- 详细哈希函数规范见 `aria/skills/audit-engine/SKILL.md` "结论记录" 章节
+
 ### 集合比较逻辑
 
 ```
@@ -46,9 +57,22 @@ conclusions_stable = (current_set == previous_set)
 | 情况 | 处理 |
 |------|------|
 | Round 1 (无上一轮) | 无法判定收敛, 必须进入 Round 2 |
-| 空结论集 (两轮都无结论) | 视为收敛 (没有问题 = 共识一致) |
+| Round 1 = ∅ (首个 0-finding 轮) | **不视为收敛**, 必须进入 Round 2 作 stability confirmation (v1.17.5+) |
+| Round N = ∅ ∧ Round N-1 = ∅ ∧ N >= 2 | 视为收敛 (双轮稳定性确认) |
 | 单元素差异 | 不收敛 (严格集合相等) |
 | severity 升级 (minor→major) | 不收敛 (severity 参与比较) |
+
+**首轮 0-finding 必须 stability confirmation** (v1.17.5+ 引入, 修复 latent bug):
+
+经验来源: `aria-plugin v1.16.0` 实战 trajectory `24→2→1→0→0` — R5=∅ 后**仍跑 R6=∅** 才声称收敛。
+若 R5 直接 stop, 风险是 agent 在 R5 因 context 问题假阴性 0 finding, 错过真 bug。
+
+**机械实现**:
+- audit-engine 在判定 `current_set == previous_set` 后, 增加守卫: 若 `current_set = ∅`, 至少需 2 轮历史 (`round_number >= 2`) + 上一轮也 = ∅
+- 等价表达: `converged = (current_set == previous_set) AND (current_set != ∅ OR round_number >= 2)`
+- Round 2 = ∅ 后仍 stop (因 round_number >= 2 满足), 但 Round 1 = ∅ 后**强制进入 Round 2** (stability gate)
+
+**memory 来源**: `feedback_audit_convergence_pattern.md` (3x 验证 invariant) + `project_premerge_iteration_pattern.md` (pre_merge 严格收敛需稳定性确认轮)。
 
 ---
 
