@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.17.3] - 2026-04-25
+## [1.17.4] - 2026-04-25
+
+### Added
+
+- **Round-2 audit P0 sister-bug bundling** — 双 Level 2 micro-Spec 打包发版 (`requirements-validator-status-i18n-alignment` + `audit-engine-report-filename-uniqueness`)
+
+#### P0.1: requirements-validator Status i18n alignment
+
+- **File**: `aria/skills/requirements-validator/SKILL.md`
+- **改动**: 第 100-148 行 PRD/Architecture/User Story 的 `version_header.required_fields` 与 `header_fields.Status` 引用 6-pattern union form; 新增独立章节 "Status 字段提取规范 (i18n alignment)" 文档化 6 个模式 + i18n 全角冒号支持 + Negative case
+- **SoT**: `aria/skills/state-scanner/references/state-snapshot-schema.md` 第 142-153 行 `_STATUS_PATTERNS` (与 collector 机械等价)
+- **触发**: 2026-04-25 Round-2 latent-bug audit P0.1 (catalog `openspec/archive/2026-04-25-round-2-latent-bug-audit-findings/proposal.md`); 教训作为 lint 标准的跨 Skill 第三次应用 (前两次: state-scanner v1.17.2 i18n + v1.17.3 regex-hardening)
+- **价值**: 中文项目 (Kairos 等中文 adopter) 用全角冒号或 heading-prefix 形式不再被 validator 误判 Status missing
+
+#### P0.2: audit-engine 报告文件名唯一性
+
+- **File**: `aria/skills/audit-engine/SKILL.md` 第 429 行
+- **改动**: 文件名 schema 从 `{checkpoint}-{timestamp}.md` 升级为 `{checkpoint}-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md`; 加入字段定义表 + 完整示例 + 碰撞防护设计 + 向后兼容 reader 行为
+- **碰撞防护**: 4-agent 并行 dispatch (qa-engineer / code-reviewer / backend-architect / tech-lead) 同毫秒落盘不冲突; 旧文件名作为 R1/legacy 仍能被 reader 处理
+- **触发**: Round-2 audit P0.2; 历史样本时间戳粒度仅到分钟/秒, strict 模式收敛比较丢 finding
+- **价值**: `R_N == R_{N-1}` 收敛判定基础完整, 不再因文件名碰撞丢 agent 输出
+
+### Changed
+
+- 双 doc-only 改动 (无 scripts 修改), 100% 向后兼容
+
+### Migration
+
+- audit-engine 旧文件名 reader 自动归类 R1/legacy, 用户无需手动迁移
+
+
 
 ### Added
 

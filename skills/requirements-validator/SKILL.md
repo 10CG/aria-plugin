@@ -101,7 +101,7 @@ allowed-tools: Read, Glob, Grep
   version_header:
     required_fields:
       - "Version" (X.Y.Z 格式)
-      - "Status" (Draft|Review|Active|Deprecated|Archived)
+      - "Status" (Draft|Review|Active|Deprecated|Archived) — 提取按下方 Status i18n 6-pattern union form (与 state-scanner v1.17.2+ 机械等价)
       - "Created" (YYYY-MM-DD 格式)
     optional_fields:
       - "Parent Document"
@@ -135,7 +135,7 @@ allowed-tools: Read, Glob, Grep
 检查项:
   header_fields:
     - Story ID (格式: US-XXX)
-    - Status (draft/ready/in_progress/done/blocked)
+    - Status (draft/ready/in_progress/done/blocked) — 提取按下方 Status i18n 6-pattern union form
     - Priority (HIGH/MEDIUM/LOW)
     - Created (YYYY-MM-DD)
     - Forgejo Issue (可选)
@@ -287,6 +287,37 @@ allowed-tools: Read, Glob, Grep
       valid: true/false
       issues: []
 ```
+
+---
+
+## Status 字段提取规范 (i18n alignment)
+
+为与 `state-scanner` v1.17.2+ 的 collector 行为保持机械等价, Status 字段
+按以下 6 个模式顺序匹配 (来源: `aria/skills/state-scanner/references/state-snapshot-schema.md`
+第 142-153 行 `_STATUS_PATTERNS`, Source-of-Truth):
+
+| # | 模式 | 示例 |
+|---|------|------|
+| 1 | `**Status**[：:]\s*X` | `**Status**: Active` |
+| 2 | `**状态**[：:]\s*X` | `**状态**：pending` |
+| 3 | `>\s***Status**[：:]\s*X` | `> **Status**: done` |
+| 4 | `(#{1,6}\s+)?Status[：:]\s*X` | `## Status: Reviewed` |
+| 5 | `\|\s*(Status\|状态)\s*\|\s*X\s*\|` | `\| Status \| active \|` |
+| 6 | `>\s*.*?**(Status\|状态)**[：:]\s*X` | `> **优先级**：P0 \| **状态**：pending` |
+
+**i18n 关键点**: 模式 1-4 的字符类 `[：:]` 同时接受 ASCII 半角 U+003A 和全角 U+FF1A
+(中文 IME 默认输入). 模式 6 处理 inline blockquote 多 meta 行 (Kairos 项目 `US-009-tts-voice-clone.md` 实际样本).
+
+**Negative case 不应误报**:
+- prose 中提到"状态"二字但非 `**状态**` bold 形式 → 不匹配 (避免文本扫描噪音)
+- 模式 6 要求同时 `>` blockquote 锚 + `**...**` bold 包装 (双重保险)
+
+**Status 合法值** (从所有模式抽取后做 normalization 校验):
+- PRD/Architecture: `Draft|Review|Active|Deprecated|Archived` (大小写不敏感)
+- User Story: `draft|ready|in_progress|done|blocked` (小写, snake_case)
+- normalization 失败 → ERROR `无效状态值: '{X}'`
+
+**为何 6 个模式而非更多**: 来源 Spec `state-scanner-i18n-status-regex` 在 v1.17.2 落地时通过实际项目样本审计确定 6 个覆盖 99%+ 的中英文文化习惯写法. 不再扩展, 防止 over-fitting.
 
 ---
 
