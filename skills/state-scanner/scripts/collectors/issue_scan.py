@@ -323,17 +323,26 @@ def _normalize_items(raw_items: list[dict[str, Any]], platform: str) -> list[dic
     QA-C2 fix (post_implementation audit R1): Forgejo conflates issues and PRs
     on the /issues endpoint. Even with `type=issues` on the URL, older Forgejo
     versions return PRs (they carry a `pull_request` sub-object). We reject any
-    item that has a `pull_request` key or whose URL path segment is `/pulls/` —
-    both conditions reliably identify PRs across Forgejo / Gitea variants.
-    GitHub's `gh issue list` already filters PRs server-side, so the filter is
-    a no-op there but harmless as a belt-and-suspenders guard.
+    item whose `pull_request` value is an object (PRs have a nested dict;
+    issues either omit the key or set it to null) or whose URL path segment is
+    `/pulls/` — both conditions reliably identify PRs across Forgejo / Gitea
+    variants. GitHub's `gh issue list` already filters PRs server-side, so the
+    filter is a no-op there but harmless as a belt-and-suspenders guard.
+
+    Bug history: prior implementation checked `if "pull_request" in raw`
+    (presence-only). Modern Forgejo (≥1.21) attaches `"pull_request": null` to
+    EVERY issue payload, so presence-only check rejected all real issues
+    silently → `open_count=0` despite real open issues. Fixed by checking the
+    value is a non-null dict. Regression test in test_issue_scan_helpers.py
+    `TestNormalizeItems.test_modern_forgejo_pull_request_null_on_issues`.
     """
     out: list[dict[str, Any]] = []
     for raw in raw_items:
         if not isinstance(raw, dict):
             continue
-        # QA-C2: reject PRs
-        if "pull_request" in raw:
+        # QA-C2: reject PRs (PRs have pull_request as a nested dict; issues have null or no key)
+        pr_field = raw.get("pull_request")
+        if isinstance(pr_field, dict):
             continue
         url = raw.get("html_url") or raw.get("url") or ""
         if isinstance(url, str) and "/pulls/" in url:

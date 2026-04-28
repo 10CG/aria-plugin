@@ -136,8 +136,8 @@ class TestErrorClassification(unittest.TestCase):
 
 class TestNormalizeItems(unittest.TestCase):
     def test_qa_c2_pull_request_filter(self):
-        """QA-C2: Forgejo /issues returns PRs. Filter out items with
-        pull_request key or `/pulls/` URL segment."""
+        """QA-C2: Forgejo /issues returns PRs. Filter out items whose
+        pull_request field is a non-null object or whose URL contains `/pulls/`."""
         raw = [
             {"number": 1, "title": "real issue", "html_url": "/issues/1"},
             {"number": 2, "title": "pr disguised", "pull_request": {}, "html_url": "/issues/2"},
@@ -146,6 +146,22 @@ class TestNormalizeItems(unittest.TestCase):
         items = _normalize_items(raw, platform="forgejo")
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["number"], 1)
+
+    def test_modern_forgejo_pull_request_null_on_issues(self):
+        """Regression: modern Forgejo (≥1.21) attaches `pull_request: null` to
+        every issue payload. Presence-only check rejected all real issues →
+        open_count=0 silent failure. Fix: only reject when value is a dict."""
+        raw = [
+            {"number": 67, "title": "real issue with null pull_request",
+             "pull_request": None, "html_url": "/issues/67"},
+            {"number": 68, "title": "another real issue",
+             "pull_request": None, "html_url": "/issues/68"},
+            {"number": 69, "title": "actual PR has dict",
+             "pull_request": {"merged": False}, "html_url": "/issues/69"},
+        ]
+        items = _normalize_items(raw, platform="forgejo")
+        self.assertEqual(len(items), 2)
+        self.assertEqual([i["number"] for i in items], [67, 68])
 
     def test_label_extraction(self):
         raw = [{"number": 1, "labels": [{"name": "bug"}, "plain-string"]}]
