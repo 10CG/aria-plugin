@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.7] - 2026-04-28
+
+### Fixed
+
+- **state-scanner issue_scan _normalize_items silent bug** — 现代 Forgejo (≥1.21) 给 `/issues` endpoint 的每个 issue payload 都附加 `"pull_request": null` 字段 (与 PR 共用 schema). 旧实现用 `if "pull_request" in raw: continue` 仅检查 key 存在性, 把**所有真实 issue** 误判为 PR 静默过滤掉 → `open_count=0`, 无 `fetch_error`, `source="live"` (genuinely successful fetch but completely wrong filter result).
+
+#### Repro & evidence
+
+- 实测案例: Aether 项目 (10CG/Aether) 有 24 个 open issues, 但 state-scanner 报告 `issue_status.open_count=0`. recommendation engine 在 issue 通道完全失明, 无法推荐任何 issue-driven 工作.
+- forgejo CLI 直接 `GET /issues?type=issues` 返回 20 issues 但 `_normalize_items` 输出 0.
+
+#### Fix
+
+- **File**: `aria/skills/state-scanner/scripts/collectors/issue_scan.py:336`
+- 改用值类型检查: `if isinstance(raw.get("pull_request"), dict): continue`
+- PRs 携带嵌套 dict (含 `merged`, `state` 等); issues 携带 `None` 或 key 缺失. 检查值类型而非 key 存在与否.
+- URL `/pulls/` 第二条 belt-and-suspenders guard 保留 (兼容旧 Forgejo / corner case).
+
+#### Test
+
+- 旧 `test_qa_c2_pull_request_filter` 用 `pull_request: {}` (空 dict) 模拟 PR, 没覆盖现代 Forgejo 的 `null` 情形 → 测试通过 production 漏 → 漏修.
+- 新增回归测试 `test_modern_forgejo_pull_request_null_on_issues`: 3 个 mixed item (2 个 `pull_request: None` issue + 1 个 `pull_request: {merged: False}` PR), 期望保留 2 个 issue.
+- 86 tests 全绿 (新增 1 + 已有 85 不变).
+
+### Bug 来源
+
+- **upstream Forgejo 1.21+ 的 schema unification**: 新版本统一 issue/PR payload schema, 给 issue 也附 `pull_request: null` 标识 "非 PR". 旧 `_normalize_items` 写于该变更之前, presence-only check 的隐式假设 (PRs 才有 pull_request key) 失效.
+- **测试盲区**: 既有测试用 `pull_request: {}` 假 PR, 与现代 Forgejo 的 null issue 形态完全不同, 无法触发 bug.
+- 影响: 任何接 aria-plugin 1.17.6 及以下版本到 Forgejo ≥1.21 的项目, recommendation engine 都看不到 issue.
+
+### 跨项目影响
+
+下游 (e.g. Aether) 升级到 1.17.7 后建议:
+- 删 `.aria/cache/issues.json` 让 scan 重新 fetch
+- 确认 `state-scanner` `issue_status.open_count` 与 `forgejo GET /repos/<owner>/<repo>/issues?state=open` 实测一致
+- 可能需要把 `.aria/config.json` `state_scanner.issue_scan.limit` 调高 (默认 20, Aether 24 个 open 时已超出)
+
 ## [1.17.6] - 2026-04-26
 
 ### Added
