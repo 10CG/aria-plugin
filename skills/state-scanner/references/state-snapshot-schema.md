@@ -43,6 +43,19 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 
 SKILL.md Phase 2 asserts `snapshot_schema_version == "1.0"` literal. To preserve this without rewriting SKILL.md for every addition, new fields MUST be additive-compatible and preserve `"1.0"`.
 
+### Backward-compat contract for inter-cycle surfacing fields (TX.0/TX-G2/TX-G3/TX-G4, 2026-05-08)
+
+The four new nested fields shipped under `state-scanner-inter-cycle-surfacing` are all additive — schema version stays `"1.0"`. Consumers MUST use defensive access:
+
+| Field | Defensive access | Absent semantic |
+|---|---|---|
+| `git.status_clean` | `git.get("status_clean", False)` | pre-TX.0 scan.py — caller treats as not-clean |
+| `upm.followups` | `upm.get("followups", [])` | no `## Pending Followups` section OR pre-TX-G2 scan.py — empty list |
+| `upm.handoff_doc` | `upm.get("handoff_doc")` | pre-TX-G3 scan.py (key absent) vs scanned-no-match (key present, value null) |
+| `requirements.stories.priority_items` | `stories.get("priority_items", [])` | pre-TX-G4 scan.py — empty list |
+
+`upm.handoff_doc`'s explicit `null` (vs key-absent) is the only field that distinguishes "scanner ran, found nothing" from "scanner version too old to scan". Other three additive fields collapse both cases to empty/false on the consumer side.
+
 ## Exit code consumer contract (R1-I2)
 
 | Exit code | Semantic | SKILL.md action |
@@ -78,6 +91,7 @@ staged_files: list[str]
 unstaged_files: list[str]
 untracked_files: list[str]
 uncommitted_count: int          # dedupe by path (R1-I4), MM entries count once
+status_clean: bool              # derived: staged_files == [] AND unstaged_files == []
 upstream:
   configured: bool
   name: str|null                # "origin/master"
@@ -90,6 +104,20 @@ shallow: bool
 
 Fail-soft: `is_git_repo=false` → all other fields absent except `is_git_repo`, and scan.py exits rc=20.
 
+### `git.status_clean` (TX.0, state-scanner-inter-cycle-surfacing 2026-05-08)
+
+Derived `bool` consumed by SKILL.md inter-cycle resume sanity check (post-TX.2 降级 form). Definition:
+
+```python
+status_clean = (staged_files == []) and (unstaged_files == [])
+```
+
+**Untracked files are deliberately excluded** — handoff scratch files / draft notes commonly remain untracked between cycles and should not flip the field to `false`. If callers need full-tree cleanliness they must compose `status_clean and untracked_files == []` themselves.
+
+**Fail-soft**: when `git status` itself errors (collector emits `git_status_failed` soft_error), `status_clean = false` (conservative: assume work in progress until proven otherwise).
+
+**Backward-compat**: this is a derived field on existing collector output — consumers built before TX.0 ship are unaffected; new consumers MUST use `git.get("status_clean", False)` defensive access for snapshots produced by older `scan.py` versions.
+
 ## `upm` (Phase 1.4)
 
 ```yaml
@@ -99,9 +127,67 @@ current_phase: str|null
 current_cycle: str|null
 active_module: str|null
 raw_block: str|null             # YAML-ish 原始内容 (未配置时 null)
+
+# ---- inter-cycle surfacing fields (G2 + G3, 2026-05-08) ----
+# Both fields are OPTIONAL: present only when scan.py impl post-TX.2 ships them.
+# Consumers MUST use defensive access (`.get()` with default).
+followups: list[FollowupRow]    # G2 — Pending Followups markdown table parse
+                                # ABSENT when UPM has no `## Pending Followups` section
+                                # PRESENT EMPTY [] when section exists but table is empty
+handoff_doc: HandoffDoc|null    # G3 — Next session 入口 pointer detected in raw_block
+
+# Substructures
+FollowupRow:
+  row_index: int                # 1-based, table row order (post-header)
+  priority: str                 # normalized: "P0"|"P1"|"P2"|"P3"|"unknown"
+  item: str|null                # Item column raw text
+  source: str|null              # Source column raw text (link / issue / git ref)
+  tracking: str|null            # Tracking column raw text
+  next_action: str|null         # Next Action column raw text
+  raw_row: str                  # full markdown row, fallback for unmapped columns
+                                # NOTE: dropped by normalize_snapshot.py (TX.1.a)
+
+HandoffDoc:
+  path: str                     # relative to project_root when path is in-tree;
+                                # absolute path preserved when outside project_root;
+                                # original string preserved + soft_error("unsupported_path_format")
+                                #   when http://|https:// URL
+  exists: bool                  # filesystem check (false when path outside project / URL)
+  raw_match: str                # full matched line, fallback for parser regression debug
+                                # NOTE: dropped by normalize_snapshot.py (TX.1.a)
 ```
 
-Missing UPM → `configured: false`, all other fields null.
+Missing UPM → `configured: false`, all other fields null **and** `followups` / `handoff_doc` keys absent.
+
+### `upm.followups` (G2 — Pending Followups parse, planned for TX-G2)
+
+> **Prerequisite (KM-08 follow-up)**: this collector requires TX.0 (`git.status_clean`) + TX.1 (this schema doc) to be merged before TX-G2 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+
+Parser anchors strictly on `^[ \t]{0,3}#{2,3}\s+Pending Followups\s*$` (case-sensitive, halfwidth space only — fullwidth U+3000 explicitly rejected per BA-10 follow-up). Below the heading, scans line-by-line until a `|`-prefixed row, then consumes contiguous markdown table rows.
+
+Column-name normalization map: `Priority` / `优先级` / `Pri` → `priority`; missing columns yield `null`. Pipe-escape `\|` is restored after split. Embedded inline code is preserved verbatim in cell values. **Multi-table negative**: only the first table after `## Pending Followups` is consumed; subsequent tables are ignored even if the heading appears multiple times.
+
+**Field-absence semantics**:
+- No `## Pending Followups` section → `followups` key **absent** (consumer: `upm.get("followups")` returns `None`)
+- Section present but empty table (only header + separator) → `followups: []`
+
+### `upm.handoff_doc` (G3 — handoff pointer detection, planned for TX-G3)
+
+> **Prerequisite (KM-08 follow-up)**: this collector requires TX.0 + TX.1 to be merged before TX-G3 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+
+Scans `raw_block` (top ±30 lines) for the first match of:
+
+- **Primary regex**: `r"^>\s*[^\n]*?(?:Next session 入口|下次 session 入口|🚪 Next session)[^\n]*?\(([^)]+\.md)\)"`
+- **Fallback regex** (R2-converged, 移除独立 "入口"): `r"^>\s*.*?(?:handoff|session)[^()\n]{0,80}\(([^)]+\.md)\)"`
+
+The `[^()\n]` class enforces single-line + balanced-paren-free body to prevent `> Next session ...\n>(下一行) (handoff.md)` cross-line false-matches.
+
+**Path resolution three-state** (per BA-11 follow-up):
+- Relative path → `(project_root / raw).resolve()` → `relative_to(project_root)`; fail-soft preserves raw + soft_warn if `relative_to` raises
+- Absolute path → `Path(raw).resolve()`, no `relative_to` rewrite, `exists()` honored
+- URL (`http://` / `https://`) → `path = raw`, `exists = false`, `errors[]` adds `unsupported_path_format`
+
+**Field-absence semantics**: zero matches → `handoff_doc: null` (key present, value null) — distinguishes "scanned, found nothing" from "scanner version too old to scan" (key absent).
 
 ## `changes` (Phase 1.5)
 
@@ -135,9 +221,36 @@ stories:
   total: int
   by_status: dict[str, int]     # OPEN-ENDED: keys from normalized lifecycle states
   items: list[{id: str, path: str, status: str, raw_status: str|null}]
+  # ---- inter-cycle surfacing field (G4, planned TX-G4 2026-05-08) ----
+  priority_items: list[PriorityItem]  # OPTIONAL — derived view of items[]
+                                       # ABSENT when scan.py impl pre-TX-G4
+
+PriorityItem:
+  id: str                       # US-XXX
+  status_normalized: str        # in_progress | ready | pending (only these 3 statuses)
+  raw_status: str|null          # original raw_status string from items[] entry
+  priority_hint: str|null       # future-extension placeholder (US frontmatter Priority); null in TX-G4 ship
+  file: str                     # relative path to story md file
 ```
 
 **Status normalization** preserves: `archived` / `deprecated` / `done` / `in_progress` / `approved` / `reviewed` / `active` / `ready` / `pending` / `unknown` (R1-I5). **`by_status` is NOT a fixed-key dict** (R3-BA1) — consumers must not assume specific keys present.
+
+### `requirements.stories.priority_items` (G4 — in-progress surfacing, planned TX-G4)
+
+> **Prerequisite (KM-08 follow-up)**: this derived view requires TX.0 + TX.1 to be merged before TX-G4 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+
+**Derived view** of `stories.items[]` — collector does NOT re-glob the filesystem; it filters + sorts the already-collected `story_items` once at the end of the requirements collector pass.
+
+**Filter**: `status_normalized ∈ {in_progress, ready, pending}`. All other statuses (`done` / `archived` / etc.) are excluded.
+
+**Sort (three-level stable tie-break, deterministic across OS / git clone)**:
+1. `_STATUS_ORDER` ASC: `in_progress=0` < `ready=1` < `pending=2`
+2. file mtime DESC (most recently touched first within same status)
+3. file path LEX ASC (alphabetic when status + mtime both tie — guards against `git clone` flat-mtime degeneration)
+
+**Slice**: head N (default 5, configurable via `state_scanner.priority_items_limit`). `mtime` is read via `Path.stat().st_mtime` exactly once per selected item (N≤5 typical).
+
+**Field-absence semantics**: no candidates → `priority_items: []`; pre-TX-G4 scan.py → key absent (consumer: `stories.get("priority_items", [])` defensive access).
 
 **Status extraction patterns** (`collectors/_status.py::_STATUS_PATTERNS`, applied in order, first match wins):
 
@@ -444,3 +557,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 |---|---|
 | 2026-04-23 | Stub created per pre_merge R1-C5 (docstring dead link fix) |
 | 2026-04-24 | Full schema authored (T4.1) — 4 new top-level keys documented, BA-R*-I1 (`main_repo.path` + `items[].heuristic`) + BA-R*-M1/M2 (`auth_missing` reserved, single-remote ahead prose) + overall_parity worked examples + QA-C2 PR filtering + all fail-soft enum values backfilled |
+| 2026-05-09 | TX.0 + TX.1 (state-scanner-inter-cycle-surfacing sub-PR-a) — 4 inter-cycle nested fields documented: `git.status_clean` (TX.0 ship), `upm.followups[]` + `upm.handoff_doc` (TX-G2/G3 reserved schema), `requirements.stories.priority_items[]` (TX-G4 reserved schema); backward-compat contract section added; schema version stays `"1.0"` (additive) |

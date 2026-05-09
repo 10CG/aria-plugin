@@ -15,6 +15,8 @@ Rules (see references/json-diff-normalizer.md for full):
 8. errors[] sorted by (error, detail)
 9. submodules[] sorted by path, remotes[] sorted by name
 10. recent_commits[] dropped (too volatile)
+11. inter-cycle raw fields dropped: followups[*].raw_row, handoff_doc.raw_match
+    (TX.1.a, state-scanner-inter-cycle-surfacing 2026-05-08)
 
 CLI:
   python3 normalize_snapshot.py INPUT [--output OUTPUT]
@@ -49,7 +51,17 @@ EPHEMERAL_PATH_KEYS = {
     "cache_path": "<cache_path>",
 }
 
-DROP_KEYS = frozenset({"recent_commits"})
+DROP_KEYS = frozenset(
+    {
+        "recent_commits",
+        # TX.1.a (state-scanner-inter-cycle-surfacing): drop raw fallback strings
+        # to keep canonical form stable when upstream markdown wording drifts.
+        # Both keys are unique to inter-cycle surfacing structures (followups +
+        # handoff_doc) — no collision with other v1.0 schema fields.
+        "raw_row",
+        "raw_match",
+    }
+)
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # NOTE: the initial draft had a generic `_ABS_PATH_RE` for any leading-`/`

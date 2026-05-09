@@ -203,6 +203,8 @@ def collect_git_state(project_root: Path) -> CollectorResult:
         "unstaged_files": [str, ...],
         "untracked_files": [str, ...],
         "uncommitted_count": int,
+        "status_clean": bool,    # derived: staged_files == [] and unstaged_files == []
+                                  # untracked files do NOT count (per state-scanner-inter-cycle-surfacing TX.0)
         "upstream": {
           "configured": bool,
           "name": str | null,
@@ -233,6 +235,8 @@ def collect_git_state(project_root: Path) -> CollectorResult:
         data.update(
             staged_files=[], unstaged_files=[], untracked_files=[], uncommitted_count=0
         )
+        # Fail-soft: when status read fails, treat as not-clean (conservative).
+        data["status_clean"] = False
     else:
         staged, unstaged, untracked = _parse_porcelain_z(out)
         data["staged_files"] = staged
@@ -241,6 +245,10 @@ def collect_git_state(project_root: Path) -> CollectorResult:
         # R1-I4: dedupe by path so MM entries count once.
         unique_paths = set(staged) | set(unstaged) | set(untracked)
         data["uncommitted_count"] = len(unique_paths)
+        # Derived field (state-scanner-inter-cycle-surfacing TX.0):
+        # status_clean = no staged AND no unstaged. Untracked excluded by design
+        # (handoff/scratch files commonly left untracked between cycles).
+        data["status_clean"] = (not staged) and (not unstaged)
 
     data["upstream"] = _collect_upstream(project_root, branch, data["shallow"])
     data["recent_commits"] = _collect_recent_commits(project_root, r)
