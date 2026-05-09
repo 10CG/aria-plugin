@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.17.7
-> **发布日期**: 2026-04-28
+> **版本**: 1.18.0
+> **发布日期**: 2026-05-09
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.17.7
+1.18.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (17)**: state-scanner v3.0.0 机械化模式 — Phase 1 数据采集由 `scripts/scan.py` (stdlib-only) 机械产出 JSON snapshot, AI 读 snapshot 进入推荐路径; SKILL.md 1178→454 行 (-724 净删减); 17 collectors + 215 stdlib unittest tests; T7 canonical normalizer + golden baseline; opt-out `mechanical_mode=false` 过渡至 v1.18.0 移除 (AD-SSME-5)
-- **Patch (7)**: state-scanner issue_scan _normalize_items silent bug 修复 — 现代 Forgejo (≥1.21) 给每个 issue payload 附 `pull_request: null`, 旧 presence-only 检查 (`if "pull_request" in raw`) 误把所有 issue 当 PR 过滤 → `open_count=0` 静默失明. 修复改为值类型检查 (`isinstance(raw.get("pull_request"), dict)`). 实测案例: Aether 项目 24 个 open issues 在 recommendation engine 中完全消失. 加 `test_modern_forgejo_pull_request_null_on_issues` 回归测试. 86 tests 全绿.
+- **Minor (18)**: state-scanner inter-cycle surfacing — G2/G3/G4 collectors 实装 (UPM Pending Followups parser + handoff_doc pointer detection + in_progress US priority_items derived view) + 2 新推荐规则 (pending_followups_p1 优先级 1.85, resume_in_progress_us 优先级 1.88) + git.status_clean derived 字段 + 4 nested schema 字段 backward-compat contract + SKILL.md T5 兜底降级 (17 → ~9 行 sanity check). Spec `state-scanner-inter-cycle-surfacing` 全 18 任务实装完毕，分 3 sub-PR (a/b/c) merge.
+- **Patch (0)**: 此版无 patch 修复，所有 minor 增量为 spec-driven feature ship.
 
 ## 包含内容
 

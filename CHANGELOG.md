@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-05-09
+
+### Added — state-scanner inter-cycle surfacing (Spec: state-scanner-inter-cycle-surfacing)
+
+- **G2 — UPM `## Pending Followups` markdown table parser** (`collectors/upm.py`):
+  column normalization (English + Chinese aliases), pipe-escape handling,
+  priority normalization (P0..P3 case-insensitive or `unknown`), BA-10 fullwidth
+  U+3000 rejection in heading regex.
+- **G3 — handoff_doc pointer detection** (`collectors/upm.py`): primary regex
+  with explicit Chinese/English/Emoji enumeration + R2-converged fallback (BA-02
+  form, no standalone `入口`); three-state path resolution (URL / absolute /
+  relative) with fail-soft `unsupported_path_format` + `handoff_path_escapes_project`
+  soft_errors.
+- **G4 — in-progress US `priority_items[]` derived view** (`collectors/requirements.py`):
+  filtered + sorted view of `items[]` (no fs re-glob); 3-level stable sort
+  (status_order ASC → mtime DESC → path LEX ASC); configurable limit via
+  `state_scanner.priority_items_limit` (default 5).
+- **TX.0 — `git.status_clean` derived bool** (`collectors/git.py`): `staged_files == []
+  AND unstaged_files == []`; untracked excluded by design; fail-soft `False`.
+- **RECOMMENDATION_RULES.md v2.11.0**: 2 new rules — `pending_followups_p1`
+  (priority 1.85) + `resume_in_progress_us` (priority 1.88).
+- **state-snapshot-schema.md**: 4 nested-field sections + backward-compat contract
+  + `errors[]` enum (`unsupported_path_format` + `handoff_path_escapes_project`).
+  Schema version stays `"1.0"` (additive only).
+- **`normalize_snapshot.py` DROP_KEYS**: `raw_row` + `raw_match` to stabilize
+  canonical form against upstream markdown drift.
+
+### Changed
+- **state-scanner SKILL.md T5 兜底降级**: 阶段 2 "完整性兜底" 段从 17 行 (4 触发
+  条件 + 3 AI 主动 Read/Grep + 过渡说明) 缩减为 ~9 行 sanity check (collector
+  字段缺失检测 → soft warn). T5 inline AI guidance 由机械化 collector 字段替代.
+
+### Fixed (sub-PR (b) R2 audit corrections)
+- **upm.py error-path schema contract**: 3 error paths (no-UPM-file / read-error /
+  block-not-found) now correctly OMIT `handoff_doc` key per schema §upm L160 contract
+  (was emitting `handoff_doc: null`, conflating "scanner ran no match" with "no UPM
+  to scan"). Pre_merge backend-architect Major closed.
+- **schema.md "planned for TX-G2/G3/G4" labels**: replaced with "shipped sub-PR (b)
+  2026-05-09" + Implementation history blockquotes. CLAUDE.md rule #3 violation
+  closed (knowledge-manager R1+R2 Major).
+
+### Tests
+**+39 net-new tests** (372 baseline → 414 on aria submodule master):
+- sub-PR (a) aria-plugin#37: +5 (status_clean derived + fail-soft + 4 normalize rules)
+- sub-PR (b) aria-plugin#38: +32 (24 initial G2/G3/G4 + 8 R2 corrections)
+- sub-PR (c) (this PR): +4 backward-compat verify (TX.6)
+
+### Pre-merge audits (multi-agent convergence loop, 4 agents per round)
+- sub-PR (a) aria-plugin#37: 4 rounds, R3==R4 converged, 4/4 PASS, 0 Critical/Major
+- sub-PR (b) aria-plugin#38: 5 rounds, R4==R5 converged after 8 R2 corrections
+- sub-PR (c) (this PR): see PR description
+
+### Refs
+- Spec: `openspec/changes/state-scanner-inter-cycle-surfacing/proposal.md`
+- Sub-PR sequence: aria-plugin#37 (a, prereq) → aria-plugin#38 (b, collectors) →
+  this PR (c, cleanup + version bump)
+- Issue: 10CG/Aria#85 (SilkNode inter-cycle surfacing gap forcing function)
+
+### Marketplace.json sync
+- 修复 `marketplace.json` 自 v1.17.6 起的版本漂移 (相对 plugin.json 落后 1 minor).
+  本次同步至 v1.18.0 闭环.
+
 ## [1.17.7] - 2026-04-28
 
 ### Fixed
