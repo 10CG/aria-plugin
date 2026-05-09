@@ -107,6 +107,69 @@ class TestRules(unittest.TestCase):
         out = normalize({"git": {"recent_commits": [{"sha": "abc", "subject": "x"}]}})
         self.assertNotIn("recent_commits", out["git"])
 
+    def test_rule_11_followups_raw_row_dropped(self):
+        """TX.1.a: followups[*].raw_row dropped to stabilize canonical form."""
+        out = normalize(
+            {
+                "upm": {
+                    "followups": [
+                        {
+                            "row_index": 1,
+                            "priority": "P1",
+                            "item": "ship state-scanner-inter-cycle-surfacing",
+                            "raw_row": "| 1 | P1 | ship ... | issue#85 | tracking | next |",
+                        }
+                    ]
+                }
+            }
+        )
+        row = out["upm"]["followups"][0]
+        self.assertNotIn("raw_row", row)
+        # Other fields must survive the DROP rule.
+        self.assertEqual(row["priority"], "P1")
+        self.assertEqual(row["row_index"], 1)
+
+    def test_rule_11_handoff_doc_raw_match_dropped(self):
+        """TX.1.a: handoff_doc.raw_match dropped (verbatim markdown line)."""
+        out = normalize(
+            {
+                "upm": {
+                    "handoff_doc": {
+                        "path": "docs/handoff/2026-05-08-session-handoff.md",
+                        "exists": True,
+                        "raw_match": "> 🚪 Next session 入口: 见 [docs/handoff/2026-05-08-session-handoff.md](docs/handoff/2026-05-08-session-handoff.md)",
+                    }
+                }
+            }
+        )
+        hd = out["upm"]["handoff_doc"]
+        self.assertNotIn("raw_match", hd)
+        self.assertEqual(hd["path"], "docs/handoff/2026-05-08-session-handoff.md")
+        self.assertTrue(hd["exists"])
+
+    def test_rule_11_priority_items_preserved(self):
+        """TX.1.a: priority_items[] is NOT dropped — its content (id/file) is
+        intentionally part of the canonical surface for cross-cycle diffs."""
+        out = normalize(
+            {
+                "requirements": {
+                    "stories": {
+                        "priority_items": [
+                            {
+                                "id": "US-076",
+                                "status_normalized": "in_progress",
+                                "raw_status": "In Progress: M3 closeout",
+                                "file": "docs/requirements/user-stories/US-076.md",
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        items = out["requirements"]["stories"]["priority_items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], "US-076")
+
 
 class TestEdgeCases(unittest.TestCase):
     def test_nan_rejected(self):
@@ -144,6 +207,11 @@ class TestConstants(unittest.TestCase):
 
     def test_recent_commits_in_drop_keys(self):
         self.assertIn("recent_commits", DROP_KEYS)
+
+    def test_inter_cycle_raw_keys_in_drop_keys(self):
+        """TX.1.a: raw_row + raw_match pinned in DROP_KEYS."""
+        self.assertIn("raw_row", DROP_KEYS)
+        self.assertIn("raw_match", DROP_KEYS)
 
 
 class TestStabilityIntegration(unittest.TestCase):

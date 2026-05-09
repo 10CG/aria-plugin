@@ -87,6 +87,37 @@ class TestCollectGitState(unittest.TestCase):
             self.assertEqual(r.data["current_branch"], "master")
             self.assertEqual(r.data["uncommitted_count"], 0)
             self.assertEqual(r.data["staged_files"], [])
+            self.assertTrue(r.data["status_clean"])
+
+    def test_status_clean_derived_field(self):
+        """TX.0 (state-scanner-inter-cycle-surfacing): status_clean reflects
+        staged + unstaged emptiness; untracked files do NOT make it dirty."""
+        with tmp_repo() as repo:
+            # Untracked-only → still clean
+            write_file(repo / "scratch.md", "draft")
+            r = collect_git_state(repo)
+            self.assertEqual(r.data["staged_files"], [])
+            self.assertEqual(r.data["unstaged_files"], [])
+            self.assertIn("scratch.md", r.data["untracked_files"])
+            self.assertTrue(r.data["status_clean"], "untracked alone must not flip clean→dirty")
+
+            # Stage a file → not clean
+            run_git(repo, "add", "scratch.md")
+            r = collect_git_state(repo)
+            self.assertIn("scratch.md", r.data["staged_files"])
+            self.assertFalse(r.data["status_clean"])
+
+            # Commit → clean again
+            run_git(repo, "commit", "-q", "-m", "add scratch")
+            r = collect_git_state(repo)
+            self.assertEqual(r.data["staged_files"], [])
+            self.assertTrue(r.data["status_clean"])
+
+            # Modify tracked → unstaged → not clean
+            write_file(repo / "scratch.md", "edited")
+            r = collect_git_state(repo)
+            self.assertIn("scratch.md", r.data["unstaged_files"])
+            self.assertFalse(r.data["status_clean"])
 
     def test_uncommitted_dedup_r1_i4(self):
         """R1-I4: MM entries count once in uncommitted_count."""
