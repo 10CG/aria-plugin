@@ -161,6 +161,8 @@ Missing UPM → `configured: false`, all other fields null **and** `followups` /
 
 ### `upm.followups` (G2 — Pending Followups parse, planned for TX-G2)
 
+> **Prerequisite (KM-08 follow-up)**: this collector requires TX.0 (`git.status_clean`) + TX.1 (this schema doc) to be merged before TX-G2 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+
 Parser anchors strictly on `^[ \t]{0,3}#{2,3}\s+Pending Followups\s*$` (case-sensitive, halfwidth space only — fullwidth U+3000 explicitly rejected per BA-10 follow-up). Below the heading, scans line-by-line until a `|`-prefixed row, then consumes contiguous markdown table rows.
 
 Column-name normalization map: `Priority` / `优先级` / `Pri` → `priority`; missing columns yield `null`. Pipe-escape `\|` is restored after split. Embedded inline code is preserved verbatim in cell values. **Multi-table negative**: only the first table after `## Pending Followups` is consumed; subsequent tables are ignored even if the heading appears multiple times.
@@ -170,6 +172,8 @@ Column-name normalization map: `Priority` / `优先级` / `Pri` → `priority`; 
 - Section present but empty table (only header + separator) → `followups: []`
 
 ### `upm.handoff_doc` (G3 — handoff pointer detection, planned for TX-G3)
+
+> **Prerequisite (KM-08 follow-up)**: this collector requires TX.0 + TX.1 to be merged before TX-G3 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
 
 Scans `raw_block` (top ±30 lines) for the first match of:
 
@@ -232,6 +236,8 @@ PriorityItem:
 **Status normalization** preserves: `archived` / `deprecated` / `done` / `in_progress` / `approved` / `reviewed` / `active` / `ready` / `pending` / `unknown` (R1-I5). **`by_status` is NOT a fixed-key dict** (R3-BA1) — consumers must not assume specific keys present.
 
 ### `requirements.stories.priority_items` (G4 — in-progress surfacing, planned TX-G4)
+
+> **Prerequisite (KM-08 follow-up)**: this derived view requires TX.0 + TX.1 to be merged before TX-G4 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
 
 **Derived view** of `stories.items[]` — collector does NOT re-glob the filesystem; it filters + sorts the already-collected `story_items` once at the end of the requirements collector pass.
 

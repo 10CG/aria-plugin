@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 
 from _helpers import init_git_repo, run_git, tmp_project, tmp_repo, write_file
 from collectors.git import (
@@ -118,6 +119,52 @@ class TestCollectGitState(unittest.TestCase):
             r = collect_git_state(repo)
             self.assertIn("scratch.md", r.data["unstaged_files"])
             self.assertFalse(r.data["status_clean"])
+
+    def test_status_clean_fail_soft_on_status_failure(self):
+        """TX.0 fail-soft (state-scanner-inter-cycle-surfacing): when
+        `git status --porcelain=v1 -z` returns non-zero, status_clean MUST
+        default to False (conservative: assume work in progress until proven
+        otherwise) and a soft_error MUST be recorded.
+
+        Pre-merge R2 audit (code-reviewer + qa-engineer convergent finding):
+        the failure path at git.py:233-239 was untested, leaving a regression
+        risk if a future refactor flipped the conservative default to True.
+        """
+        with tmp_repo() as repo:
+            from collectors import git as _git_module
+
+            real_run = _git_module._run
+
+            def fake_run(cmd, *args, **kwargs):
+                # Only intercept the `git status` invocation; let other git
+                # commands (rev-parse, branch --show-current, log, etc.) pass
+                # through to the real implementation so the rest of the
+                # collector still produces a valid output shape.
+                if (
+                    isinstance(cmd, (list, tuple))
+                    and len(cmd) >= 2
+                    and cmd[0] == "git"
+                    and cmd[1] == "status"
+                ):
+                    return (1, "", "fatal: simulated status failure")
+                return real_run(cmd, *args, **kwargs)
+
+            with patch.object(_git_module, "_run", side_effect=fake_run):
+                r = collect_git_state(repo)
+
+            self.assertTrue(r.data["is_git_repo"])
+            self.assertEqual(r.data["staged_files"], [])
+            self.assertEqual(r.data["unstaged_files"], [])
+            self.assertEqual(r.data["untracked_files"], [])
+            self.assertEqual(r.data["uncommitted_count"], 0)
+            # Critical assertion: fail-soft must NOT default to True.
+            self.assertFalse(
+                r.data["status_clean"],
+                "fail-soft must yield status_clean=False (conservative)",
+            )
+            # Soft error must be recorded for downstream errors[] aggregation.
+            error_kinds = [e["error"] for e in r.errors]
+            self.assertIn("git_status_failed", error_kinds)
 
     def test_uncommitted_dedup_r1_i4(self):
         """R1-I4: MM entries count once in uncommitted_count."""
