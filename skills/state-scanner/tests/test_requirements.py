@@ -152,5 +152,129 @@ class TestI18nStatusRegex(unittest.TestCase):
             self.assertIsNone(r.data["stories"]["items"][0]["raw_status"])
 
 
+class TestPriorityItemsG4(unittest.TestCase):
+    """G4 (state-scanner-inter-cycle-surfacing 2026-05-09): priority_items[].
+
+    Schema: state-snapshot-schema.md §requirements.stories.priority_items
+    Tasks: T4.4.a-d.
+    """
+
+    def test_t4_4_a_status_order_in_progress_first(self):
+        """T4.4.a: in_progress > ready > pending sort order."""
+        import os
+        import time
+
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            # Create with distinct mtimes so sort is deterministic via status alone.
+            write_file(stories_dir / "US-001.md", "**Status**: Pending\n")
+            write_file(stories_dir / "US-002.md", "**Status**: In Progress\n")
+            write_file(stories_dir / "US-003.md", "**Status**: Ready\n")
+            now = time.time()
+            os.utime(stories_dir / "US-001.md", (now, now))
+            os.utime(stories_dir / "US-002.md", (now, now))
+            os.utime(stories_dir / "US-003.md", (now, now))
+
+            r = collect_requirements(root)
+            items = r.data["stories"]["priority_items"]
+            self.assertEqual(len(items), 3)
+            # First entry must be in_progress
+            self.assertEqual(items[0]["id"], "US-002")
+            self.assertEqual(items[0]["status_normalized"], "in_progress")
+            # Second: ready
+            self.assertEqual(items[1]["status_normalized"], "ready")
+            # Third: pending
+            self.assertEqual(items[2]["status_normalized"], "pending")
+
+    def test_t4_4_b_path_lex_tiebreak_when_mtime_ties(self):
+        """T4.4.b: same status + same mtime → sort by path LEX ASC.
+
+        Guards against `git clone` flat-mtime degeneration (issue #61).
+        """
+        import os
+        import time
+
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            # 3 in_progress stories with identical mtime — must sort by path LEX.
+            write_file(stories_dir / "US-Z01.md", "**Status**: In Progress\n")
+            write_file(stories_dir / "US-A01.md", "**Status**: In Progress\n")
+            write_file(stories_dir / "US-M01.md", "**Status**: In Progress\n")
+            t = time.time()
+            for name in ("US-Z01.md", "US-A01.md", "US-M01.md"):
+                os.utime(stories_dir / name, (t, t))
+
+            r = collect_requirements(root)
+            ids = [it["id"] for it in r.data["stories"]["priority_items"]]
+            self.assertEqual(ids, ["US-A01", "US-M01", "US-Z01"])
+
+    def test_t4_4_c_no_candidates_yields_empty_list(self):
+        """T4.4.c: only done/archived/unknown stories → priority_items is []."""
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            write_file(stories_dir / "US-001.md", "**Status**: Done\n")
+            write_file(stories_dir / "US-002.md", "**Status**: Archived\n")
+            write_file(stories_dir / "US-003.md", "no status header\n")
+            r = collect_requirements(root)
+            self.assertEqual(r.data["stories"]["priority_items"], [])
+
+    def test_t4_4_d_status_normalization_pipeline(self):
+        """T4.4.d: `**Status**: Ready` / `**状态**: 就绪` (when normalized) / etc.
+        all reach priority_items via the status normalization pipeline.
+
+        Note: '就绪' is not in the current _STATUS_NORMALIZATION map; the test
+        uses literal 'Ready' to verify the English normalization route since
+        i18n word-level mapping is out-of-scope for G4.
+        """
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            write_file(stories_dir / "US-A.md", "**Status**: Ready\n")
+            write_file(stories_dir / "US-B.md", "**状态**：pending\n")  # fullwidth colon
+            write_file(stories_dir / "US-C.md", "**Status**: In Progress\n")
+            r = collect_requirements(root)
+            statuses = {it["id"]: it["status_normalized"] for it in r.data["stories"]["priority_items"]}
+            self.assertEqual(statuses["US-A"], "ready")
+            self.assertEqual(statuses["US-B"], "pending")
+            self.assertEqual(statuses["US-C"], "in_progress")
+            # priority_hint always null in TX-G4 ship
+            for it in r.data["stories"]["priority_items"]:
+                self.assertIsNone(it["priority_hint"])
+
+    def test_priority_items_limit_default_5(self):
+        """T4.5: default limit is 5 even when more candidates exist."""
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            for i in range(8):
+                write_file(stories_dir / f"US-{i:03d}.md", "**Status**: In Progress\n")
+            r = collect_requirements(root)
+            self.assertEqual(len(r.data["stories"]["priority_items"]), 5)
+
+    def test_priority_items_limit_configurable(self):
+        """T4.5: state_scanner.priority_items_limit overrides default."""
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            for i in range(8):
+                write_file(stories_dir / f"US-{i:03d}.md", "**Status**: In Progress\n")
+            # Configure limit=3 via .aria/config.json
+            write_file(
+                root / ".aria" / "config.json",
+                '{"state_scanner": {"priority_items_limit": 3}}\n',
+            )
+            r = collect_requirements(root)
+            self.assertEqual(len(r.data["stories"]["priority_items"]), 3)
+
+    def test_priority_items_field_shape(self):
+        """priority_items[*] shape matches schema (id/status_normalized/raw_status/priority_hint/file)."""
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            write_file(stories_dir / "US-042.md", "**Status**: In Progress\n")
+            r = collect_requirements(root)
+            item = r.data["stories"]["priority_items"][0]
+            self.assertEqual(set(item.keys()), {"id", "status_normalized", "raw_status", "priority_hint", "file"})
+            self.assertEqual(item["id"], "US-042")
+            self.assertEqual(item["file"], "docs/requirements/user-stories/US-042.md")
+            self.assertEqual(item["status_normalized"], "in_progress")
+
+
 if __name__ == "__main__":
     unittest.main()

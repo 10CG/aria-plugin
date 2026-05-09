@@ -14,6 +14,8 @@
 | `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture | 80% | No |
 | `architecture_outdated` | 1.7 | update-architecture | Architecture 状态为 outdated | 80% | No |
 | `architecture_chain_broken` | 1.8 | fix-architecture | 需求链路不完整 | 80% | No |
+| `pending_followups_p1` | 1.85 | (降级提示) | UPM `## Pending Followups` 含 P1 行 | 75% | No — inter-cycle backlog 提醒 |
+| `resume_in_progress_us` | 1.88 | continue-in-progress | `priority_items[]` 含 in_progress US | 80% | No — 跨 session 续作建议 |
 | `audit_unconverged` | 1.9 | (建议性提示) | 最新审计报告未收敛 | 75% | No — 用户可能已知并选择接受 |
 | `custom_check_failed` | 1.95 | (阻断提示) | severity=error 的自定义检查失败 | 90% | No — 需用户确认修复 |
 | `custom_check_warning` | 1.96 | (降级提示) | severity=warning 的自定义检查失败 | 70% | No — 非阻塞，附加 fix 建议 |
@@ -469,6 +471,72 @@ recommendation:
   context:
     issues: "{chain_issues}"
 ```
+
+---
+
+## Inter-cycle surfacing 相关规则详情 (2026-05-09, state-scanner-inter-cycle-surfacing G2/G4)
+
+### 1.85 pending_followups_p1
+
+```yaml
+id: pending_followups_p1
+priority: 1.85
+description: UPM Pending Followups 表存在 P1 行 — inter-cycle backlog 优先级提醒
+
+conditions:
+  all:
+    - upm.followups exists (key present)
+    - any(f.priority == "P1" for f in upm.followups)
+
+  detection:
+    snapshot_path: "upm.followups[]"
+    field_check: "any row with priority == 'P1'"
+
+recommendation:
+  workflow: null  # 不强推工作流，触发降级提示
+  info: "📌 UPM Pending Followups 含 {p1_count} 条 P1 项 — 跨 session backlog 待处理"
+  display:
+    - 前 5 条 P1 项 (item / source / tracking 摘要)
+    - handoff_doc 路径 (若 upm.handoff_doc.exists=true)
+  suggestion:
+    - "Review UPM `## Pending Followups` 表"
+    - "若指向 issue/PR, 可调 /aria:state-scanner 重新扫描"
+  non_blocking: true
+```
+
+**Rationale (placement 1.85)**: 介于 architecture_chain_broken (1.8 — 项目健康) 与 audit_unconverged (1.9 — 流程健康) 之间。架构断链优先于 backlog 提醒, 但 P1 cross-cycle followup 应早于审计未收敛信号浮出 (因为它直接暗示用户该接续什么工作)。
+
+---
+
+### 1.88 resume_in_progress_us
+
+```yaml
+id: resume_in_progress_us
+priority: 1.88
+description: 存在 in_progress User Story — 推荐 inter-cycle resume 续做
+
+conditions:
+  all:
+    - requirements.stories.priority_items exists
+    - any(it.status_normalized == "in_progress" for it in priority_items)
+
+  detection:
+    snapshot_path: "requirements.stories.priority_items[]"
+    field_check: "any item with status_normalized == 'in_progress'"
+
+recommendation:
+  workflow: continue-in-progress
+  info: "🔄 续做进行中: {us_id} — {raw_status_first_line}"
+  display:
+    - in_progress US id + raw_status 第一行
+    - 文件路径 (`docs/requirements/user-stories/{id}.md`)
+  suggestion:
+    - "调 /aria:phase-b-developer 续作 {us_id}"
+    - "或 Read {file} 查看当前进度详情"
+  non_blocking: false  # in_progress 是强信号，建议直接续做
+```
+
+**Rationale (placement 1.88)**: 紧邻 pending_followups_p1 (1.85) 之后。in_progress US 是当前 cycle 进行中的工作信号,优先级与 P1 followup 同级但稍后, 让 cross-cycle backlog 先浮出 (P1 可能是上 cycle 遗留, in_progress 是本 cycle 半成品)。
 
 ---
 
