@@ -519,6 +519,44 @@ class TestHandoffDocG3(unittest.TestCase):
                 import os
                 os.unlink(abs_handoff_path)
 
+    def test_tx6_backward_compat_defensive_access_followups_absent(self):
+        """TX.6 (backward-compat verify): when `followups` field is absent
+        from snapshot (consumer running pre-G2 scan.py output OR no
+        `## Pending Followups` heading), `data.get("followups", [])`
+        defensive access must return [] without raising KeyError.
+
+        This pins the schema's backward-compat contract: consumers MUST
+        use `.get("followups", [])` not `data["followups"]`.
+        """
+        with tmp_project() as root:
+            # No UPM file → followups key absent (per schema §upm L160).
+            r = collect_upm_state(root)
+            self.assertNotIn("followups", r.data)
+            # Defensive access pattern from schema backward-compat contract:
+            followups = r.data.get("followups", [])
+            self.assertEqual(followups, [])
+            # Iteration over the defensive default is safe (no AttributeError).
+            for _row in followups:
+                self.fail("defensive default should yield empty iter")
+
+    def test_tx6_backward_compat_defensive_access_handoff_doc_absent(self):
+        """TX.6 (backward-compat verify): when `handoff_doc` field is absent
+        (pre-G3 scan.py OR error-paths), `data.get("handoff_doc")` returns
+        None without raising. Distinct from `data.get("handoff_doc", {})`
+        which would mask the absent-vs-null distinction — schema documents
+        `data.get("handoff_doc")` as the canonical defensive pattern."""
+        with tmp_project() as root:
+            r = collect_upm_state(root)
+            # No UPM file → handoff_doc key absent.
+            self.assertNotIn("handoff_doc", r.data)
+            # Canonical defensive access:
+            hd = r.data.get("handoff_doc")
+            self.assertIsNone(hd)
+            # Attribute access on the default (None) MUST be guarded by caller;
+            # this test pins that the consumer pattern doesn't crash mid-flight.
+            if hd is not None:
+                self.fail("guard branch should not fire on absent field")
+
     def test_t3_2_relative_path_escape_fail_soft(self):
         """T3.2 BA-11 branch: relative path that resolves outside project_root
         triggers `handoff_path_escapes_project` soft_error + preserves raw path.

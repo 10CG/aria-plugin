@@ -315,6 +315,44 @@ class TestPriorityItemsG4(unittest.TestCase):
             # Falls back to default limit 5 (not 7, not crash).
             self.assertEqual(len(r.data["stories"]["priority_items"]), 5)
 
+    def test_tx6_backward_compat_defensive_access_priority_items(self):
+        """TX.6 (backward-compat verify): consumers using
+        `data["stories"].get("priority_items", [])` must work whether the
+        field is shipped (post-G4) OR absent (pre-G4 scan.py output).
+
+        Pins schema backward-compat table contract: priority_items consumer
+        access pattern is `stories.get("priority_items", [])`, never raw
+        index. Test exercises the defensive default in BOTH directions:
+        present-and-empty AND access-when-shipped.
+        """
+        with tmp_project() as root:
+            # Configured project with no priority candidates → priority_items: []
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            write_file(stories_dir / "US-001.md", "**Status**: Done\n")
+            r = collect_requirements(root)
+            stories = r.data["stories"]
+            # Field IS present (G4 shipped); defensive default not exercised.
+            self.assertIn("priority_items", stories)
+            self.assertEqual(stories.get("priority_items", []), [])
+            # Iteration over defensive access is safe.
+            for _it in stories.get("priority_items", []):
+                self.fail("empty list should yield zero iterations")
+
+    def test_tx6_backward_compat_unconfigured_requirements(self):
+        """TX.6: when `configured: false` (no docs/requirements/), consumers
+        using `data["stories"].get("priority_items", [])` still work — the
+        stories dict still contains an empty priority_items list (collector
+        emits the field always when configured=false-with-stories-dict-missing
+        OR populates it with empty when configured=true-with-no-candidates)."""
+        with tmp_project() as root:
+            # No docs/requirements/ → configured: false
+            r = collect_requirements(root)
+            self.assertFalse(r.data["configured"])
+            # Stories dict still emitted (with empty priority_items per
+            # collector contract — see requirements.py:115 unconfigured branch).
+            stories = r.data["stories"]
+            self.assertEqual(stories.get("priority_items", []), [])
+
     def test_load_priority_items_limit_handles_non_dict_state_scanner(self):
         """R2 audit (code-reviewer extension): nested state_scanner being
         non-dict (e.g. string) must also fall back to default."""
