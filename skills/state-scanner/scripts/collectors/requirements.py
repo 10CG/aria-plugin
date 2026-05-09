@@ -32,7 +32,13 @@ def _load_priority_items_limit(project_root: Path) -> int:
         raw = json.loads(cfg_path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError):
         return _DEFAULT_PRIORITY_ITEMS_LIMIT
-    ss = raw.get("state_scanner") or {}
+    # Defensive: config.json may be a syntactically-valid array/scalar at root;
+    # AttributeError on raw.get() would propagate without this guard.
+    if not isinstance(raw, dict):
+        return _DEFAULT_PRIORITY_ITEMS_LIMIT
+    ss = raw.get("state_scanner")
+    if not isinstance(ss, dict):
+        return _DEFAULT_PRIORITY_ITEMS_LIMIT
     val = ss.get("priority_items_limit")
     if isinstance(val, int) and val > 0:
         return val

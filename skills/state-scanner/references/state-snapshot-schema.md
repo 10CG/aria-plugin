@@ -128,13 +128,17 @@ current_cycle: str|null
 active_module: str|null
 raw_block: str|null             # YAML-ish 原始内容 (未配置时 null)
 
-# ---- inter-cycle surfacing fields (G2 + G3, 2026-05-08) ----
-# Both fields are OPTIONAL: present only when scan.py impl post-TX.2 ships them.
-# Consumers MUST use defensive access (`.get()` with default).
+# ---- inter-cycle surfacing fields (G2 + G3, shipped 2026-05-09 sub-PR (b)) ----
+# Both fields are OPTIONAL on the consumer side: scan.py emits them in the
+# happy path (UPM file present + parseable). Defensive access still required:
+# pre-TX-G2/G3 scanners (versions before sub-PR (b)) won't emit them.
 followups: list[FollowupRow]    # G2 — Pending Followups markdown table parse
                                 # ABSENT when UPM has no `## Pending Followups` section
+                                # ABSENT in all error-paths (no UPM file / read error / no UPMv2-STATE block)
                                 # PRESENT EMPTY [] when section exists but table is empty
 handoff_doc: HandoffDoc|null    # G3 — Next session 入口 pointer detected in raw_block
+                                # ABSENT in all error-paths (no UPM file / read error / no UPMv2-STATE block)
+                                # null when scanned (raw_block present) but no match
 
 # Substructures
 FollowupRow:
@@ -159,9 +163,9 @@ HandoffDoc:
 
 Missing UPM → `configured: false`, all other fields null **and** `followups` / `handoff_doc` keys absent.
 
-### `upm.followups` (G2 — Pending Followups parse, planned for TX-G2)
+### `upm.followups` (G2 — Pending Followups parse, shipped sub-PR (b) 2026-05-09)
 
-> **Prerequisite (KM-08 follow-up)**: this collector requires TX.0 (`git.status_clean`) + TX.1 (this schema doc) to be merged before TX-G2 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+> **Implementation history**: TX.0 + TX.1 prerequisite shipped sub-PR (a) 2026-05-09 (aria-plugin#37, SHA 8ecee44). G2 collector shipped sub-PR (b) 2026-05-09 (aria-plugin#38). Earlier "planned for TX-G2" qualifier removed once `_parse_followups_table` landed in `collectors/upm.py`.
 
 Parser anchors strictly on `^[ \t]{0,3}#{2,3}\s+Pending Followups\s*$` (case-sensitive, halfwidth space only — fullwidth U+3000 explicitly rejected per BA-10 follow-up). Below the heading, scans line-by-line until a `|`-prefixed row, then consumes contiguous markdown table rows.
 
@@ -171,9 +175,9 @@ Column-name normalization map: `Priority` / `优先级` / `Pri` → `priority`; 
 - No `## Pending Followups` section → `followups` key **absent** (consumer: `upm.get("followups")` returns `None`)
 - Section present but empty table (only header + separator) → `followups: []`
 
-### `upm.handoff_doc` (G3 — handoff pointer detection, planned for TX-G3)
+### `upm.handoff_doc` (G3 — handoff pointer detection, shipped sub-PR (b) 2026-05-09)
 
-> **Prerequisite (KM-08 follow-up)**: this collector requires TX.0 + TX.1 to be merged before TX-G3 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+> **Implementation history**: shipped sub-PR (b) 2026-05-09 (aria-plugin#38). `_detect_handoff_doc` in `collectors/upm.py` implements primary regex (Chinese / English / Emoji enumeration) + R2-converged fallback (BA-02 fix removed standalone "入口" alternation) + three-state path resolution (BA-11 relative_to fail-soft).
 
 Scans `raw_block` (top ±30 lines) for the first match of:
 
@@ -183,9 +187,13 @@ Scans `raw_block` (top ±30 lines) for the first match of:
 The `[^()\n]` class enforces single-line + balanced-paren-free body to prevent `> Next session ...\n>(下一行) (handoff.md)` cross-line false-matches.
 
 **Path resolution three-state** (per BA-11 follow-up):
-- Relative path → `(project_root / raw).resolve()` → `relative_to(project_root)`; fail-soft preserves raw + soft_warn if `relative_to` raises
+- Relative path → `(project_root / raw).resolve()` → `relative_to(project_root)`; fail-soft preserves raw + `errors[]` adds `handoff_path_escapes_project` if `relative_to` raises ValueError
 - Absolute path → `Path(raw).resolve()`, no `relative_to` rewrite, `exists()` honored
 - URL (`http://` / `https://`) → `path = raw`, `exists = false`, `errors[]` adds `unsupported_path_format`
+
+**`errors[]` enum produced by G3** (collector = `upm`):
+- `unsupported_path_format` — path is `http(s)://` URL
+- `handoff_path_escapes_project` — relative path resolves outside project_root
 
 **Field-absence semantics**: zero matches → `handoff_doc: null` (key present, value null) — distinguishes "scanned, found nothing" from "scanner version too old to scan" (key absent).
 
@@ -221,9 +229,10 @@ stories:
   total: int
   by_status: dict[str, int]     # OPEN-ENDED: keys from normalized lifecycle states
   items: list[{id: str, path: str, status: str, raw_status: str|null}]
-  # ---- inter-cycle surfacing field (G4, planned TX-G4 2026-05-08) ----
-  priority_items: list[PriorityItem]  # OPTIONAL — derived view of items[]
-                                       # ABSENT when scan.py impl pre-TX-G4
+  # ---- inter-cycle surfacing field (G4, shipped 2026-05-09 sub-PR (b)) ----
+  priority_items: list[PriorityItem]  # derived view of items[]
+                                       # PRESENT (possibly []) when configured: true
+                                       # ABSENT when configured: false (no docs/requirements/) or pre-TX-G4 scanner
 
 PriorityItem:
   id: str                       # US-XXX
@@ -235,9 +244,9 @@ PriorityItem:
 
 **Status normalization** preserves: `archived` / `deprecated` / `done` / `in_progress` / `approved` / `reviewed` / `active` / `ready` / `pending` / `unknown` (R1-I5). **`by_status` is NOT a fixed-key dict** (R3-BA1) — consumers must not assume specific keys present.
 
-### `requirements.stories.priority_items` (G4 — in-progress surfacing, planned TX-G4)
+### `requirements.stories.priority_items` (G4 — in-progress surfacing, shipped sub-PR (b) 2026-05-09)
 
-> **Prerequisite (KM-08 follow-up)**: this derived view requires TX.0 + TX.1 to be merged before TX-G4 implementation begins. See `proposal.md §Tasks` for the full execution-order gate.
+> **Implementation history**: shipped sub-PR (b) 2026-05-09 (aria-plugin#38). `_derive_priority_items` in `collectors/requirements.py` derives view from existing `items[]` (no fs re-glob) + 3-level stable sort + configurable limit via `state_scanner.priority_items_limit`.
 
 **Derived view** of `stories.items[]` — collector does NOT re-glob the filesystem; it filters + sorts the already-collected `story_items` once at the end of the requirements collector pass.
 
@@ -558,3 +567,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 | 2026-04-23 | Stub created per pre_merge R1-C5 (docstring dead link fix) |
 | 2026-04-24 | Full schema authored (T4.1) — 4 new top-level keys documented, BA-R*-I1 (`main_repo.path` + `items[].heuristic`) + BA-R*-M1/M2 (`auth_missing` reserved, single-remote ahead prose) + overall_parity worked examples + QA-C2 PR filtering + all fail-soft enum values backfilled |
 | 2026-05-09 | TX.0 + TX.1 (state-scanner-inter-cycle-surfacing sub-PR-a) — 4 inter-cycle nested fields documented: `git.status_clean` (TX.0 ship), `upm.followups[]` + `upm.handoff_doc` (TX-G2/G3 reserved schema), `requirements.stories.priority_items[]` (TX-G4 reserved schema); backward-compat contract section added; schema version stays `"1.0"` (additive) |
+| 2026-05-09 | sub-PR (b) — TX-G2/G3/G4 collectors shipped (aria-plugin#38). "Planned" qualifiers replaced with "shipped" + Implementation history blockquotes. KM-08 prerequisite NOTE blockquotes removed (gates satisfied). Error-path absence semantics clarified for `followups` + `handoff_doc` (both ABSENT in error-paths, schema previously documented only the no-UPM-file case). `errors[]` enum produced by G3 documented (`unsupported_path_format` + `handoff_path_escapes_project`) |

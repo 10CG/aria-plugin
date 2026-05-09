@@ -295,6 +295,52 @@ More prose.
             self.assertEqual(fu[0]["priority"], "unknown")
             self.assertEqual(fu[1]["priority"], "P2")
 
+    def test_p0_priority_accepted(self):
+        """R2 audit: P0 explicitly tested — `[Pp][0-3]` regex includes 0."""
+        body = """## Pending Followups
+
+| Priority | Item |
+|----------|------|
+| P0 | critical item |
+| p0 | lowercase variant |
+"""
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "project-planning" / "unified-progress-management.md",
+                _upm_with_followups(body),
+            )
+            r = collect_upm_state(root)
+            fu = r.data["followups"]
+            self.assertEqual(fu[0]["priority"], "P0")
+            self.assertEqual(fu[1]["priority"], "P0")
+
+    def test_no_upm_file_followups_and_handoff_doc_keys_absent(self):
+        """R2 audit (backend-architect Major): when UPM file missing, both
+        `followups` AND `handoff_doc` keys must be ABSENT (not null) per
+        schema §upm L160 contract."""
+        with tmp_project() as root:
+            r = collect_upm_state(root)
+            self.assertFalse(r.data["configured"])
+            self.assertNotIn("followups", r.data, "followups key must be absent on missing UPM")
+            self.assertNotIn("handoff_doc", r.data, "handoff_doc key must be absent on missing UPM")
+
+    def test_no_upmv2_state_block_handoff_doc_absent(self):
+        """R2 audit: when UPM file exists but UPMv2-STATE block missing,
+        `handoff_doc` key must be ABSENT (G3 had no raw_block to scan).
+        `followups` may still be present if `## Pending Followups` heading exists.
+        """
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "project-planning" / "unified-progress-management.md",
+                "# UPM\n\nNo UPMv2-STATE block here.\n\n## Pending Followups\n\n"
+                "| Priority | Item |\n|----------|------|\n| P1 | x |\n",
+            )
+            r = collect_upm_state(root)
+            self.assertTrue(r.data["configured"])
+            self.assertNotIn("handoff_doc", r.data)
+            # followups still emitted because heading + table present.
+            self.assertEqual(len(r.data["followups"]), 1)
+
 
 # -------------------------------------------------------------------------
 # G3: handoff_doc pointer detection (T3.3.a-e)
@@ -439,6 +485,66 @@ class TestHandoffDocG3(unittest.TestCase):
             )
             r = collect_upm_state(root)
             self.assertIsNone(r.data["handoff_doc"])
+
+    def test_t3_2_absolute_path_branch(self):
+        """T3.2 absolute path: resolved + exists() check, no relative_to rewrite.
+
+        R2 audit (code-reviewer + qa-engineer convergent): branch was
+        unexercised; this test pins the absolute-path code path at upm.py
+        `_detect_handoff_doc` (the `candidate.is_absolute()` branch).
+        """
+        import tempfile
+
+        with tmp_project() as root:
+            # Create a real file outside project_root, reference it via abs path.
+            with tempfile.NamedTemporaryFile(
+                suffix=".md", delete=False, mode="w"
+            ) as tmp_f:
+                tmp_f.write("h")
+                abs_handoff_path = tmp_f.name
+            try:
+                write_file(
+                    root / "docs" / "project-planning" / "unified-progress-management.md",
+                    _upm_with_state_block(
+                        f"current_phase: P\n> handoff: see [{abs_handoff_path}]({abs_handoff_path})"
+                    ),
+                )
+                r = collect_upm_state(root)
+                hd = r.data["handoff_doc"]
+                self.assertIsNotNone(hd)
+                # Absolute path preserved verbatim (no relative_to rewrite).
+                self.assertEqual(hd["path"], abs_handoff_path)
+                self.assertTrue(hd["exists"])
+            finally:
+                import os
+                os.unlink(abs_handoff_path)
+
+    def test_t3_2_relative_path_escape_fail_soft(self):
+        """T3.2 BA-11 branch: relative path that resolves outside project_root
+        triggers `handoff_path_escapes_project` soft_error + preserves raw path.
+
+        R2 audit (code-reviewer + qa-engineer convergent + backend-architect
+        schema-completeness): branch + error_kind both unexercised.
+        """
+        with tmp_project() as root:
+            # `../../../etc/x.md` resolves above project_root via `..` traversal.
+            write_file(
+                root / "docs" / "project-planning" / "unified-progress-management.md",
+                _upm_with_state_block(
+                    "current_phase: P\n"
+                    "> handoff: see [../../../etc/x.md](../../../etc/x.md)"
+                ),
+            )
+            r = collect_upm_state(root)
+            hd = r.data["handoff_doc"]
+            self.assertIsNotNone(hd)
+            # Raw path preserved (relative_to ValueError fail-soft).
+            self.assertEqual(hd["path"], "../../../etc/x.md")
+            # exists reflects the actual filesystem (likely false).
+            self.assertIsInstance(hd["exists"], bool)
+            # soft_error recorded.
+            error_kinds = [e["error"] for e in r.errors]
+            self.assertIn("handoff_path_escapes_project", error_kinds)
 
 
 if __name__ == "__main__":

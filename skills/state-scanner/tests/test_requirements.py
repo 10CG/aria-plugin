@@ -275,6 +275,60 @@ class TestPriorityItemsG4(unittest.TestCase):
             self.assertEqual(item["file"], "docs/requirements/user-stories/US-042.md")
             self.assertEqual(item["status_normalized"], "in_progress")
 
+    def test_mtime_oserror_fallback_sorts_last_in_bucket(self):
+        """R2 audit (qa-engineer): mtime stat() OSError → fallback 0.0 → sorts
+        last within its status bucket. Branch at requirements.py
+        `except OSError: mtime = 0.0` was unexercised."""
+        from unittest.mock import patch
+
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            # 2 in_progress stories — mock one to fail stat().
+            write_file(stories_dir / "US-A.md", "**Status**: In Progress\n")
+            write_file(stories_dir / "US-B.md", "**Status**: In Progress\n")
+
+            real_stat = type(stories_dir).stat
+
+            def fake_stat(self, *args, **kwargs):
+                # Make US-A's stat() raise OSError; US-B reads normally.
+                if self.name == "US-A.md":
+                    raise OSError("simulated stat failure")
+                return real_stat(self, *args, **kwargs)
+
+            with patch.object(type(stories_dir), "stat", fake_stat):
+                r = collect_requirements(root)
+
+            ids = [it["id"] for it in r.data["stories"]["priority_items"]]
+            # US-B (real mtime) sorts ahead of US-A (fallback mtime=0.0 = oldest).
+            self.assertEqual(ids, ["US-B", "US-A"])
+
+    def test_load_priority_items_limit_handles_non_dict_json(self):
+        """R2 audit (code-reviewer): config.json with array root must NOT crash
+        with AttributeError; defensive fallback to default 5."""
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            for i in range(7):
+                write_file(stories_dir / f"US-{i:03d}.md", "**Status**: In Progress\n")
+            # config.json is an array (valid JSON, invalid for this consumer)
+            write_file(root / ".aria" / "config.json", "[1, 2, 3]\n")
+            r = collect_requirements(root)
+            # Falls back to default limit 5 (not 7, not crash).
+            self.assertEqual(len(r.data["stories"]["priority_items"]), 5)
+
+    def test_load_priority_items_limit_handles_non_dict_state_scanner(self):
+        """R2 audit (code-reviewer extension): nested state_scanner being
+        non-dict (e.g. string) must also fall back to default."""
+        with tmp_project() as root:
+            stories_dir = root / "docs" / "requirements" / "user-stories"
+            for i in range(7):
+                write_file(stories_dir / f"US-{i:03d}.md", "**Status**: In Progress\n")
+            write_file(
+                root / ".aria" / "config.json",
+                '{"state_scanner": "wrong-type"}\n',
+            )
+            r = collect_requirements(root)
+            self.assertEqual(len(r.data["stories"]["priority_items"]), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

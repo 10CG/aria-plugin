@@ -319,6 +319,8 @@ def collect_upm_state(project_root: Path) -> CollectorResult:
             break
 
     if found_path is None:
+        # Schema §upm L160: missing UPM → `followups` + `handoff_doc` keys ABSENT
+        # (distinguishes "scanner ran, found nothing" from "no UPM to scan").
         r.data = {
             "configured": False,
             "source_file": None,
@@ -326,7 +328,6 @@ def collect_upm_state(project_root: Path) -> CollectorResult:
             "current_cycle": None,
             "active_module": None,
             "raw_block": None,
-            "handoff_doc": None,
         }
         return r
 
@@ -334,6 +335,7 @@ def collect_upm_state(project_root: Path) -> CollectorResult:
         text = found_path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         r.soft_error("upm_read_failed", str(e))
+        # Read error: same absence semantic as no-UPM-file (no successful scan).
         r.data = {
             "configured": False,
             "source_file": str(found_path.relative_to(project_root)),
@@ -341,7 +343,6 @@ def collect_upm_state(project_root: Path) -> CollectorResult:
             "current_cycle": None,
             "active_module": None,
             "raw_block": None,
-            "handoff_doc": None,
         }
         return r
 
@@ -359,6 +360,10 @@ def collect_upm_state(project_root: Path) -> CollectorResult:
 
     if block is None:
         r.soft_error("upm_block_not_found", "UPMv2-STATE marker missing")
+        # Block missing: G3 had no raw_block to scan, so handoff_doc key is ABSENT
+        # (consistent with schema's null-vs-absent contract — null is reserved for
+        # "scanned raw_block, no match"). G2 followups still emitted if
+        # `## Pending Followups` heading exists in the surrounding text.
         data: dict[str, Any] = {
             "configured": True,
             "source_file": str(found_path.relative_to(project_root)),
@@ -366,7 +371,6 @@ def collect_upm_state(project_root: Path) -> CollectorResult:
             "current_cycle": None,
             "active_module": None,
             "raw_block": None,
-            "handoff_doc": None,
         }
         if followups is not None:
             data["followups"] = followups

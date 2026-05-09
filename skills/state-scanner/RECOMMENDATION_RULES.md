@@ -474,7 +474,7 @@ recommendation:
 
 ---
 
-## Inter-cycle surfacing 相关规则详情 (2026-05-09, state-scanner-inter-cycle-surfacing G2/G4)
+## Inter-cycle surfacing 相关规则详情 (2026-05-09, state-scanner-inter-cycle-surfacing G2/G3/G4)
 
 ### 1.85 pending_followups_p1
 
@@ -1226,9 +1226,17 @@ debug_mode:
 
 ---
 
-**最后更新**: 2026-04-23
+**最后更新**: 2026-05-09
 
 ## 变更历史
+
+### v2.11.0 (2026-05-09)
+
+- **新增**: 规则 `pending_followups_p1` (优先级 1.85) — UPM `## Pending Followups` 表存在 P1 行时提示 inter-cycle backlog
+- **新增**: 规则 `resume_in_progress_us` (优先级 1.88) — 存在 in_progress User Story 时建议续做
+- **关联**: Spec `state-scanner-inter-cycle-surfacing` sub-PR (b) — G2 + G3 + G4 collectors landing in aria-plugin#38 (2026-05-09)
+- **依赖**: G2 collector (`upm.followups[]`) + G4 collector (`requirements.stories.priority_items[]`); G3 `upm.handoff_doc` 由 1.85 规则附带使用
+- **向后兼容**: 字段缺失时规则条件不满足，不触发；旧 snapshot (pre-TX-G2/G3/G4) 行为与 v2.10.1 一致
 
 ### v2.10.1 (2026-04-23)
 
