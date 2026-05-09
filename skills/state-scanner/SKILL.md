@@ -14,7 +14,7 @@ allowed-tools: Read, Glob, Grep, Bash
 # 状态扫描与智能推荐 (State Scanner v3.0)
 
 > **版本**: 3.0.0 | **角色**: 十步循环统一入口
-> **机械化**: v3.0.0 起 Phase 1.x 由 `scripts/scan.py` (stdlib-only Python) 机械产出 JSON snapshot, AI 读 snapshot 进入阶段 2 推荐。v2.x prose 路径保留 `mechanical_mode=false` opt-out 至 v1.18.0 移除 (AD-SSME-5)。
+> **机械化**: v3.0.0 起 Phase 1.x 由 `scripts/scan.py` (stdlib-only Python) 机械产出 JSON snapshot, AI 读 snapshot 进入阶段 2 推荐。v2.x prose 路径保留 `mechanical_mode=false` opt-out, 计划下一 minor (v1.19.0+) 移除 (AD-SSME-5;v1.18.0 ship 时仍保留 — 监测使用量后决定)。
 
 ## 快速开始
 
@@ -53,7 +53,7 @@ allowed-tools: Read, Glob, Grep, Bash
 | `state_scanner.auto_execute_enabled` | `false` | 高置信度自动执行 |
 | `state_scanner.auto_execute_rules` | `["commit_only", "quick_fix", "doc_only"]` | 允许自动执行的规则 |
 | `state_scanner.audit_log_path` | `".aria/audit.log"` | 审计日志路径 |
-| `state_scanner.mechanical_mode` | `true` | v3.0.0+: `true` 走 scan.py 路径, `false` 回退 v2.x prose 路径 (v1.18.0 移除) |
+| `state_scanner.mechanical_mode` | `true` | v3.0.0+: `true` 走 scan.py 路径, `false` 回退 v2.x prose 路径 (计划 v1.19.0+ 移除, v1.18.0 ship 时仍保留) |
 | `workflow.auto_proceed` | `false` | Phase 间自动推进 |
 
 ---
@@ -91,7 +91,7 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/scan.py" \
 | scan.py 成功后读取 snapshot 引用的外部文件 (audit report 原文 / Story body 细节) | ✅ 允许 |
 | Phase 3 展示 / Phase 4 传递给 workflow-runner 走 prose 路径 | ✅ 允许 (这些不是数据采集) |
 
-**Opt-out** (过渡期): `.aria/config.json` 设 `state_scanner.mechanical_mode=false` → 回退 v2.x prose 路径. 该 flag 计划 v1.18.0 移除 (AD-SSME-5), 期间零告警使用量 = 安全移除信号。
+**Opt-out** (过渡期): `.aria/config.json` 设 `state_scanner.mechanical_mode=false` → 回退 v2.x prose 路径. 该 flag 计划下一 minor (v1.19.0+) 移除 (AD-SSME-5);v1.18.0 ship 时仍保留, 期间零告警使用量 = 安全移除信号。
 
 ---
 
@@ -463,5 +463,5 @@ workflow-runner v2.0
 
 ---
 
-**最后更新**: 2026-04-24
-**Skill版本**: 3.0.0 (2026-04-24: T5 机械化契约 — Step 0 scan.py 硬约束 + Phase 2 入口断言 + 阶段 1 prose → schema.md 引用)
+**最后更新**: 2026-05-09
+**Skill版本**: 3.1.0 (2026-05-09: state-scanner-inter-cycle-surfacing G2/G3/G4 collectors shipped + T5 兜底降级为 sanity check + KM-08 prerequisite NOTE 移除 — 见 v1.18.0 CHANGELOG)
