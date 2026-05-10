@@ -68,24 +68,32 @@ def detect_aether() -> tuple[bool, str | None]:
     return False, None
 
 
-def verify_aether_in_flight_flag(binary: str, timeout: int = 5) -> bool:
+def verify_aether_in_flight_flag(binary: str, timeout: int = 10, attempts: int = 2) -> bool:
     """Return True if `aether ci status --help` advertises `--in-flight`.
 
     Older binaries (pre PR #116, before 2026-05-06) lack this flag and
     must be upgraded before the gate can function. We grep stdout to
     avoid version-string parsing.
+
+    R2 hardening (CR-M1): bumped default timeout 5s → 10s + 2 attempts to
+    avoid false negatives on cold caches / slow filesystems. A single slow
+    `aether --help` should not flip a binary's flag-presence verdict.
     """
-    try:
-        result = subprocess.run(
-            [binary, "ci", "status", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
-    haystack = (result.stdout or "") + (result.stderr or "")
-    return "in-flight" in haystack
+    last_haystack = ""
+    for _ in range(attempts):
+        try:
+            result = subprocess.run(
+                [binary, "ci", "status", "--help"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            continue
+        last_haystack = (result.stdout or "") + (result.stderr or "")
+        if "in-flight" in last_haystack:
+            return True
+    return "in-flight" in last_haystack
 
 
 def _run_aether_with_retry(
@@ -148,12 +156,23 @@ def _query_aether(
 def _normalize_pr_ci_status(runs: list[dict[str, Any]]) -> str:
     """Map aether CIRun list → passing | failing | pending.
 
-    Takes the most recent run (assumed first in list). Conservative mapping:
-    unknown statuses route to pending so the caller waits rather than races.
+    Selects the most recent run by `started_at` (descending) rather than
+    relying on aether's list ordering — R2 patch (CR-M3) defends against a
+    future aether change to oldest-first ordering. Falls back to runs[0] if
+    no run has a parseable started_at. Conservative mapping: unknown
+    statuses route to pending so the caller waits rather than races.
     """
     if not runs:
         return "pending"
-    latest = runs[0]
+
+    def _started_key(run: dict[str, Any]) -> str:
+        # ISO 8601 strings sort lexicographically when normalized to UTC Z.
+        # Use empty-string fallback so runs with missing started_at sort first
+        # (least recent) and don't shadow newer runs.
+        return run.get("started_at") or ""
+
+    sorted_runs = sorted(runs, key=_started_key, reverse=True)
+    latest = sorted_runs[0]
     status = (latest.get("status") or "").lower()
     if status in ("success", "passing", "passed", "completed"):
         return "passing"

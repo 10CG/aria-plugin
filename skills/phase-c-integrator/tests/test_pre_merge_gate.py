@@ -160,8 +160,8 @@ class GateCheckTests(unittest.TestCase):
     @mock.patch.object(gate, "detect_aether", return_value=(True, "/usr/local/bin/aether"))
     @mock.patch.object(gate, "verify_aether_in_flight_flag", return_value=True)
     @mock.patch.object(gate, "_query_aether")
-    def test_case_e_malformed_aether_routes_fail(self, m_query, *_unused) -> None:
-        # primitive 异常 → fail verdict + raw_message 含错误信息
+    def test_case_e_malformed_aether_main_leg_routes_fail(self, m_query, *_unused) -> None:
+        # primitive 异常 (main leg first) → fail verdict + raw_message 含错误信息
         m_query.side_effect = [
             (False, None, "malformed JSON from aether: line 1 col 1"),
         ]
@@ -169,6 +169,27 @@ class GateCheckTests(unittest.TestCase):
         self.assertEqual(out["verdict"], "fail")
         self.assertIn("malformed", out["raw_message"])
         self.assertEqual(out["pr_ci_status"], "pending")
+        self.assertIn("main in-flight query failed", out["raw_message"])
+
+    @mock.patch.object(gate, "detect_aether", return_value=(True, "/usr/local/bin/aether"))
+    @mock.patch.object(gate, "verify_aether_in_flight_flag", return_value=True)
+    @mock.patch.object(gate, "_query_aether")
+    def test_case_e2_malformed_aether_pr_leg_routes_fail(self, m_query, *_unused) -> None:
+        """R2 patch (CR-M2): cover the PR-leg failure path.
+
+        Without this test, test_case_e exits early on the first _query_aether
+        call (main-leg failure) and never reaches the second call. This test
+        succeeds the main leg then fails the PR leg, exercising the second
+        `if not pr_ok` branch in gate_check.
+        """
+        m_query.side_effect = [
+            (True, {"runs": []}, ""),  # main leg succeeds
+            (False, None, "PR query timed out"),  # PR leg fails
+        ]
+        out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(out["verdict"], "fail")
+        self.assertIn("PR CI status query failed", out["raw_message"])
+        self.assertIn("PR query timed out", out["raw_message"])
 
     @mock.patch.object(gate, "detect_aether", return_value=(True, "/usr/local/bin/aether"))
     @mock.patch.object(gate, "verify_aether_in_flight_flag", return_value=False)
