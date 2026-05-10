@@ -168,6 +168,46 @@ audit.checkpoints.*:
   valid_keys: [post_brainstorm, post_spec, post_planning, post_implementation,
                mid_implementation, pre_merge, post_closure]
   default: "off"
+
+# Phase C.2.4 — Pre-Merge Precondition Gate (v1.3.0+, Forgejo Issue #60)
+phase_c_integrator.pre_merge_gate.enabled:
+  type: boolean
+  default: true
+
+phase_c_integrator.pre_merge_gate.primitive_preference:
+  type: array of string
+  valid_values: [aether-ci-cli]
+  default: ["aether-ci-cli"]
+  # 注: aether-pre-merge-check skill 从未实施 (P0-B not shipped),仅 CLI primitive 可用
+
+phase_c_integrator.pre_merge_gate.no_aether_fallback:
+  type: string
+  valid_values: [skip_with_warning, abort]
+  default: "skip_with_warning"
+
+phase_c_integrator.pre_merge_gate.wait_timeout_seconds:
+  type: integer
+  range: [60, 7200]
+  default: 1800
+
+phase_c_integrator.pre_merge_gate.wait_check_intervals:
+  type: array of integer
+  default: [30, 60, 120, 300, 300]
+  # 数组耗尽后重复 intervals[-1] 直到 wait_timeout_seconds
+
+phase_c_integrator.pre_merge_gate.primitive_call_timeout_seconds:
+  type: integer
+  range: [5, 300]
+  default: 30
+
+phase_c_integrator.pre_merge_gate.poll_chunk_seconds:
+  type: integer
+  range: [1, 30]
+  default: 5
+
+phase_c_integrator.pre_merge_gate.user_escape_hatch:
+  type: boolean
+  default: true
 ```
 
 ## 旧配置兼容层
