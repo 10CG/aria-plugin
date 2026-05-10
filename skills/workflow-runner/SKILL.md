@@ -12,7 +12,8 @@ allowed-tools: Task, Read, Write, Glob, Grep
 
 # Workflow Runner v2.2 (轻量编排器)
 
-> **版本**: 2.2.0 | **架构**: Phase-Based
+> **版本**: 2.3.0 | **架构**: Phase-Based
+> **更新**: 2026-05-10 — `wait_recoverable` 错误类型 + `gate_state` workflow-state 扩展 (#60 D2)
 > **类型**: 编排器 (调用 Phase Skills)
 > **更新**: 2026-02-05 - 添加 A.0.5 头脑风暴步骤集成
 
@@ -239,6 +240,33 @@ Schema 详见 [references/workflow-state-schema.md](./references/workflow-state-
 
 Gate 强制执行逻辑、手动/自动模式切换、失败恢复详见 [references/gate-enforcement.md](./references/gate-enforcement.md)
 
+### Pre-Action Gate State (v2.3.0+)
+
+> 新增于 v2.3.0 — 支持 `wait_recoverable` 错误类型 (#60 phase-c-integrator C.2.4 pre-merge gate)。
+
+`gate_state` 顶级 block 跟踪当前活跃的 pre-action gate (currently only `pre_merge`,但 schema 通用化为未来 `pre_release` / `pre_deploy` 预留扩展):
+
+```json
+{
+  "gate_state": {
+    "name": "pre_merge",
+    "status": "waiting | green | fail",
+    "started_at": "ISO 8601",
+    "retry_count": 0,
+    "next_check_at": "ISO 8601",
+    "in_flight_runs": [
+      {"run_id": 3161, "branch": "main", "started_at": "ISO 8601", "elapsed_seconds": 459}
+    ],
+    "primitive_used": "aether-ci-cli",
+    "raw_message": ""
+  }
+}
+```
+
+完整 schema 见 [references/workflow-state-schema.md §1.1.gate_state](./references/workflow-state-schema.md)。Schema migration `format_version 1.0 → 1.1` 见 §8.3 默认 `gate_state: null`。
+
+**Defensive access**: 所有读 `gate_state` 的代码必须用 `state.get("gate_state") or {}` 而非 `state["gate_state"]`,防 v1.0 state 文件 KeyError。
+
 ### State Cleanup
 
 工作流结束时的清理策略:
@@ -275,6 +303,92 @@ recovery:
     - 回滚 git commit (如果已执行)
     - 建议: "检查提交消息或 hook 错误"
 ```
+
+### `wait_recoverable` 错误类型 (v2.3.0+)
+
+> 新增于 v2.3.0 — 修复 Forgejo Issue #60 phase-c-integrator C.2.4 pre-merge gate。
+> "等待外部 CI 完成" 是协作正常态,**不**应当作 fatal error 处理。
+
+**触发场景**:
+- phase-c-integrator C.2.4 返回 `verdict=wait` (main 分支有 in-flight CI 或 PR CI pending)
+- 未来扩展: 任何 pre-action gate 返回 wait 状态 (eg pre_release / pre_deploy)
+
+**配置**:
+
+```yaml
+on_phase_error:
+  wait_recoverable:
+    triggered_by:
+      - source: "phase-c-integrator"
+        sub_step: "C.2.4"
+        verdict: "wait"
+    behavior:
+      - log: "main 分支有 in-flight CI,等待 X 完成"
+      - persist: workflow-state.json 写 gate_state block
+      - sleep: wait_check_intervals[retry_count] (默认指数退避)
+      - re-invoke: phase-c-integrator C.2.4 重新检查
+```
+
+**Exit conditions** (优先级 first-match-wins, R2 patch CR-4):
+1. **user Ctrl-C** → 转 manual mode (workflow-state 标 `session.status: suspended`,允许 resume) [最高]
+2. **retry_count > max OR elapsed > wait_timeout_seconds** → user prompt (continue / abort)
+3. **verdict=fail** → 转为 stop (fatal)
+4. **verdict=green** → 继续 merge (正常路径) [最低]
+
+**实施步骤**:
+
+```
+当 phase-c-integrator C.2.4 返回 verdict=wait:
+  1. 读 .aria/config.json 加载 phase_c_integrator.pre_merge_gate.* 配置
+  2. 写入 workflow-state.json gate_state block (atomic write 协议见 schema §4)
+     - status: "waiting"
+     - started_at / retry_count / next_check_at / in_flight_runs[] 全部填充
+  3. 进入 polling loop:
+     a. 计算本轮 sleep 时长: wait_check_intervals[min(retry_count, len-1)]
+     b. polling sleep chunk 模式 (CR-5): sleep 拆分 5s 块
+        - 每块结束 check `.aria/.workflow-interrupt` flag file
+        - flag 存在 → 立即 break,转 suspended
+     c. sleep 结束 → 重新调 phase-c-integrator C.2.4 gate
+     d. 处理 verdict 按 exit conditions 优先级
+  4. 退出 polling 后:
+     - verdict=green → 调 branch-manager merge,清理 gate_state
+     - verdict=fail → workflow-state.session.status=failed,保留 gate_state 给 audit trail
+     - timeout → user prompt;continue → reset retry_count + 继续;abort → stop
+     - Ctrl-C → workflow-state.session.status=suspended,保留 gate_state 给 resume
+```
+
+### Ctrl-C 检测机制 (v2.3.0+)
+
+> CR-5 R2 patch — workflow-runner 现无 signal handler 设计,采用 polling sleep chunk 模式
+
+**Flag-file lifecycle** (R2-CR-B inline patch):
+- **创建**: workflow-runner 顶层 SIGINT handler 收到中断时 atomic write `.aria/.workflow-interrupt` (open-O_CREAT-O_EXCL + tmp+rename)
+- **检查**: polling sleep chunk 每块结束后 `os.path.exists(.aria/.workflow-interrupt)`
+- **清理时机** (3 处):
+  - workflow-runner 启动入口 (resume 或 fresh): 无条件清理 stale flag
+  - 进入 manual mode / suspended 状态后: **保留** flag (待 user explicit clear / resume)
+  - user resume workflow 时: 清理 flag (resume 是新意图,不继承 prior interrupt)
+- **Ownership**: flag 文件只属当前 workflow-runner pid;多 workflow-runner 并发不允许 (沿用现有 workflow-state lock 约定)
+
+**Chunk 大小 trade-off**: `phase_c_integrator.pre_merge_gate.poll_chunk_seconds` 默认 5s;过小耗 CPU,过大 Ctrl-C 响应慢。
+
+### Resume 语义 (v2.3.0+)
+
+> CR-6 + BA-5 R2 patch — workflow 中断后 resume 时正确处理 gate_state
+
+`workflow-state.json` 含 `gate_state.status == waiting` AND `phase_results.C.2.action.pr_number != null` (PR 已创建) 时:
+
+1. **resume 入口先清理 stale flag**: `rm -f .aria/.workflow-interrupt` (R2-CR-B,resume 是新意图)
+2. **判定 next_check_at 是否过期** (R2 inline patch QA-12 — clock 源):
+   - `next_check_at` 持久化为 ISO 8601 wall clock (跨进程可读)
+   - elapsed 用 `time.monotonic()` 防 DST/系统时钟漂移
+   - 已过期 (`now >= next_check_at`) → 立即重新调 C.2.4 gate
+   - 未过期 → 等待至 `next_check_at` 后再调
+3. **gate verdict 处理**:
+   - `green` → **跳过** C.2 push/create-PR (已完成,PR_NUMBER 已持久化),直接调 branch-manager merge call (idempotent — 若 PR 已 merged 则 branch-manager 报告 success 不重复操作)
+   - `wait` → 增量更新 `gate_state.retry_count` + `next_check_at`,继续 polling
+   - `fail` → workflow report 含 PR_NUMBER + 失败 verdict,转 stop
+4. **不重跑 Phase C 整段**,只 re-run gate + merge call (避免重复推送 / 重复创建 PR)
 
 ---
 

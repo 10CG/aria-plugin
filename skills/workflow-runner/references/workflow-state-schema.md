@@ -1,8 +1,9 @@
 # Workflow State Schema Specification
 
-> **Version**: 1.0 | **Format**: `aria-workflow-state/v1`
-> **Consumers**: state-scanner, workflow-runner
+> **Version**: 1.1 | **Format**: `aria-workflow-state/v1`
+> **Consumers**: state-scanner, workflow-runner, phase-c-integrator (gate_state)
 > **Storage**: `.aria/workflow-state.json` (project root)
+> **Last change (v1.1, 2026-05-10)**: additive — `gate_state` top-level optional block (#60 D2)
 
 ---
 
@@ -11,7 +12,7 @@
 ```json
 {
   "$schema": "aria-workflow-state/v1",
-  "format_version": "1.0",
+  "format_version": "1.1",
 
   "session": {
     "id": "string (sess-YYYYMMDD-XXXXXX)",
@@ -32,6 +33,24 @@
   "gates": {
     "gate1_spec_approved": "boolean",
     "gate2_merge_main": "boolean"
+  },
+
+  "gate_state": {
+    "name": "string (pre_merge | pre_release | pre_deploy)",
+    "status": "string (waiting | green | fail)",
+    "started_at": "string (ISO 8601)",
+    "retry_count": "integer (>=0)",
+    "next_check_at": "string (ISO 8601)",
+    "in_flight_runs": [
+      {
+        "run_id": "integer",
+        "branch": "string",
+        "started_at": "string (ISO 8601)",
+        "elapsed_seconds": "integer (>=0)"
+      }
+    ],
+    "primitive_used": "string (aether-ci-cli | manual)",
+    "raw_message": "string"
   },
 
   "phase_results": {
@@ -87,6 +106,31 @@ Quality gates that guard phase transitions. A gate must be `true` before the wor
 |-------|------|---------|-------------|
 | `gate1_spec_approved` | boolean | `false` | Set to `true` when the OpenSpec proposal is approved. Required before Phase A exits to Phase B. Workflows that skip Phase A (e.g., `quick-fix`) initialize this to `true`. |
 | `gate2_merge_main` | boolean | `false` | Set to `true` when the feature branch is confirmed mergeable to main (CI green, no conflicts). Required before Phase C step C.2 (merge). |
+
+#### `gate_state` (added v1.1, optional, may be `null`)
+
+Tracks the currently-active **pre-action gate** (a gate that runs before a phase's action and may suspend the workflow waiting for an external condition). Currently only `pre_merge` is shipped (consumes phase-c-integrator C.2.4 + aether `--in-flight` primitive); `pre_release` / `pre_deploy` are reserved for future Specs.
+
+Distinct from `gates.*` which are quality-gate booleans (passed/not-passed). `gate_state` is a stateful waiter object with retry / timing / external-state metadata.
+
+| Field | Type | Required when present | Description |
+|-------|------|------------------------|-------------|
+| `name` | string | yes | Gate identifier. Open-set string for future extensibility; current shipped value: `pre_merge`. |
+| `status` | enum | yes | `waiting` (in polling loop), `green` (last check passed, ready to consume), `fail` (last check failed, gate stopped). |
+| `started_at` | string | yes | ISO 8601 of first gate check (entry to wait_recoverable). |
+| `retry_count` | integer | yes | Number of completed polling cycles. Starts at 0; increments per re-invoke. |
+| `next_check_at` | string | yes | ISO 8601 wall clock of next scheduled gate check. Used on resume to decide immediate-recheck vs wait-remainder. |
+| `in_flight_runs` | array | yes | Snapshot of upstream in-flight CI runs from last check. Empty array when `status=green`. |
+| `primitive_used` | string | yes | Source of the gate query: `aether-ci-cli` (normal) or `manual` (no-aether fallback path). |
+| `raw_message` | string | no | Human-readable annotation, esp. on `fail` to surface upstream error. May be empty string. |
+
+**Defensive access**: All consumers MUST use `state.get("gate_state") or {}` rather than `state["gate_state"]` to handle v1.0 state files migrated to v1.1 runtime (where field defaults to `null`).
+
+**Lifecycle**:
+- Created by phase-c-integrator C.2.4 first wait verdict
+- Updated each polling cycle (retry_count += 1, next_check_at recomputed)
+- Cleared (set to `null`) on workflow completion or final verdict (green merged / fail stopped)
+- Preserved across workflow suspension (Ctrl-C → `session.status: suspended`) for resume
 
 #### `phase_results`
 
@@ -481,15 +525,23 @@ On read:
 
 Default values for missing fields:
 
-| Field | Default |
-|-------|---------|
-| `gates.gate1_spec_approved` | `false` |
-| `gates.gate2_merge_main` | `false` |
-| `workflow.auto_proceed` | `true` |
-| `workflow.spec_id` | `null` |
-| `workflow.current_step` | `null` |
-| `git_anchor.worktree_path` | `null` |
-| `phase_results.<P>.error` | `null` |
+| Field | Default | Added in |
+|-------|---------|----------|
+| `gates.gate1_spec_approved` | `false` | v1.0 |
+| `gates.gate2_merge_main` | `false` | v1.0 |
+| `workflow.auto_proceed` | `true` | v1.0 |
+| `workflow.spec_id` | `null` | v1.0 |
+| `workflow.current_step` | `null` | v1.0 |
+| `git_anchor.worktree_path` | `null` | v1.0 |
+| `phase_results.<P>.error` | `null` | v1.0 |
+| `gate_state` | `null` | v1.1 |
+
+**Migration table — supported version transitions**:
+
+| From | To | Action | Notes |
+|------|-----|--------|-------|
+| `1.0` | `1.1` | Add `gate_state: null` (additive only) | No data loss; consumers must use defensive `.get()` access. Migrating a `waiting`-state file is impossible from v1.0 (the concept didn't exist), so v1.0 → v1.1 always defaults to `null`. |
+| `1.1` | `1.0` | Not supported (downgrade) | Treat as absent + warn user. |
 
 ### 8.4 Phase Failure Recovery
 
