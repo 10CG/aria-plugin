@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     skill never shipped).
   - Three-state verdict: `green` (passing + no in-flight) / `wait` (passing +
     in-flight OR pending) / `fail` (failing OR primitive error).
-  - 7 new config keys under `phase_c_integrator.pre_merge_gate.*`: `enabled`,
+  - 8 new config keys under `phase_c_integrator.pre_merge_gate.*`: `enabled`,
     `primitive_preference`, `no_aether_fallback`, `wait_timeout_seconds`,
     `wait_check_intervals`, `primitive_call_timeout_seconds`, `poll_chunk_seconds`,
     `user_escape_hatch`.
