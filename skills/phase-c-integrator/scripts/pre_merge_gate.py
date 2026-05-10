@@ -93,6 +93,10 @@ def verify_aether_in_flight_flag(binary: str, timeout: int = 10, attempts: int =
         last_haystack = (result.stdout or "") + (result.stderr or "")
         if "in-flight" in last_haystack:
             return True
+    # Loop exhausted. last_haystack is "" if every attempt raised (returns
+    # False), or the last successful-but-not-matching output. The final check
+    # is intentionally redundant — covers the rare path where subprocess.run
+    # succeeded on the final attempt but the binary still lacks --in-flight.
     return "in-flight" in last_haystack
 
 
