@@ -10,7 +10,7 @@ user-invocable: true
 allowed-tools: Task, Read, Write, Glob, Grep
 ---
 
-# Workflow Runner v2.2 (轻量编排器)
+# Workflow Runner v2.3 (轻量编排器)
 
 > **版本**: 2.3.0 | **架构**: Phase-Based
 > **更新**: 2026-05-10 — `wait_recoverable` 错误类型 + `gate_state` workflow-state 扩展 (#60 D2)

@@ -584,7 +584,7 @@ A `feature-dev` workflow midway through Phase B:
 ```json
 {
   "$schema": "aria-workflow-state/v1",
-  "format_version": "1.0",
+  "format_version": "1.1",
 
   "session": {
     "id": "sess-20260316-a3f7c1",
@@ -606,6 +606,8 @@ A `feature-dev` workflow midway through Phase B:
     "gate1_spec_approved": true,
     "gate2_merge_main": false
   },
+
+  "gate_state": null,
 
   "phase_results": {
     "A": {
