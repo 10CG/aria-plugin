@@ -12,8 +12,9 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 
 # Phase C - 集成阶段 (Integrator)
 
-> **版本**: 1.2.0 | **十步循环**: C.1-C.2
-> **更新**: 2026-03-27 - 升级审计触发从 agent-team-audit 改为 audit-engine
+> **版本**: 1.3.0 | **十步循环**: C.1-C.2
+> **更新**: 2026-05-10 - C.2.4 Pre-Merge Precondition Gate (#60, consume aether `--in-flight` primitive)
+> **历史更新**: 2026-03-27 - 升级审计触发从 agent-team-audit 改为 audit-engine
 
 ## 快速开始
 
@@ -42,6 +43,13 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `experiments.agent_team_audit` | `false` | 旧配置 (向后兼容，自动映射到 audit.*) |
 | `experiments.agent_team_audit_points` | `["pre_merge"]` | 旧配置 (向后兼容) |
 | `upm.milestone_driven` | `false` | 启用 C.2.6 里程碑子进度追加 (opt-in) |
+| `phase_c_integrator.pre_merge_gate.enabled` | `true` | 启用 C.2.4 pre-merge precondition gate (v1.3.0+) |
+| `phase_c_integrator.pre_merge_gate.primitive_preference` | `["aether-ci-cli"]` | gate primitive 优先级链 (现仅 aether CLI; aether-pre-merge-check skill 从未实施) |
+| `phase_c_integrator.pre_merge_gate.no_aether_fallback` | `"skip_with_warning"` | 无 aether 时降级 (`skip_with_warning` / `abort`) |
+| `phase_c_integrator.pre_merge_gate.wait_timeout_seconds` | `1800` | wait+retry max 等待时长 (默认 30 min) |
+| `phase_c_integrator.pre_merge_gate.wait_check_intervals` | `[30,60,120,300,300]` | 指数退避秒数; 数组耗尽后重复 `intervals[-1]` |
+| `phase_c_integrator.pre_merge_gate.primitive_call_timeout_seconds` | `30` | 单次 aether subprocess 调用 timeout |
+| `phase_c_integrator.pre_merge_gate.poll_chunk_seconds` | `5` | Ctrl-C polling chunk 大小 |
 
 当 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时，C.2 合并前触发 audit-engine (pre_merge 检查点)。
 旧配置 `experiments.agent_team_audit=true` 且 `"pre_merge" in agent_team_audit_points` 自动映射到新配置。
@@ -148,6 +156,26 @@ C.2 - PR/合并:
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。
 > 统一规范见 `../forgejo-sync/PRE_CHECK.md`
 
+C.2.4 - Pre-Merge Precondition Gate (v1.3.0+):
+  触发条件:
+    - C.2 action PR 已创建 (PR_NUMBER + PR_URL 已知)
+    - 即将调用 branch-manager merge action (auto_merge=true 或 user-triggered continue)
+    - 配置 phase_c_integrator.pre_merge_gate.enabled: true (默认)
+  primitive 调用:
+    - aether ci status --branch main --in-flight --json (查 main 是否有 in-flight)
+    - aether ci status --branch <PR_BRANCH> --json (查本 PR CI 状态)
+    - aria 端 verdict 计算 (aether-pre-merge-check skill 从未实施, P0-B not shipped)
+  三态结果:
+    green:  本 PR CI passing + main 无 in-flight CI → 继续 branch-manager merge
+    wait:   main 有 in-flight CI run OR PR CI pending → 进入 wait+retry (workflow-runner wait_recoverable)
+    fail:   PR CI failing OR primitive 错误 → BLOCK + 报告
+  output:
+    pre_merge_verdict: "green" | "wait" | "fail"
+    in_flight_runs: [{run_id, branch, started_at, elapsed_seconds}]   # wait 时
+    pr_ci_status: "passing" | "failing" | "pending"
+    primitive_used: "aether-ci-cli" | "manual"
+    primitive_version_sha: "f29abee"   # aether-cli #116 baseline
+
 C.2.5 - Multi-Remote Push Enforcement:
   触发条件:
     - Phase C.2 合并成功 (master 已 fast-forward)
@@ -163,6 +191,84 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
   action: 见下方 ### C.2.6 详细说明
   backward_compat: upm.milestone_driven=false 时完全跳过，Phase C 行为与之前完全相同
 ```
+
+### C.2.4 Pre-Merge Precondition Gate (v1.3.0+)
+
+> **新增于 v1.3.0** — 修复 Forgejo Issue #60 "phase-c-integrator 缺少 pre-merge safety gate"。
+> 源于 2026-05-02 SilkNode PR-321 cancel PR-322 main CI Run #3161 (459s 部署观测丢失)。
+> Consume aether `--in-flight` primitive (aether-cli #116, SHA `f29abee` 2026-05-06)。
+
+**Naming 命名空间澄清**: phase-c-integrator-level 子步骤标签 (C.2.x) 为 **orchestrator-tier**,与 branch-manager 内部实现层 (也用 C.2.x sequence: C.2.1 sync / C.2.2 push / C.2.3 create-PR / **C.2.4 wait-approval** / C.2.5 merge) 是**独立 label namespace**。本 SKILL §C.2.4 = "pre-merge precondition gate" (orchestrator);branch-manager 内部 C.2.4 = "等待审批" (implementation);同名不同 tier,语义独立。
+
+**触发条件**:
+- Phase C.2 action PR 已创建 (PR_NUMBER + PR_URL 已知)
+- 即将调用 branch-manager merge action (`auto_merge=true` 自动 / `auto_merge=false` user-triggered)
+- 配置 `phase_c_integrator.pre_merge_gate.enabled: true` (默认)
+
+**与 branch-manager 边界** (不重叠):
+| Skill | 职责 | 调用顺序 |
+|-------|------|----------|
+| branch-manager (C.2.1-C.2.3) | sync rebase + push branch + create PR | gate 之前 |
+| phase-c-integrator C.2.4 | pre-merge gate 三态判定 | gate (本段) |
+| branch-manager (C.2.4-C.2.5) | wait approval + merge API call | gate green 后 |
+
+**执行流程**:
+
+1. **Aether binary pre-flight check**: `aether --help | grep -q "in-flight"` 验证 binary 含 P0-A flag,缺失 → fail-fast 提示 "请升级 aether ≥ commit f29abee (2026-05-06)"
+2. **Aether init detection**: `which aether 2>/dev/null` 优先, 次选 `~/.aether/config.yaml` 是否存在;两者都 false → 按 `no_aether_fallback` 配置降级
+3. **Query main in-flight**: `aether ci status --branch main --in-flight --json` → parse `data.runs[]`
+4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending`
+5. **Verdict 计算** (aria 端):
+   - `pr_ci_status in [failing, error]` → `verdict=fail`
+   - `pr_ci_status == pending` → `verdict=wait` (PR CI 尚未完成)
+   - `pr_ci_status == passing AND main_in_flight_runs == []` → `verdict=green`
+   - `pr_ci_status == passing AND main_in_flight_runs != []` → `verdict=wait`
+6. **路由决策**:
+   - `green` → 调用 branch-manager merge action,进入 C.2.5
+   - `wait` → 输出 `wait_recoverable` 错误给 workflow-runner,触发 wait+retry 循环 (见 workflow-runner SKILL.md §wait_recoverable)
+   - `fail` → BLOCK + 输出 verdict + raw_message,phase-c-integrator return failure
+
+**Subprocess 调用规范**:
+- `subprocess.run(..., timeout=primitive_call_timeout_seconds)` 强制 (默认 30s)
+- timeout 触发 → max 3 attempts retry (backoff 5s/15s/45s) → 仍超时则 `fail` verdict
+- exit-code 映射: `0` = success / `1-126` = aether 错误 → `fail` / `127` = binary not found → `no_aether_fallback` / `-SIGTERM` = subprocess timeout → retry → 仍失败则 `fail`
+
+**Helper 实现**: `${ARIA_PLUGIN_ROOT:-aria}/skills/phase-c-integrator/scripts/pre_merge_gate.py` (stdlib + subprocess only)
+
+**Output schema**:
+```json
+{
+  "verdict": "green" | "wait" | "fail",
+  "pr_ci_status": "passing" | "failing" | "pending",
+  "in_flight_runs": [
+    {"run_id": 3161, "branch": "main", "started_at": "2026-05-09T12:45:00Z", "elapsed_seconds": 459}
+  ],
+  "primitive_used": "aether-ci-cli",
+  "primitive_version_sha": "f29abee",
+  "raw_message": "..."
+}
+```
+
+**配置参数**:
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `enabled` | `true` | gate 总开关 (false → 完全跳过 C.2.4,向后兼容) |
+| `primitive_preference` | `["aether-ci-cli"]` | 现仅 CLI (skill 从未实施) |
+| `no_aether_fallback` | `"skip_with_warning"` | 无 aether 时 (`skip_with_warning` / `abort`) |
+| `wait_timeout_seconds` | `1800` | wait+retry max (默认 30 min) |
+| `wait_check_intervals` | `[30,60,120,300,300]` | 指数退避 (秒); 数组耗尽后重复 `intervals[-1]` |
+| `primitive_call_timeout_seconds` | `30` | 单次 subprocess 调用 timeout |
+| `poll_chunk_seconds` | `5` | Ctrl-C polling chunk |
+
+**降级行为**:
+- `enabled: false` → 完全跳过 C.2.4 (与 v1.2.0 行为 100% 一致)
+- 无 aether (binary not in PATH AND `~/.aether/config.yaml` not exists) AND `no_aether_fallback: skip_with_warning` → 跳过 + workflow report 警告
+- 无 aether AND `no_aether_fallback: abort` → BLOCK + 提示 "本项目要求 aether,请安装"
+- aether binary 过期 (无 `--in-flight` flag) → fail-fast,**不**继续执行 (避免 silent skip)
+
+**Race condition 处理**: gate 检查与 merge call 之间,main 可能新触发 CI run。窗口最小化 (gate green 后立即调 merge),不消除 race。深度 mitigation 留 future Spec。
+
+---
 
 ### C.2.5 Multi-Remote Push Enforcement (v1.15.0+)
 
