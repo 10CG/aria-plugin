@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2026-05-10
+
+### Added — phase-c-integrator pre-merge gate (Spec: phase-c-integrator-pre-merge-gate, Forgejo Issue #60)
+
+- **D1 — phase-c-integrator C.2.4 Pre-Merge Precondition Gate** (`skills/phase-c-integrator/`):
+  - SKILL.md version 1.2.0 → 1.3.0; new sub-step C.2.4 inserted between PR
+    creation and C.2.5 multi-remote push.
+  - Consume aether `--in-flight` primitive (aether-cli #116, SHA `f29abee`
+    2026-05-06). aria-side verdict computation (P0-B `aether-pre-merge-check`
+    skill never shipped).
+  - Three-state verdict: `green` (passing + no in-flight) / `wait` (passing +
+    in-flight OR pending) / `fail` (failing OR primitive error).
+  - 8 new config keys under `phase_c_integrator.pre_merge_gate.*`: `enabled`,
+    `primitive_preference`, `no_aether_fallback`, `wait_timeout_seconds`,
+    `wait_check_intervals`, `primitive_call_timeout_seconds`, `poll_chunk_seconds`,
+    `user_escape_hatch`.
+  - Helper `scripts/pre_merge_gate.py` (~290 lines, stdlib + subprocess only)
+    + 20 unit tests (`tests/test_pre_merge_gate.py`).
+  - Subprocess hardening: `subprocess.run(timeout=N)` + max 3 retry attempts
+    (5s/15s/45s backoff); aether binary version pre-flight check (greps
+    `--in-flight` in `aether ci status --help`).
+  - Naming clarification: phase-c-integrator-tier C.2.4 (orchestrator) ≠
+    branch-manager-internal C.2.4 (`等待审批`); independent label namespaces.
+- **D2 — workflow-runner `wait_recoverable` error type + `gate_state` schema**
+  (`skills/workflow-runner/`):
+  - SKILL.md version 2.2.0 → 2.3.0; new §Pre-Action Gate State + §wait_recoverable
+    error type + §Ctrl-C 检测机制 + §Resume 语义 sections.
+  - workflow-state-schema.md `format_version: 1.0 → 1.1` (additive only); new
+    `gate_state` top-level optional block with field descriptions and migration
+    table entry (v1.0 → v1.1: gate_state default null).
+  - Defensive access pattern: `state.get("gate_state") or {}` documented.
+  - Reference impl `scripts/gate_state_helper.py` (~190 lines, stdlib only)
+    + 22 unit tests (`tests/test_gate_state_helper.py`): lifecycle (create /
+    increment / clear) + corruption recovery + interrupt flag-file lifecycle
+    (clear / set / detect / latest-wins) + polling sleep chunk with mid-sleep
+    interrupt detection (injectable `sleep_func` for deterministic tests).
+- **config-loader/SKILL.md**: 7 validation rules for new
+  `phase_c_integrator.pre_merge_gate.*` block.
+
+### Background
+
+2026-05-02 SilkNode incident: PR-321 merge cancelled PR-322 main CI Run #3161
+(459s deployment observability lost). Root cause: Forgejo Actions concurrency
+rule + Nomad single-job topology + missing pre-merge in-flight CI check in aria
+workflow. Spec passed post_spec audit R1+R2 (4 Critical → 0, unanimous
+PASS_WITH_WARNINGS). T1.0 spike revised D1 design after discovering the
+upstream `aether-pre-merge-check` skill was never shipped — only the underlying
+`aether ci status --in-flight` query primitive exists.
+
+### Tests
+
+42 new unit tests, all pass (20 D1 pre_merge_gate.py + 22 D2 gate_state_helper.py).
+
+### Backward compatibility
+
+- `pre_merge_gate.enabled: false` config preserves v1.18.0 behavior bit-for-bit
+  (gate skipped entirely).
+- `.aria/config.json` without `pre_merge_gate` block → config-loader fills
+  defaults (`enabled: true`); workflow infrastructure invokes gate.
+- Projects without aether plugin: `no_aether_fallback: skip_with_warning`
+  default emits a workflow-report warning but does not block.
+- workflow-state.json v1.0 files migrate transparently to v1.1 on read with
+  `gate_state: null` default.
+
 ## [1.18.0] - 2026-05-09
 
 ### Added — state-scanner inter-cycle surfacing (Spec: state-scanner-inter-cycle-surfacing)
