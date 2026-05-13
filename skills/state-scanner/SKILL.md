@@ -411,6 +411,64 @@ workflow-runner v2.0
 
 ---
 
+## Status 字段最佳实践
+
+state-scanner 通过 `_normalize_status` 把 OpenSpec proposal.md / User Story 的 `Status:` 行归一化为 lifecycle state (`archived` / `deprecated` / `pending` / `in_progress` / `implemented` / `approved` / `reviewed` / `active` / `ready` / `done` / `unknown`),驱动 `pending_archive` / `requirements` / 各类推荐规则。
+
+### Supported token set
+
+按 priority 顺序 (从最高到最低):
+
+| 类别 | tokens | normalized state |
+|------|--------|------------------|
+| 终态 (irreversible) | `archived` | `archived` |
+| | `deprecated` | `deprecated` |
+| 待开始 | `draft`, `pending`, `placeholder` | `pending` |
+| 进行中 | `in progress`, `in_progress`, `in-progress`, `进行中` | `in_progress` |
+| 已批准 | `approved` | `approved` |
+| **已实施** (post-merge, awaiting verify/archive) | `implemented` | `implemented` |
+| 已评审 | `reviewed` | `reviewed` |
+| 活跃 | `active` | `active` |
+| 就绪 | `ready` | `ready` |
+| 完成 (fallback) | `done`, `complete` | `done` |
+
+### 推荐 Status 行格式
+
+✅ **单 token** — 最安全:
+```markdown
+> **Status**: Approved
+> **Status**: Implemented
+> **Status**: Active
+```
+
+✅ **`<token> — <narrative>`** — em-dash 后任意内容,只看首 token 决定语义:
+```markdown
+> **Status**: Approved (Rev2 CONVERGED) — Phase A done, ready for Phase B
+> **Status**: Implemented (Phase B PR-A merged) — post-deploy 验证后归档
+```
+
+### Anti-pattern: substring shadows
+
+Word-boundary regex 匹配 (`\b<token>\b`) 已根治大部分 substring shadow 风险 (修复见 Forgejo Aria #101),但部分 narrative 仍要小心:
+
+❌ **避免** narrative 含 token 字面 (无 word boundary 风险时不会触发,但容易让人误读):
+```markdown
+> **Status**: WIP - 已完成 mock 测试   ← "done" 不会被错误命中,但语义模糊
+```
+
+❌ **历史陷阱** (已修复,不再触发 — 仅作教育示例):
+```markdown
+"Approved Phase A done"  ← 历史会误归 done, 现在 word boundary 正确归 approved
+"Implemented stubs"      ← 历史会误归 unknown, 现在 implemented
+"Inactive — deprecated"  ← 历史会误归 active, 现在 deprecated 优先级更高
+```
+
+### Implementation note
+
+实现细节见 `scripts/collectors/_status.py::_normalize_status` + `_has_token` helper。归一化逻辑 backed by 13 个 regression test (`tests/test_openspec.py::TestStatusNormalizationIssue101Fix`),覆盖 issue #101 4 真实字符串 + 4 shadow guards + 5 positive regression cases。
+
+---
+
 ## 错误处理
 
 | 错误 | 原因 | 解决方案 |

@@ -87,6 +87,109 @@ class TestStatusNormalization(unittest.TestCase):
         self.assertEqual(_normalize_status(None), "unknown")
 
 
+class TestStatusNormalizationIssue101Fix(unittest.TestCase):
+    """Regression tests for Forgejo Aria #101 fix (2026-05-13).
+
+    Bug 1: `done` token substring matched aggressively, shadowing `approved` /
+           `pending` / etc. when those tokens appeared with "...Phase A done..." narratives.
+    Bug 2: `Implemented` not in token dictionary → returned `unknown`.
+
+    Fix: word-boundary regex matching (`\\b<token>\\b`) + add `implemented` token +
+    reorder `approved` before `implemented` in priority chain.
+
+    See: openspec/archive/2026-05-13-aria-issue-101-status-normalize/
+    """
+
+    # --- Bug 1+2 fix verification: 4 真实 #101 Status strings ---
+
+    def test_issue101_docs_marketplace_adaptation(self):
+        # Bug 1: "Approved ... Phase A done" → was "done", now "approved"
+        self.assertEqual(
+            _normalize_status(
+                "Approved (Rev2 CONVERGED) — Phase A done, ready for Phase B"
+            ),
+            "approved",
+        )
+
+    def test_issue101_existing_data_migration(self):
+        # Bug 2: "Implemented (...) — post-deploy 验证后归档" → was "unknown", now "implemented"
+        self.assertEqual(
+            _normalize_status(
+                "Implemented (Phase B PR-A merged 2026-05-10) — post-deploy 验证后归档"
+            ),
+            "implemented",
+        )
+
+    def test_issue101_pricing_status_marketplace_redo(self):
+        # Bug 2: same family, with "UAT PASS; post-monitoring 后归档" narrative
+        self.assertEqual(
+            _normalize_status(
+                "Implemented (Phase B PR-A merged 2026-05-10) — UAT PASS; post-monitoring 后归档"
+            ),
+            "implemented",
+        )
+
+    def test_issue101_terms_of_service_and_attribution(self):
+        # Bug 1: "DRAFT pending ... Phase B PR-A done" → was "done", now "pending"
+        self.assertEqual(
+            _normalize_status(
+                "⏸ DRAFT pending lawyer review — Phase B PR-A done 2026-05-09"
+            ),
+            "pending",
+        )
+
+    # --- Shadow guards: word-boundary prevents substring false positives ---
+
+    def test_shadow_inactive_not_active(self):
+        # `inactive` contains `active` substring — word boundary prevents shadow
+        self.assertEqual(_normalize_status("Inactive — superseded"), "unknown")
+
+    def test_shadow_unimplemented_not_implemented(self):
+        # `unimplemented` contains `implemented` substring — word boundary prevents shadow
+        self.assertEqual(_normalize_status("Unimplemented stubs"), "unknown")
+
+    def test_shadow_incomplete_not_complete(self):
+        # `incomplete` contains `complete` substring — word boundary prevents shadow
+        self.assertEqual(_normalize_status("Incomplete (missing sections)"), "unknown")
+
+    def test_ordering_approved_before_implemented(self):
+        # BA-M2: "Approved (Implemented by PR-A)" should → approved (gatekeeping state),
+        # NOT implemented (post-merge state). approved-before-implemented in priority chain.
+        self.assertEqual(
+            _normalize_status("Approved (Implemented by PR-A)"), "approved"
+        )
+
+    # --- Positive regression: reorder didn't break single-token / multi-word ---
+
+    def test_positive_regression_single_token_states(self):
+        self.assertEqual(_normalize_status("Active"), "active")
+        self.assertEqual(_normalize_status("Reviewed"), "reviewed")
+        self.assertEqual(_normalize_status("Ready"), "ready")
+        self.assertEqual(_normalize_status("Implemented"), "implemented")  # new state
+        self.assertEqual(_normalize_status("Done"), "done")
+        self.assertEqual(_normalize_status("Archived 2026-01-01"), "archived")
+
+    def test_positive_regression_in_progress_with_done_shadow(self):
+        # "In Progress (50% done)" — multi-word phrase wins, narrative "done" doesn't shadow
+        self.assertEqual(
+            _normalize_status("In Progress (50% done)"), "in_progress"
+        )
+
+    def test_positive_regression_ready_with_done_shadow(self):
+        # "ready (Phase A done)" — single-token `ready` wins, narrative "done" doesn't shadow
+        self.assertEqual(_normalize_status("ready (Phase A done)"), "ready")
+
+    def test_implemented_does_not_trigger_pending_archive(self):
+        # Implemented spec is "post-deploy verification pending", NOT ready to archive.
+        # openspec collector's pending_archive only triggers on status=="done",
+        # so this is verified indirectly — but explicit test guards the contract.
+        self.assertEqual(_normalize_status("Implemented"), "implemented")
+        self.assertNotEqual(_normalize_status("Implemented"), "done")
+
+    def test_empty_string_is_unknown(self):
+        self.assertEqual(_normalize_status(""), "unknown")
+
+
 class TestOpenspecCollector(unittest.TestCase):
     def test_no_openspec_dir(self):
         with tmp_project() as root:
