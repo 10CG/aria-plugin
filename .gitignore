@@ -2,3 +2,6 @@
 # Python bytecode cache
 **/__pycache__/
 *.pyc
+
+# Skill-creator benchmark workspaces (kept locally, archived in aria-plugin-benchmarks/ab-results/)
+skills/*-workspace/

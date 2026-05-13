@@ -1,0 +1,407 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "aria/skills/issue-triage/references/triage-report.schema.json",
+  "title": "Triage Report",
+  "description": "Output schema for aria/skills/issue-triage/scripts/triage.py (Steps 1-5 mechanical + Step 6 AI-completed). Schema v1.0.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "triage_tool_version",
+    "issue_ref",
+    "generated_at",
+    "steps",
+    "repro",
+    "verdict",
+    "severity",
+    "recommended_action",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Triage report schema version. Current: '1.0'.",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
+      "examples": ["1.0"]
+    },
+    "triage_tool_version": {
+      "type": "string",
+      "description": "Aria plugin version read from aria/.claude-plugin/plugin.json (R2 QA-R2-m3).",
+      "examples": ["1.19.0"]
+    },
+    "issue_ref": {
+      "type": "string",
+      "description": "Canonical issue reference in '<owner>/<repo>#N' form.",
+      "pattern": "^[^/]+/[^#]+#\\d+$",
+      "examples": ["10CG/Aria#101"]
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp when triage.py ran.",
+      "format": "date-time",
+      "examples": ["2026-05-13T00:00:00Z"]
+    },
+    "steps": {
+      "type": "object",
+      "description": "Per-step mechanical collection results (Steps 1-5).",
+      "required": [
+        "step1_issue",
+        "step2_version",
+        "step3_code",
+        "step4_history",
+        "step5_inflight"
+      ],
+      "properties": {
+        "step1_issue": {
+          "$ref": "#/$defs/Step1Issue"
+        },
+        "step2_version": {
+          "$ref": "#/$defs/Step2Version"
+        },
+        "step3_code": {
+          "$ref": "#/$defs/Step3Code"
+        },
+        "step4_history": {
+          "$ref": "#/$defs/Step4History"
+        },
+        "step5_inflight": {
+          "$ref": "#/$defs/Step5Inflight"
+        }
+      },
+      "additionalProperties": false
+    },
+    "repro": {
+      "$ref": "#/$defs/Repro"
+    },
+    "verdict": {
+      "description": "Triage verdict (7 values). AI-determined in Step 6. null in mechanical output scaffold.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "partial-repro",
+            "not-reproducible",
+            "fixed-in-X",
+            "duplicate-of-#N",
+            "needs-info",
+            "wont-fix"
+          ]
+        },
+        { "type": "null" }
+      ]
+    },
+    "severity": {
+      "description": "Issue severity (AI-determined). null in mechanical output scaffold.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["critical", "major", "minor", "trivial"]
+        },
+        { "type": "null" }
+      ]
+    },
+    "recommended_action": {
+      "description": "Recommended next action (AI-determined). null in mechanical output scaffold.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["hotfix", "next-cycle", "backlog", "close"]
+        },
+        { "type": "null" }
+      ]
+    },
+    "deviation_note": {
+      "description": "Required when verdict is 'partial-repro'. Explains how repro symptoms deviate from the issue description.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "null" }
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "description": "Collector soft-error list. Empty array on full success.",
+      "items": {
+        "type": "object",
+        "required": ["step", "error", "detail"],
+        "properties": {
+          "step": { "type": "string" },
+          "error": { "type": "string" },
+          "detail": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "verdict": { "const": "partial-repro" }
+    },
+    "required": ["verdict"]
+  },
+  "then": {
+    "required": ["deviation_note"],
+    "properties": {
+      "deviation_note": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Mandatory when verdict=partial-repro. Must be a non-empty string explaining the symptom deviation."
+      }
+    }
+  },
+  "$defs": {
+    "CollectionStatus": {
+      "type": "string",
+      "enum": ["ok", "error", "skipped"],
+      "description": "Collector outcome status."
+    },
+    "Step1Issue": {
+      "type": "object",
+      "description": "Step 1: Read issue body + comments + labels from Forgejo.",
+      "required": ["collection_status", "title", "body", "labels", "comments"],
+      "properties": {
+        "collection_status": { "$ref": "#/$defs/CollectionStatus" },
+        "number": {
+          "oneOf": [{ "type": "integer" }, { "type": "null" }]
+        },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "state": { "type": "string" },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["body"],
+            "properties": {
+              "id": {},
+              "body": { "type": "string" },
+              "user": { "type": "string" },
+              "created_at": { "type": "string" }
+            }
+          }
+        },
+        "url": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "Step2Version": {
+      "type": "object",
+      "description": "Step 2: Version reported vs current (fail-soft 5-path chain).",
+      "required": ["collection_status", "current"],
+      "properties": {
+        "collection_status": { "$ref": "#/$defs/CollectionStatus" },
+        "reported": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Version extracted from issue body/comments; null if not found."
+        },
+        "current": {
+          "type": "string",
+          "description": "Current project version; 'unknown' if all 5 paths failed."
+        },
+        "gap": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["same", "behind", "ahead", "different"]
+            },
+            { "type": "null" }
+          ],
+          "description": "Version comparison result; null when either side is unknown."
+        }
+      }
+    },
+    "CitedPath": {
+      "type": "object",
+      "description": "A single file:line citation extracted from the issue.",
+      "required": ["file_path", "format", "exists"],
+      "properties": {
+        "file_path": { "type": "string" },
+        "line": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "format": {
+          "type": "string",
+          "enum": ["backtick", "prose_line", "prose_l", "md_link", "md_link_local"]
+        },
+        "exists": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "line_in_range": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "snippet": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "warning": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "total_lines": { "type": "integer" }
+      }
+    },
+    "Step3Code": {
+      "type": "object",
+      "description": "Step 3: Cited file path verification (3 citation formats).",
+      "required": ["collection_status", "cited_paths"],
+      "properties": {
+        "collection_status": { "$ref": "#/$defs/CollectionStatus" },
+        "cited_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CitedPath" }
+        },
+        "matches_description": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }],
+          "description": "True if all files exist and all cited lines are in range; null if no citations."
+        }
+      }
+    },
+    "FixCandidate": {
+      "type": "object",
+      "description": "A commit from git log that may be a fix for the issue.",
+      "required": ["sha", "message", "match_reason"],
+      "properties": {
+        "sha": { "type": "string" },
+        "message": { "type": "string" },
+        "file": { "type": "string" },
+        "match_reason": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      }
+    },
+    "Step4History": {
+      "type": "object",
+      "description": "Step 4: Git log on cited files — likely fix candidates.",
+      "required": ["collection_status", "likely_fix_candidates"],
+      "properties": {
+        "collection_status": { "$ref": "#/$defs/CollectionStatus" },
+        "likely_fix_candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FixCandidate" },
+          "description": "Empty array means no candidates found (boolean false at read time)."
+        }
+      }
+    },
+    "InFlightPR": {
+      "type": "object",
+      "description": "An open PR that keyword-matches the issue context.",
+      "required": ["title", "match_reasons"],
+      "properties": {
+        "number": {
+          "oneOf": [{ "type": "integer" }, { "type": "null" }]
+        },
+        "title": { "type": "string" },
+        "state": { "type": "string" },
+        "html_url": { "type": "string" },
+        "head_branch": { "type": "string" },
+        "match_reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "Worktree": {
+      "type": "object",
+      "description": "A git worktree entry from 'git worktree list --porcelain'.",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "branch": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "is_main": { "type": "boolean" },
+        "head": { "type": "string" },
+        "bare": { "type": "boolean" }
+      }
+    },
+    "Step5Inflight": {
+      "type": "object",
+      "description": "Step 5: In-flight check — remote PRs, local branches, worktrees.",
+      "required": ["collection_status", "remote_prs", "local_branches", "worktrees"],
+      "properties": {
+        "collection_status": { "$ref": "#/$defs/CollectionStatus" },
+        "remote_prs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/InFlightPR" }
+        },
+        "local_branches": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "worktrees": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Worktree" }
+        }
+      }
+    },
+    "ReproCase": {
+      "type": "object",
+      "description": "A single reproduction attempt (Step 6, AI-completed).",
+      "required": [
+        "case_id",
+        "input",
+        "expected_behavior",
+        "actual_behavior",
+        "match"
+      ],
+      "properties": {
+        "case_id": { "type": "string" },
+        "input": { "type": "string" },
+        "expected_behavior": { "type": "string" },
+        "actual_behavior": { "type": "string" },
+        "match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }],
+          "description": "true=reproduced, false=not reproduced, null=inconclusive"
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "Repro": {
+      "type": "object",
+      "description": "Step 6 reproduction results. AI-completed; scaffold (empty cases, null exit_mode) present in mechanical output.",
+      "required": [
+        "exit_mode",
+        "cases",
+        "hit_count",
+        "total_count",
+        "hit_rate"
+      ],
+      "properties": {
+        "exit_mode": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["auto", "pause", "skip"]
+            },
+            { "type": "null" }
+          ],
+          "description": "null in mechanical output scaffold; AI sets to auto/pause/skip."
+        },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReproCase" }
+        },
+        "hit_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of cases where match=true (R2 QA-R2-m1 mechanical comparison field)."
+        },
+        "total_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of cases attempted (R2 QA-R2-m1)."
+        },
+        "hit_rate": {
+          "type": "string",
+          "pattern": "^\\d+/\\d+$",
+          "description": "Human-readable 'N/M' string (R2 QA-R2-m1 display field).",
+          "examples": ["2/4", "0/0", "4/4"]
+        }
+      }
+    }
+  }
+}
