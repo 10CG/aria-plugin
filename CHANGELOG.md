@@ -5,6 +5,102 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] - 2026-05-13
+
+### Added — `issue-triage` Skill (Spec: aria-issue-triage-sop, Forgejo Aria #101)
+
+- **New Skill `issue-triage`** (`skills/issue-triage/`):
+  - 6-step standard SOP for triaging issues filed against Aria-managed projects
+  - `scripts/triage.py` (stdlib-only Python) + 6 sub-collectors (Step 1-5
+    mechanical) + JSON schema with `partial-repro` conditional (`if verdict ==
+    "partial-repro" then deviation_note required`)
+  - 7-verdict dictionary including **`partial-repro`** (new — captures cases
+    where issue self-report differs from actual reproduction; born from #101
+    where issue claimed 4/4 hit rate but actual was 2/4 primary + 2/4 secondary)
+  - Orthogonal fields: `severity` (critical/major/minor/trivial) +
+    `recommended_action` (hotfix/next-cycle/backlog/close)
+  - Step 6 (reproduction) supports 3 exit modes: `auto` / `pause` / `skip`
+  - Cross-repo support: 5-path fail-soft version chain
+    (plugin.json → .claude-plugin/plugin.json → VERSION → package.json → pyproject.toml)
+  - Rule #7 secret-hygiene compliant: single subprocess chokepoint with
+    `capture_output=True`, AST-verified zero leaks
+  - 115 unit tests + CI workflow YAML, full schema validation gate
+
+- **Truth-source convention** (`aria-standards`):
+  - New SOT doc `standards/conventions/issue-triage.md` (464 lines) — 6-step
+    SOP definition, verdict dictionary, exception template
+  - SKILL.md references SOT (no duplication) — mirrors Rule #7
+    secret-hygiene.md pattern
+
+- **Skill count**: 30 user-facing → **31 user-facing** (6 internal unchanged)
+
+### Fixed — state-scanner `_normalize_status` (Spec: aria-issue-101-status-normalize, Forgejo Aria #101)
+
+- **Bug 1 — substring shadow class**: `done` / `complete` / etc. token checks
+  used `if X in low` which matched substrings. Status strings like
+  `"Approved (Rev2 CONVERGED) — Phase A done"` matched `done` and returned
+  `status=done` before reaching `approved`, causing `pending_archive` false
+  positives → silent risk of WIP spec moved to archive on user accept of
+  state-scanner recommendation.
+
+- **Bug 2 — missing `implemented` token**: Status values like
+  `"Implemented (Phase B PR-A merged) — post-deploy 验证后归档"` returned
+  `unknown` (not in token dictionary). Caused state-scanner to drop legitimate
+  Implemented specs from active classification.
+
+- **Fix — word-boundary regex** (`\b<token>\b` via new `_has_token` helper):
+  - Root-causes the entire substring-shadow class
+  - Bonus pre-existing bug fixes: `inactive` no longer matches `active`,
+    `incomplete` no longer matches `complete`
+  - Prevents would-be regression: `unimplemented` does not match `implemented`
+
+- **Priority chain refined** per R1 audit BA-M2:
+  - Terminal (archived/deprecated) → pending family → in_progress family →
+    **approved → implemented** (gatekeeping state before post-merge state) →
+    reviewed/active/ready → done/complete (LAST fallback)
+
+- **New lifecycle state `implemented`**: Post-merge state, between `approved`
+  and `done`. For specs with code merged but awaiting post-deploy verify /
+  monitoring / archive trigger.
+
+- **state-scanner SKILL.md** adds "Status 字段最佳实践" section: supported
+  token table with priority order + recommended format examples + anti-pattern
+  educational notes (historical shadow traps now safe under word-boundary).
+
+- **Tests**: New `TestStatusNormalizationIssue101Fix` class with 13 cases
+  (4 #101 真实 strings + 4 shadow guards + 5 positive regression). Full
+  state-scanner test suite: 414 → 427, **0 regression**.
+
+- **Live verify**: Aria itself `pending_archive` false positives **4 → 0**
+  on current active specs.
+
+### Methodology
+
+- **Two cycles single-day completion** demonstrating triage SOP value:
+  1. `aria-issue-triage-sop` (Phase A+B+C+D, 8 task groups, 3 repos) —
+     2 audits (R1+R2 post_spec SCOPE_OK_R2), T5 dogfood PASS, T8 Rule #6
+     benchmark +21.8pp overall / +53.3pp structural
+  2. `aria-issue-101-status-normalize` (Phase A+B+C+D, deterministic bug fix) —
+     post_spec R1 SCOPE_OK_R1, Rule #6 deterministic AB +77pp (pre 3/13 vs
+     post 13/13), 0 regression
+- **Public dogfood evidence**:
+  - Manual triage: https://forgejo.10cg.pub/10CG/Aria/issues/101#issuecomment-5972
+  - AI dogfood: https://forgejo.10cg.pub/10CG/Aria/issues/101#issuecomment-6019
+- **Decision memo**: `docs/decisions/2026-05-13-rule-9-deferral.md` (main
+  Aria repo) — Rule #9 (issue triage enforcement) deferred, requires
+  ≥3 dogfood + 1 missed-triage incident before reconsidering
+
+### References
+
+- Spec archive: `openspec/archive/2026-05-13-aria-issue-triage-sop/`
+- Spec archive: `openspec/archive/2026-05-13-aria-issue-101-status-normalize/`
+- Audit reports: `.aria/audit-reports/post_spec-{R1,R2}-2026-05-13-*.md`
+- Benchmark archive: `aria-plugin-benchmarks/ab-results/2026-05-13-issue-triage/`
+- Benchmark archive: `aria-plugin-benchmarks/ab-results/2026-05-13-state-scanner-issue-101-fix/`
+- Closes: Forgejo Aria #101
+
+---
+
 ## [1.19.0] - 2026-05-10
 
 ### Added — phase-c-integrator pre-merge gate (Spec: phase-c-integrator-pre-merge-gate, Forgejo Issue #60)
