@@ -39,37 +39,75 @@ def _extract_status(text: str) -> str | None:
     return None
 
 
+def _has_token(text: str, token: str) -> bool:
+    """Match `token` as a whole word in `text` (word-boundary anchored).
+
+    Prevents substring shadowing — `inactive` no longer matches `active`,
+    `unimplemented` no longer matches `implemented`, `incomplete` no longer
+    matches `complete`, etc. Both arguments must already be lower-cased
+    by the caller.
+
+    Fixes Forgejo Aria #101 (substring matching false positives).
+    """
+    return re.search(r"\b" + re.escape(token) + r"\b", text) is not None
+
+
 def _normalize_status(raw: str | None) -> str:
     """Normalize Status string to OpenSpec-aligned lifecycle states.
 
-    Preserves semantic distinction between Draft / Reviewed / Approved / In Progress
-    / Done / Active / Deprecated / Archived (R1-I5). `ready` is for User Stories
-    with explicit `ready` marker only.
+    Priority order (refined per Forgejo Aria #101 fix, 2026-05-13):
+      1. Terminal (archived / deprecated) — irreversible
+      2. Pending family (draft / pending / placeholder)
+      3. In-progress family (multi-word + i18n; literal substring is unambiguous)
+      4. approved (BEFORE implemented — "Approved (Implemented by PR-A)" → approved)
+      5. implemented (NEW lifecycle state; was missing from token dictionary)
+      6. reviewed / active / ready
+      7. done / complete — LAST fallback (prevents the original #101 substring shadow)
+
+    Word-boundary matching via `_has_token` roots out the entire substring-shadow
+    bug class (#101 primary + secondary). Multi-word phrases use literal substring
+    because they cannot be ambiguous within Status strings.
+
+    See:
+      - Forgejo Aria #101 (root cause + manual triage)
+      - openspec/archive/2026-05-13-aria-issue-101-status-normalize/ (fix proposal)
     """
     if raw is None:
         return "unknown"
     low = raw.lower()
-    for token in ("archived",):
-        if token in low:
-            return "archived"
-    for token in ("deprecated",):
-        if token in low:
-            return "deprecated"
-    for token in ("done", "complete"):
-        if token in low:
-            return "done"
-    for token in ("in progress", "in_progress", "in-progress", "进行中"):
-        if token in low:
-            return "in_progress"
-    if "approved" in low:
-        return "approved"
-    if "reviewed" in low:
-        return "reviewed"
-    if "active" in low:
-        return "active"
-    if "ready" in low:
-        return "ready"
+
+    # Terminal states first (irreversible lifecycle endpoints)
+    if _has_token(low, "archived"):
+        return "archived"
+    if _has_token(low, "deprecated"):
+        return "deprecated"
+
+    # Pending family
     for token in ("draft", "pending", "placeholder"):
-        if token in low:
+        if _has_token(low, token):
             return "pending"
+
+    # In-progress family (multi-word phrases + i18n — literal substring is correct
+    # here because these phrases are unambiguous within Status strings)
+    for phrase in ("in progress", "in_progress", "in-progress", "进行中"):
+        if phrase in low:
+            return "in_progress"
+
+    # approved BEFORE implemented (#101 fix BA-M2: "Approved (Implemented by PR-A)" → approved)
+    if _has_token(low, "approved"):
+        return "approved"
+    if _has_token(low, "implemented"):  # #101 fix Bug 2: was missing from dict
+        return "implemented"
+    if _has_token(low, "reviewed"):
+        return "reviewed"
+    if _has_token(low, "active"):
+        return "active"
+    if _has_token(low, "ready"):
+        return "ready"
+
+    # done/complete LAST as fallback (#101 fix Bug 1: prevents substring shadow)
+    for token in ("done", "complete"):
+        if _has_token(low, token):
+            return "done"
+
     return "unknown"
