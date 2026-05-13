@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.19.0
-> **发布日期**: 2026-05-10
+> **版本**: 1.20.0
+> **发布日期**: 2026-05-13
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.19.0
+1.20.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (18)**: state-scanner inter-cycle surfacing — G2/G3/G4 collectors 实装 (UPM Pending Followups parser + handoff_doc pointer detection + in_progress US priority_items derived view) + 2 新推荐规则 (pending_followups_p1 优先级 1.85, resume_in_progress_us 优先级 1.88) + git.status_clean derived 字段 + 4 nested schema 字段 backward-compat contract + SKILL.md T5 兜底降级 (17 → ~9 行 sanity check). Spec `state-scanner-inter-cycle-surfacing` 全 18 任务实装完毕，分 3 sub-PR (a/b/c) merge.
-- **Patch (0)**: 此版无 patch 修复，所有 minor 增量为 spec-driven feature ship.
+- **Minor (20)**: 新增 `issue-triage` Skill (6-step SOP + scripts/triage.py + 7-verdict 字典 + `partial-repro` verdict + word-boundary regex 通用化 in state-scanner) + 新增 `implemented` lifecycle state in state-scanner (post-merge / awaiting verify) + Forgejo Aria #101 root-cause fix (`_normalize_status` substring shadow class — `inactive`/`unimplemented`/`incomplete` 一并解决). 两 cycle 单日完成: `aria-issue-triage-sop` + `aria-issue-101-status-normalize` (manual triage → AI dogfood → fix → ship 完整闭环).
+- **Patch (0)**: 此版无独立 patch 修复,所有变更为 spec-driven feature/fix.
 
 ## 包含内容
 
-### Skills (30 面向用户 + 6 内部 = 36 total)
+### Skills (31 面向用户 + 6 内部 = 37 total)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -39,8 +39,9 @@
 **需求管理 (4个)**
 - requirements-validator, requirements-sync, forgejo-sync, openspec-archive
 
-**反馈与报告 (1个)**
-- aria-report
+**反馈与报告 (2个)**
+- aria-report (用户向 Aria 团队反馈, inbound)
+- issue-triage (Aria 团队核对 issue, outbound, v1.20.0 新增)
 
 **看板与可视化 (1个)**
 - aria-dashboard
