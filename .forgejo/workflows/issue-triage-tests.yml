@@ -1,0 +1,61 @@
+# issue-triage unit tests — CI workflow
+#
+# Runs the pytest suite for aria/skills/issue-triage/tests/ on every push
+# and pull request. Validates:
+#   - JSON schema positive/negative cases (T4.1)
+#   - Exit code boundary tests (T4.4)
+#   - Version collector fail-soft chain (T1.3 + M2)
+#   - Code citation format parsing (T1.4)
+#   - History collector (T1.5)
+#   - Inflight collector 3-section independence (T1.6 + m5)
+#   - Rule #7 secret hygiene AST checks (T1.2/T1.6)
+#   - Idempotency (mid-review concern 11)
+#
+# Spec: openspec/changes/aria-issue-triage-sop/tasks.md §T4.5
+
+name: issue-triage tests
+
+on:
+  push:
+    paths:
+      - 'skills/issue-triage/**'
+  pull_request:
+    paths:
+      - 'skills/issue-triage/**'
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    name: pytest issue-triage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aria plugin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pytest jsonschema
+
+      - name: Run issue-triage tests
+        run: |
+          python3 -m pytest skills/issue-triage/tests/ -v --tb=short
+        env:
+          TRIAGE_LOG_LEVEL: WARNING
+
+      - name: Upload test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: |
+            .pytest_cache/
+          retention-days: 7
