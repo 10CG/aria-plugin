@@ -1,0 +1,26 @@
+{
+  "skill_name": "issue-triage",
+  "evals": [
+    {
+      "id": 1,
+      "name": "aria-101-direct-ref",
+      "prompt": "core-team 反馈 aria-plugin 有个 state-scanner 把活跃 spec 误归为 done 的 bug — Forgejo Aria #101。先帮我核对一下,看是不是已经修了或者有人在做。我们工作目录是 /home/dev/Aria,在 master 分支上。",
+      "expected_output": "完整 6 步 triage 输出: version check 1.17.3 vs current 1.19.0, code path verify aria/skills/state-scanner/scripts/collectors/_status.py:58-60 exists, git log on _status.py 无 fix commit, in-flight 0 PR/branch, repro 4 个 Status 字符串 (2/4 命中主 bug + 2/4 命中 Implemented 词典缺失次生 bug), verdict partial-repro + deviation_note 描述 4/4 vs 2/4 偏差",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "silknode-207-url-only",
+      "prompt": "用户在 SilkNode 提了个生产 bug,链接 https://forgejo.10cg.pub/10CG/silknode/issues/207 — 大概是 Consul template 重渲染 REDIS_URL 偶发空值。帮我看看这是不是已经修过、或者有人正在做。要不要立刻起 hotfix cycle?",
+      "expected_output": "Cross-repo triage: 拉 silknode/207 内容, version check (SilkNode 项目,version.current 应 fail-soft 找到 VERSION 或返回 unknown 不报错), Step 5 in-flight 应跨 silknode + silknode-web repo 搜索关联 PR/branch, Step 6 repro 因为生产 infra bug 一般不能本地 repro → exit_mode=skip + verdict=needs-info 或 partial-repro 取决于 in-flight 是否命中, 最后给出 hotfix/next-cycle/backlog 的 recommended_action 建议",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "ambiguous-recent-bug-ref",
+      "prompt": "我记得最近 Aria 仓库有个 state-scanner 不显示 in-flight 改动的 bug 反馈,好像是 #89 还是 #90?帮我查一下,核对完告诉我现在应该怎么做。",
+      "expected_output": "歧义引用处理: 应先 list 候选 issue (#89 + #90 各 fetch 一次,选最近且 open 的那个);完成 6 步 triage;若两个都 open 应分别 triage 并标记彼此 duplicate 嫌疑;最终 verdict + 后续动作建议",
+      "files": []
+    }
+  ]
+}
