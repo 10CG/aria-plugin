@@ -19,6 +19,15 @@ Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
 
 `age_hours` uses `time.time()` not `datetime.now()` to avoid timezone/DST
 pitfalls. mtime is filesystem-native UTC seconds-since-epoch.
+
+`latest.md` (the navigation pointer file) is excluded from latest detection
+to avoid surfacing the pointer instead of the actual newest handoff doc
+(see QA-M2 finding in pre_merge R1 audit 2026-05-14).
+
+Soft errors (emitted to `r.errors[]`, snapshot exit code 10):
+- `handoff_canonical_scan_failed` — iterdir/permission failure on docs/handoff/
+- `handoff_forbidden_scan_failed` — iterdir/permission failure on .aria/handoff/
+- `handoff_stat_failed` — stat() failure on a candidate file (rare; race conditions)
 """
 
 from __future__ import annotations
@@ -31,13 +40,31 @@ from ._common import CollectorResult
 
 CANONICAL_DIR = "docs/handoff/"
 FORBIDDEN_DIR = ".aria/handoff/"
+POINTER_FILENAME = "latest.md"  # not a handoff doc; excluded from latest detection
+
+
+class _ScanError(Exception):
+    """Internal: signal that a directory scan failed (permission denied, etc.).
+
+    Caught by `collect_handoff` to emit soft_error with directory context.
+    Cannot use `r.soft_error` from `_scan_md_files` directly because the helper
+    doesn't have access to the CollectorResult.
+    """
 
 
 def _scan_md_files(directory: Path) -> list[Path]:
-    """Return all .md files directly in directory (non-recursive), defensively.
+    """Return handoff .md files directly in directory (non-recursive).
 
-    Skips files whose names cannot be decoded as UTF-8 (non-UTF-8 filenames
+    Filters out the `latest.md` pointer file — it's a navigation aid, not a
+    handoff document. Including it would cause mtime sort to always surface
+    the pointer (which is updated on every handoff write) instead of the
+    actual newest handoff doc (QA-M2 fix).
+
+    Skips files whose names cannot be encoded as UTF-8 (non-UTF-8 filenames
     on the filesystem); these are extremely rare but possible on Linux.
+
+    Raises `_ScanError` on iterdir/permission failure so the caller can emit
+    a soft_error (QA-M1 fix — previously silent → exists=False with no error).
     """
     if not directory.is_dir():
         return []
@@ -45,14 +72,13 @@ def _scan_md_files(directory: Path) -> list[Path]:
     try:
         for entry in directory.iterdir():
             try:
-                # Trigger UnicodeDecodeError for non-UTF-8 filenames before mtime call
                 _ = entry.name.encode("utf-8")
             except UnicodeError:
                 continue
-            if entry.is_file() and entry.suffix == ".md":
+            if entry.is_file() and entry.suffix == ".md" and entry.name != POINTER_FILENAME:
                 out.append(entry)
-    except OSError:
-        return []
+    except OSError as e:
+        raise _ScanError(f"{directory}: {e}") from e
     return out
 
 
@@ -62,8 +88,17 @@ def collect_handoff(project_root: Path) -> CollectorResult:
     canonical = project_root / "docs" / "handoff"
     forbidden = project_root / ".aria" / "handoff"
 
-    canonical_files = _scan_md_files(canonical)
-    forbidden_files = _scan_md_files(forbidden)
+    try:
+        canonical_files = _scan_md_files(canonical)
+    except _ScanError as e:
+        r.soft_error("handoff_canonical_scan_failed", str(e))
+        canonical_files = []
+
+    try:
+        forbidden_files = _scan_md_files(forbidden)
+    except _ScanError as e:
+        r.soft_error("handoff_forbidden_scan_failed", str(e))
+        forbidden_files = []
 
     misplaced = sorted(
         str(p.relative_to(project_root)) for p in forbidden_files
@@ -81,9 +116,12 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         }
         return r
 
+    # Cache stat() results once (B-M1 fix — was calling stat() twice per file
+    # due to max(key=...) discarding the StatResult, plus a second stat() on
+    # the winning path. Gratuitous TOCTOU window even though both were in
+    # the same try/except block).
     try:
-        latest = max(canonical_files, key=lambda p: p.stat().st_mtime)
-        mtime = latest.stat().st_mtime
+        mtimes = {p: p.stat().st_mtime for p in canonical_files}
     except OSError as e:
         r.soft_error("handoff_stat_failed", str(e))
         r.data = {
@@ -96,6 +134,9 @@ def collect_handoff(project_root: Path) -> CollectorResult:
             "canonical_dir": CANONICAL_DIR,
         }
         return r
+
+    latest = max(canonical_files, key=lambda p: mtimes[p])
+    mtime = mtimes[latest]
 
     age_hours = (time.time() - mtime) / 3600
     last_mod_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(

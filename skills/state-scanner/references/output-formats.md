@@ -682,4 +682,4 @@ stale handoff (age > 30 天 / 720h):
 
 ---
 
-**最后更新**: 2026-04-09
+**最后更新**: 2026-05-14 (H0 spec — added handoff doc surfaced + drift detected variants)

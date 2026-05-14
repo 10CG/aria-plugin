@@ -153,6 +153,90 @@ class TestSchemaAdditive(unittest.TestCase):
             self.assertTrue(iso.endswith("+00:00"), f"Expected UTC suffix, got {iso}")
 
 
+class TestLatestPointerExclusion(unittest.TestCase):
+    """QA-M2 fix: `latest.md` is a pointer file, not a handoff doc.
+
+    Including it would make mtime sort always surface the pointer
+    (which is updated on every handoff write), instead of the actual
+    newest handoff doc.
+    """
+
+    def test_latest_md_not_picked_as_latest(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "2026-05-01-real.md").write_text("# real\n", encoding="utf-8")
+            (handoff / "latest.md").write_text("# pointer\n", encoding="utf-8")
+            # latest.md mtime is newer (just written after the other)
+            _touch(handoff / "latest.md", mtime_offset=0)
+            _touch(handoff / "2026-05-01-real.md", mtime_offset=-3600)
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "2026-05-01-real.md")
+            self.assertNotEqual(r.data["latest_filename"], "latest.md")
+
+    def test_only_pointer_in_dir_yields_empty(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "latest.md").write_text("# pointer\n", encoding="utf-8")
+
+            r = collect_handoff(root)
+
+            self.assertFalse(r.data["exists"])
+            self.assertIsNone(r.data["latest_path"])
+
+
+class TestPermissionErrors(unittest.TestCase):
+    """QA-M1 fix: permission-denied directory must emit soft_error,
+    not silently return exists=False with empty errors[]."""
+
+    def test_canonical_unreadable_emits_soft_error(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "ok.md").write_text("# ok\n", encoding="utf-8")
+            # Make dir unreadable (chmod 000)
+            os.chmod(handoff, 0o000)
+            try:
+                r = collect_handoff(root)
+
+                self.assertFalse(r.data["exists"])
+                # Must have at least one error entry naming the scan failure
+                error_kinds = {e["error"] for e in r.errors}
+                self.assertIn("handoff_canonical_scan_failed", error_kinds)
+            finally:
+                # Restore so tempdir cleanup works
+                os.chmod(handoff, 0o755)
+
+
+class TestHookSmokeIntegration(unittest.TestCase):
+    """QA-M3 fix: wrap shell hook smoke test so run_tests.py discovers it."""
+
+    def test_hook_smoke_test_passes(self):
+        import subprocess
+
+        tests_dir = Path(__file__).resolve().parent
+        smoke_script = tests_dir / "test_handoff_hook.sh"
+        if not smoke_script.is_file():
+            self.skipTest(f"hook smoke script not found at {smoke_script}")
+
+        r = subprocess.run(
+            ["bash", str(smoke_script)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            r.returncode,
+            0,
+            msg=f"hook smoke test failed (rc={r.returncode}):\n{r.stdout}\n{r.stderr}",
+        )
+        self.assertIn("PASS: 10", r.stdout)
+        self.assertIn("FAIL: 0", r.stdout)
+
+
 class TestEdgeCases(unittest.TestCase):
     """Defensive edge cases per proposal §Risk and Success Criteria."""
 

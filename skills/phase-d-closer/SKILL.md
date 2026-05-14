@@ -363,8 +363,14 @@ trigger_level_1_primary:
 trigger_level_2_cycles_shipped:
   signal: git log since last `docs/handoff/*.md` mtime
   check: count distinct openspec/archive/{date}-*/ entries created > N >= 2
-  command_hint: |
+  command_hint_linux: |
     last_handoff_mtime=$(stat -c '%Y' $(ls -t docs/handoff/*.md | head -1))
+  command_hint_macos: |
+    last_handoff_mtime=$(stat -f '%m' $(ls -t docs/handoff/*.md | head -1))
+  command_hint_portable: |
+    # Python alternative (cross-platform, recommended for AI implementations):
+    last_handoff_mtime=$(python3 -c "import os, glob; files=sorted(glob.glob('docs/handoff/*.md'), key=os.path.getmtime, reverse=True); print(int(os.path.getmtime(files[0])) if files else 0)")
+  count_command: |
     git log --since="@$last_handoff_mtime" --diff-filter=A --name-only -- "openspec/archive/*/proposal.md" | sort -u | wc -l
   fallback_if_missing: go to level 3
 
@@ -372,6 +378,7 @@ trigger_level_3_phase_count:
   signal: count distinct "Phase {A,B,C,D}" markers in commit subjects since last handoff
   check: distinct phase count >= 2
   command_hint: |
+    # uses $last_handoff_mtime computed in level 2 (portable)
     git log --since="@$last_handoff_mtime" --format="%s" | grep -oE "Phase [ABCD]" | sort -u | wc -l
   fallback_if_missing: go to level 4
 
