@@ -24,6 +24,8 @@ Coverage (schema v1.0):
               for `local_refs` mode; optional `ls_remote` opt-in)
 - Phase 1.13: Issue awareness (opt-in via issue_scan.enabled; Forgejo/GitHub)
 - Phase 1.14: Forgejo CLAUDE.local.md config detection
+- Phase 1.15: Session-handoff doc surfacing (docs/handoff/ canonical + .aria/
+              handoff/ misplaced detection; additive top-level `handoff` field)
 
 Invariants (do not break without schema bump):
 - Top-level field `snapshot_schema_version` is the ONLY version gate SKILL.md
@@ -51,6 +53,7 @@ from collectors import (
     collect_custom_checks,
     collect_forgejo_config,
     collect_git_state,
+    collect_handoff,
     collect_interrupt_state,
     collect_issue_scan,
     collect_multi_remote,
@@ -92,6 +95,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_12_multi = collect_multi_remote(project_root)
     phase1_13_issue = collect_issue_scan(project_root)
     phase1_14_forgejo = collect_forgejo_config(project_root)
+    phase1_15_handoff = collect_handoff(project_root)
 
     # T3.3 contract: multi_remote.data returns the inner block; nest under
     # sync_status.multi_remote (overrides the T3.2 stub of {"enabled": false}).
@@ -114,6 +118,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         ("multi_remote", phase1_12_multi),
         ("issue_scan", phase1_13_issue),
         ("forgejo_config", phase1_14_forgejo),
+        ("handoff", phase1_15_handoff),
     ]:
         for err in result.errors:
             errors.append({"collector": collector_name, **err})
@@ -135,6 +140,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         "custom_checks": phase1_11_custom.data,
         "sync_status": phase1_12_sync.data,
         "forgejo_config": phase1_14_forgejo.data,
+        "handoff": phase1_15_handoff.data,
         "errors": errors,
     }
 
