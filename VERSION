@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.20.0
-> **发布日期**: 2026-05-13
+> **版本**: 1.21.0
+> **发布日期**: 2026-05-14
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.20.0
+1.21.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (20)**: 新增 `issue-triage` Skill (6-step SOP + scripts/triage.py + 7-verdict 字典 + `partial-repro` verdict + word-boundary regex 通用化 in state-scanner) + 新增 `implemented` lifecycle state in state-scanner (post-merge / awaiting verify) + Forgejo Aria #101 root-cause fix (`_normalize_status` substring shadow class — `inactive`/`unimplemented`/`incomplete` 一并解决). 两 cycle 单日完成: `aria-issue-triage-sop` + `aria-issue-101-status-normalize` (manual triage → AI dogfood → fix → ship 完整闭环).
-- **Patch (0)**: 此版无独立 patch 修复,所有变更为 spec-driven feature/fix.
+- **Minor (21)**: H0 `aria-ten-step-session-handoff-stage` — 十步循环加 D.3 session-handoff 步骤 + 新 `handoff` Phase 1.15 collector + 5 层防漂移 enforcement matrix (L1 PreToolUse hook + L2 collector + L3 RECOMMENDATION_RULES rule + L4 standards/conventions SOT + L5 phase-d-closer template hardcode) + CLAUDE.md Rule #9 ship-time 激活 + Aria 自身 6 files migration (`.aria/handoff/` → `docs/handoff/`). 4 dogfood incidents 驱动 (SilkNode 1 + Aria self 3). 442 unit tests + 10 hook smoke (100% pass). pre_merge audit R1 SCOPE_OK_R1 (3 agents convergence, 0 Critical, 5 Major inline-fixed). Forgejo Aria #92 完整闭环.
+- **Patch (0)**: 此版无独立 patch 修复,所有变更为 spec-driven feature.
 
 ## 包含内容
 
@@ -62,6 +62,7 @@
 ### Hooks 系统
 
 - SessionStart → 中断恢复检测 (session-start-check.sh)
+- PreToolUse → handoff-location-guard.sh (v1.21.0 新增, Rule #9 L1 enforcement — 阻止写 .aria/handoff/*.md)
 
 ## v1.15.0 核心成果 — US-012 多远程一致性保障
 
