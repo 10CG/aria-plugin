@@ -1,9 +1,9 @@
 ---
 name: phase-d-closer
 description: |
-  十步循环 Phase D - 收尾阶段执行器，编排 D.1-D.2 步骤。
+  十步循环 Phase D - 收尾阶段执行器，编排 D.1-D.3 步骤。
 
-  使用场景："执行收尾阶段"、"Phase D"、"更新进度并归档 Spec"
+  使用场景："执行收尾阶段"、"Phase D"、"更新进度并归档 Spec"、"写 session handoff"
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Bash, Task
@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 
 # Phase D - 收尾阶段 (Closer)
 
-> **版本**: 1.0.0 | **十步循环**: D.1-D.2
+> **版本**: 1.1.0 | **十步循环**: D.1-D.3 (D.3 added by H0 spec 2026-05-14)
 
 ## 快速开始
 
@@ -36,6 +36,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 |------|-------|------|------|
 | D.1 | progress-updater | 进度更新 | upm_updated |
 | D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug) | spec_archived |
+| D.3 | session-handoff (本 Skill 内嵌) | 写 session handoff doc 到 `docs/handoff/` | handoff_written |
 
 ---
 
@@ -110,13 +111,30 @@ D.2 - Spec 归档:
   output:
     spec_archived: true
     archive_path: "openspec/archive/add-auth-feature/"
+
+D.3 - Session handoff (新增 2026-05-14 by H0 spec):
+  trigger_check: 任一满足即 prompt (用户可拒, 不强制)
+  output_path_hardcoded: "docs/handoff/{YYYY-MM-DD}-{slug}.md"
+  template: "aria/templates/session-handoff.md"
+  forbidden_path: ".aria/handoff/"   # L1 hook 会拦, L5 此处也硬约束
+  skip_if:
+    - user_declines: true
+  action:
+    1. 评估触发条件 (见 §D.3 触发条件 below)
+    2. 触发命中 → fill template (9-section skeleton) → write to docs/handoff/
+    3. 更新 docs/handoff/latest.md pointer
+    4. (optional) 提示 user commit handoff doc
+  output:
+    handoff_written: true
+    handoff_path: "docs/handoff/2026-05-14-h0-cycle-done.md"
+    latest_pointer_updated: true
 ```
 
 ### 输出
 
 ```yaml
 success: true
-steps_executed: [D.1, D.2]
+steps_executed: [D.1, D.2, D.3]
 steps_skipped: []
 results:
   D.1:
@@ -125,6 +143,10 @@ results:
   D.2:
     spec_archived: true
     archive_path: "..."
+  D.3:
+    handoff_written: true
+    handoff_path: "docs/handoff/2026-05-14-h0-cycle-done.md"
+    latest_pointer_updated: true
 
 context_for_next: null  # Phase D 是最后阶段
 ```
@@ -138,6 +160,8 @@ context_for_next: null  # Phase D 是最后阶段
 | 无 UPM | D.1 | UPM 文档不存在 |
 | 无 OpenSpec | D.2 | openspec/changes/ 为空 |
 | Spec 未完成 | D.2 | tasks.md 有未完成项 |
+| 触发条件未满足且 user prompt 拒绝 | D.3 | 见 §D.3 触发条件 |
+| Level 1 quick fix (无 spec, 单 commit) | D.3 | 启发式 — Level 标记或 changes.complexity |
 
 ### 跳过逻辑
 
@@ -318,6 +342,97 @@ on_upm_conflict:
 
 ---
 
+## §D.3 详细说明 (新增 2026-05-14, H0 spec)
+
+### 目的
+
+session 结束时**标准化引导**写 handoff doc, 让下一个 session AI/人 zero-context 可恢复优先级 + carry-forward。
+
+历史问题: handoff 写不写、写哪个 dir、什么格式各项目自发演进, 导致跨 session 上下文丢失 (4 起 dogfood 实证, 见 H0 spec)。
+
+### 触发条件 (任一满足即 prompt user)
+
+按 fallback 优先级评估 (F2 audit fix per backend-M1 — 信号缺失也能 prompt):
+
+```yaml
+trigger_level_1_primary:
+  signal: workflow-state.json::session.started_at
+  check: now - started_at > 4h
+  fallback_if_missing: go to level 2
+
+trigger_level_2_cycles_shipped:
+  signal: git log since last `docs/handoff/*.md` mtime
+  check: count distinct openspec/archive/{date}-*/ entries created > N >= 2
+  command_hint: |
+    last_handoff_mtime=$(stat -c '%Y' $(ls -t docs/handoff/*.md | head -1))
+    git log --since="@$last_handoff_mtime" --diff-filter=A --name-only -- "openspec/archive/*/proposal.md" | sort -u | wc -l
+  fallback_if_missing: go to level 3
+
+trigger_level_3_phase_count:
+  signal: count distinct "Phase {A,B,C,D}" markers in commit subjects since last handoff
+  check: distinct phase count >= 2
+  command_hint: |
+    git log --since="@$last_handoff_mtime" --format="%s" | grep -oE "Phase [ABCD]" | sort -u | wc -l
+  fallback_if_missing: go to level 4
+
+trigger_level_4_user_prompt:
+  prompt: |
+    "本 session 是否符合 D.3 触发条件之一?
+       (a) 跨度 > 4h
+       (b) ship >= 2 cycles
+       (c) 跨 >= 2 phases
+     默认 yes (D.2 archive 已成功通常意味本 session 完整闭环)。
+     选择: y / n / 详情 (查看 fallback 信号原始值)"
+  default_if_silent: "yes" (D.2 archive 成功且 user 在场)
+```
+
+### 输出路径硬编码 (L5 enforcement, 不可修改)
+
+```
+docs/handoff/{YYYY-MM-DD}-{slug}.md
+
+slug 规则 (优先级):
+  1. user 提供 (如 "h0-cycle-done")
+  2. cycle change_id 后缀 (如 "aria-ten-step-session-handoff-stage" → "h0-stage")
+  3. fallback: "session-handoff"
+
+同日重名 fallback:
+  docs/handoff/{YYYY-MM-DD}-{HHMM}-{slug}.md
+```
+
+**绝对禁止**: 写 `.aria/handoff/*` (L1 PreToolUse hook 会拦; L4 convention SOT 显式 forbidden)。
+
+### 模板使用
+
+读 `aria/templates/session-handoff.md` (9-section skeleton), 按 variable 字典 substitute:
+
+| Variable | 来源 |
+|----------|------|
+| `{project}` | `.aria/config.json::project.name` 或 git remote 推断 |
+| `{date}` | `date -u +%Y-%m-%d` |
+| `{cycle_name}` | spec change_id 或 user 提供 |
+| `{session_duration}` | level 1/2/3 信号计算的实测值 |
+| `{shipped_cycles}` | level 2 信号 count |
+| `{memory_entries_count}` | `ls ~/.claude/projects/*/memory/*.md` since last handoff |
+| `{next_session_entry}` | "/aria:state-scanner" (Aria projects); 其他项目按 `.aria/config.json::next_session_command` |
+| `{start_date}` | 上次 handoff 的 last_modified_iso (from snapshot.handoff) |
+
+### latest.md pointer 更新
+
+新 handoff 写完后, 自动更新 `docs/handoff/latest.md`:
+- Latest 字段指向新 doc 的相对路径
+- "历史 handoff" 表格首行 prepend 新条目 (Status: **Active (Latest)**)
+- 前一 Latest 改为 "Active (parallel predecessor)" 或 "superseded" (由 user 判断)
+
+### Forbidden patterns (L5 hardcode)
+
+- ❌ 写到 `.aria/handoff/` (L1 hook 会拦)
+- ❌ 文件名含空格或特殊字符 (用 hyphen)
+- ❌ 跳过 latest.md 更新 (导致 stale pointer)
+- ❌ 用 datetime.now() 计算 — 用 UTC `date -u`
+
+---
+
 ## 与其他 Phase 的关系
 
 ```
@@ -329,7 +444,12 @@ phase-c-integrator
     ▼
 phase-d-closer (本 Skill)
     │
-    │ 工作流结束
+    ├── D.1 progress-updater (UPM 更新)
+    ├── D.post audit checkpoint (经验提取, convergence 1 round)
+    ├── D.2 openspec-archive (Spec 归档)
+    └── D.3 session-handoff (写 handoff to docs/handoff/, latest.md update)
+    │
+    │ 工作流结束 → 下次 session: /aria:state-scanner 自动 surface handoff
     ▼
   (完成)
 ```
@@ -340,10 +460,13 @@ phase-d-closer (本 Skill)
 
 - [progress-updater](../progress-updater/SKILL.md) - D.1 进度更新
 - [openspec:archive](../../commands/openspec/archive.md) - D.2 Spec 归档
+- [session-handoff template](../../templates/session-handoff.md) - D.3 9-section skeleton (H0 spec 2026-05-14)
+- [session-handoff convention](../../../standards/conventions/session-handoff.md) - L4 SOT (added by H0)
 - [phase-c-integrator](../phase-c-integrator/SKILL.md) - 上一阶段
 - [UPM 规范](../../../standards/core/upm/unified-progress-management-spec.md)
+- [state-scanner Phase 1.15 handoff awareness](../state-scanner/SKILL.md) - D.3 输出在下次 session start 自动 surface
 
 ---
 
-**最后更新**: 2025-12-25
-**Skill版本**: 1.0.0
+**最后更新**: 2026-05-14 (H0 spec — D.3 session-handoff step added)
+**Skill版本**: 1.1.0
