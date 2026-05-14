@@ -342,6 +342,73 @@
 
 ---
 
+## Handoff doc surfaced (Phase 1.15, H0 spec 2026-05-14)
+
+正常情况 (canonical dir 有文件, 无漂移):
+
+```
+📜 Session Handoff
+───────────────────────────────────────────────────────────────
+  上次 handoff: 2026-05-13-issue-101-cycle-closeout.md
+  写入时间: 2026-05-13T20:31:00+00:00 (~24h ago)
+  路径: docs/handoff/2026-05-13-issue-101-cycle-closeout.md
+  ✅ AI 已读取本 doc, §next session 入口指引已纳入推荐
+```
+
+无 handoff (空 canonical dir):
+
+```
+📜 Session Handoff
+───────────────────────────────────────────────────────────────
+  上次 handoff: 无 (docs/handoff/ 为空)
+  提示: Phase D.3 (phase-d-closer) 在 session 结束时会引导写 handoff
+```
+
+stale handoff (age > 30 天 / 720h):
+
+```
+📜 Session Handoff
+───────────────────────────────────────────────────────────────
+  上次 handoff: 2026-04-01-old.md
+  ⚠️ 写入时间: 2026-04-01 (~960h ago, > 30 天)
+  路径: docs/handoff/2026-04-01-old.md
+  提示: handoff 已过期, 内容仅供参考, 不作为优先级依据
+```
+
+---
+
+## Handoff drift detected (Phase 1.15 + handoff_drift rule, H0 spec 2026-05-14)
+
+`snapshot.handoff.misplaced_files != []` 时触发 `handoff_drift` rule (priority 1.91):
+
+```
+📜 Session Handoff
+───────────────────────────────────────────────────────────────
+  上次 handoff: docs/handoff/latest.md (~45h ago)
+  🔄 检测到 6 个 handoff 文件写错位置 (.aria/handoff/, canonical 是 docs/handoff/)
+
+  漂移文件:
+    .aria/handoff/2026-04-23-aria-plugin-17-vs-18-triage.md
+    .aria/handoff/2026-04-23-state-scanner-mechanical-b2-resume.md
+    .aria/handoff/2026-04-24-session-closeout-final.md
+    .aria/handoff/2026-04-24-session-closeout.md
+    .aria/handoff/2026-04-25-session-final-closeout.md
+    .aria/handoff/2026-05-13-issue-101-cycle-closeout.md
+
+  修复建议 (Layer 3 of 5-layer enforcement):
+    git mv .aria/handoff/*.md docs/handoff/
+    # 然后更新 docs/handoff/latest.md pointer + rmdir .aria/handoff/
+  Convention SOT: standards/conventions/session-handoff.md
+
+🎯 推荐工作流
+───────────────────────────────────────────────────────────────
+  ➤ [1] migrate-handoff-drift (推荐, 优先级 1.91)
+        理由: 6 个 handoff 文件位于 forbidden dir, 阻塞 next session
+              自动 surface 上次 handoff。1-line `git mv` 可修复。
+```
+
+---
+
 ## 自定义检查未配置时
 
 此区块不输出 (`.aria/state-checks.yaml` 不存在时静默跳过)。

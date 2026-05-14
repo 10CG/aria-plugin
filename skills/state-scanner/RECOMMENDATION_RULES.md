@@ -17,6 +17,7 @@
 | `pending_followups_p1` | 1.85 | (降级提示) | UPM `## Pending Followups` 含 P1 行 | 75% | No — inter-cycle backlog 提醒 |
 | `resume_in_progress_us` | 1.88 | continue-in-progress | `priority_items[]` 含 in_progress US | 80% | No — 跨 session 续作建议 |
 | `audit_unconverged` | 1.9 | (建议性提示) | 最新审计报告未收敛 | 75% | No — 用户可能已知并选择接受 |
+| `handoff_drift` | 1.91 | migrate-handoff-drift | `handoff.misplaced_files != []` | 95% | No — 文件迁移涉及 git mv,需用户 confirm |
 | `custom_check_failed` | 1.95 | (阻断提示) | severity=error 的自定义检查失败 | 90% | No — 需用户确认修复 |
 | `custom_check_warning` | 1.96 | (降级提示) | severity=warning 的自定义检查失败 | 70% | No — 非阻塞，附加 fix 建议 |
 | `submodule_drift` | 1.97 | (降级提示) | 任一子模块 `tree_vs_remote == true` | 70% | No — 非阻塞，附加 update 建议 |
@@ -567,6 +568,51 @@ recommendation:
     - "workflow-runner 会在对应阶段自动重新触发审计"
   non_blocking: true  # 建议性，不阻塞工作流
 ```
+
+### 1.91 handoff_drift (2026-05-14 新增, H0 spec)
+
+```yaml
+id: handoff_drift
+priority: 1.91
+description: 检测到 handoff doc 写错位置 — .aria/handoff/*.md 存在 (canonical 是 docs/handoff/)
+
+conditions:
+  all:
+    - handoff_misplaced_present: true   # snapshot.handoff.misplaced_files 非空
+
+  detection:
+    field: "snapshot.handoff.misplaced_files"
+    expected: "[]"
+    actual: "list of paths under .aria/handoff/*.md"
+
+recommendation:
+  workflow: migrate-handoff-drift
+  steps:
+    - "git mv .aria/handoff/*.md docs/handoff/"
+    - "更新 docs/handoff/latest.md pointer 到迁移后的最新 doc"
+    - "rmdir .aria/handoff/ (验证空 dir)"
+    - "git commit -m 'chore(handoff): migrate misplaced files to canonical docs/handoff/'"
+  info: "🔄 检测到 {misplaced_count} 个 handoff 文件写错位置 (.aria/handoff/, canonical 是 docs/handoff/)"
+  suggestion:
+    - "迁移漂移文件 (Layer 3 of 5-layer enforcement)"
+    - "Convention SOT: standards/conventions/session-handoff.md"
+  reason: |
+    .aria/ 是机器状态 namespace (workflow-state.json / audit logs / cache 等),
+    docs/ 是人类/AI 可读 prose namespace。handoff doc 是 prose,属于 docs/handoff/。
+    H0 spec (Forgejo #92) ship 后,本 rule 是 5 层防漂移的 Layer 3 (推荐降级)。
+  non_blocking: false  # 不严格阻断,但应在常规工作流前 surface
+```
+
+**Rationale (placement 1.91)**: 在 `audit_unconverged` (1.9 — 流程未收敛) 之后, `custom_check_failed` (1.95 — 硬阻断) 之前。审计未收敛是更紧迫的流程问题; handoff 漂移虽影响下次 session 但当前可继续工作。优先级数字大于 1.9 表示 "稍后处理 OK", 但应在常规工作流 (commit_only / quick_fix 等) **之前** surface 给 AI 看到。
+
+**配合的其他防御层**:
+- **Layer 1 (L1)**: PreToolUse hook `handoff-location-guard.sh` — 阻止新写入 `.aria/handoff/*.md`
+- **Layer 2 (L2)**: scan.py `collectors/handoff.py` — 检测 misplaced_files (本 rule 的信号源)
+- **Layer 3 (L3, 本 rule)**: state-scanner 推荐迁移工作流
+- **Layer 4 (L4)**: `standards/conventions/session-handoff.md` — Convention SOT
+- **Layer 5 (L5)**: `phase-d-closer` D.3 template hardcode 写 `docs/handoff/`
+
+完整 spec: `openspec/changes/aria-ten-step-session-handoff-stage/`
 
 ---
 
