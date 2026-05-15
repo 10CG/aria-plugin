@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] - 2026-05-14
+
+### Added — Ten-step cycle Phase D.3 session-handoff stage (Spec: aria-ten-step-session-handoff-stage, Forgejo Aria #92)
+
+- **New Phase 1.15 `handoff` collector** (`skills/state-scanner/scripts/collectors/handoff.py`):
+  - Scans `docs/handoff/*.md` by mtime DESC for latest handoff doc
+  - Excludes `latest.md` pointer file (real handoff docs only)
+  - Detects misplaced `.aria/handoff/*.md` files → `misplaced_files` field
+  - Emits soft_error on permission-denied / stat-failure paths
+  - Adds top-level `handoff` field to snapshot (schema 1.0 additive — no version bump)
+  - 11 unit tests covering mtime sort, age_hours, schema, edge cases, latest.md exclusion, permission errors
+
+- **New phase-d-closer §D.3 session-handoff step** (`skills/phase-d-closer/SKILL.md`, version 1.0.0 → 1.1.0):
+  - Trigger: 4-level fallback (workflow-state.json::session.started_at > 4h → cycles shipped ≥ 2 → phase markers ≥ 2 → user prompt with default yes)
+  - Output path **hardcoded** `docs/handoff/{YYYY-MM-DD}-{slug}.md` (L5 enforcement)
+  - Auto-updates `docs/handoff/latest.md` pointer
+  - Cross-platform stat hint (Linux/macOS/portable Python)
+
+- **New 9-section handoff template** (`templates/session-handoff.md`):
+  - §0 入口 / §1 已完成 / §2 carry-forward / §3 风险 / §4 实战教训
+  - §5 多维度同步 / §6 next session 入口 / §7 提交清单 / §8 Memory entries
+
+- **New PreToolUse hook `handoff-location-guard.sh`** (`hooks/handoff-location-guard.sh`):
+  - Blocks Write/Edit/NotebookEdit to `.aria/handoff/*.md`
+  - Cross-platform regex (POSIX `/` + Windows `\` separator char class)
+  - Resolves symlinks via `Path.resolve()` to defeat circumvention
+  - JSON deny payload (preferred) + exit-2 fallback (`ARIA_HOOK_DENY_MODE=exit2`)
+  - 10 shell smoke test cases (run_tests.py 集成 via subprocess wrapper)
+
+- **New state-scanner recommendation rule `handoff_drift`** (priority 1.91, between `audit_unconverged` 1.9 and `custom_check_failed` 1.95):
+  - Trigger: `snapshot.handoff.misplaced_files != []`
+  - Workflow: `migrate-handoff-drift` (4-step bash: git mv + update latest.md + rmdir + commit)
+  - Confidence 95%, not auto-execute (file move 涉及 git history,需用户 confirm)
+
+- **New convention SOT `standards/conventions/session-handoff.md`** (`aria-standards`):
+  - Mirrors Rule #7 secret-hygiene structure
+  - 5-layer enforcement matrix documented
+  - Migration notes for downstream projects
+  - Source incidents (4 dogfood)
+
+- **CLAUDE.md Rule #9 ship-time 激活**:
+  - Position: after Rule #8 pre-merge gate
+  - Mirrors Rule #7 structure (要点 / 触发场景 / Source incidents / Exception / 详细规范 ref)
+  - 4 dogfood evidence > Rule #7/#8 (no observation period needed)
+
+- **Aria self migration**: 6 `.aria/handoff/*.md` files migrated to `docs/handoff/` via `git mv` (100% similarity preserved). `docs/handoff/latest.md` pointer corrected to truly newest doc.
+
+### Quality
+
+- pre_merge audit R1 SCOPE_OK_R1 — 3 agents convergence (backend / knowledge / qa), 0 Critical, 5 Major inline-fixed (collector double stat / macOS stat / silent permission-denied / latest.md wins mtime / hook test discovery)
+- 442 Python unit tests + 10 shell hook smoke tests (100% pass, no regression)
+- 4 dogfood incidents (SilkNode 2026-05-09 + Aria self 2026-05-13 ×3 含 H0 spec 起草本 session)
+
+### Forgejo Issues
+
+- Closes #92 (ten-step cycle session-handoff stage proposal)
+
+---
+
 ## [1.20.0] - 2026-05-13
 
 ### Added — `issue-triage` Skill (Spec: aria-issue-triage-sop, Forgejo Aria #101)

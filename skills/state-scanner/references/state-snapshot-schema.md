@@ -31,6 +31,7 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 | `sync_status` | Phase 1.12 | required | additive keys OK (T3.2+) |
 | `issue_status` | Phase 1.13 | **optional** (only when `issue_scan.enabled=true`) | additive keys OK (T3.4+) |
 | `forgejo_config` | Phase 1.14 | required | additive keys OK (T3.5+) |
+| `handoff` | Phase 1.15 | required | additive keys OK (H0 spec, 2026-05-14) |
 | `errors` | aggregated fail-soft | required | informational |
 
 **Emission rule for optional keys**: Phase 1.13 `issue_status` is the only optional top-level key. Its absence signals `issue_scan.enabled=false`, which is semantically distinct from `issue_status: null`. Consumers checking for the feature should use `"issue_status" in snapshot`, not `snapshot.get("issue_status")`.
@@ -546,6 +547,40 @@ hardening Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
 - `_KNOWN_FORGEJO_HOSTS` is a hardcoded tuple (not config-driven). Cross-project adopters on a different Forgejo instance must edit the collector source. Asymmetric with `issue_scan.platform_hostnames` which IS configurable.
 - Only `origin` remote is checked. Non-origin Forgejo remotes (e.g. `upstream`) silently yield `forgejo_remote_detected: false`.
 
+## `handoff` (Phase 1.15, H0 spec 2026-05-14)
+
+```yaml
+exists: bool                    # true if docs/handoff/*.md has any file
+latest_path: str | null         # relative path to newest .md by mtime
+latest_filename: str | null     # basename of latest_path
+last_modified_iso: str | null   # UTC ISO 8601 (timezone-aware) of mtime
+age_hours: float | null         # (time.time() - mtime) / 3600, rounded 2dp
+misplaced_files: list[str]      # relative paths under .aria/handoff/*.md
+canonical_dir: str              # always "docs/handoff/" (literal constant)
+```
+
+**Surfacing contract**: AI in state-scanner Phase 2 推荐前 SHOULD read
+`handoff.latest_path` if `exists=true` AND `age_hours < 720` (30 days),
+to ground recommendations in the previous session's carry-forward priority.
+
+**Drift detection** (Layer 2 of 5-layer enforcement, see OpenSpec
+`aria-ten-step-session-handoff-stage` proposal §Layered defense matrix):
+`misplaced_files != []` is the trigger signal for `RECOMMENDATION_RULES.md`
+`handoff_drift` rule (Layer 3), which surfaces migration as priority workflow.
+
+**Why `time.time()` not `datetime.now()`**: Avoid timezone/DST ambiguity.
+mtime is filesystem-native UTC seconds-since-epoch; `time.time()` returns
+the same scale. `datetime.now()` is local-time by default and would skew
+`age_hours` by tz offset.
+
+**Edge cases**:
+- `docs/handoff/` absent or empty → `exists=false, latest_path=null,
+  age_hours=null` but `misplaced_files` still computed
+- Non-UTF-8 filename under canonical dir → silently skipped (rare; only on
+  Linux filesystems with mixed encoding)
+- `stat()` fails on a candidate file → `soft_error("handoff_stat_failed")`
+  emitted to `errors[]`, `latest_path=null`
+
 ## `errors` (aggregated fail-soft)
 
 ```yaml
@@ -568,3 +603,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 | 2026-04-24 | Full schema authored (T4.1) — 4 new top-level keys documented, BA-R*-I1 (`main_repo.path` + `items[].heuristic`) + BA-R*-M1/M2 (`auth_missing` reserved, single-remote ahead prose) + overall_parity worked examples + QA-C2 PR filtering + all fail-soft enum values backfilled |
 | 2026-05-09 | TX.0 + TX.1 (state-scanner-inter-cycle-surfacing sub-PR-a) — 4 inter-cycle nested fields documented: `git.status_clean` (TX.0 ship), `upm.followups[]` + `upm.handoff_doc` (TX-G2/G3 reserved schema), `requirements.stories.priority_items[]` (TX-G4 reserved schema); backward-compat contract section added; schema version stays `"1.0"` (additive) |
 | 2026-05-09 | sub-PR (b) — TX-G2/G3/G4 collectors shipped (aria-plugin#38). "Planned" qualifiers replaced with "shipped" + Implementation history blockquotes. KM-08 prerequisite NOTE blockquotes removed (gates satisfied). Error-path absence semantics clarified for `followups` + `handoff_doc` (both ABSENT in error-paths, schema previously documented only the no-UPM-file case). `errors[]` enum produced by G3 documented (`unsupported_path_format` + `handoff_path_escapes_project`) |
+| 2026-05-14 | H0 (`aria-ten-step-session-handoff-stage`) T1 — added `handoff` top-level field (Phase 1.15). Additive, schema stays `"1.0"`. Surfaces latest `docs/handoff/*.md` for AI to read pre-recommendation + detects misplaced `.aria/handoff/*.md` for Layer 2 drift detection (5-layer enforcement). |

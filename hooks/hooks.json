@@ -1,5 +1,5 @@
 {
-  "description": "Aria SessionStart Hook - detect interrupted workflows",
+  "description": "Aria Hooks: SessionStart workflow recovery + PreToolUse handoff location guard",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,18 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-check.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/handoff-location-guard.sh",
             "timeout": 5
           }
         ]
