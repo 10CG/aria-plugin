@@ -120,7 +120,7 @@ class TestMisplacedDetection(unittest.TestCase):
 class TestSchemaAdditive(unittest.TestCase):
     """Field shape must be stable and snapshot version stays 1.0."""
 
-    def test_returned_data_has_all_seven_keys(self):
+    def test_returned_data_has_all_eight_keys(self):
         with tmp_project() as root:
             (root / "docs" / "handoff").mkdir(parents=True)
             (root / "docs" / "handoff" / "foo.md").write_text("# foo\n", encoding="utf-8")
@@ -133,6 +133,7 @@ class TestSchemaAdditive(unittest.TestCase):
                 "latest_filename",
                 "last_modified_iso",
                 "age_hours",
+                "latest_source",  # H5 fix — added
                 "misplaced_files",
                 "canonical_dir",
             }
@@ -151,6 +152,81 @@ class TestSchemaAdditive(unittest.TestCase):
             self.assertIsNotNone(iso)
             # ISO 8601 UTC ends with +00:00 (timezone-aware)
             self.assertTrue(iso.endswith("+00:00"), f"Expected UTC suffix, got {iso}")
+
+
+class TestLatestPointerPriority(unittest.TestCase):
+    """H5 fix: latest.md pointer is the human-maintained semantic 'latest';
+    mtime-max only wins when pointer absent/unparseable/stale.
+
+    Scenario: a predecessor handoff edited post-hoc (closeout / rebase)
+    gets the newest mtime and would otherwise shadow the real latest.
+    """
+
+    def _write_pointer(self, handoff: Path, target: str) -> None:
+        (handoff / "latest.md").write_text(
+            f"# Aria Handoff — Latest\n\n"
+            f"**Latest**: [{target}](./{target}) — desc\n",
+            encoding="utf-8",
+        )
+
+    def test_pointer_wins_over_newer_mtime(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "2026-05-15-real-latest.md").write_text("# real\n", encoding="utf-8")
+            (handoff / "2026-05-10-old-predecessor.md").write_text("# old\n", encoding="utf-8")
+            self._write_pointer(handoff, "2026-05-15-real-latest.md")
+            # Predecessor edited post-hoc → newest mtime (the H5 trap)
+            _touch(handoff / "2026-05-10-old-predecessor.md", mtime_offset=0)
+            _touch(handoff / "2026-05-15-real-latest.md", mtime_offset=-7200)
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "2026-05-15-real-latest.md")
+            self.assertEqual(r.data["latest_source"], "pointer")
+            self.assertEqual(r.errors, [])
+
+    def test_no_pointer_falls_back_to_mtime(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "a.md").write_text("# a\n", encoding="utf-8")
+            (handoff / "b.md").write_text("# b\n", encoding="utf-8")
+            _touch(handoff / "b.md", mtime_offset=0)
+            _touch(handoff / "a.md", mtime_offset=-3600)
+            # No latest.md pointer at all
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "b.md")
+            self.assertEqual(r.data["latest_source"], "mtime")
+
+    def test_stale_pointer_falls_back_to_mtime_with_soft_error(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "exists.md").write_text("# e\n", encoding="utf-8")
+            self._write_pointer(handoff, "2026-99-99-deleted.md")  # target absent
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "exists.md")
+            self.assertEqual(r.data["latest_source"], "mtime")
+            error_kinds = {e["error"] for e in r.errors}
+            self.assertIn("handoff_pointer_target_missing", error_kinds)
+
+    def test_pointer_targeting_itself_ignored(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "real.md").write_text("# real\n", encoding="utf-8")
+            self._write_pointer(handoff, "latest.md")  # degenerate self-ref
+
+            r = collect_handoff(root)
+
+            # Falls back to mtime (only real.md qualifies)
+            self.assertEqual(r.data["latest_filename"], "real.md")
+            self.assertEqual(r.data["latest_source"], "mtime")
 
 
 class TestLatestPointerExclusion(unittest.TestCase):
