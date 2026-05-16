@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.1] - 2026-05-16
+
+### Fixed — H5 handoff collector mtime/pointer divergence (post-H0 closeout finding)
+
+- **`collectors/handoff.py`**: `latest_path` now prefers `docs/handoff/latest.md`
+  pointer target (human-maintained semantic "Latest") over raw mtime-max.
+  mtime is fallback only (pointer absent / unparseable / stale target).
+  - New `_parse_latest_pointer()` helper (regex on `**Latest**:` line)
+  - New additive `latest_source` field: `"pointer"` | `"mtime"` | `null`
+  - New `soft_error("handoff_pointer_target_missing")` for stale pointer
+  - Schema stays `"1.0"` (additive)
+- **Why**: discovered at H0 closeout — an H0 handoff edited post-hoc (rebase/
+  closeout finalize) got newest mtime and shadowed the newer US-025 handoff;
+  collector reported wrong "latest", defeating H0's anti-miss purpose.
+  Memory: `feedback_handoff_mtime_vs_pointer_divergence`.
+- **Tests**: +4 (TestLatestPointerPriority: pointer-wins / no-pointer-mtime /
+  stale-pointer-soft-error / self-ref-ignored). 446/446 suite pass.
+- **Docs synced** (Rule #3): schema doc + SKILL.md handoff-awareness +
+  standards/conventions/session-handoff.md §3.2
+
+---
+
 ## [1.21.0] - 2026-05-14
 
 ### Added — Ten-step cycle Phase D.3 session-handoff stage (Spec: aria-ten-step-session-handoff-stage, Forgejo Aria #92)

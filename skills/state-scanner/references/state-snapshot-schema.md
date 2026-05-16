@@ -551,17 +551,33 @@ hardening Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
 
 ```yaml
 exists: bool                    # true if docs/handoff/*.md has any file
-latest_path: str | null         # relative path to newest .md by mtime
+latest_path: str | null         # relative path to latest .md (pointer-first, mtime fallback)
 latest_filename: str | null     # basename of latest_path
 last_modified_iso: str | null   # UTC ISO 8601 (timezone-aware) of mtime
 age_hours: float | null         # (time.time() - mtime) / 3600, rounded 2dp
+latest_source: str | null       # "pointer" | "mtime" | null (H5 fix transparency)
 misplaced_files: list[str]      # relative paths under .aria/handoff/*.md
 canonical_dir: str              # always "docs/handoff/" (literal constant)
 ```
 
+**Latest detection (H5 fix, 2026-05-16)**: `latest_path` prefers the
+`docs/handoff/latest.md` pointer target (the human-maintained semantic
+"Latest"). Raw mtime-max is only a **fallback** — used when the pointer is
+absent / unparseable / targets a missing file. `latest_source` exposes which
+path was taken (`"pointer"` | `"mtime"` | `null`).
+
+**Why**: a predecessor handoff edited post-hoc (closeout finalize / rebase /
+typo fix) gets the newest mtime and would otherwise shadow the real latest
+(memory `feedback_handoff_mtime_vs_pointer_divergence` — discovered at H0
+closeout when an edited H0 handoff out-ranked the newer US-025 handoff).
+Stale pointer (target absent) → `soft_error("handoff_pointer_target_missing")`
++ mtime fallback.
+
 **Surfacing contract**: AI in state-scanner Phase 2 推荐前 SHOULD read
 `handoff.latest_path` if `exists=true` AND `age_hours < 720` (30 days),
 to ground recommendations in the previous session's carry-forward priority.
+Since H5 fix `latest_path` is already pointer-resolved — AI no longer needs
+to separately parse `latest.md` (collector does it mechanically).
 
 **Drift detection** (Layer 2 of 5-layer enforcement, see OpenSpec
 `aria-ten-step-session-handoff-stage` proposal §Layered defense matrix):
@@ -579,7 +595,10 @@ the same scale. `datetime.now()` is local-time by default and would skew
 - Non-UTF-8 filename under canonical dir → silently skipped (rare; only on
   Linux filesystems with mixed encoding)
 - `stat()` fails on a candidate file → `soft_error("handoff_stat_failed")`
-  emitted to `errors[]`, `latest_path=null`
+  emitted to `errors[]`, `latest_path=null`, `latest_source=null`
+- `latest.md` pointer targets a file absent from canonical dir →
+  `soft_error("handoff_pointer_target_missing")` + mtime fallback
+  (`latest_source="mtime"`)
 
 ## `errors` (aggregated fail-soft)
 
@@ -604,3 +623,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 | 2026-05-09 | TX.0 + TX.1 (state-scanner-inter-cycle-surfacing sub-PR-a) — 4 inter-cycle nested fields documented: `git.status_clean` (TX.0 ship), `upm.followups[]` + `upm.handoff_doc` (TX-G2/G3 reserved schema), `requirements.stories.priority_items[]` (TX-G4 reserved schema); backward-compat contract section added; schema version stays `"1.0"` (additive) |
 | 2026-05-09 | sub-PR (b) — TX-G2/G3/G4 collectors shipped (aria-plugin#38). "Planned" qualifiers replaced with "shipped" + Implementation history blockquotes. KM-08 prerequisite NOTE blockquotes removed (gates satisfied). Error-path absence semantics clarified for `followups` + `handoff_doc` (both ABSENT in error-paths, schema previously documented only the no-UPM-file case). `errors[]` enum produced by G3 documented (`unsupported_path_format` + `handoff_path_escapes_project`) |
 | 2026-05-14 | H0 (`aria-ten-step-session-handoff-stage`) T1 — added `handoff` top-level field (Phase 1.15). Additive, schema stays `"1.0"`. Surfaces latest `docs/handoff/*.md` for AI to read pre-recommendation + detects misplaced `.aria/handoff/*.md` for Layer 2 drift detection (5-layer enforcement). |
+| 2026-05-16 | H5 fix (`fix/h5-handoff-pointer-divergence`) — `latest_path` now prefers `docs/handoff/latest.md` pointer target over raw mtime (mtime fallback only). New additive `latest_source` field (`"pointer"`/`"mtime"`/`null`). New `soft_error("handoff_pointer_target_missing")` for stale pointer. Schema stays `"1.0"` (additive). Fixes mtime-vs-pointer divergence found at H0 closeout. |

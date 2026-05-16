@@ -176,7 +176,8 @@ AI 在阶段 2 推荐生成 **之前** MUST 检查 `snapshot.handoff`:
 
 1. 若 `handoff.exists == true` 且 `handoff.age_hours < 720` (30 days):
    - **Read `handoff.latest_path`** — 读最新 session handoff 完整内容,理解上 session 写明的 carry-forward 优先级 / next-step 建议
-   - 推荐输出 §当前状态 段展示 `latest_filename` + `age_hours` (例: "上次 handoff: 2026-05-13-foo.md (45.1h ago)")
+   - **H5 fix (2026-05-16)**: `handoff.latest_path` 已经是 pointer-resolved (collector 机械优先 `docs/handoff/latest.md` pointer target, mtime 仅 fallback)。AI **不再需要** 单独 parse latest.md — 直接信任 `latest_path`。`latest_source` 字段透明展示来源 (`pointer`/`mtime`);若 `mtime` 且存在 `handoff_pointer_target_missing` soft_error,提示用户 latest.md pointer stale 需修
+   - 推荐输出 §当前状态 段展示 `latest_filename` + `age_hours` + `latest_source` (例: "上次 handoff: 2026-05-15-foo.md (12.1h ago, via pointer)")
    - 推荐生成时,handoff §next session 入口 / §未完成 列表的 priority items 应**优先**于 generic 推荐规则
 
 2. 若 `handoff.misplaced_files != []`:

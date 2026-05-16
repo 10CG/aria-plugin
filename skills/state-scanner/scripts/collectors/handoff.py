@@ -14,6 +14,10 @@ Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
 - latest_filename: str | None — basename of latest_path
 - last_modified_iso: str | None — UTC ISO 8601 of latest mtime
 - age_hours: float | None — (time.time() - mtime) / 3600
+- latest_source: str | None — "pointer" (latest.md target) | "mtime" (fallback)
+  | None (no canonical files / stat failed). H5 fix: pointer is the
+  human-maintained semantic "latest"; mtime only wins when pointer is
+  absent/unparseable/stale.
 - misplaced_files: list[str] — relative paths under .aria/handoff/*.md
 - canonical_dir: str — always "docs/handoff/" (for AI display)
 
@@ -32,6 +36,7 @@ Soft errors (emitted to `r.errors[]`, snapshot exit code 10):
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +46,38 @@ from ._common import CollectorResult
 CANONICAL_DIR = "docs/handoff/"
 FORBIDDEN_DIR = ".aria/handoff/"
 POINTER_FILENAME = "latest.md"  # not a handoff doc; excluded from latest detection
+
+# `**Latest**: [filename](./filename) — desc` — capture the link target or the
+# bracketed text. H5 fix: pointer is the human-maintained semantic "latest";
+# mtime is only a fallback (a predecessor handoff edited post-hoc — closeout /
+# rebase / typo fix — gets the newest mtime and would otherwise shadow the
+# real latest). See memory feedback_handoff_mtime_vs_pointer_divergence.
+_LATEST_POINTER_RE = re.compile(
+    r"^\*\*Latest\*\*:\s*\[[^\]]+\]\(\.?/?([^)]+?)\)",
+    re.MULTILINE,
+)
+
+
+def _parse_latest_pointer(canonical: Path) -> str | None:
+    """Return the filename the docs/handoff/latest.md pointer targets, or None.
+
+    Defensive: missing latest.md, unreadable, or unparseable → None (caller
+    falls back to mtime sort).
+    """
+    pointer = canonical / POINTER_FILENAME
+    if not pointer.is_file():
+        return None
+    try:
+        text = pointer.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = _LATEST_POINTER_RE.search(text)
+    if not m:
+        return None
+    target = m.group(1).strip()
+    # Normalize: strip any leading ./ and directory components — pointer
+    # targets are siblings in the same dir.
+    return Path(target).name or None
 
 
 class _ScanError(Exception):
@@ -111,6 +148,7 @@ def collect_handoff(project_root: Path) -> CollectorResult:
             "latest_filename": None,
             "last_modified_iso": None,
             "age_hours": None,
+            "latest_source": None,
             "misplaced_files": misplaced,
             "canonical_dir": CANONICAL_DIR,
         }
@@ -130,14 +168,37 @@ def collect_handoff(project_root: Path) -> CollectorResult:
             "latest_filename": None,
             "last_modified_iso": None,
             "age_hours": None,
+            "latest_source": None,
             "misplaced_files": misplaced,
             "canonical_dir": CANONICAL_DIR,
         }
         return r
 
-    latest = max(canonical_files, key=lambda p: mtimes[p])
-    mtime = mtimes[latest]
+    # H5 fix: prefer the latest.md pointer target (human-maintained semantic
+    # "Latest") over raw mtime. mtime-max only wins when the pointer is
+    # absent / unparseable / targets a missing file.
+    mtime_latest = max(canonical_files, key=lambda p: mtimes[p])
+    latest = mtime_latest
+    latest_source = "mtime"
 
+    pointer_target = _parse_latest_pointer(canonical)
+    if pointer_target and pointer_target != POINTER_FILENAME:
+        by_name = {p.name: p for p in canonical_files}
+        resolved = by_name.get(pointer_target)
+        if resolved is not None:
+            latest = resolved
+            latest_source = "pointer"
+        # pointer target not among canonical files (stale pointer) → keep
+        # mtime fallback; surface as soft signal for L3/AI awareness.
+        else:
+            r.soft_error(
+                "handoff_pointer_target_missing",
+                f"latest.md points to '{pointer_target}' but it is absent "
+                f"in {CANONICAL_DIR}; fell back to mtime latest "
+                f"'{mtime_latest.name}'",
+            )
+
+    mtime = mtimes[latest]
     age_hours = (time.time() - mtime) / 3600
     last_mod_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(
         timespec="seconds"
@@ -149,6 +210,7 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         "latest_filename": latest.name,
         "last_modified_iso": last_mod_iso,
         "age_hours": round(age_hours, 2),
+        "latest_source": latest_source,  # "pointer" | "mtime" (H5 transparency)
         "misplaced_files": misplaced,
         "canonical_dir": CANONICAL_DIR,
     }
