@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.3] - 2026-05-17
+
+### Fixed — issue-triage D3 schema conformance (H3 iteration-2 + iteration-3)
+
+- **`skills/issue-triage/SKILL.md` v1.0.0 → v1.2.0**:
+  - **iteration-2** (anti-hand-author): Step 0 🚫 prominent block + Stage 1
+    mechanical gate. *Benchmark-disproven as the D3 cause* — kept as
+    defense-in-depth (0 regression, valid for weaker models / future drift).
+  - **iteration-3** (the real D3 fix): Stage 3 now inlines the exact schema
+    enums verbatim — verdict (7), severity (4, no "medium"),
+    recommended_action (4, no "schedule") — at the fill point instead of
+    deferring to a separate conventions file. Step 6 inlines ReproCase
+    required fields (case_id was the #1 omission). New Stage 3.5 best-effort
+    `jsonschema` self-check before comment synthesis.
+
+- **Root cause** (corrected): the 2026-05-13 benchmark misdiagnosed D3 0/3
+  as hand-authoring. Re-benchmark proved `script_produced 8/8` (zero
+  hand-authoring on Opus 4.7); real cause = AI free-texts schema-enum
+  fields with plausible-but-invalid values when enums aren't inlined.
+
+- **Benchmark** (`aria-plugin-benchmarks/ab-results/2026-05-17-issue-triage-iter2/`):
+  D3 with_skill **0/4 → 4/4** (iter-1 v1.1.0 → iter-2 v1.2.0), baseline
+  v1.0.0 stays 1/4 — causal, baseline-controlled delta. Rule #6 PASS
+  (capability-type Skill, 不可协商, full LLM AB — deterministic-substitute
+  not applicable).
+
+---
+
 ## [1.21.2] - 2026-05-17
 
 ### Docs/clarity — H1 follow-up (PR #46 + #4 audit Important items)

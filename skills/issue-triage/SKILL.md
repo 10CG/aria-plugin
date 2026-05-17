@@ -15,7 +15,7 @@ allowed-tools: Bash, Read, Write
 
 # Issue Triage (issue-triage v1.0)
 
-> **版本**: 1.0.0 | **角色**: issue 接收方核对
+> **版本**: 1.2.0 | **角色**: issue 接收方核对
 > **十步循环角色**: B.2 实施阶段 — 接收 issue 后的前置核对步骤，防止在过期信息或未复现 bug 上开起新的 cycle
 > **机械化**: Step 0 由 `scripts/triage.py` (stdlib-only Python) 产出 JSON snapshot，AI 读 snapshot 进行 Step 6 复现 + verdict 综合。
 
@@ -69,7 +69,15 @@ allowed-tools: Bash, Read, Write
 
 ### Step 0: 机械执行 triage.py (硬约束)
 
-> **不可协商**: Steps 1-5 所有字段由 `scripts/triage.py` 机械采集，AI 不得跳过、不得逐字段手工 Bash 替代、不得在失败时"降级"到手工采集。
+> 🚫 **不可协商 (iteration-2 强化 — D3 regression fix)**: Steps 1-5 所有字段**只能**由 `scripts/triage.py` 机械采集。AI **绝对禁止**:
+> - ❌ **手写/hand-author `.aria/triage-report.json`** (即使你"知道"内容 — 这是 D3 0/3 benchmark regression 的直接根因: agents 手写 JSON 漏 `steps.step1_issue.body` required field)
+> - ❌ 跳过 triage.py 直接进 Stage 1/2
+> - ❌ 逐字段手工 Bash 替代采集
+> - ❌ triage.py 失败时"降级"到手工采集或手工补 JSON
+>
+> **唯一合法路径**: 实际运行下方命令 → 检查退出码 → 读 script 产出的 JSON。report 必须由 triage.py 进程写出,**不是 AI 文本生成**。
+
+**反例 (历史 D3 0/3 regression,严禁重演)**: 3/3 with_skill agents 自认为知道 issue 内容,手写 JSON,漏掉 `steps.step1_issue.body` required field → jsonschema 校验全失败。**结构化采集的价值正是在于机械完整性,手写必然漏字段**。
 
 **执行命令**:
 
@@ -97,8 +105,9 @@ triage.py exit 0/10 后：
 
 1. 读取 `.aria/triage-report.json`
 2. 验证 `schema_version` 字段存在（缺失 → abort，"report 格式异常，请重跑 /issue-triage"）
-3. 展示 Steps 1-5 摘要（版本差、cited paths、likely_fix_candidates、in-flight 命中）
-4. 若 exit 10：对每个 `collection_status: error` 的步骤展示 warning
+3. **Anti-hand-author gate (iteration-2, D3 fix)**: 验证以下三者全部存在且自洽 — `triage_tool_version` (string,来自 plugin.json) + `generated_at` (ISO-8601 UTC,应在本 turn triage.py 运行时刻±数分钟内) + `steps.step1_issue.body` (required,手写最易漏的字段)。**任一缺失或 `generated_at` 明显非本次运行 → abort**: "report 疑似手写/陈旧,非 triage.py 本次产出。严禁手写 JSON (D3 regression),请实际运行 Step 0 命令"。此 gate 不替代 Step 0 硬约束,是二次防线 (instruction + mechanical check 双层)。
+4. 展示 Steps 1-5 摘要（版本差、cited paths、likely_fix_candidates、in-flight 命中）
+5. 若 exit 10：对每个 `collection_status: error` 的步骤展示 warning
 
 ---
 
@@ -112,18 +121,60 @@ triage.py exit 0/10 后：
 | `pause` | 需要用户提供 env / data / 交互操作 | **暂停**，展示"需要以下信息才能继续复现：\n{missing_items}"，等待用户补充后 resume |
 | `skip` | 无法复现（缺资源、环境、凭证） | 跳过复现，verdict **强制** = `needs-info`，仍生成 report |
 
-每个复现 case 必须填结构化 schema（case schema 定义见 `standards/conventions/issue-triage.md §Step 6`）。即使 verdict=`not-reproducible`，也需 ≥1 case 记录缺失原因；`match: null` 表示未能执行。
+每个复现 case **必须**含以下全部 required 字段 (schema `ReproCase.required` — iteration-3 inline,**不要**只看 conventions 文件,benchmark 实证 agent 不可靠地去开外部文件导致漏字段):
+
+```
+case_id            (string,必填 — e.g. "case-1";benchmark 实证最易漏)
+input              (复现输入/命令/数据)
+expected_behavior  (issue 声称的预期)
+actual_behavior    (实测结果;未能执行填说明)
+match              (bool | null — true=复现 / false=不复现 / null=未能执行)
+```
+
+即使 verdict=`not-reproducible`,也需 ≥1 case 记录缺失原因。**漏 `case_id` 是 D3 schema 校验失败的头号原因 (2026-05-17 benchmark 2/8 命中)**。
 
 ---
 
 ### Stage 3: Verdict 计算
 
-1. 基于 `repro.cases[]` 和 Steps 1-5 数据，按 `standards/conventions/issue-triage.md §Verdict dictionary` 选择 verdict
-2. 填写正交字段：
-   - `severity`: 基于影响面（commit blast radius / hit_rate / data corruption 风险）由 AI 判断
-   - `recommended_action`: 基于 verdict + severity 推断
-   - `deviation_note`: **仅** `partial-repro` verdict **必填**，描述与 issue 描述的实质偏离
-3. 将 verdict + 正交字段写入 `.aria/triage-report.json`
+> 🚫 **不可协商 (iteration-3 — D3 真根因 fix)**: 以下三个字段的值**只能**从下方 enum 逐字选取。2026-05-17 benchmark 实证: agent 跑对了 triage.py (8/8),但在此处自创"合理但不在 schema"的值 (`severity:medium`、`verdict:already-fixed/enhancement/fixed-in-1.20.0`、`recommended_action:schedule`) → D3 schema 校验 0/8 全败。**这是 D3 的真根因,不是手写 JSON。** 不要凭直觉造词,不要依赖记忆,直接对下表。
+
+**`verdict`** (七选一,逐字):
+
+| 值 | 用 when |
+|----|---------|
+| `confirmed` | 复现成功,bug 真实存在 |
+| `partial-repro` | 部分复现 / 与 issue 描述有实质偏离 (必填 `deviation_note`) |
+| `not-reproducible` | 无法复现 |
+| `fixed-in-X` | 已修复 (**字面就是 `fixed-in-X`**,不要写 `fixed-in-1.20.0` / `already-fixed` / `fixed`) |
+| `duplicate-of-#N` | 与已有 issue 重复 (N 替换为真编号,如 `duplicate-of-#90`) |
+| `needs-info` | 信息不足 (Step 6 skip 模式强制此值) |
+| `wont-fix` | 确认但决定不修 |
+
+**`severity`** (四选一,逐字 — **无 `medium`**): `critical` | `major` | `minor` | `trivial`
+(影响面判断: data corruption / 阻断主流程 → critical;功能错误 → major;边缘/体验 → minor;文案/琐碎 → trivial)
+
+**`recommended_action`** (四选一,逐字 — **无 `schedule`/`open-spec`/`open-cycle`/`no-new-cycle`**): `hotfix` | `next-cycle` | `backlog` | `close`
+(verdict=fixed-in-X/duplicate/wont-fix → 多为 `close`;confirmed+critical → `hotfix`;confirmed 普通 → `next-cycle`;低优 → `backlog`)
+
+**步骤**:
+1. 基于 `repro.cases[]` + Steps 1-5 数据,从上方 `verdict` 表逐字选一
+2. `severity` / `recommended_action` 逐字选,`deviation_note` 仅 `partial-repro` 必填
+3. 将 verdict + 正交字段写入 report
+
+### Stage 3.5: Schema self-check (best-effort,iteration-3)
+
+写完 verdict 字段后,**若环境有 jsonschema** 则机械自检 (mechanical enforcement 胜过 instruction):
+
+```bash
+python3 -c "import json,jsonschema,sys; \
+s=json.load(open('aria/skills/issue-triage/references/triage-report.schema.json')); s.pop('\$id',None); \
+jsonschema.validate(json.load(open('.aria/triage-report.json')),s); print('SCHEMA OK')" 2>&1
+```
+
+- 输出 `SCHEMA OK` → 进 Stage 4
+- `ValidationError` → 读错误定位字段 (多为 verdict/severity/action enum 或 repro case_id),**对照上方 enum 表修正后重跑**,不得带 schema-invalid report 进 Stage 4
+- `ModuleNotFoundError: jsonschema` → 跳过自检 (best-effort),但**人工逐字复核** verdict/severity/action 在上方 enum 内 + 每个 repro case 有 `case_id`
 
 ---
 
@@ -305,6 +356,6 @@ Stage 2: exit_mode=pause
 
 ---
 
-**最后更新**: 2026-05-13
-**Skill 版本**: 1.0.0
+**最后更新**: 2026-05-17 (iteration-3: D3 真根因 — Stage 3 inline schema enum + Step 6 case_id + Stage 3.5 self-check;iteration-2 anti-hand-author 保留为 defense-in-depth)
+**Skill 版本**: 1.2.0
 **维护者**: 10CG Lab
