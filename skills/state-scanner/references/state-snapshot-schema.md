@@ -560,11 +560,21 @@ misplaced_files: list[str]      # relative paths under .aria/handoff/*.md
 canonical_dir: str              # always "docs/handoff/" (literal constant)
 ```
 
-**Latest detection (H5 fix, 2026-05-16)**: `latest_path` prefers the
-`docs/handoff/latest.md` pointer target (the human-maintained semantic
-"Latest"). Raw mtime-max is only a **fallback** — used when the pointer is
-absent / unparseable / targets a missing file. `latest_source` exposes which
-path was taken (`"pointer"` | `"mtime"` | `null`).
+**`latest.md` is never itself a candidate (QA-M2, H1 follow-up doc)**:
+the `docs/handoff/latest.md` pointer file is a navigation aid, not a
+handoff document. `collectors/handoff.py::_scan_md_files` excludes the
+`POINTER_FILENAME` (`latest.md`) constant from the candidate set entirely —
+it never appears in `latest_path`, never counts toward `exists`, and is
+not flagged in `misplaced_files`. A directory containing **only**
+`latest.md` yields `exists=false`. (Without this exclusion, the pointer —
+re-touched on every handoff write — would always win the mtime sort.)
+
+**Latest detection (H5 fix, 2026-05-16)**: among the non-pointer
+candidates, `latest_path` prefers the `docs/handoff/latest.md` pointer
+*target* (the human-maintained semantic "Latest"). Raw mtime-max is only a
+**fallback** — used when the pointer is absent / unparseable / targets a
+missing file. `latest_source` exposes which path was taken
+(`"pointer"` | `"mtime"` | `null`).
 
 **Why**: a predecessor handoff edited post-hoc (closeout finalize / rebase /
 typo fix) gets the newest mtime and would otherwise shadow the real latest
