@@ -18,6 +18,14 @@
 #       exit 0 + stdout: {"decision": "block", "reason": "<message>"}
 #   - Legacy deny via exit 2 + stderr if ARIA_HOOK_DENY_MODE=exit2.
 
+# NOTE (H1 follow-up, PR #46 audit Important-1): `set -e` here is NOT the
+# safety mechanism. The DECISION=$(...) command substitution masks the
+# python exit code per POSIX, so a python crash inside the heredoc does NOT
+# abort this script. The intended safe behavior is the explicit fallthrough:
+# empty/non-"DENY" $DECISION → `exit 0` (PASS, never block on hook failure).
+# `set -e` only guards the trivial top-level statements; do not rely on it
+# for the decision path. Fail-open is deliberate (a broken hook must never
+# block legitimate writes).
 set -e
 
 DENY_MODE="${ARIA_HOOK_DENY_MODE:-json}"

@@ -600,8 +600,22 @@ recommendation:
     .aria/ 是机器状态 namespace (workflow-state.json / audit logs / cache 等),
     docs/ 是人类/AI 可读 prose namespace。handoff doc 是 prose,属于 docs/handoff/。
     H0 spec (Forgejo #92) ship 后,本 rule 是 5 层防漂移的 Layer 3 (推荐降级)。
-  non_blocking: false  # 不严格阻断,但应在常规工作流前 surface
+  non_blocking: false       # 阻断性降级 (同 prd_draft_blocking 语义)
+  degradation: true         # 降级推荐优先级, 常规 feature/fix 作为备选展示
 ```
+
+**`non_blocking` 三态语义 (H1 follow-up, PR #46 audit Important-2 澄清)**:
+
+`non_blocking` 不是布尔二态,是三态优先级 gate (与既有规则 prd_draft_blocking L335 / resume_in_progress_us L537 一致):
+
+| 取值 | 语义 | 用例 |
+|------|------|------|
+| `non_blocking: true` | 建议性 — 仅提示,不改变常规推荐排序 | `audit_unconverged` (1.9), `multi_remote_drift` (1.35) |
+| `non_blocking: false` (单独) | 强信号 — 该 rule 推荐优先, 但不显式抑制常规流 | `resume_in_progress_us` (1.88) |
+| `non_blocking: false` + `degradation: true` | **阻断性降级** — 抑制常规 workflow 推荐, 该 rule 的修复 workflow 上位为主推荐, 用户须明确选择忽略才回到常规流 | `prd_draft_blocking` (5), **`handoff_drift` (1.91)** |
+| `blocking: true` | 硬阻断 — 完全不出常规推荐, 必须先修复 | `custom_check_failed` (1.95) |
+
+`handoff_drift` 取 `degradation` 态 (同 `prd_draft_blocking`): 不硬阻断 (用户当前仍可工作), 但 migrate-handoff-drift 上位为主推荐, 常规 feature/fix 降为备选 (因为漂移会让下次 session 漏读 handoff — H0 痛点)。
 
 **Rationale (placement 1.91)**: 在 `audit_unconverged` (1.9 — 流程未收敛) 之后, `custom_check_failed` (1.95 — 硬阻断) 之前。审计未收敛是更紧迫的流程问题; handoff 漂移虽影响下次 session 但当前可继续工作。优先级数字大于 1.9 表示 "稍后处理 OK", 但应在常规工作流 (commit_only / quick_fix 等) **之前** surface 给 AI 看到。
 

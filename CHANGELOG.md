@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.2] - 2026-05-17
+
+### Docs/clarity — H1 follow-up (PR #46 + #4 audit Important items)
+
+- **`hooks/handoff-location-guard.sh`**: added NOTE clarifying `set -e` is
+  NOT the safety mechanism — the `DECISION=$(...)` command substitution masks
+  python exit codes; safe behavior is the explicit fail-open PASS fallthrough
+  (PR #46 audit Important-1; comment-only, behavior unchanged)
+- **`RECOMMENDATION_RULES.md`**: `handoff_drift` rule clarified — added
+  `degradation: true` flag + tri-state `non_blocking` semantics table
+  (`non_blocking:true` advisory / `non_blocking:false` strong-signal /
+  `+degradation:true` blocking-degradation / `blocking:true` hard-block),
+  aligning handoff_drift with established `prd_draft_blocking` precedent
+  (PR #46 audit Important-2)
+- **`references/state-snapshot-schema.md`**: added explicit note that
+  `latest.md` (pointer) is never itself a candidate handoff doc —
+  excluded from `latest_path`/`exists`/`misplaced_files`; dir with only
+  `latest.md` → `exists=false` (PR #46 audit Important-3)
+- **(`standards/conventions/session-handoff.md`)**: `{archive-date}`
+  placeholder filled to `2026-05-15` (real H0 archive date) — PR #4 audit
+  Minor m5, companion aria-standards PR
+
+No behavior change — documentation/clarity only. 446/446 suite + 10/10
+hook smoke pass (pre-existing issue-cache-freshness flake unrelated).
+Level 1 quick-fix per `feedback_closeout_found_bug_level1_hotfix`.
+
+---
+
 ## [1.21.1] - 2026-05-16
 
 ### Fixed — H5 handoff collector mtime/pointer divergence (post-H0 closeout finding)
