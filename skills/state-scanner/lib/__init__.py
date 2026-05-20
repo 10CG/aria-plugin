@@ -35,7 +35,15 @@ from .coordination_ref import (
     REF_NAME,
     REMOTE_REF,
     BootstrapResult,
+    FetchResult,
+    PushResult,
+    ReadClaimsResult,
+    WriteClaimResult,
     bootstrap,
+    fetch_coordination_ref,
+    push_coordination_ref,
+    read_claims,
+    write_claim,
 )
 from .track_id import (
     MAX_TRACK_ID_LENGTH,
@@ -59,13 +67,21 @@ __all__ = [
     "get_identity",
     "get_owner",
     "get_session_id",
-    # coordination_ref (TASK-012)
+    # coordination_ref (TASK-012 + TASK-013)
     "BOOTSTRAP_COMMIT_MSG",
     "EMPTY_TREE_SHA",
     "REF_NAME",
     "REMOTE_REF",
     "BootstrapResult",
+    "FetchResult",
+    "PushResult",
+    "ReadClaimsResult",
+    "WriteClaimResult",
     "bootstrap",
+    "fetch_coordination_ref",
+    "push_coordination_ref",
+    "read_claims",
+    "write_claim",
     # track_id (TASK-014)
     "MAX_TRACK_ID_LENGTH",
     "NON_ASCII_FALLBACK_PREFIX",
