@@ -7,27 +7,53 @@ with a 30-second TTL so rapid successive scans skip redundant network I/O.
 Return schema (top-level key: `coordination_fetch`):
 
     {
-        "success": bool,          # True when fetch ran or cache was fresh
-        "cached": bool,           # True when TTL not expired — no fetch ran
-        "last_fetch_at": str,     # ISO 8601 UTC of the last successful fetch
-        "age_seconds": int,       # Seconds since last_fetch_at (0 if never fetched)
-        "refs_fetched": list[str],# Refspecs attempted; empty on error or cache hit
-        "error_kind": str | None, # "network" | "auth_403" | "non_ff" | "git_missing"
-                                  # | "other" | None (success path)
-        "error_msg": str | None,  # Human-readable detail; None on success
+        "success": bool,              # True when fetch ran or cache was fresh
+        "cached": bool,               # True when TTL not expired — no fetch ran;
+                                      # also True when fetch fails but stale cache
+                                      # is returned (degraded mode, TASK-007)
+        "last_fetch_at": str,         # ISO 8601 UTC of the last successful fetch
+        "age_seconds": int,           # Seconds since last_fetch_at (0 if never fetched)
+        "refs_fetched": list[str],    # Refspecs attempted; empty on error or cache hit
+        "error_kind": str | None,     # "network" | "auth_403" | "non_ff" | "git_missing"
+                                      # | "other" | None (success path)
+        "error_msg": str | None,      # Human-readable detail; None on success
+        "degraded": bool,             # TASK-007: True when fetch failed but stale cache
+                                      # data is being served in its place.
+                                      # Renderer consumer should display a top-bar:
+                                      # "⚠ 离线: 看板可能陈旧, 重复劳动风险升高"
+        "degradation_reason": str | None,  # TASK-007: "fetch_failed_using_stale_cache"
+                                           # when degraded=True, else None
     }
 
 Design notes:
-- Deliberately does NOT raise on any error — the caller (TASK-007 offline
-  degradation) consumes `success=False` and renders the offline red-bar.
+- Deliberately does NOT raise on any error — all errors surface via `success=False`
+  and/or `degraded=True` fields.  The board renderer (TASK-005) reads the
+  `degraded` signal and renders the offline red-bar; this collector only provides
+  the signal.
 - Cache path is `.aria/cache/coordination-fetch.json` relative to project_root.
   The `.aria/cache/` directory is created silently if absent.
 - A corrupt or non-JSON cache file is treated as absent → normal fetch.
 - Rule #7 compliance: subprocess uses `capture_output=True`; stdout/stderr are
   never printed. Error details are coerced to short, non-secret strings.
+- Degradation semantics (TASK-007):
+    * fetch fail + stale cache present  → success=False, cached=True,
+                                          degraded=True,
+                                          degradation_reason="fetch_failed_using_stale_cache"
+    * fetch fail + no cache at all      → success=False, cached=False,
+                                          degraded=False, degradation_reason=None
+    * cache fresh (TTL not expired)     → success=True,  cached=True,
+                                          degraded=False, degradation_reason=None
+    * fetch success                     → success=True,  cached=False,
+                                          degraded=False, degradation_reason=None
 
-Spec: openspec/changes/multi-terminal-coordination/tasks.md §1.3
-Task: TASK-003 (backend-architect)
+Example (for TASK-008 test authoring):
+    # fetch fail + stale cache → degraded
+    # subprocess returns rc=128, cache exists with last_fetch_at=10 min ago
+    # → success=False, cached=True, degraded=True,
+    #   degradation_reason="fetch_failed_using_stale_cache"
+
+Spec: openspec/changes/multi-terminal-coordination/tasks.md §1.3, §1.7
+Tasks: TASK-003 (backend-architect), TASK-007 (backend-architect)
 """
 
 from __future__ import annotations
@@ -199,6 +225,8 @@ def collect_coordination_fetch(
                         "refs_fetched": [],
                         "error_kind": None,
                         "error_msg": None,
+                        "degraded": False,
+                        "degradation_reason": None,
                     }
                     return r
 
@@ -221,6 +249,8 @@ def collect_coordination_fetch(
             "refs_fetched": list(_FETCH_REFSPECS),
             "error_kind": None,
             "error_msg": None,
+            "degraded": False,
+            "degradation_reason": None,
         }
         return r
 
@@ -235,9 +265,20 @@ def collect_coordination_fetch(
     log.warning("coordination_fetch: fetch failed — kind=%s msg=%s", error_kind, error_msg)
     r.soft_error("coordination_fetch_failed", f"{error_kind}: {error_msg}")
 
-    # Determine last_fetch_at from stale cache (if any) for age reporting
+    # ── TASK-007: Offline degradation ─────────────────────────────────────────
+    # If a stale cache entry exists (even though its TTL has expired), serve the
+    # cached data and set degraded=True so the board renderer can display the
+    # offline red-bar: "⚠ 离线: 看板可能陈旧, 重复劳动风险升高"
+    #
+    # Stale cache is only used when the JSON parsed successfully; a corrupt cache
+    # is treated as absent (per _read_cache contract) → degraded=False path.
+    #
+    # Note: _write_cache is NOT called here — we must not overwrite a valid
+    # stale entry with a failed-fetch timestamp.
     stale_last_fetch_iso: str = ""
     stale_age: int = 0
+    has_usable_stale_cache: bool = False
+
     if cache is not None:
         cached_iso = cache.get(_CACHE_KEY_LAST_FETCH_AT, "")
         if cached_iso:
@@ -245,14 +286,40 @@ def collect_coordination_fetch(
             if stale_ts is not None:
                 stale_last_fetch_iso = cached_iso
                 stale_age = int(now_ts - stale_ts)
+                has_usable_stale_cache = True
 
-    r.data = {
-        "success": False,
-        "cached": False,
-        "last_fetch_at": stale_last_fetch_iso,
-        "age_seconds": stale_age,
-        "refs_fetched": [],
-        "error_kind": error_kind,
-        "error_msg": error_msg,
-    }
+    if has_usable_stale_cache:
+        # Degraded mode: fetch failed but stale cache is available.
+        log.warning(
+            "coordination_fetch: serving stale cache (age=%ds) in degraded mode",
+            stale_age,
+        )
+        r.soft_error(
+            "coordination_fetch_degraded",
+            f"fetch failed ({error_kind}); serving stale cache aged {stale_age}s",
+        )
+        r.data = {
+            "success": False,
+            "cached": True,
+            "last_fetch_at": stale_last_fetch_iso,
+            "age_seconds": stale_age,
+            "refs_fetched": [],
+            "error_kind": error_kind,
+            "error_msg": error_msg,
+            "degraded": True,
+            "degradation_reason": "fetch_failed_using_stale_cache",
+        }
+    else:
+        # No cache at all — pure failure, no data to serve.
+        r.data = {
+            "success": False,
+            "cached": False,
+            "last_fetch_at": stale_last_fetch_iso,
+            "age_seconds": stale_age,
+            "refs_fetched": [],
+            "error_kind": error_kind,
+            "error_msg": error_msg,
+            "degraded": False,
+            "degradation_reason": None,
+        }
     return r
