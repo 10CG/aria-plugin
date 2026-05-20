@@ -26,6 +26,11 @@ Coverage (schema v1.0):
 - Phase 1.14: Forgejo CLAUDE.local.md config detection
 - Phase 1.15: Session-handoff doc surfacing (docs/handoff/ canonical + .aria/
               handoff/ misplaced detection; additive top-level `handoff` field)
+- Phase 1.16: Coordination fetch (git fetch with 30s TTL cache; prerequisite for
+              Phase 1.17; additive top-level `coordination_fetch` field)
+- Phase 1.17: Cross-branch handoff track rebuild (scans all origin/* branches for
+              docs/handoff/*.md, parses frontmatter, legacy fallback for pre-v1.1.0
+              docs; additive top-level `tracks_multibranch` field)
 
 Invariants (do not break without schema bump):
 - Top-level field `snapshot_schema_version` is the ONLY version gate SKILL.md
@@ -50,10 +55,12 @@ from collectors import (
     collect_architecture,
     collect_audit,
     collect_changes_analysis,
+    collect_coordination_fetch,
     collect_custom_checks,
     collect_forgejo_config,
     collect_git_state,
     collect_handoff,
+    collect_handoff_multibranch,
     collect_interrupt_state,
     collect_issue_scan,
     collect_multi_remote,
@@ -96,6 +103,13 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_13_issue = collect_issue_scan(project_root)
     phase1_14_forgejo = collect_forgejo_config(project_root)
     phase1_15_handoff = collect_handoff(project_root)
+    # Phase 1.16: coordination fetch (TASK-003) — must run before multibranch scan.
+    # collect_coordination_fetch is idempotent with a 30s TTL cache; running it here
+    # ensures all remote refs are available even if the caller did not pre-fetch.
+    phase1_16_coord_fetch = collect_coordination_fetch(project_root)
+    # Phase 1.17: cross-branch handoff track rebuild (TASK-004).
+    # Depends on phase1_16_coord_fetch having populated refs/remotes/origin/*.
+    phase1_17_handoff_mb = collect_handoff_multibranch(project_root)
 
     # T3.3 contract: multi_remote.data returns the inner block; nest under
     # sync_status.multi_remote (overrides the T3.2 stub of {"enabled": false}).
@@ -119,6 +133,8 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         ("issue_scan", phase1_13_issue),
         ("forgejo_config", phase1_14_forgejo),
         ("handoff", phase1_15_handoff),
+        ("coordination_fetch", phase1_16_coord_fetch),
+        ("handoff_multibranch", phase1_17_handoff_mb),
     ]:
         for err in result.errors:
             errors.append({"collector": collector_name, **err})
@@ -141,6 +157,8 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         "sync_status": phase1_12_sync.data,
         "forgejo_config": phase1_14_forgejo.data,
         "handoff": phase1_15_handoff.data,
+        "coordination_fetch": phase1_16_coord_fetch.data,
+        "tracks_multibranch": phase1_17_handoff_mb.data,
         "errors": errors,
     }
 
