@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-05-20
+
+### Added — Multi-terminal coordination (Layer H + Layer L + Design A)
+
+Per OpenSpec change `multi-terminal-coordination` (Approved 2026-05-19, per DEC-20260519-001).
+Methodology extension addressing multi-terminal concurrent development including **cross-container** (no shared filesystem) scenarios. Real-world race events observed during this ship cycle motivated all three layers (接错棒 / 重复劳动 / 工作树污染).
+
+**Implementation** (3 layers, advisory + 最终一致, pure git remote 不绑 Forgejo):
+
+- **Layer H — Handoff frontmatter schema (Rule #9 §2.3 extension)**:
+  - 5 字段机读 frontmatter (`track-id` / `owner-container` / `phase` / `status` / `updated-at`)
+  - state-scanner Phase 1 跨分支 fetch + 重建多 track 看板 → 根除单写者 `latest.md` siloing
+  - `standards/conventions/session-handoff.md` v1.0.0 → v1.1.0 (additive)
+  - `aria/templates/session-handoff.md` frontmatter head + 字段填充指引
+  - Backward-compatible: existing handoffs without frontmatter → graceful legacy fallback per mtime + filename
+
+- **Layer L — Orphan ref + claim + reconcile + 急切认领**:
+  - `refs/aria/coordination` orphan ref (history-isolated)
+  - claim YAML schema v1 (10 fields incl `schema_version` + `superseded_from`)
+  - file-per-writer partitioning (`claims/<container-id>/<session-id>.yaml`) → push 永不写他人文件
+  - reconcile 4-rule deterministic protocol (early `claimed_at` / done takeover / `stale_ttl` takeover / lex tiebreak / `clock_skew` CONFLICT downgrade)
+  - `scripts/phase1_gate.py` 9-step 急切认领 (fetch → reconcile → push claim → release to Phase B)
+  - 7-case `failure_handlers.py` (non-ff retry / `auth_failed` no-retry / `disk_full` / partial fetch / orphan bootstrap / `user_decision` callback)
+  - claim lifecycle (acquire / heartbeat 10min / release / `stale_ttl` 30min / GC archive)
+
+- **Design A — Conditional worktree** (per-container concurrent ≥2 tracks):
+  - `lib/concurrent_tracks.py`: `count_concurrent_tracks` 检测 `needs_worktree`
+  - `lib/worktree_manager.py`: create / list / remove / cleanup_on_release / auto_cleanup_done_tracks
+  - Submodule independent checkout via `git worktree add` semantics
+  - 误用保护: dirty worktree default refuses cleanup; archive mode preserves history
+
+**New files** (10 lib modules + 2 scripts + 1 doc + 3 tests):
+- `aria/skills/state-scanner/lib/` — claim_schema / identity / track_id / coordination_ref / constants / claim_lifecycle / gc / reconcile / failure_handlers / concurrent_tracks / worktree_manager
+- `aria/skills/state-scanner/scripts/phase1_gate.py`
+- `aria/skills/state-scanner/scripts/renderers/track_board.py` (P1 + collision/clock-skew upgrade)
+- `aria/skills/state-scanner/scripts/writers/latest_md_writer.py`
+- `aria/skills/state-scanner/docs/rule9-5layer-matrix.md`
+- `aria/skills/state-scanner/tests/test_p1_layer_h.py` + `test_reconcile_golden_table.py` + `test_race_window.py` + `test_failure_injection.py` (108 tests total)
+
+**5-layer enforcement matrix** (Rule #9 全覆盖):
+- L1 hook `handoff-location-guard.sh` 文档化 "无需改动 — 仅检查路径不检查内容"
+- L2 collector `handoff.py` 加 `parse_handoff_frontmatter` helper + frontmatter-aware
+- L3 state-scanner: Phase 1.16 `coordination_fetch` + Phase 1.17 `handoff_multibranch` + multi-track board
+- L4 规约 SOT: `standards/conventions/session-handoff.md` §2.3
+- L5 D.3 template: `aria/templates/session-handoff.md` frontmatter head
+
+**CLAUDE.md Rule #9 Extension** (Aria 主仓): 引用本 v1.22.0 Spec + DEC-20260519-001
+
+**Audit trajectory**:
+- post_spec R1 (5 agents convergence): PASS_WITH_WARNINGS 5/5, 13 major dedupe
+- post_spec R2 (v2 fixes verify): 4 PASS + 1 PASS_WITH_WARNINGS (全 minor) → 实质 unanimous PASS, 0 critical / 0 major
+- post_implementation R8 (P2 final, informal): tech-lead **READY_TO_MERGE** + code-reviewer **SHIP_NOW** (15 minor, all `blocks_merge: no`)
+
+**Rule #6 structural benchmark**: `aria-plugin-benchmarks/ab-suite/multi-terminal-coordination/benchmark.yaml` + result `ab-results/2026-05-20T042320Z-multi-terminal-coordination/` with AUTO_GATE=true (4 metrics, 所有 delta > 0,所有 threshold 满足);human_review pending per Rule #6 framing.
+
+**Dogfood**: `.aria/dogfood-reports/multi-terminal-coordination-2026-05-20.md` 含本 session 真实 race 实证 (3 organic events: wrong-baton / push-reject / submodule-detach) + counterfactual analysis;真实 metric 数值待 master merge 后 `.aria/scripts/dogfood/measure_multi_terminal.py` 运行收集 (pending verdict)。
+
+**Refs**:
+- Spec: `openspec/changes/multi-terminal-coordination/` (Approved)
+- Decision: `docs/decisions/DEC-20260519-001-multi-terminal-coordination.md`
+- Closeout notes: `.aria/notes/multi-terminal-coordination-{p1,p2}-closeout.md`
+
+---
+
 ## [1.21.4] - 2026-05-20
 
 ### Fixed — state-scanner sister-bug bundle: locale crash + transitional status
