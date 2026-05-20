@@ -54,7 +54,6 @@ Deps: TASK-003 (coordination_fetch.py) + TASK-009 (handoff.py parse_handoff_fron
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from ._common import CollectorResult, _run, log

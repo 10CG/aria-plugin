@@ -324,7 +324,7 @@ def render_track_board(
         lines.append(f"(缓存于 {age_seconds}s 前)")
 
     # ── Board header ──────────────────────────────────────────────────────────
-    fetch_ts = last_fetch_at[:16].replace("T", "T") + "Z" if last_fetch_at else "未知"
+    fetch_ts = last_fetch_at[:16] + "Z" if last_fetch_at else "未知"
     lines.append(f"=== 多 Track 协调看板 (fetch @ {fetch_ts}) ===")
 
     # ── Read tracks_multibranch (TASK-004 interface) ──────────────────────────
