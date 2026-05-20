@@ -190,6 +190,88 @@ class TestStatusNormalizationIssue101Fix(unittest.TestCase):
         self.assertEqual(_normalize_status(""), "unknown")
 
 
+class TestStatusNormalizationIssue73Fix(unittest.TestCase):
+    """Regression suite for Aria #73 — transitional status mis-classification.
+
+    Background: pre-v1.20.0 (before #101) `Implementation-Complete-Pending-Obs`
+    normalized to `done` (substring shadow), triggering false-positive
+    pending_archive recommendation. The v1.20.0 #101 fix incidentally moved
+    `pending` family above `done` fallback, so the symptom shifted to `pending`
+    — pending_archive no longer fired, but `requirements.py:56` priority_items
+    filter (status ∈ {in_progress, ready, pending}) wrongly surfaced the spec
+    as "待处理".
+
+    v1.21.4 #73 fix adds a transitional family ahead of pending family, mapping
+    `implementation-complete` / `implementation-done` phrases to `implemented`
+    — the canonical lifecycle slot for "post-merge, awaiting verify/archive"
+    per SKILL.md token dictionary. Aether 2026-05-04 real-world case:
+    `migrate-docker-data-root-to-local-ssd` Spec with 24h observation window.
+    """
+
+    def test_issue73_implementation_complete_pending_obs(self):
+        # Primary case from #73 body (Aether 2026-05-04)
+        self.assertEqual(
+            _normalize_status("Implementation-Complete-Pending-Obs"),
+            "implemented",
+        )
+
+    def test_issue73_implementation_complete_with_narrative(self):
+        # Full real-world form: phrase + date + commentary
+        self.assertEqual(
+            _normalize_status(
+                "Implementation-Complete-Pending-Obs 2026-05-04 "
+                "(Phase 1-5 全部 done, 24h obs window: 5/5 03:48 UTC PASS 后转 Complete)"
+            ),
+            "implemented",
+        )
+
+    def test_issue73_implementation_done_variant(self):
+        # Alternate spelling — implementation-done same semantic
+        self.assertEqual(
+            _normalize_status("Implementation-Done (24h obs PASS)"),
+            "implemented",
+        )
+
+    def test_issue73_does_not_trigger_pending(self):
+        # Negative: must NOT fall into pending family despite containing
+        # `pending` token (`pending-obs` word-boundary match)
+        self.assertNotEqual(
+            _normalize_status("Implementation-Complete-Pending-Obs"),
+            "pending",
+        )
+
+    def test_issue73_does_not_trigger_done(self):
+        # Negative: must NOT fall into done fallback (original #73 symptom)
+        self.assertNotEqual(
+            _normalize_status("Implementation-Complete-Pending-Obs"),
+            "done",
+        )
+
+    def test_issue73_archived_still_wins(self):
+        # Priority: archived (terminal) still takes precedence over transitional
+        # — once a Spec is archived, the transitional history is irrelevant.
+        self.assertEqual(
+            _normalize_status(
+                "Archived (was Implementation-Complete-Pending-Obs)"
+            ),
+            "archived",
+        )
+
+    def test_issue73_unimplemented_shadow_guard(self):
+        # Negative: `unimplemented` doesn't match `implementation-complete`
+        # (different prefix); the transitional family uses substring not
+        # word-boundary, but the phrases are distinctive enough that
+        # `unimplemented` doesn't contain either phrase.
+        self.assertEqual(_normalize_status("Unimplemented"), "unknown")
+
+    def test_issue73_phrase_anywhere_in_string(self):
+        # Substring match — phrase can appear with surrounding text
+        self.assertEqual(
+            _normalize_status("Status: Implementation-Complete — awaiting D.2"),
+            "implemented",
+        )
+
+
 class TestOpenspecCollector(unittest.TestCase):
     def test_no_openspec_dir(self):
         with tmp_project() as root:

@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.4] - 2026-05-20
+
+### Fixed — state-scanner sister-bug bundle: locale crash + transitional status
+
+- **`skills/state-scanner/scripts/collectors/_common.py:_run`** (Aria #61):
+  Windows CJK locale crash. `subprocess.run(..., text=True)` was falling back
+  to `locale.getpreferredencoding()` (GBK on Chinese Windows) and crashing on
+  UTF-8 git output (CJK commit messages / emoji per aria-standards
+  git-commit.md 双语规范). 100% of `scan.py` runs failed on Chinese Windows
+  with `UnicodeDecodeError: 'gbk' codec can't decode byte 0xaf` → exit 30.
+  Fix: explicit `encoding="utf-8", errors="replace"` + defensive
+  `UnicodeDecodeError` catch returning rc=125 (mirrors `TimeoutExpired` /
+  `FileNotFoundError` softening — `_run` contract preserved: never raises).
+
+- **`skills/state-scanner/scripts/collectors/_status.py:_normalize_status`**
+  (Aria #73): transitional status `Implementation-Complete-Pending-Obs`
+  mis-classified. Original v3.0 bug ("→ done", false-positive
+  `pending_archive`) was incidentally migrated to "→ pending" by v1.20.0
+  #101 fix, which wrongly surfaced the spec as a "待启动" item via
+  `requirements.py:56` priority_items filter
+  (`status ∈ {in_progress, ready, pending}`). Aether 2026-05-04 real-world
+  hit: `migrate-docker-data-root-to-local-ssd` Spec with 24h obs window.
+  Fix: new transitional family ahead of pending — hyphenated phrases
+  `implementation-complete` / `implementation-done` route to `implemented`
+  (the canonical lifecycle slot for "post-merge, awaiting verify/archive"
+  per SKILL.md token dictionary). No new state introduced.
+
+### Tests
+
+- **`tests/test_common.py`** (NEW, 6 tests in `TestRunUtf8Encoding`):
+  CJK roundtrip / emoji roundtrip / mixed ascii+CJK+emoji / non-zero rc /
+  invalid-bytes errors=replace / command-not-found rc=127. Covers `_run`
+  contract end-to-end.
+- **`tests/test_openspec.py::TestStatusNormalizationIssue73Fix`** (NEW, 8 tests):
+  primary case / alternate spelling / narrative form / no-pending-collision /
+  no-done-collision / archived-precedence / unimplemented-shadow-guard /
+  phrase-anywhere.
+- **Suite**: 460/460 PASS (+14 new). Smoke importlib benchmark: 15/15 PASS.
+
+### Closes
+
+- Forgejo Aria #61
+- Forgejo Aria #73
+
+### Spec
+
+- `openspec/changes/state-scanner-bugfix-locale-and-transitional-status/`
+  → archived to `openspec/archive/2026-05-20-...` at release ship
+
+---
+
 ## [1.21.3] - 2026-05-17
 
 ### Fixed — issue-triage D3 schema conformance (H3 iteration-2 + iteration-3)

@@ -82,6 +82,18 @@ def _normalize_status(raw: str | None) -> str:
     if _has_token(low, "deprecated"):
         return "deprecated"
 
+    # Transitional family (#73 fix, 2026-05-20): hyphenated multi-word phrases
+    # semantically equivalent to `implemented` (post-merge, awaiting verify/archive).
+    # MUST precede the Pending family — strings like "Implementation-Complete-Pending-Obs"
+    # also contain a `pending` token (word-boundary match on `pending-obs`) and would
+    # otherwise mis-route to `pending`, which downstream breaks requirements.py:56
+    # priority_items surface (filters status ∈ {in_progress, ready, pending}).
+    # See openspec/archive/2026-05-20-state-scanner-bugfix-locale-and-transitional-status/
+    # for full rationale + Aria #73 history.
+    for phrase in ("implementation-complete", "implementation-done"):
+        if phrase in low:
+            return "implemented"
+
     # Pending family
     for token in ("draft", "pending", "placeholder"):
         if _has_token(low, token):
