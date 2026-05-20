@@ -15,6 +15,7 @@ from ._common import CollectorResult, log
 from .architecture import collect_architecture
 from .audit import collect_audit
 from .changes import collect_changes_analysis
+from .coordination_fetch import collect_coordination_fetch
 from .custom_checks import collect_custom_checks
 from .forgejo_config import collect_forgejo_config
 from .git import collect_git_state
@@ -35,6 +36,7 @@ __all__ = [
     "collect_architecture",
     "collect_audit",
     "collect_changes_analysis",
+    "collect_coordination_fetch",
     "collect_custom_checks",
     "collect_forgejo_config",
     "collect_git_state",
