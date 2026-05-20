@@ -14,6 +14,12 @@ P2 Layer L (multi-terminal-coordination) 新增:
 """
 from __future__ import annotations
 
+from .claim_lifecycle import (
+    AcquireResult,
+    acquire_claim,
+    heartbeat,
+    release_claim,
+)
 from .claim_schema import (
     ClaimRecord,
     SCHEMA_VERSION_CURRENT,
@@ -21,6 +27,16 @@ from .claim_schema import (
     STATUS_WRITABLE,
     parse_claim,
     serialize_claim,
+)
+from .constants import (
+    ARCHIVE_RETENTION_DAYS,
+    CLOCK_SKEW_WARN_THRESHOLD,
+    HEARTBEAT_INTERVAL,
+    STALE_TTL,
+)
+from .gc import (
+    GcResult,
+    archive_done_claims,
 )
 from .identity import (
     Identity,
@@ -54,6 +70,11 @@ from .track_id import (
 )
 
 __all__ = [
+    # claim_lifecycle (TASK-018)
+    "AcquireResult",
+    "acquire_claim",
+    "heartbeat",
+    "release_claim",
     # claim_schema (TASK-010)
     "ClaimRecord",
     "SCHEMA_VERSION_CURRENT",
@@ -61,6 +82,14 @@ __all__ = [
     "STATUS_WRITABLE",
     "parse_claim",
     "serialize_claim",
+    # constants (TASK-018, Finding #3 SOT)
+    "ARCHIVE_RETENTION_DAYS",
+    "CLOCK_SKEW_WARN_THRESHOLD",
+    "HEARTBEAT_INTERVAL",
+    "STALE_TTL",
+    # gc (TASK-018)
+    "GcResult",
+    "archive_done_claims",
     # identity (TASK-011)
     "Identity",
     "get_container_id",

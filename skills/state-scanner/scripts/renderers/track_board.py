@@ -18,7 +18,7 @@ Column definitions:
     LAST-PING    — relative age from updated_at ("Xm ago" / "Xh ago" / "Xd ago")
     STATUS       — freshness status with colour emoji OR done/legacy marker
 
-Freshness thresholds (P1 local constants; TASK-018 will introduce constants.py):
+Freshness thresholds (imported from lib/constants.py — TASK-018 Finding #3 migration):
     HEARTBEAT_INTERVAL = 600   s  (10 min) → 🟢 active
     STALE_TTL          = 1800  s  (30 min) → 🟡 stale? 待确认 (between intervals)
     ≥ STALE_TTL                            → 🔴 abandoned? 可接管
@@ -49,12 +49,29 @@ from datetime import datetime, timezone
 from typing import Optional
 
 # ---------------------------------------------------------------------------
-# P1 local constants (TASK-018 will introduce lib/constants.py; until then
-# these values are the single canonical source and must match tasks.md §2.8)
+# Coordination thresholds — imported from the single source of truth.
+# (Finding #3 migration: TASK-018 replaced the former P1 local constants with
+# this import.  See aria/skills/state-scanner/lib/constants.py.)
+#
+# Import strategy: track_board.py is loaded in two different contexts:
+#   (a) Via test harness: scripts/ is on sys.path, so "renderers" is a
+#       top-level package — relative import "..lib" would cross above the
+#       top-level package and fail.
+#   (b) Via scan.py / proper package install: full package hierarchy available.
+# We use a try/except to handle both cases cleanly.
 # ---------------------------------------------------------------------------
 
-HEARTBEAT_INTERVAL: int = 600   # seconds — 10 min; edge: age < this → 🟢 active
-STALE_TTL: int = 1800           # seconds — 30 min; edge: age < this → 🟡 stale
+try:
+    from ..lib.constants import HEARTBEAT_INTERVAL, STALE_TTL
+except ImportError:
+    # Fallback: inject lib/ directory into sys.path via __file__ location.
+    # This path is:  scripts/renderers/../../../lib  →  state-scanner/lib/
+    import sys as _sys
+    from pathlib import Path as _Path
+    _LIB_DIR = str(_Path(__file__).resolve().parent.parent.parent / "lib")
+    if _LIB_DIR not in _sys.path:
+        _sys.path.insert(0, _LIB_DIR)
+    from constants import HEARTBEAT_INTERVAL, STALE_TTL  # type: ignore[import]
 
 # Maximum characters for the TRACK column before truncation.
 MAX_TRACK_ID_LEN: int = 40
