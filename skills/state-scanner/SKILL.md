@@ -154,6 +154,13 @@ Snapshot 字段: `coordination_fetch` (additive, schema v1.0+, 详见 `collector
 
 **AI 阶段 1 职责**: 仅验证 scan.py 退出码 (0/1/2 语义见 Step 0 表格), 读 snapshot 传入阶段 2。不得手动逐字段解析或补齐。
 
+**Step 1.17 (TASK-004): `tracks_multibranch` collector** — 扫描所有 `origin/*` 分支的 `docs/handoff/*.md`, 解析 frontmatter, 重建多 track 列表。Snapshot key: `tracks_multibranch`.
+
+<!-- TODO(TASK-005 integration): 阶段 2 推荐决策生成 **之前**, 若 snapshot 含 tracks_multibranch 且 exists==true,
+     调用 renderers/track_board.render_track_board(snapshot) 渲染多 track 看板并展示给用户,
+     再进入推荐规则匹配。当前 TASK-005 仅提供渲染函数; 集成调用点由后续 phase 指定.
+     Renderer path: aria/skills/state-scanner/scripts/renderers/track_board.py -->
+
 ---
 
 ### 阶段 2: 推荐决策
