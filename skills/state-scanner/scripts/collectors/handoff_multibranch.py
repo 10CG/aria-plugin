@@ -99,9 +99,15 @@ def _list_origin_branches(project_root: Path) -> tuple[list[str], str | None]:
     to enumerate all remote branches that were populated by TASK-003 fetch.
     Excludes the synthetic ``origin/HEAD`` pointer.
     """
+    # Sort by committerdate desc so most-recently-updated branches win the
+    # MAX_BRANCHES_SCANNED cap (Round 8 tech-lead Finding #4 fix — previously
+    # lexicographic order let archive/* + bugfix/* steal scan budget from
+    # master + feature/*; first dogfood run after v1.22.0 ship immediately
+    # surfaced this in real use against this very Aria repo).
     cmd = [
         "git",
         "for-each-ref",
+        "--sort=-committerdate",
         "--format=%(refname:short)",
         "refs/remotes/origin/",
     ]
@@ -125,7 +131,11 @@ def _list_origin_branches(project_root: Path) -> tuple[list[str], str | None]:
             continue
         branches.append(bare)
 
-    return sorted(branches), None
+    # Preserve `git for-each-ref --sort=-committerdate` ordering (most-recently-updated
+    # branches first) so MAX_BRANCHES_SCANNED cap keeps active branches over stale ones.
+    # Round 8 tech-lead Finding #4 fix — previously `sorted(branches)` undid the git
+    # sort and let archive/* + bugfix/* steal scan budget. Surfaced at zero-day dogfood.
+    return branches, None
 
 
 def _list_handoff_files(project_root: Path, branch: str) -> tuple[list[str], str | None]:
@@ -278,12 +288,13 @@ def collect_handoff_multibranch(
         return r
 
     # Performance cap: only scan first MAX_BRANCHES_SCANNED branches.
-    # Branches are already sorted lexicographically by _list_origin_branches.
+    # Branches are pre-sorted by committerdate desc (most-recent first) by
+    # _list_origin_branches. Cap keeps active over stale.
     if len(branches) > MAX_BRANCHES_SCANNED:
         capped_msg = (
             f"Remote branch count ({len(branches)}) exceeds cap "
             f"({MAX_BRANCHES_SCANNED}); scanning only the first "
-            f"{MAX_BRANCHES_SCANNED} branches (lexicographic order)."
+            f"{MAX_BRANCHES_SCANNED} branches (most-recent by committerdate)."
         )
         r.soft_error("handoff_multibranch_branch_cap", capped_msg)
         error_messages.append(capped_msg)

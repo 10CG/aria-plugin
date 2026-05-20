@@ -177,10 +177,25 @@ def parse_handoff_frontmatter(content: str) -> Optional[dict]:
     if not _FRONTMATTER_REQUIRED_KEYS.issubset(parsed.keys()):
         return None
 
-    # Verify every required value is a plain string (type guard for downstream).
+    # Verify every required value is a plain string (or coerce datetime to ISO string).
+    # YAML auto-parses ISO 8601 timestamps (e.g. `updated-at: 2026-05-20T04:50:34Z`)
+    # to ``datetime.datetime`` objects, which is harmless for ``updated-at`` but
+    # initially caused this function to reject 100% of real-world v1.22.0 handoffs
+    # as "legacy" at first dogfood run (zero-day production bug, fixed inline).
+    # Per §2.3.1 schema, all 5 fields are string-typed; we coerce datetime back
+    # to a normalized ISO 8601 string with trailing 'Z' for UTC.
+    import datetime as _dt
+
     result: dict = {}
     for key in _FRONTMATTER_REQUIRED_KEYS:
         val = parsed[key]
+        if isinstance(val, _dt.datetime):
+            # Normalize to ISO 8601 UTC with trailing 'Z'.
+            if val.tzinfo is None:
+                val = val.replace(tzinfo=_dt.timezone.utc)
+            val = val.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        elif isinstance(val, _dt.date):
+            val = val.isoformat()
         if not isinstance(val, str):
             # YAML might coerce e.g. `status: true` → bool; reject silently.
             return None

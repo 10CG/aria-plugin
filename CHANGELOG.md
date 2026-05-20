@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1] - 2026-05-20
+
+### Fixed — Zero-day dogfood bugs in v1.22.0 handoff collector
+
+3 production bugs surfaced at first dogfood use(同日 v1.22.0 ship 后立即手动跑
+`collect_handoff_multibranch` 验证 Layer H 多 track 看板时发现,符合 P2 closeout
+Round 8 tech-lead Finding #4 + 新 datetime bug,两 terminals 的 frontmatter 都被误标 legacy):
+
+- **`scripts/collectors/handoff.py::parse_handoff_frontmatter`**:
+  YAML 自动把 ISO 8601 timestamp(`updated-at: 2026-05-20T04:50:34Z`)解析为
+  `datetime.datetime` 对象,parser `isinstance(val, str)` 类型守卫返回 None →
+  全部 v1.22.0+ handoff 被误标 legacy。**Fix**: coerce `datetime.datetime` 或
+  `datetime.date` 为规范化 ISO 8601 string (UTC + 'Z' suffix) 后再做 type guard。
+
+- **`scripts/collectors/handoff_multibranch.py::_list_origin_branches`**:
+  `git for-each-ref` sort 用 `--sort=-committerdate`(本 hotfix 加),但函数末尾
+  `return sorted(branches), None` **再 sort 一次撤销 git 排序** → 20-branch cap 仍
+  按字典序选 archive/* + bugfix/* 而非 master/feature/*。Round 8 tech-lead Finding #4
+  实质未 fix(那次 fix 只改了 git 命令但漏掉 Python re-sort)。**Fix**: 移除
+  `sorted()` 保留 git committerdate desc 顺序;cap 现在按 committerdate 倒序取 top 20。
+
+- **(配套)** Stale "lexicographic order" 错误消息文本更新为 "most-recent by committerdate"。
+
+### Verified
+
+- 双终端实测:`multi-terminal-coordination` (simonfish/dev-claude2, D.3, done) +
+  `aria-2-0-m5-replay-reconciler-drift-review-loop-audit` (simonfish/dev-claude, D.3, active)
+  都正确出现在 NON-LEGACY tracks 列表
+- 108 tests still PASS(无回归)
+- 直接 hotfix branch(small isolated patch,不另开 spec)
+
+### Meta dogfood note
+
+3 个 bugs 在 v1.22.0 ship 后 5 分钟内、同日 dogfood 暴露 + 即时修复 ship — spec ship
+过程中 5 次真实 race events + 3 次 production bugs 立即可见,**solution validates
+itself by being needed AND fixing itself during its own day-zero use**。Memory entry
+`feedback_meta_dogfood_solution_validates_self_mid_ship` 沉淀此 pattern。
+
+---
+
 ## [1.22.0] - 2026-05-20
 
 ### Added — Multi-terminal coordination (Layer H + Layer L + Design A)
