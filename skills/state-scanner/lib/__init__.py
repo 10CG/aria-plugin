@@ -20,6 +20,10 @@ from .claim_lifecycle import (
     heartbeat,
     release_claim,
 )
+from .concurrent_tracks import (
+    ConcurrentTracksResult,
+    count_concurrent_tracks,
+)
 from .claim_schema import (
     ClaimRecord,
     SCHEMA_VERSION_CURRENT,
@@ -91,6 +95,9 @@ __all__ = [
     "acquire_claim",
     "heartbeat",
     "release_claim",
+    # concurrent_tracks (TASK-023)
+    "ConcurrentTracksResult",
+    "count_concurrent_tracks",
     # claim_schema (TASK-010)
     "ClaimRecord",
     "SCHEMA_VERSION_CURRENT",

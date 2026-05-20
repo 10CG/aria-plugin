@@ -8,6 +8,15 @@ Additionally detects misplaced files under `.aria/handoff/*.md` (forbidden
 location) — this is Layer 2 of the 5-layer defense-in-depth against handoff
 dir drift. See OpenSpec `aria-ten-step-session-handoff-stage` proposal §Why.
 
+This module is **frontmatter-aware** via the additive helper
+``parse_handoff_frontmatter()`` (TASK-009 b, multi-terminal-coordination v1.22.x+).
+The helper parses the machine-readable YAML frontmatter schema (§2.3.1, 5 fields:
+``track-id`` / ``owner-container`` / ``phase`` / ``status`` / ``updated-at``)
+from a handoff doc string.  The main ``collect_handoff()`` flow is **not modified**
+— it returns the same ``handoff`` snapshot fields as before (schema 1.0, backward
+compatible).  The helper is consumed by ``collectors/handoff_multibranch.py``
+(TASK-004) to reconstruct the multi-track dashboard from cross-branch fetched docs.
+
 Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
 - exists: bool — whether canonical dir has any .md file
 - latest_path: str | None — relative path to newest .md by mtime

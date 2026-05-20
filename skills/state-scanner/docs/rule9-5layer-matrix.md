@@ -12,13 +12,56 @@
 
 ## 总览表
 
-| Layer | 职责 | 是否需改动 (multi-terminal-coordination) | 实施位置 | 引用 Task |
-|-------|------|------------------------------------------|---------|-----------|
-| **L1 hook** | 阻断 `.aria/handoff/*.md` 写入 (PreToolUse) | **不需要** — 仅检查路径,不检查内容 | `aria/hooks/handoff-location-guard.sh` | TASK-009 (a) 文档化 |
-| **L2 collector** | 检测 misplaced files + 解析 frontmatter | **需要** — 加 frontmatter-aware helper (向后兼容) | `aria/skills/state-scanner/scripts/collectors/handoff.py` | TASK-009 (b) helper; TASK-004 consume |
-| **L3 state-scanner** | 推荐 `migrate-handoff-drift` / 多 track 看板渲染 | **需要** — Phase 1 大改:fetch + 全分支重建看板 + claim 闸门 | `aria/skills/state-scanner/` (scan + 新 collectors/renderers) | TASK-003 / 004 / 005 / 006 / 007 |
-| **L4 规约 SOT** | `session-handoff.md §2.3` frontmatter schema 权威定义 | **已完成** — TASK-001 ship (commit `03ddfd0`) | `standards/conventions/session-handoff.md` | TASK-001 |
-| **L5 D.3 template** | 写出含 frontmatter 的 handoff doc (硬编码输出路径) | **已完成** — TASK-002 ship (commit `6cb110f`) | `aria/templates/session-handoff.md` | TASK-002 |
+| Layer | 职责 | 实施状态 | 实施位置 | 引用 Task |
+|-------|------|---------|---------|-----------|
+| **L1 hook** | 阻断 `.aria/handoff/*.md` 写入 (PreToolUse) | ✅ **不需要改动** — 仅检查路径,P2 frontmatter 不影响此层 | `aria/hooks/handoff-location-guard.sh` | TASK-009 (a) 文档化 |
+| **L2 collector** | 检测 misplaced files + 解析 frontmatter | ✅ **已完成** — TASK-009(b) helper ship; TASK-004 consume | `aria/skills/state-scanner/scripts/collectors/handoff.py` + `collectors/handoff_multibranch.py` | TASK-009 (b); TASK-004 |
+| **L3 state-scanner** | 推荐 `migrate-handoff-drift` / 多 track 看板渲染 + claim 闸门 | ✅ **P1+P2 全部 ship** — Phase 1.16 fetch + 1.17 multibranch + renderers + writers + phase1_gate + lib/ 9 modules | `aria/skills/state-scanner/` (collectors / renderers / writers / scripts / lib) | TASK-003~007 (P1); TASK-010~022 (P2) |
+| **L4 规约 SOT** | `session-handoff.md §2.3` frontmatter schema 权威定义 | ✅ **已完成** — TASK-001 ship (commit `03ddfd0`) | `standards/conventions/session-handoff.md` | TASK-001 |
+| **L5 D.3 template** | 写出含 frontmatter 的 handoff doc (硬编码输出路径) | ✅ **已完成** — TASK-002 ship (commit `6cb110f`) | `aria/templates/session-handoff.md` | TASK-002 |
+
+---
+
+## 실施完成度 (P2 ship 後状態, 2026-05-20)
+
+> P1 (Layer H, TASK-001~009) + P2 (Layer L, TASK-010~022) 全部 ship 後の実装状態を記録する。
+> P3 (TASK-023~030) は Design A 条件触发 + Rule #6 benchmark + Dogfood の 3 フェーズ。
+
+### P2 ship 後 Layer 实施状態
+
+| Layer | 实施状态 | P1 deliverable | P2 deliverable | P3 remaining |
+|-------|---------|----------------|----------------|--------------|
+| **L1 hook** | ✅ 完整 (TASK-009a) | `handoff-location-guard.sh` 不修改确认 + 注释文档化 | — (不需要 P2 修改) | — |
+| **L2 collector** | ✅ 完整 (TASK-009b + TASK-004) | `parse_handoff_frontmatter()` helper 新增 | TASK-004 consume: `collectors/handoff_multibranch.py` 使用 helper 解析全分支 frontmatter | — |
+| **L3 state-scanner** | ✅ P1+P2 ship (TASK-003/004/005/006/007 + TASK-010~022) | Phase 1.16 coordination_fetch + 1.17 handoff_multibranch + renderers/track_board + writers/latest_md_writer + scripts/phase1_gate | lib/ 9 modules: claim_schema, identity, track_id, coordination_ref, orphan_ref_bootstrap, claim_lifecycle, reconcile, failure_handlers, constants | TASK-023 同容器并发检测; TASK-024 worktree 触发流程入口; TASK-025 worktree 生命周期 |
+| **L4 规约 SOT** | ✅ 完整 (TASK-001) | `standards/conventions/session-handoff.md` v1.1.0 §2.3 frontmatter schema | — (不需要 P2 修改) | — |
+| **L5 D.3 template** | ✅ 完整 (TASK-002) | `aria/templates/session-handoff.md` frontmatter head | — (不需要 P2 修改) | — |
+
+### P2 Layer L ship 详情
+
+| Task | 模块 | 交付物 | 测试 |
+|------|------|--------|------|
+| TASK-010 | `lib/claim_schema.py` | claim YAML schema v1 (8 字段) + schema_version 前向兼容 | — |
+| TASK-011 | `lib/identity.py` | owner/container/session identity 生成 + `~/.aria/container-id` 持久化 | — |
+| TASK-014 | `lib/track_id.py` | 确定性 track-id 派生函数 (normalization + SHA256 fallback) | — |
+| TASK-012 | `lib/orphan_ref_bootstrap.py` | orphan ref `refs/aria/coordination` 初始化 | — |
+| TASK-013 | `lib/coordination_ref.py` | claim CRUD + push/fetch (file-per-writer) | — |
+| TASK-018 | `lib/claim_lifecycle.py` + `lib/constants.py` | lifecycle FSM + GC (Finding #3 resolved: constants 迁移完成) | — |
+| TASK-015 | `lib/reconcile.py` | 4-rule deterministic reconcile protocol (6-rule final: sole_active + stale_takeover + conflict + all_terminal + no_claims + unknown_sentinel) | TASK-020 55 golden tests |
+| TASK-019 | `lib/failure_handlers.py` | 7-case resilient wrapper | TASK-022 23 tests |
+| TASK-016 | `scripts/phase1_gate.py` | 9-step 急切认领闸门 | — |
+| TASK-017 | `scripts/renderers/track_board.py` | collision render upgrade (reconcile-based collision detection) | — |
+| TASK-020 | `tests/test_reconcile_golden.py` | reconcile golden table tests (55 cases) | 55 PASS |
+| TASK-021 | `tests/test_race_window.py` | race window tests (12, threading.Barrier zero-sleep) | 12 PASS |
+| TASK-022 | `tests/test_failure_injection.py` | failure injection tests (23, 7-case mock.patch) | 23 PASS |
+
+**P2 cumulative**: 90 tests PASS (55 golden + 12 race + 23 failure) + P1 18 tests = **108 total PASS in 1.381s**。
+
+### Round 8 audit 主要结论
+
+- tech-lead: **READY_TO_MERGE** — "P2 Layer L 13 atomic ship 构成完整、内聚的协调机制"
+- code-reviewer: **SHIP_NOW** — "Rule #7 audit clean / Rule #9 frontmatter ↔ claim YAML schema alignment verified"
+- 6-rule reconcile 含 `sole_active + stale_takeover_eligible` 优雅边角 + clock-skew CONFLICT 不静默
 
 ---
 
@@ -127,18 +170,38 @@ state-scanner Phase 1 在推荐前先执行:
 4. 检测 collision (cross-owner 强提示 / self-multi-container soft hint per §2.3.5)
 5. 急切认领闸门:推荐 → 用户确认 → 二次 fetch → push claim → 放行 Phase B
 
-### 改动范围 (跨多个 Task)
+### 实施范围 (跨多个 Task — P1 + P2 全部 ship)
 
-| Task | 内容 |
-|------|------|
-| TASK-003 | fetch + 缓存时间戳逻辑 |
-| TASK-004 | `parse_handoff_frontmatter` 消费 + track 列表重建 |
-| TASK-005 | 看板渲染 (多 track 表格 + 颜色 + 折叠) |
-| TASK-006 | `latest.md` 角色降级 (多 track → deprecation banner) |
-| TASK-007 | 离线退化 + 顶部红条告警 |
+**P1 Layer H (Phase 1 scan + 看板渲染)**:
 
-本文档 (TASK-009 e) 仅记录 L3 在 5 层矩阵中的定位与职责边界;
-实施细节见各 Task 及 `SKILL.md` 更新 (TASK 3.7 a)。
+| Task | 内容 | 状态 |
+|------|------|------|
+| TASK-003 | `collectors/coordination_fetch.py` — fetch + 30s TTL 缓存 | ✅ ship |
+| TASK-004 | `collectors/handoff_multibranch.py` — `parse_handoff_frontmatter` 消费 + 全分支 track 列表重建 | ✅ ship |
+| TASK-005 | `renderers/track_board.py` — 多 track 看板渲染 (collision badge 🔴/🟡) | ✅ ship |
+| TASK-006 | `writers/latest_md_writer.py` — `latest.md` 角色降级 (单 track pointer / 多 track deprecation banner) | ✅ ship (D.3-scoped, Finding #2) |
+| TASK-007 | 离线退化 — `coordination_fetch.py` offline 分支 + 顶部红条告警 | ✅ ship |
+
+**P2 Layer L (claim/reconcile 协调机制)**:
+
+| Task | 内容 | 状态 |
+|------|------|------|
+| TASK-010 | `lib/claim_schema.py` — claim YAML schema v1 | ✅ ship |
+| TASK-011 | `lib/identity.py` — owner/container/session identity | ✅ ship |
+| TASK-014 | `lib/track_id.py` — 确定性 track-id 派生 | ✅ ship |
+| TASK-012 | `lib/orphan_ref_bootstrap.py` — orphan ref bootstrap | ✅ ship |
+| TASK-013 | `lib/coordination_ref.py` — claim CRUD + push/fetch | ✅ ship |
+| TASK-018 | `lib/claim_lifecycle.py` + `lib/constants.py` — lifecycle FSM + GC | ✅ ship |
+| TASK-015 | `lib/reconcile.py` — 4→6 rule deterministic reconcile | ✅ ship |
+| TASK-019 | `lib/failure_handlers.py` — 7-case resilient wrapper | ✅ ship |
+| TASK-016 | `scripts/phase1_gate.py` — 9-step 急切认领闸门 | ✅ ship |
+| TASK-017 | `scripts/renderers/track_board.py` — collision render upgrade | ✅ ship |
+| TASK-020/021/022 | 90 P2 tests (golden + race + failure) | ✅ 90 PASS |
+
+**P3 remaining**: TASK-023 同容器并发 active claim 检测; TASK-024 worktree 触发流程入口 (phase1_gate 集成到 state-scanner 主流程); TASK-025 worktree 生命周期。
+
+本文档 (TASK-009 e + TASK-029 review) 记录 L3 在 5 层矩阵中的定位与职责边界;
+实施细节见各 Task 及 `SKILL.md` §"Layer L Phase B 集成" (TASK-029 新增)。
 
 ---
 
