@@ -34,9 +34,25 @@ from .constants import (
     HEARTBEAT_INTERVAL,
     STALE_TTL,
 )
+from .failure_handlers import (
+    FetchHealth,
+    NON_FF_MAX_RETRIES,
+    PUSH_BACKOFF_SECONDS,
+    ResilientPushResult,
+    ResilientWriteResult,
+    UserDecisionCallback,
+    health_check_fetch,
+    resilient_push,
+    resilient_write_claim,
+)
 from .gc import (
     GcResult,
     archive_done_claims,
+)
+from .reconcile import (
+    ReconcileVerdict,
+    reconcile,
+    reconcile_all,
 )
 from .identity import (
     Identity,
@@ -87,9 +103,23 @@ __all__ = [
     "CLOCK_SKEW_WARN_THRESHOLD",
     "HEARTBEAT_INTERVAL",
     "STALE_TTL",
+    # failure_handlers (TASK-019)
+    "FetchHealth",
+    "NON_FF_MAX_RETRIES",
+    "PUSH_BACKOFF_SECONDS",
+    "ResilientPushResult",
+    "ResilientWriteResult",
+    "UserDecisionCallback",
+    "health_check_fetch",
+    "resilient_push",
+    "resilient_write_claim",
     # gc (TASK-018)
     "GcResult",
     "archive_done_claims",
+    # reconcile (TASK-015)
+    "ReconcileVerdict",
+    "reconcile",
+    "reconcile_all",
     # identity (TASK-011)
     "Identity",
     "get_container_id",
