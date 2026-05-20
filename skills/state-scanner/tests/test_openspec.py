@@ -2,6 +2,9 @@
 
 Covers D1/D2/D5 (intentional divergences from v2.9 prose: Approved/Reviewed/
 Active/Deprecated/Archived preserved as distinct states, not collapsed).
+
+Phase 1.6.1 carry-forward inventory tests (Spec
+`state-scanner-inline-carry-forward-surfacing`, v1.23.0) at bottom.
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ import unittest
 
 from _helpers import make_openspec, tmp_project, write_file
 from collectors._status import _extract_status, _normalize_status
-from collectors.openspec import collect_openspec
+from collectors.openspec import _extract_carry_forward_annotations, collect_openspec
 
 
 class TestStatusExtraction(unittest.TestCase):
@@ -333,6 +336,232 @@ class TestOpenspecCollector(unittest.TestCase):
             r = collect_openspec(root)
             self.assertEqual(r.data["changes"]["total"], 1)
             self.assertEqual(r.data["changes"]["items"][0]["id"], "valid")
+
+
+class TestCarryForwardInventory(unittest.TestCase):
+    """Phase 1.6.1 — inline carry-forward annotation surfacing in tasks.md.
+
+    Spec: state-scanner-inline-carry-forward-surfacing (Approved R2 PASS_WITH_WARNINGS).
+    16 cases: 9 core + 7 R1-audit gap fills.
+    """
+
+    # --- Helper-level (pattern correctness) ---
+
+    def test_no_annotations_returns_zero_total(self):
+        with tmp_project() as root:
+            make_openspec(root, [("feature-a", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feature-a" / "tasks.md",
+                "- [ ] task 1\n- [x] task 2\n",
+            )
+            r = collect_openspec(root)
+            cf = r.data["carry_forward_inventory"]
+            self.assertEqual(cf["total"], 0)
+            self.assertEqual(cf["active_change_count"], 1)
+            self.assertEqual(cf["by_change"], {})
+
+    def test_single_carry_forward(self):
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "- [ ] task [carry-forward: detail]\n",
+            )
+            r = collect_openspec(root)
+            cf = r.data["carry_forward_inventory"]
+            self.assertEqual(cf["total"], 1)
+            self.assertEqual(cf["by_change"]["feat"]["count"], 1)
+            self.assertEqual(
+                cf["by_change"]["feat"]["samples"], ["[carry-forward: detail]"]
+            )
+
+    def test_mixed_token_types(self):
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "[carry-forward: a] [TODO: b] [PASS-with-note: c] [defer] [known gap]\n",
+            )
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 5)
+
+    def test_hyphen_vs_space_variants(self):
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "[known gap] vs [known-gap] vs [deferred] vs [defer]\n",
+            )
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 4)
+
+    def test_multi_change_aggregation(self):
+        with tmp_project() as root:
+            make_openspec(root, [("a", "Draft"), ("b", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "a" / "tasks.md",
+                "[carry-forward: 1] [TODO: 2] [defer]\n",
+            )
+            write_file(
+                root / "openspec" / "changes" / "b" / "tasks.md",
+                "[carry-forward: x] [carry-forward: y] [carry-forward: z]\n",
+            )
+            r = collect_openspec(root)
+            cf = r.data["carry_forward_inventory"]
+            self.assertEqual(cf["total"], 6)
+            self.assertEqual(cf["active_change_count"], 2)
+            self.assertEqual(set(cf["by_change"].keys()), {"a", "b"})
+            self.assertEqual(cf["by_change"]["a"]["count"], 3)
+            self.assertEqual(cf["by_change"]["b"]["count"], 3)
+
+    def test_archive_excluded(self):
+        with tmp_project() as root:
+            make_openspec(root, [("active", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "active" / "tasks.md",
+                "no annotations here\n",
+            )
+            # Create archive entry with annotation — must NOT be counted
+            write_file(
+                root / "openspec" / "archive" / "2026-04-01-old" / "tasks.md",
+                "[carry-forward: should be excluded]\n",
+            )
+            write_file(
+                root / "openspec" / "archive" / "2026-04-01-old" / "proposal.md",
+                "# old\n",
+            )
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 0)
+
+    def test_multi_line_annotation_normalized(self):
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "[carry-forward:\n  long detail\n  spans lines]\n",
+            )
+            r = collect_openspec(root)
+            samples = r.data["carry_forward_inventory"]["by_change"]["feat"]["samples"]
+            # \n → space, multi-line collapsed
+            self.assertIn("[carry-forward:", samples[0])
+            self.assertNotIn("\n", samples[0])
+
+    def test_substring_shadow_guard_token_extension(self):
+        """[carry-forwarded-stuff] must NOT match (\\b blocks substring extension)."""
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "[carry-forwarded-detail] [carry-forwardish] [todone]\n",
+            )
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 0)
+
+    def test_first_3_samples_truncation(self):
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            # 5 annotations; long one to test 80-char trunc
+            long_detail = "x" * 200
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                f"[carry-forward: 1] [carry-forward: {long_detail}] [TODO: 3] [defer] [TODO: 5]\n",
+            )
+            r = collect_openspec(root)
+            entry = r.data["carry_forward_inventory"]["by_change"]["feat"]
+            self.assertEqual(entry["count"], 5)
+            self.assertEqual(len(entry["samples"]), 3)  # first 3 only
+            # Long annotation truncated with trailing "..."
+            self.assertTrue(entry["samples"][1].endswith("..."))
+            self.assertLessEqual(len(entry["samples"][1]), 83)  # 80 + "..."
+
+    # --- R1 audit gap fills ---
+
+    def test_empty_tasks_md(self):
+        """Empty (0-byte) tasks.md → count=0, change not in by_change."""
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(root / "openspec" / "changes" / "feat" / "tasks.md", "")
+            r = collect_openspec(root)
+            cf = r.data["carry_forward_inventory"]
+            self.assertEqual(cf["total"], 0)
+            self.assertEqual(cf["active_change_count"], 1)
+            self.assertNotIn("feat", cf["by_change"])
+
+    def test_missing_tasks_md(self):
+        """Active change without tasks.md → silently skipped."""
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            # NO tasks.md created
+            r = collect_openspec(root)
+            cf = r.data["carry_forward_inventory"]
+            self.assertEqual(cf["total"], 0)
+            self.assertEqual(cf["active_change_count"], 1)
+            self.assertNotIn("feat", cf["by_change"])
+
+    def test_proposal_md_not_scanned(self):
+        """Annotations in proposal.md NOT counted (scope: tasks.md only)."""
+        with tmp_project() as root:
+            # make_openspec writes proposal.md; we inject a carry-forward into it
+            write_file(
+                root / "openspec" / "changes" / "feat" / "proposal.md",
+                "# feat\n\n> **Status**: Draft\n\n[carry-forward: in proposal not tasks]\n",
+            )
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "- [ ] clean tasks\n",
+            )
+            (root / "openspec" / "archive").mkdir(parents=True, exist_ok=True)
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 0)
+
+    def test_crlf_line_endings_normalized(self):
+        """Windows CRLF (\\r\\n) inside multi-line annotation normalized to space."""
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            (root / "openspec" / "changes" / "feat" / "tasks.md").write_bytes(
+                b"[carry-forward:\r\n  windows-detail\r\n  third-line]\r\n"
+            )
+            r = collect_openspec(root)
+            samples = r.data["carry_forward_inventory"]["by_change"]["feat"]["samples"]
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 1)
+            self.assertNotIn("\r", samples[0])
+            self.assertNotIn("\n", samples[0])
+
+    def test_nested_brackets_handled(self):
+        """[[carry-forward: x]] → matches once (non-greedy stops at first ])."""
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "[[carry-forward: x]] outer\n",
+            )
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 1)
+
+    def test_archive_substring_in_path_not_matched(self):
+        """Path with 'changes' substring in archive (e.g., archive/old-changes/) excluded."""
+        with tmp_project() as root:
+            make_openspec(root, [])  # empty changes/
+            # Archive with 'changes' in subname — must NOT be glob-matched
+            write_file(
+                root / "openspec" / "archive" / "2026-04-01-old-changes-sub" / "tasks.md",
+                "[carry-forward: archive substring trap]\n",
+            )
+            r = collect_openspec(root)
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 0)
+
+    def test_code_block_and_html_comment_included(self):
+        """INCLUDE annotations inside ``` code blocks ``` and <!-- HTML comments -->."""
+        with tmp_project() as root:
+            make_openspec(root, [("feat", "Draft")])
+            write_file(
+                root / "openspec" / "changes" / "feat" / "tasks.md",
+                "```\n[carry-forward: in code block]\n```\n"
+                "<!-- [TODO: in html comment] -->\n",
+            )
+            r = collect_openspec(root)
+            # Both INCLUDE policy per §Change 2
+            self.assertEqual(r.data["carry_forward_inventory"]["total"], 2)
 
 
 if __name__ == "__main__":

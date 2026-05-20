@@ -541,6 +541,67 @@ recommendation:
 
 ---
 
+### 1.89 carry_forward_info (INFO tier, 1-4 items)
+
+> 自 v1.23.0 起 (state-scanner-inline-carry-forward-surfacing, 2026-05-20),Phase 1.6.1 collector 扫描 active `openspec/changes/*/tasks.md` 浮出 inline carry-forward 注释。
+
+```yaml
+id: carry_forward_info
+priority: 1.89
+description: 1-4 inline carry-forward annotations in active openspec changes — INFO tier reminder
+
+conditions:
+  all:
+    - openspec.carry_forward_inventory.total > 0
+    - openspec.carry_forward_inventory.total < 5
+
+  detection:
+    snapshot_path: "openspec.carry_forward_inventory"
+    field_check: "0 < total < 5"
+
+recommendation:
+  workflow: null  # INFO 不打断 primary workflow
+  info: "ℹ {total} inline carry-forward annotation(s) across {by_change.keys() | join(', ')}"
+  display:
+    - 单行 summary,出现在 state-scanner 标准输出 "📌 Carry-forward inventory" section
+  suggestion:
+    - "若已是 known WIP,可继续推进;若漏遗,在当前 phase 完成前处理"
+  non_blocking: true
+```
+
+### 1.895 carry_forward_pile (WARNING tier, ≥5 items)
+
+```yaml
+id: carry_forward_pile
+priority: 1.895
+description: ≥5 inline carry-forward annotations accumulated — advisory WARNING,suggest consolidation
+
+conditions:
+  all:
+    - openspec.carry_forward_inventory.total >= 5
+
+  detection:
+    snapshot_path: "openspec.carry_forward_inventory"
+    field_check: "total >= 5"
+
+recommendation:
+  workflow: null  # advisory, does not downgrade primary recommendation
+  info: "⚠ Active OpenSpec changes have {total} accumulated inline carry-forward annotations."
+  display:
+    - 多行 indented 块, 出现在 "📌 Carry-forward inventory" section
+    - 列前 3 changes by count (含 samples truncated 80 chars)
+  suggestion:
+    - "consolidate to project_v<XX>_carry_forward.md before next major checkpoint"
+    - "或 address in current implementation phase"
+  non_blocking: true
+```
+
+**Rationale (placement 1.89 / 1.895)**: 紧邻 resume_in_progress_us (1.88) 之后,与 in-flight signals 一族;在 audit_unconverged (1.9) 之前。INFO tier 用 priority 1.89,WARNING tier 用 1.895 ensure INFO 先于 WARNING 渲染时 visual ordering 正确(若同时触发,只 ≥5 命中 WARNING,1-4 命中 INFO,互斥)。
+
+**Source incident**: TH v0.3.2 chat MVP 8 sessions / 14 days / 7 inline annotations 全 invisible until owner asked "是否会被遗忘?"。Forgejo Issues #90 (primary) + #89 (superset variant B)。
+
+---
+
 ## 审计相关规则详情
 
 ### 1.9 audit_unconverged

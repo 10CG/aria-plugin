@@ -275,7 +275,7 @@ PriorityItem:
 
 **i18n note** (Spec `state-scanner-i18n-status-regex`, 2026-04-25): patterns 1-4 accept BOTH halfwidth `:` (U+003A) and fullwidth `：` (U+FF1A) via `[：:]` character class — fullwidth colon is the default produced by Chinese IMEs. Pattern 6 captures inline blockquote multi-meta lines (e.g. Kairos `US-009-tts-voice-clone.md` real-world sample) where status is not the first key. Negative cases (prose mention of `状态` outside `**...**` bold inside blockquote) do NOT match — pattern 6 requires both `>` blockquote anchor AND `**...**` bold wrapper to fire.
 
-## `openspec` (Phase 1.6)
+## `openspec` (Phase 1.6 + 1.6.1)
 
 ```yaml
 configured: bool                # openspec/changes/ exists
@@ -286,7 +286,28 @@ archive:
   total: int
   items: list[{path: str, date: str|null, feature: str}]
 pending_archive: list[{id: str, reason: str}]  # Status=done 仍在 changes/
+carry_forward_inventory:                       # Phase 1.6.1 (v1.23.0+)
+  total: int                                   # sum across all active changes
+  active_change_count: int                     # disambiguates 0-active vs N-active-but-clean
+  by_change:                                   # only changes with count>0 appear
+    <change_id>:
+      count: int
+      samples: list[str]                       # first 3, each truncated to 80 chars + "..."
 ```
+
+**Carry-forward inventory** (Spec `state-scanner-inline-carry-forward-surfacing`, v1.23.0):
+
+- **Pattern**: `r'\[(?:carry-forward|TODO|defer(?:red)?|known[ -]gap|PASS-with-note)\b[\s\S]*?\]'`
+  - Positional anchoring: token group must touch opening `[`
+  - Token-end `\b` blocks substring extension (e.g., `[carry-forwarded-stuff]` does NOT match)
+  - `[\s\S]*?` non-greedy cross-line capture (handles multi-line annotations + CRLF)
+- **Scope**: only `openspec/changes/*/tasks.md` (active changes only); `archive/` excluded; `proposal.md` not scanned
+- **Multi-line normalization**: `\r\n` + `\n` + `\r` → single space in samples
+- **Empty state**: field always present; `total=0` when no annotations OR no active changes; `active_change_count` disambiguates the two zero cases
+- **INCLUDE policy**: annotations inside fenced code blocks (` ``` `) and HTML comments (`<!-- ... -->`) ARE counted
+- **Backward compat**: additive to snapshot_schema_version 1.0 (no breaking change to existing consumers)
+
+Recommendation rules consuming this field: `carry_forward_info` (INFO tier, 1≤total<5) and `carry_forward_pile` (WARNING tier, total≥5) — see [RECOMMENDATION_RULES.md](../RECOMMENDATION_RULES.md).
 
 ## `architecture` (Phase 1.7)
 
