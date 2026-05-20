@@ -15,10 +15,12 @@ from ._common import CollectorResult, log
 from .architecture import collect_architecture
 from .audit import collect_audit
 from .changes import collect_changes_analysis
+from .coordination_fetch import collect_coordination_fetch
 from .custom_checks import collect_custom_checks
 from .forgejo_config import collect_forgejo_config
 from .git import collect_git_state
 from .handoff import collect_handoff
+from .handoff_multibranch import collect_handoff_multibranch
 from .interrupt import collect_interrupt_state
 from .issue_scan import collect_issue_scan
 from .multi_remote import collect_multi_remote
@@ -35,10 +37,12 @@ __all__ = [
     "collect_architecture",
     "collect_audit",
     "collect_changes_analysis",
+    "collect_coordination_fetch",
     "collect_custom_checks",
     "collect_forgejo_config",
     "collect_git_state",
     "collect_handoff",
+    "collect_handoff_multibranch",
     "collect_interrupt_state",
     "collect_issue_scan",
     "collect_multi_remote",

@@ -17,6 +17,36 @@
 #   - Deny via JSON stdout payload (preferred per Claude Code hook spec):
 #       exit 0 + stdout: {"decision": "block", "reason": "<message>"}
 #   - Legacy deny via exit 2 + stderr if ARIA_HOOK_DENY_MODE=exit2.
+#
+# ─── TASK-009 (a): COMPATIBILITY AUDIT — NO LOGIC CHANGE NEEDED ───────────────
+#
+# Context: OpenSpec `multi-terminal-coordination` (v1.22.x+) extends Rule #9
+# by adding machine-readable YAML frontmatter to handoff docs (§2.3 schema:
+# track-id / owner-container / phase / status / updated-at). This hook guards
+# the *location* of the write; it does NOT inspect file content or frontmatter.
+#
+# Decision: THIS HOOK REQUIRES NO MODIFICATION for multi-terminal-coordination.
+#
+# Rationale:
+#   1. The guard condition is path-based only: it checks whether the resolved
+#      file path matches `(?:^|[/\\])\.aria[/\\]handoff[/\\][^/\\]+\.md$`.
+#   2. The new frontmatter schema lives inside docs/handoff/*.md (canonical),
+#      not inside .aria/handoff/ (forbidden). The hook allows writes to
+#      docs/handoff/ by design (pass-through for any non-forbidden path).
+#   3. Frontmatter content parsing is the responsibility of the Layer 2
+#      collector (collectors/handoff.py), not this hook.
+#   4. Fail-open design (broken hook → exit 0) remains correct: a hook crash
+#      must never block a legitimate write to docs/handoff/ with frontmatter.
+#   5. The L5 template (aria/templates/session-handoff.md) now emits the
+#      frontmatter block, so the write path is always docs/handoff/ — which
+#      this hook already allows.
+#
+# Cross-references:
+#   - Rule #9: standards/conventions/session-handoff.md §3 (enforcement matrix)
+#   - L2 collector: aria/skills/state-scanner/scripts/collectors/handoff.py
+#   - 5-layer matrix doc: aria/skills/state-scanner/docs/rule9-5layer-matrix.md
+#   - Task coverage: TASK-009 (a) in openspec/changes/multi-terminal-coordination/tasks.md §1.9
+# ─────────────────────────────────────────────────────────────────────────────
 
 # NOTE (H1 follow-up, PR #46 audit Important-1): `set -e` here is NOT the
 # safety mechanism. The DECISION=$(...) command substitution masks the

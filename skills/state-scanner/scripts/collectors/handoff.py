@@ -8,6 +8,15 @@ Additionally detects misplaced files under `.aria/handoff/*.md` (forbidden
 location) — this is Layer 2 of the 5-layer defense-in-depth against handoff
 dir drift. See OpenSpec `aria-ten-step-session-handoff-stage` proposal §Why.
 
+This module is **frontmatter-aware** via the additive helper
+``parse_handoff_frontmatter()`` (TASK-009 b, multi-terminal-coordination v1.22.x+).
+The helper parses the machine-readable YAML frontmatter schema (§2.3.1, 5 fields:
+``track-id`` / ``owner-container`` / ``phase`` / ``status`` / ``updated-at``)
+from a handoff doc string.  The main ``collect_handoff()`` flow is **not modified**
+— it returns the same ``handoff`` snapshot fields as before (schema 1.0, backward
+compatible).  The helper is consumed by ``collectors/handoff_multibranch.py``
+(TASK-004) to reconstruct the multi-track dashboard from cross-branch fetched docs.
+
 Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
 - exists: bool — whether canonical dir has any .md file
 - latest_path: str | None — relative path to newest .md by mtime
@@ -40,8 +49,146 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from ._common import CollectorResult
+
+# ─── TASK-009 (b): frontmatter-aware helper ──────────────────────────────────
+# Added for OpenSpec `multi-terminal-coordination` (v1.22.x+).
+# TASK-004 (state-scanner Phase 1 cross-branch track rebuild) will consume
+# `parse_handoff_frontmatter` to parse all remote docs/handoff/*.md and
+# reconstruct the multi-track dashboard.
+# THIS HELPER IS ADDITIVE — it does NOT modify collect_handoff() main flow.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Required frontmatter fields per §2.3.1 schema.
+# Any subset with fewer than all 5 keys present is treated as incomplete
+# (legacy fallback per §2.3.4).
+_FRONTMATTER_REQUIRED_KEYS = frozenset(
+    {"track-id", "owner-container", "phase", "status", "updated-at"}
+)
+
+# Matches the opening and closing `---` fence of a YAML frontmatter block
+# positioned at the very top of the file (first line must be `---`).
+_FRONTMATTER_RE = re.compile(
+    r"^---\r?\n(.*?)\r?\n---(?:\r?\n|$)",
+    re.DOTALL,
+)
+
+
+def parse_handoff_frontmatter(content: str) -> Optional[dict]:
+    """Parse machine-readable YAML frontmatter from a session handoff doc.
+
+    Implements the §2.3.1 schema defined in
+    ``standards/conventions/session-handoff.md §2.3.1`` (v1.1.0, added by
+    OpenSpec ``multi-terminal-coordination``).
+
+    The frontmatter block must be the very first thing in the file:
+
+    .. code-block:: yaml
+
+        ---
+        track-id: multi-terminal-coordination
+        owner-container: creationhikari/devbox-A
+        phase: A.2
+        status: active
+        updated-at: 2026-05-19T22:31:13Z
+        ---
+
+    Args:
+        content: Full text of the handoff document (already read from disk).
+
+    Returns:
+        A ``dict`` with exactly the 5 required keys when the frontmatter is
+        present **and** structurally complete::
+
+            {
+                "track-id": str,
+                "owner-container": str,
+                "phase": str,
+                "status": str,
+                "updated-at": str,
+            }
+
+        Returns ``None`` in all failure / legacy-doc scenarios:
+
+        * No ``---`` frontmatter fence at the top of the file (legacy doc
+          written before v1.1.0 — graceful ``legacy`` fallback per §2.3.4).
+        * YAML parsing failure (``yaml.YAMLError`` or ``ImportError``).
+        * Parsed result is not a ``dict`` (e.g. a bare YAML scalar).
+        * One or more of the 5 required keys is absent from the parsed dict
+          (schema incomplete — treated same as no frontmatter per §2.3.4).
+        * Any required field value is not a plain string (type error).
+
+    Callers (TASK-004) must handle ``None`` as the ``legacy`` track signal
+    and fall back to mtime + filename parsing, consistent with the H5
+    ``feedback_handoff_mtime_vs_pointer_divergence`` pattern.
+
+    Examples::
+
+        # Legacy handoff doc without frontmatter → None
+        >>> parse_handoff_frontmatter("# Aria — Session Handoff\\n\\n## §0 ...\\n")
+        None
+
+        # Well-formed frontmatter → dict
+        >>> doc = (
+        ...     "---\\n"
+        ...     "track-id: multi-terminal-coordination\\n"
+        ...     "owner-container: creationhikari/devbox-A\\n"
+        ...     "phase: A.2\\n"
+        ...     "status: active\\n"
+        ...     "updated-at: 2026-05-19T22:31:13Z\\n"
+        ...     "---\\n"
+        ...     "\\n"
+        ...     "# Aria — Session Handoff\\n"
+        ... )
+        >>> result = parse_handoff_frontmatter(doc)
+        >>> result == {
+        ...     "track-id": "multi-terminal-coordination",
+        ...     "owner-container": "creationhikari/devbox-A",
+        ...     "phase": "A.2",
+        ...     "status": "active",
+        ...     "updated-at": "2026-05-19T22:31:13Z",
+        ... }
+        True
+    """
+    if not content:
+        return None
+
+    m = _FRONTMATTER_RE.match(content)
+    if not m:
+        # No frontmatter fence at the top → legacy doc, return None per §2.3.4.
+        return None
+
+    raw_yaml = m.group(1)
+
+    try:
+        import yaml  # lazy import — stdlib not available; yaml is optional dep
+        parsed = yaml.safe_load(raw_yaml)
+    except Exception:
+        # YAML parse failure or yaml not installed → treat as malformed legacy.
+        return None
+
+    if not isinstance(parsed, dict):
+        # Bare scalar / list YAML at frontmatter position — not a valid schema.
+        return None
+
+    # Verify all 5 required keys are present (§2.3.1 "必含 ✅").
+    if not _FRONTMATTER_REQUIRED_KEYS.issubset(parsed.keys()):
+        return None
+
+    # Verify every required value is a plain string (type guard for downstream).
+    result: dict = {}
+    for key in _FRONTMATTER_REQUIRED_KEYS:
+        val = parsed[key]
+        if not isinstance(val, str):
+            # YAML might coerce e.g. `status: true` → bool; reject silently.
+            return None
+        result[key] = val
+
+    return result
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 CANONICAL_DIR = "docs/handoff/"
 FORBIDDEN_DIR = ".aria/handoff/"
