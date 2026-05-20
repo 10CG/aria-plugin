@@ -161,6 +161,14 @@ Snapshot 字段: `coordination_fetch` (additive, schema v1.0+, 详见 `collector
      再进入推荐规则匹配。当前 TASK-005 仅提供渲染函数; 集成调用点由后续 phase 指定.
      Renderer path: aria/skills/state-scanner/scripts/renderers/track_board.py -->
 
+<!-- TODO(TASK-006 integration): latest.md 写入 **不** 由 scan.py 触发。
+     writers/latest_md_writer.write_latest_md(snapshot, output_path) 由
+     phase-d-closer D.3 step 在 session handoff 决策后调用。
+     Writer path: aria/skills/state-scanner/scripts/writers/latest_md_writer.py
+     Return dict: {action: "pointer"|"banner"|"skipped", path: str, content_lines: int}
+     依赖: snapshot["tracks_multibranch"]["tracks"] (TASK-004 产出).
+     集成设计在 Layer L (TASK-011+) claim 数据可用后由后续 phase 确定。 -->
+
 ---
 
 ### 阶段 2: 推荐决策
