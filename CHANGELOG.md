@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2026-05-20
+
+### Added — state-scanner Phase 1.6.1 inline carry-forward surfacing
+
+Spec `state-scanner-inline-carry-forward-surfacing`(Forgejo Aria #90 primary + #89 superset variant B):state-scanner Phase 1.6 OpenSpec collector 之前**仅**输出 active changes 的 status / id / path 而**完全不识别** `openspec/changes/*/tasks.md` 内累积的 inline `[carry-forward|TODO|defer(red)?|known[ -]gap|PASS-with-note]` 注释。Multi-session AI 接手时对该 backlog blind。
+
+#### Collector enhancement
+
+- **`scripts/collectors/openspec.py`** 新 helper `_extract_carry_forward_annotations(tasks_md_content) -> list[str]`:
+  - Pattern: `r'\[(?:carry-forward|TODO|defer(?:red)?|known[ -]gap|PASS-with-note)\b[\s\S]*?\]'`
+  - Positional anchoring(token 紧贴 `[`)+ token-end `\b`(防 substring extension `[carry-forwarded-stuff]`)+ `[\s\S]*?` 非贪婪跨行
+  - Multi-line normalization:`\r\n` + `\n` + `\r` → single space(CRLF + LF + 单 CR 全 multi-platform)
+  - INCLUDE annotations 在 ```` ``` ```` code blocks 和 `<!-- ... -->` HTML 注释内
+- `collect_openspec` 集成:per-active-change scan tasks.md(missing OK,silently skip),累积到顶层新字段 `openspec.carry_forward_inventory = {total, active_change_count, by_change}`,empty 时 `total=0` field always present
+- Scope:**仅** `openspec/changes/*/tasks.md`(active only,archive 严格不扫,`proposal.md` 不扫)
+
+#### 2-tier recommendation rules
+
+- **`RECOMMENDATION_RULES.md`** 新 §1.89 + §1.895(2-tier 避免 silent floor):
+  - `carry_forward_info`(INFO,priority 1.89,1≤total<5,non-blocking)
+  - `carry_forward_pile`(WARNING,priority 1.895,total≥5,non-blocking)
+
+#### Tests + dogfood
+
+- **16 unit tests** `tests/test_openspec.py::TestCarryForwardInventory`:9 core + 7 R1-audit gap fills(empty tasks.md / missing tasks.md / proposal.md negative scope / CRLF / nested brackets / archive substring / code-block + HTML comment INCLUDE)
+- Full regression: **584/584 tests PASS**
+- **Live dogfood**(B.6): baseline 4 → inject 5 → 9 exact match → cleanup → 4 baseline restored,atomicity verified(git diff 0 lines)
+- **Rule #6 structural deterministic benchmark**: `aria-plugin-benchmarks/structural/state-scanner-carry-forward/README.md` — AUTO_GATE=true via binary verification per `feedback_rule6_framing_differs_by_skill_type`
+
+#### Schema + docs
+
+- `references/state-snapshot-schema.md` adds `openspec.carry_forward_inventory` schema(additive,schema_version 仍 1.0)
+- `SKILL.md` Phase 1.6 表格标注 `carry_forward_inventory` v1.23.0+
+
+#### Audit history
+
+- R1(post_spec): all REVISE,0 critical / ~5 majors / ~12 minors;multi-agent 共识 3/3 Q1 dispatcher + 2/3 regex word-boundary + threshold tier
+- R2: all PASS_WITH_WARNINGS,all R1 majors ADDRESSED + 0 new critical/major
+- Convergence per `feedback_post_spec_audit_pragmatic_convergence`:unanimous PASS-tier + verdict 改善 + 无振荡 + 0 critical/major
+
+#### Forgejo issues
+
+- Closes #90(primary) + #89(superset variant B per close-by-reference selection table in proposal §Success Criteria)
+
 ## [1.22.1] - 2026-05-20
 
 ### Fixed — Zero-day dogfood bugs in v1.22.0 handoff collector
