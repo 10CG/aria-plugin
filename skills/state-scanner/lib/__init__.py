@@ -29,6 +29,14 @@ from .identity import (
     get_owner,
     get_session_id,
 )
+from .coordination_ref import (
+    BOOTSTRAP_COMMIT_MSG,
+    EMPTY_TREE_SHA,
+    REF_NAME,
+    REMOTE_REF,
+    BootstrapResult,
+    bootstrap,
+)
 from .track_id import (
     MAX_TRACK_ID_LENGTH,
     NON_ASCII_FALLBACK_PREFIX,
@@ -51,6 +59,13 @@ __all__ = [
     "get_identity",
     "get_owner",
     "get_session_id",
+    # coordination_ref (TASK-012)
+    "BOOTSTRAP_COMMIT_MSG",
+    "EMPTY_TREE_SHA",
+    "REF_NAME",
+    "REMOTE_REF",
+    "BootstrapResult",
+    "bootstrap",
     # track_id (TASK-014)
     "MAX_TRACK_ID_LENGTH",
     "NON_ASCII_FALLBACK_PREFIX",
