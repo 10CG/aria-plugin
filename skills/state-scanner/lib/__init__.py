@@ -38,6 +38,18 @@ from .constants import (
     HEARTBEAT_INTERVAL,
     STALE_TTL,
 )
+from .worktree_manager import (
+    LifecycleResult,
+    WORKTREE_ARCHIVE_DIRNAME,
+    WORKTREE_ROOT_DIRNAME,
+    WorktreeCreateResult,
+    auto_cleanup_done_tracks,
+    cleanup_on_release,
+    create_worktree,
+    has_uncommitted_changes,
+    list_worktrees,
+    remove_worktree,
+)
 from .failure_handlers import (
     FetchHealth,
     NON_FF_MAX_RETRIES,
@@ -98,6 +110,17 @@ __all__ = [
     # concurrent_tracks (TASK-023)
     "ConcurrentTracksResult",
     "count_concurrent_tracks",
+    # worktree_manager (TASK-024 + TASK-025)
+    "LifecycleResult",
+    "WORKTREE_ARCHIVE_DIRNAME",
+    "WORKTREE_ROOT_DIRNAME",
+    "WorktreeCreateResult",
+    "auto_cleanup_done_tracks",
+    "cleanup_on_release",
+    "create_worktree",
+    "has_uncommitted_changes",
+    "list_worktrees",
+    "remove_worktree",
     # claim_schema (TASK-010)
     "ClaimRecord",
     "SCHEMA_VERSION_CURRENT",
