@@ -56,6 +56,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Note (Round 6 review): `git show` / `git ls-tree` invocations below intentionally
+# omit the `--` ref/path separator because `for-each-ref` upstream already filters
+# to legitimate `refs/remotes/origin/*` strings — there is no path that could be
+# misinterpreted as a flag. Adding `--` would require a refactor for `git show`'s
+# `<ref>:<path>` syntax (which does not accept `--` between ref and path).
+
 from ._common import CollectorResult, _run, log
 from .handoff import parse_handoff_frontmatter
 
