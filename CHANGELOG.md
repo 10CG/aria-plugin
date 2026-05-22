@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.1] - 2026-05-22
+
+### Fixed — state-scanner `_status` lifecycle-head extraction range (aria-plugin #50)
+
+Spec `state-scanner-status-extraction-range` (Forgejo aria-plugin #50). `_extract_status` 抓取 `> **Status**: ...` 单行时**对单行长度无上限**。大型 spec 把 Status 字段当 mini-changelog 写成 1500+ chars 一长行时,`_normalize_status` 的 `done`/`complete` fallback 会 word-boundary 命中埋在子任务叙述里的 token,把仍 archival-blocked 的 spec 错归 `done` → 错放进 `openspec.pending_archive[]`,污染归档推荐。与已修的 #101 (substring-shadow) 同源不同面 —— #101 修了匹配方式,#50 修提取范围。
+
+- **`_status_lifecycle_head(raw)`** — 新 helper,把 raw Status 截到第一个文档化分隔符 (em-dash `—` / en-dash `–` / 空格包围 ASCII hyphen ` - ` / 半全角分号 `;` `；` / 全角句号 `。`) 前的 lifecycle 头段;逗号 `,` 与 ASCII 句号 `.` 刻意排除 (保护 `Approved, revised` / `v2.0`)。`_normalize_status` 改在头段上分类,签名 `(raw) -> str` 不变。
+- **`_status_field_overlong(raw)`** — 新瘦谓词;头段无分隔符且超 200 字符时,`openspec.py` + `requirements.py` collector 发 `status_field_truncated` soft_error (经 scan.py 聚合进 snapshot `errors[]`,exit 10 路径)。
+- **token 字典扩展** — `delivered` / `shipped` 加入 `implemented` 分支 (post-merge 已交付语义)。
+- `_extract_status` 本身不变 —— `raw_status` 字段仍保留完整 Status 叙述供人类展示 (`raw_status` full / `status` from-head 职责分离)。
+- 23 个 regression test (`TestStatusExtractionRangeIssue50Fix` 20 + 2 e2e + 1 requirements e2e);#101 (13) + #73 (8) 既有 regression 全过,0 regression。
+- post_spec audit 5-agent convergence R1 (1 Critical + ~10 Important) → R2 → R3 CONVERGED。
+
 ## [1.23.0] - 2026-05-20
 
 ### Added — state-scanner Phase 1.6.1 inline carry-forward surfacing

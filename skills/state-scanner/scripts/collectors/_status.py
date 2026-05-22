@@ -9,6 +9,16 @@ via `[：:]` character class — fullwidth colon is the default produced by
 Chinese IMEs in markdown documents. Pattern 6 (NEW) captures inline blockquote
 multi-meta lines like `> **优先级**：P0 | **状态**：pending` where status is
 not the first key on the line. Pattern 5 (table) already supported `[：:]`.
+
+Lifecycle-head extraction (Spec `state-scanner-status-extraction-range`, #50,
+2026-05-21): large specs write the Status field as a single-line mini-changelog
+(sub-task state + archival history + blockers) that can run 1500+ chars. The
+`done`/`complete` fallback in `_normalize_status` would word-boundary-match a
+token buried deep in that narrative and mis-classify a still-blocked spec as
+`done`. `_status_lifecycle_head` truncates the raw Status to its lifecycle-
+bearing head segment (everything before the first documented separator) before
+classification. `_extract_status` itself is UNCHANGED — it still returns the
+full single line so `raw_status` keeps the complete narrative for display.
 """
 
 from __future__ import annotations
@@ -30,6 +40,22 @@ _STATUS_PATTERNS = [
     ),
 ]
 
+# Documented lifecycle-head separators (#50 fix, state-scanner-status-extraction-range):
+#   - em-dash U+2014 / en-dash U+2013, with optional surrounding whitespace
+#     (`\s*` both sides) — covers spaceless `delivered—blocked` variants
+#   - ASCII hyphen REQUIRING whitespace on both sides (`\s-\s`) — a tolerated
+#     narrative separator; the mandatory spaces prevent mis-cutting word-internal
+#     hyphens like `PR-A` or dates `2026-05-09`
+#   - half/full-width semicolon `;` `；`, full-width period `。`
+# Deliberately EXCLUDED: comma `,` (lifecycle phrases like `Approved, revised`
+# must survive) and ASCII period `.` (would mis-cut version strings like `v2.0`).
+_STATUS_HEAD_SEPARATOR_RE = re.compile(r"\s*[—–]\s*|\s-\s|[;；。]")
+
+# Char-cap backstop: legitimate lifecycle-head segments in the Aria/nexus corpus
+# measure < ~90 chars; 200 gives ~2x headroom. The cap only fires when the head
+# contains NO documented separator at all (pathological token-free long openers).
+_STATUS_HEAD_MAX_CHARS = 200
+
 
 def _extract_status(text: str) -> str | None:
     for pat in _STATUS_PATTERNS:
@@ -37,6 +63,44 @@ def _extract_status(text: str) -> str | None:
         if m:
             return m.group(1).strip()
     return None
+
+
+def _status_lifecycle_head(raw: str | None) -> tuple[str, bool]:
+    """Return ``(lifecycle-bearing head segment, truncated_by_cap)``.
+
+    Truncates ``raw`` at the first documented separator (see
+    ``_STATUS_HEAD_SEPARATOR_RE``); if the resulting head still exceeds
+    ``_STATUS_HEAD_MAX_CHARS`` it is hard-cut and ``truncated_by_cap`` is True.
+
+    None-safe: ``raw is None`` → ``("", False)``. This guard is REQUIRED because
+    ``_status_field_overlong`` calls this helper directly on a collector path
+    where ``_extract_status`` may have returned ``None``.
+
+    `_extract_status` is intentionally NOT changed — it still returns the full
+    single-line raw Status so the snapshot `raw_status` field keeps the complete
+    narrative for human display. Truncation here is for lifecycle classification
+    only. See Spec `state-scanner-status-extraction-range` (Forgejo aria-plugin
+    #50) for the full design rationale.
+    """
+    if raw is None:
+        return "", False
+    m = _STATUS_HEAD_SEPARATOR_RE.search(raw)
+    head = (raw[: m.start()] if m else raw).strip()
+    truncated = False
+    if len(head) > _STATUS_HEAD_MAX_CHARS:
+        head = head[:_STATUS_HEAD_MAX_CHARS]
+        truncated = True
+    return head, truncated
+
+
+def _status_field_overlong(raw: str | None) -> bool:
+    """True when the Status head segment hit the char-cap (no separator + overlong).
+
+    Thin predicate over `_status_lifecycle_head` so collectors can emit a
+    `status_field_truncated` soft_error without touching `_normalize_status`
+    (whose `(raw) -> str` signature is contract-frozen for 21 regression tests).
+    """
+    return _status_lifecycle_head(raw)[1]
 
 
 def _has_token(text: str, token: str) -> bool:
@@ -57,24 +121,32 @@ def _normalize_status(raw: str | None) -> str:
 
     Priority order (refined per Forgejo Aria #101 fix, 2026-05-13):
       1. Terminal (archived / deprecated) — irreversible
-      2. Pending family (draft / pending / placeholder)
-      3. In-progress family (multi-word + i18n; literal substring is unambiguous)
-      4. approved (BEFORE implemented — "Approved (Implemented by PR-A)" → approved)
-      5. implemented (NEW lifecycle state; was missing from token dictionary)
-      6. reviewed / active / ready
-      7. done / complete — LAST fallback (prevents the original #101 substring shadow)
+      2. Transitional family (#73 — implementation-complete / -done phrases)
+      3. Pending family (draft / pending / placeholder)
+      4. In-progress family (multi-word + i18n; literal substring is unambiguous)
+      5. approved (BEFORE implemented — "Approved (Implemented by PR-A)" → approved)
+      6. implemented (also delivered / shipped — #50 fix, all → implemented)
+      7. reviewed / active / ready
+      8. done / complete — LAST fallback (prevents the original #101 substring shadow)
+
+    Classification operates on the lifecycle-head segment only (`_status_lifecycle_head`,
+    #50 fix) — narrative after the first documented separator does NOT participate,
+    so a `done` token buried in a long mini-changelog Status cannot shadow the head.
+    The `(raw) -> str` signature is unchanged.
 
     Word-boundary matching via `_has_token` roots out the entire substring-shadow
     bug class (#101 primary + secondary). Multi-word phrases use literal substring
     because they cannot be ambiguous within Status strings.
 
     See:
-      - Forgejo Aria #101 (root cause + manual triage)
-      - openspec/archive/2026-05-13-aria-issue-101-status-normalize/ (fix proposal)
+      - Forgejo Aria #101 (substring shadow) + aria-plugin #50 (extraction range)
+      - openspec/archive/2026-05-13-aria-issue-101-status-normalize/
+      - openspec/changes/state-scanner-status-extraction-range/ (#50 fix proposal)
     """
     if raw is None:
         return "unknown"
-    low = raw.lower()
+    head, _ = _status_lifecycle_head(raw)  # #50 fix: classify on lifecycle head only
+    low = head.lower()
 
     # Terminal states first (irreversible lifecycle endpoints)
     if _has_token(low, "archived"):
@@ -108,7 +180,13 @@ def _normalize_status(raw: str | None) -> str:
     # approved BEFORE implemented (#101 fix BA-M2: "Approved (Implemented by PR-A)" → approved)
     if _has_token(low, "approved"):
         return "approved"
-    if _has_token(low, "implemented"):  # #101 fix Bug 2: was missing from dict
+    # implemented family (#101 fix Bug 2: implemented was missing from dict;
+    # #50 fix: delivered / shipped are synonyms — post-merge work that is delivered)
+    if (
+        _has_token(low, "implemented")
+        or _has_token(low, "delivered")
+        or _has_token(low, "shipped")
+    ):
         return "implemented"
     if _has_token(low, "reviewed"):
         return "reviewed"

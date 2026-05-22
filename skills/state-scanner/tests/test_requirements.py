@@ -36,6 +36,18 @@ class TestPrdScanning(unittest.TestCase):
             paths = [p["path"] for p in r.data["prd"]]
             self.assertEqual(len(paths), 2)
 
+    def test_issue50_overlong_prd_status_emits_soft_error(self):
+        # #50 e2e: T3 wires soft_error into requirements.py too — a separator-less
+        # PRD Status field over the char-cap must emit `status_field_truncated`.
+        with tmp_project() as root:
+            write_file(
+                root / "docs" / "requirements" / "prd-big.md",
+                "# PRD\n\n**Status**: " + "x" * 250 + "\n",
+            )
+            r = collect_requirements(root)
+            kinds = {e["error"] for e in r.errors}
+            self.assertIn("status_field_truncated", kinds)
+
 
 class TestUserStories(unittest.TestCase):
     def test_user_stories_counted_by_status(self):
