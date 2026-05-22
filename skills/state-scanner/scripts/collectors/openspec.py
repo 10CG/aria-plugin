@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from ._common import CollectorResult
-from ._status import _extract_status, _normalize_status
+from ._status import (
+    _STATUS_HEAD_MAX_CHARS,
+    _extract_status,
+    _normalize_status,
+    _status_field_overlong,
+)
 
 _CARRY_FORWARD_RE = re.compile(
     r"\[(?:carry-forward|TODO|defer(?:red)?|known[ -]gap|PASS-with-note)\b[\s\S]*?\]"
@@ -69,6 +74,14 @@ def collect_openspec(project_root: Path) -> CollectorResult:
             r.soft_error("spec_read_failed", f"{d.name}: {e}")
             continue
         st = _normalize_status(raw)
+        # #50 fix: surface over-long separator-less Status fields so spec authors
+        # get visible feedback (the head was hard-cut at _STATUS_HEAD_MAX_CHARS).
+        if _status_field_overlong(raw):
+            r.soft_error(
+                "status_field_truncated",
+                f"{d.name}: Status field head exceeds {_STATUS_HEAD_MAX_CHARS} "
+                "chars with no separator — lifecycle keyword may be lost",
+            )
         item = {
             "id": d.name,
             "path": str(proposal.relative_to(project_root)),

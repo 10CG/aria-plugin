@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from ._common import CollectorResult
-from ._status import _extract_status, _normalize_status
+from ._status import (
+    _STATUS_HEAD_MAX_CHARS,
+    _extract_status,
+    _normalize_status,
+    _status_field_overlong,
+)
 
 # G4 (state-scanner-inter-cycle-surfacing): priority_items derived view
 # Status sort order: in_progress first (active work), then ready (next-up),
@@ -133,6 +138,13 @@ def collect_requirements(project_root: Path) -> CollectorResult:
         except OSError as e:
             r.soft_error("prd_read_failed", f"{prd_path.name}: {e}")
             continue
+        # #50 fix: over-long separator-less Status field → visible author feedback.
+        if _status_field_overlong(raw):
+            r.soft_error(
+                "status_field_truncated",
+                f"{prd_path.name}: Status field head exceeds {_STATUS_HEAD_MAX_CHARS} "
+                "chars with no separator — lifecycle keyword may be lost",
+            )
         prd_items.append(
             {
                 "path": str(prd_path.relative_to(project_root)),
@@ -153,6 +165,13 @@ def collect_requirements(project_root: Path) -> CollectorResult:
                 r.soft_error("us_read_failed", f"{us_path.name}: {e}")
                 continue
             st = _normalize_status(raw)
+            # #50 fix: over-long separator-less Status field → visible author feedback.
+            if _status_field_overlong(raw):
+                r.soft_error(
+                    "status_field_truncated",
+                    f"{us_path.name}: Status field head exceeds {_STATUS_HEAD_MAX_CHARS} "
+                    "chars with no separator — lifecycle keyword may be lost",
+                )
             by_status[st] = by_status.get(st, 0) + 1
             story_items.append(
                 {

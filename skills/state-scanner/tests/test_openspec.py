@@ -12,7 +12,12 @@ from __future__ import annotations
 import unittest
 
 from _helpers import make_openspec, tmp_project, write_file
-from collectors._status import _extract_status, _normalize_status
+from collectors._status import (
+    _extract_status,
+    _normalize_status,
+    _status_field_overlong,
+    _status_lifecycle_head,
+)
 from collectors.openspec import _extract_carry_forward_annotations, collect_openspec
 
 
@@ -275,6 +280,131 @@ class TestStatusNormalizationIssue73Fix(unittest.TestCase):
         )
 
 
+class TestStatusExtractionRangeIssue50Fix(unittest.TestCase):
+    """Regression suite for Forgejo aria-plugin #50 — `_status` lifecycle-head
+    extraction range + `delivered`/`shipped` token dict extension.
+
+    Bug 1: `_extract_status` returned the full single-line Status with no length
+           cap; a `done`/`complete` token buried in a long mini-changelog Status
+           shadowed the lifecycle head via `_normalize_status`'s fallback.
+    Bug 2: `delivered` / `shipped` were missing from the token dictionary.
+
+    Fix: `_status_lifecycle_head` truncates raw to the first documented separator
+    (em-dash / en-dash / ASCII-hyphen-with-spaces / `;` / `；` / `。`) before
+    classification; `delivered`/`shipped` added to the `implemented` branch.
+
+    See: openspec/changes/state-scanner-status-extraction-range/
+    """
+
+    # --- Bug 1: lifecycle-head truncation ---
+
+    def test_issue50_triage_case1_long_single_line(self):
+        # triage case-1: header `delivered`, `done` buried in sub-task narrative
+        # after the em-dash. Was `done` (WRONG), now `implemented`.
+        raw = (
+            "🟢 **Phase B Sprint 2 delivered** — archival blocked; "
+            "(2) TASK-101 closed (PR #53, docs sync 标 done); "
+            "blockers: live verify outstanding"
+        )
+        self.assertEqual(_normalize_status(raw), "implemented")
+        self.assertNotEqual(_normalize_status(raw), "done")
+
+    def test_issue50_em_dash_truncation(self):
+        self.assertEqual(
+            _normalize_status("Approved — Phase A done, ready for Phase B"),
+            "approved",
+        )
+
+    def test_issue50_ascii_hyphen_with_spaces_truncation(self):
+        # ` - ` (space-hyphen-space) is a tolerated separator; head `WIP` has no
+        # token, the trailing `done` after the hyphen must not shadow.
+        self.assertEqual(_normalize_status("WIP - 子任务 done"), "unknown")
+
+    def test_issue50_semicolon_truncation(self):
+        self.assertEqual(_normalize_status("Approved; Phase A done"), "approved")
+
+    def test_issue50_fullwidth_period_truncation(self):
+        self.assertEqual(_normalize_status("WIP。Phase A done"), "unknown")
+
+    def test_issue50_ascii_period_not_a_separator(self):
+        # ASCII `.` must NOT truncate — `v2.0` version strings stay intact.
+        self.assertEqual(_normalize_status("v2.0 implemented"), "implemented")
+
+    def test_issue50_73_phrase_across_separator(self):
+        # NEW-IM-1: a #73 transitional phrase split by a separator loses the
+        # phrase from the head — head `implementation` has no token → unknown.
+        # Authoring a Status this way is a documented violation (SKILL.md);
+        # this case pins the truncation-boundary behavior.
+        self.assertEqual(_normalize_status("implementation — complete"), "unknown")
+
+    # --- Bug 2: delivered / shipped token dict ---
+
+    def test_issue50_delivered_token(self):
+        self.assertEqual(_normalize_status("Phase B delivered"), "implemented")
+
+    def test_issue50_shipped_token(self):
+        self.assertEqual(_normalize_status("Shipped to prod"), "implemented")
+
+    def test_issue50_delivered_case_insensitive(self):
+        self.assertEqual(_normalize_status("DELIVERED"), "implemented")
+
+    def test_issue50_shadow_undelivered(self):
+        # word boundary: `undelivered` must NOT match `delivered`
+        self.assertEqual(_normalize_status("undelivered work remaining"), "unknown")
+
+    def test_issue50_shadow_preshipped(self):
+        # word boundary: `preshipped` must NOT match `shipped`
+        self.assertEqual(_normalize_status("preshipped artifacts"), "unknown")
+
+    def test_issue50_ordering_approved_before_delivered(self):
+        # approved still wins over the implemented-family (delivered)
+        self.assertEqual(_normalize_status("Approved (delivered by PR)"), "approved")
+
+    # --- Boundary cases for _status_lifecycle_head / _status_field_overlong ---
+
+    def test_head_char_cap_boundary(self):
+        # cap is strict `>`: exactly 200 → not truncated; 201 → truncated
+        head_200, trunc_200 = _status_lifecycle_head("a" * 200)
+        self.assertEqual(len(head_200), 200)
+        self.assertFalse(trunc_200)
+        head_201, trunc_201 = _status_lifecycle_head("a" * 201)
+        self.assertEqual(len(head_201), 200)
+        self.assertTrue(trunc_201)
+
+    def test_head_separator_at_position_zero(self):
+        head, trunc = _status_lifecycle_head(" — narrative only")
+        self.assertEqual(head, "")
+        self.assertFalse(trunc)
+        self.assertEqual(_normalize_status(" — narrative only"), "unknown")
+
+    def test_head_multiple_em_dashes_cuts_first(self):
+        head, _ = _status_lifecycle_head("Approved — note1 — note2")
+        self.assertEqual(head, "Approved")
+
+    def test_head_separator_inside_parentheses(self):
+        # `。` inside parens still truncates; head `In Progress (Phase 1` still
+        # classifies via the `in progress` multi-word phrase. Behavior pinned.
+        self.assertEqual(
+            _normalize_status("In Progress (Phase 1。Phase 2)"), "in_progress"
+        )
+
+    def test_head_comma_is_not_a_separator(self):
+        # comma must NOT truncate — `Approved, revised` keeps `approved`
+        head, _ = _status_lifecycle_head("Approved, revised")
+        self.assertEqual(head, "Approved, revised")
+        self.assertEqual(_normalize_status("Approved, revised"), "approved")
+
+    def test_head_none_safe(self):
+        self.assertEqual(_status_lifecycle_head(None), ("", False))
+        self.assertFalse(_status_field_overlong(None))
+
+    def test_field_overlong_predicate(self):
+        self.assertTrue(_status_field_overlong("z" * 250))
+        self.assertFalse(_status_field_overlong("Approved"))
+        # long string WITH an early separator → head is short → not overlong
+        self.assertFalse(_status_field_overlong("Approved — " + "x" * 300))
+
+
 class TestOpenspecCollector(unittest.TestCase):
     def test_no_openspec_dir(self):
         with tmp_project() as root:
@@ -336,6 +466,26 @@ class TestOpenspecCollector(unittest.TestCase):
             r = collect_openspec(root)
             self.assertEqual(r.data["changes"]["total"], 1)
             self.assertEqual(r.data["changes"]["items"][0]["id"], "valid")
+
+    def test_issue50_overlong_status_emits_soft_error(self):
+        # #50 e2e: a separator-less Status field over the char-cap emits a
+        # `status_field_truncated` soft_error (aggregated into snapshot errors[]).
+        with tmp_project() as root:
+            make_openspec(root, [("big-spec", "x" * 250)])
+            r = collect_openspec(root)
+            kinds = {e["error"] for e in r.errors}
+            self.assertIn("status_field_truncated", kinds)
+
+    def test_issue50_raw_status_keeps_full_narrative(self):
+        # #50 e2e: raw_status retains the COMPLETE Status text; only `status`
+        # is derived from the truncated lifecycle head.
+        long_status = "🟢 Phase B delivered — " + "narrative " * 30
+        with tmp_project() as root:
+            make_openspec(root, [("verbose-spec", long_status)])
+            r = collect_openspec(root)
+            item = r.data["changes"]["items"][0]
+            self.assertEqual(item["raw_status"], long_status.strip())
+            self.assertEqual(item["status"], "implemented")
 
 
 class TestCarryForwardInventory(unittest.TestCase):

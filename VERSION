@@ -1,20 +1,20 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.23.0
-> **发布日期**: 2026-05-20  # state-scanner inline carry-forward surfacing
+> **版本**: 1.23.1
+> **发布日期**: 2026-05-22  # state-scanner _status lifecycle-head extraction range (aria-plugin #50)
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.23.0
+1.23.1
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
 - **Minor (23)**: `state-scanner-inline-carry-forward-surfacing` — Phase 1.6.1 collector enhancement: surface inline `[carry-forward|TODO|defer(red)?|known[ -]gap|PASS-with-note]` annotations in active `openspec/changes/*/tasks.md`. New snapshot field `openspec.carry_forward_inventory` (additive, schema_version 1.0). 2-tier recommendation rules: `carry_forward_info` (INFO, 1≤total<5) + `carry_forward_pile` (WARNING, total≥5). 16 unit tests (9 core + 7 R1-audit gap fills) + live dogfood (4 baseline → 9 inject → 4 cleanup, atomicity verified) + Rule #6 structural deterministic benchmark (per `feedback_rule6_framing_differs_by_skill_type`). post_spec audit R1 REVISE → R2 PASS_WITH_WARNINGS unanimous (3 agents: tech-lead / backend-architect / qa-engineer). Forgejo Aria #90 (primary) + #89 (superset variant B).
-- **Patch (0)**: 本 minor 起点
+- **Patch (1)**: `state-scanner-status-extraction-range` (aria-plugin #50) — `_status` collector lifecycle-head 截断修复:`_extract_status` 对长单行 Status 无上限 → `_normalize_status` fallback 误命中子任务叙述里的 token。新增 `_status_lifecycle_head` (首段截断) + `_status_field_overlong` (collector 发 `status_field_truncated` soft_error);token 字典扩 `delivered`/`shipped` → `implemented`。23 regression test + post_spec audit R1→R3 CONVERGED。
 
 ## 包含内容
 
