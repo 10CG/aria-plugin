@@ -87,9 +87,22 @@ sha256_of() {
 }
 
 # ── Helper: JSON-escape a string for embedding in compact output ──────────
+# Prefers python3 (full JSON spec compliance for unicode/control chars);
+# falls back to jq if python3 absent (jq is already a required dep per
+# settings_corrupted check at line ~110); errors hard if neither available
+# (which is a misconfig deserving loud failure, not silent empty JSON).
+# v1.24.2 backend-architect M2 fix: previously assumed python3 unconditionally,
+# would silently produce empty advisory field if python3 missing on minimal container.
 json_escape() {
   local s="$1"
-  printf '%s' "$s" | python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$s" | python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'
+  elif command -v jq >/dev/null 2>&1; then
+    printf '%s' "$s" | jq -Rs .
+  else
+    echo "[check_secret_guard_install] ERROR: neither python3 nor jq available for JSON escaping; install one" >&2
+    return 2
+  fi
 }
 
 # ── Detection ─────────────────────────────────────────────────────────────

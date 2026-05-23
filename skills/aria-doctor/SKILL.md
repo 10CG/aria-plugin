@@ -14,7 +14,7 @@ user-invocable: true
 
 > **Version**: 1.0.0 (initial — ships with aria-plugin v1.24.0)
 > **Status**: Active
-> **Spec**: `openspec/archive/<date>-aria-secret-guard-plugin-default`
+> **Spec**: `openspec/archive/2026-05-23-aria-secret-guard-plugin-default`
 
 ---
 
@@ -187,7 +187,7 @@ bash aria/skills/aria-doctor/tests/check_secret_guard_install.test.sh
 
 ## Refs
 
-- **Spec**: `openspec/archive/<date>-aria-secret-guard-plugin-default/proposal.md` §State Schema for aria-doctor
+- **Spec**: `openspec/archive/2026-05-23-aria-secret-guard-plugin-default/proposal.md` §State Schema for aria-doctor
 - **Convention**: `standards/conventions/secret-hygiene.md` §6 Local copy + plugin coexist 模式
 - **Parent decision**: `.aria/decisions/2026-05-20-secret-rotation-during-m5-deploy.md` §5 (Layer 3 决议)
 - **Brainstorm**: `.aria/decisions/2026-05-22-aria-secret-guard-plugin-default-brainstorm.md`
