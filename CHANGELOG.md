@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2026-05-23
+
+### Added — O4 closure: Bash matcher regex extension for local `<reader> <key-file>` (closes v1.24.0 known-limit (c))
+
+Closes v1.24.0 CHANGELOG known-limit (c) (F2 from TASK-007 dogfood 2026-05-23).
+
+**Coverage extension** at `aria/hooks/secret-guard.sh` Bash branch `risky_patterns` array (1 new regex line at L369):
+
+```
+(cat|head|tail|less|more|strings|hexdump|od|xxd)[[:space:]]+[^|]*(id_rsa|id_ed25519|id_ecdsa|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig)(\b|/|$|[[:space:]])
+```
+
+Previously these `<reader> <key-file>` patterns were ONLY blocked by:
+- the SSH-wrapped variant (`ssh ... cat id_rsa`) at L398 of secret-guard.sh, AND
+- the Read|Edit|Write|MultiEdit matcher file_path scan at L153
+
+Now plain Bash invocations are also blocked, achieving **Bash↔Read matcher parity**.
+
+**Pattern list** intentionally mirrors the Read|Edit file_path regex (line 153 of secret-guard.sh):
+- SSH keys: `id_rsa`, `id_ed25519`, `id_ecdsa`
+- PEM/key files: `*.pem`, `*.key`
+- PKCS-12 / JKS: `*.p12`, `*.pfx`, `*.jks`
+- GPG / age: `*.gpg`, `*.age`
+- Terraform state: `*.tfstate`
+- Cloud configs: `/.aws/credentials`, `/.aws/config`, `/.kube/config`, `/kubeconfig`
+
+**Test coverage** (`aria/hooks/tests/secret-guard.test.sh`, +6 positive + 2 negative cases):
+
+Positive (newly blocking, was allow per known-limit (c)):
+- `cat ~/.ssh/id_rsa via Bash blocked` → exit 2
+- `head /etc/ssl/private/foo.key blocked` → exit 2
+- `tail /home/u/keys/cert.pem blocked` → exit 2
+- `less /home/u/.ssh/id_ed25519 blocked` → exit 2
+- `cat /home/u/.aws/credentials blocked` → exit 2
+- `strings /tmp/cert.p12 blocked` → exit 2
+
+Negative (regex must NOT over-trigger):
+- `cat foo.keyfile.txt NOT blocked` → exit 0 (word boundary guards against `.key` matching inside `keyfile`)
+- `cat README.md NOT blocked` → exit 0 (plain doc file)
+
+Companion preserved:
+- `Read id_rsa correctly blocked` → exit 2 (parity confirmation, Read matcher unchanged)
+
+**Test counts post-fix**:
+- secret-guard.test.sh: 214 → **219 PASS** (+5 net = +6 positive + 2 negative − 3 previous known-limit allow cases)
+- secret-scan.test.sh: 44/44 unchanged
+- aria-doctor: 8/8 unchanged
+- **Total: 271/271 PASS**
+
+### Notes
+
+- v1.24.0 CHANGELOG `[1.24.0]` "Known limitations" item (c) remains in historical record (do not delete) but is now resolved as of v1.25.0; future projects encountering the cited workarounds should upgrade to v1.25.0+.
+- Bash matcher coverage gap was discovered in v1.24.0 Aria-self dogfood (TASK-007 F2 finding), labeled-test pinned in v1.24.2 (qa M N2 closure), structurally closed in this v1.25.0 release per roadmap O4.
+- Why MINOR (not PATCH): adds new detection patterns to risky_patterns regex (extends matcher coverage = new functional capability for security-relevant hook).
+
+### Refs
+
+- v1.24.0 dogfood discovery: `openspec/archive/2026-05-23-aria-secret-guard-plugin-default/smoke-evidence.md` §1 F2
+- v1.24.2 labeled tests (predecessor): aria-plugin PR #60 SHA `0530db4`
+- Roadmap item: O4 from `docs/handoff/2026-05-23-aria-secret-guard-plugin-default-shipped.md` §6
+
 ## [1.24.2] - 2026-05-23
 
 ### Fixed — O5 minor cleanup from v1.24.0 post_implementation R1 audit

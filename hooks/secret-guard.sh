@@ -366,6 +366,15 @@ declare -a risky_patterns=(
   'cat[[:space:]]+[^|]*\.envrc'
   '(head|tail|less|more)[[:space:]]+[^|]*\.env'
 
+  # v1.25.0 O4 (closes v1.24.0 known-limit (c) F2): Local key-file reads via
+  # plain Bash readers — mirrors Read|Edit branch file_path regex at line 153
+  # to cover the gap where `cat ~/.ssh/id_rsa` (no SSH wrapper) wasn't blocked.
+  # SSH-wrapped variant remains at line ~398. Pattern list intentionally
+  # parallels the file_path regex (id_rsa / id_ed25519 / id_ecdsa / .pem /
+  # .key / .p12 / .pfx / .jks / .gpg / .age / .tfstate / .aws/credentials /
+  # .aws/config / .kube/config / kubeconfig) to maintain Bash↔Read parity.
+  '(cat|head|tail|less|more|strings|hexdump|od|xxd)[[:space:]]+[^|]*(id_rsa|id_ed25519|id_ecdsa|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig)(\b|/|$|[[:space:]])'
+
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
   '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/(var/)?run/secrets/'
