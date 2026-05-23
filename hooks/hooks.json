@@ -1,5 +1,5 @@
 {
-  "description": "Aria Hooks: SessionStart workflow recovery + PreToolUse handoff location guard",
+  "description": "Aria Hooks: SessionStart workflow recovery + PreToolUse handoff-location/secret-guard + PostToolUse secret-scan",
   "hooks": {
     "SessionStart": [
       {
@@ -20,6 +20,38 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/handoff-location-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-scan.sh",
             "timeout": 5
           }
         ]
