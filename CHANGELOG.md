@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] - 2026-05-23
+
+### Performance — O3 closure: hook perf optimization (~5× cold-start, ~4× warm-path)
+
+Closes v1.24.0 roadmap item O3. Reclaims the original 100ms performance budget that was relaxed to 400/150ms in v1.24.0 post-dogfood after empirical measurement found 337ms p95 on Bash path.
+
+**Two structural changes** to `aria/hooks/secret-guard.sh`:
+
+#### (1) Consolidated entry jq call
+
+Before: 3 separate `printf '%s' "$input" | jq -r '...'` subshell invocations (type check + tool_name extract + per-branch command/file_path extract).
+
+After: 1 `readarray -t < <(jq -r '...')` call extracting all 4 fields at entry. Per-line readarray (not `IFS=$'\t' read` with `@tsv`) preserves empty fields — tab is whitespace IFS, consecutive tabs collapse.
+
+#### (2) Bash builtin `=~` regex in risky_patterns sweep
+
+Before: `echo "$command" | grep -qE "$pat"` × ~100 patterns = ~100 subprocess forks per invocation.
+
+After: `[[ "$command" =~ $pat ]]` — bash builtin, no fork. POSIX ERE compatible (no regex changes needed).
+
+### Performance results (empirical, n=30 samples post-warmup)
+
+| Path | v1.24.0 | v1.26.0 | Δ |
+|------|---------|---------|---|
+| Cold start (fresh shell) | 600-1400ms | **59-68ms** | -90% to -95% |
+| Bash matcher warm p95 | 337ms | **76ms** | **-77%** |
+| Read/Edit warm p95 | ~102ms | **41ms** | -60% |
+
+**All paths comfortably under the original 100ms performance budget**.
+
+### Verification
+
+- secret-guard.test.sh: **219/219 PASS** (unchanged)
+- secret-scan.test.sh: 44/44 PASS (unchanged)
+- aria-doctor: 8/8 PASS (unchanged)
+- **Total: 271/271 PASS** — zero behavior change, pure performance refactor
+- Cold-start via `env -i HOME=$HOME PATH=$PATH bash` to defeat process cache
+
+### Why MINOR (not PATCH)
+
+Pure performance refactor of two hot code paths in security-relevant hook. Reclaims documented performance budget. Per Aria SemVer convention, structural hook refactor with measurable consumer-visible impact = MINOR+.
+
+### NOT addressed in this release (deferred)
+
+The remaining ~30 pre-loop `echo "$command" | grep -qE` filter checks (lines ~167, 243-335 — guard:ack detection, filter detection like jq/grep/sed/cut/awk, redirect detection) were NOT converted. They contribute ~30 × ~3ms ≈ 90ms of remaining overhead. v1.26.0 already hits budget; converting is deferred as low-priority polish (potential v1.27.x).
+
+### Refs
+
+- Roadmap item O3: `docs/handoff/2026-05-23-aria-secret-guard-plugin-default-shipped.md` §6
+- v1.24.0 dogfood F1 finding: `openspec/archive/2026-05-23-aria-secret-guard-plugin-default/smoke-evidence.md` §1
+- Performance budget originally set: v1.24.0 proposal.md §Impact (relaxed to 400/150ms post-empirical; this release reclaims original 100ms)
+
 ## [1.25.0] - 2026-05-23
 
 ### Added — O4 closure: Bash matcher regex extension for local `<reader> <key-file>` (closes v1.24.0 known-limit (c))
