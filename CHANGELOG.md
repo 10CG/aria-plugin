@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] - 2026-05-23
+
+### Added — plugin-default secret-guard + secret-scan hooks (Layer 2 mechanical enforcement of Rule #7)
+
+Spec `aria-secret-guard-plugin-default` (Forgejo Aria [#84](https://forgejo.10cg.pub/10CG/Aria/issues/84) + [#107](https://forgejo.10cg.pub/10CG/Aria/issues/107), parent decision [`.aria/decisions/2026-05-20-secret-rotation-during-m5-deploy.md §5`](../.aria/decisions/2026-05-20-secret-rotation-during-m5-deploy.md)). All aria-plugin consumers now auto-get LLM secret leak protection by default; no per-project install needed.
+
+**Hook source** (cherry-picked from SilkNode PR #429 v1.2 commit `8eef709`):
+
+- `aria/hooks/secret-guard.sh` (563 lines, executable) — PreToolUse: regex-blocks ~100 risky read patterns (cloud secret managers, K8s/Vault/Nomad secret APIs, .env / id_rsa / .pem / .aws/credentials / .kube/config / etc.). `# guard:ack: <reason>` inline bypass with `~/.claude/logs/guard-bypass.log` audit trail.
+- `aria/hooks/secret-scan.sh` (378 lines, executable) — PostToolUse: scans tool output, REDACTs known secret-shaped content before reaching LLM context. Warn-only (exit 0 always, fail-open by design).
+
+**Hook registration** (`aria/hooks/hooks.json`, 3 new entries):
+
+- PreToolUse `Bash` → secret-guard.sh
+- PreToolUse `Read|Edit|Write|MultiEdit` → secret-guard.sh
+- PostToolUse `Bash|Read|Edit|Write|MultiEdit` → secret-scan.sh
+- **NotebookEdit not registered** (per Tool Matcher decision in proposal §Tool Matcher & Contract).
+
+**Test coverage** (`aria/hooks/tests/`):
+
+- `secret-guard.test.sh` — 208 regression cases (207 from SilkNode upstream + 1 new `${CLAUDE_PLUGIN_ROOT}` substitution runtime test).
+- `secret-scan.test.sh` — 44 regression cases.
+- **Total: 252/252 PASS** (ship gate satisfied).
+
+**New skill** `aria-doctor` v1.0.0 (`aria/skills/aria-doctor/`):
+
+`check_secret_guard_install()` function detects dual-install state with **5 primary states** + **2 sub-flags**:
+
+- States: `not_installed` / `single_plugin` / `single_local` / `dual_install` / `corrupted_settings`
+- Sub-flags (on `dual_install`): `stale_local_version` / `divergent_content`
+- 8 unit tests PASS, banner regex spec documented (graceful fallback when no banner)
+- R2 audit deferred items closed: BA N1 (not_installed assert-never contract), BA N2 (single_local dual-cause advisory), QA NF2 (banner-missing edge case)
+
+**Convention update** — `standards/conventions/secret-hygiene.md` v1.0.0 → v1.1.0 (additive):
+
+- New §0 Path↔Layer mapping table (Path 1↔Layer 0 / Path 2↔inline / Path 3↔Layer 2)
+- New §5 Layer 2 enforcement (plugin SOT paths, exit semantics, Path 2 inline ack, Q1 evidence boundary, Path 1+Layer 2 互补 with known-limitation list)
+- New §6 Local copy + plugin coexist mode (5-state aria-doctor pointer + cleanup strategy + backwards-compat guarantee)
+
+**Rule #6 framing** (per memory `feedback_deterministic_structural_skill_rule6_substitute`):
+
+aria-doctor is a deterministic structural skill (pure function: filesystem → JSON state). Rule #6 benchmark uses **structural substitute** (NOT `/skill-creator` LLM AB):
+
+- `aria-plugin-benchmarks/ab-results/2026-05-23-aria-secret-guard-plugin-default-structural/README.md` — substitute framework + 8 test × 5-state coverage matrix
+- `aria-plugin-benchmarks/.../atomicity-guard.md` — schema evolution contract (append-only sub-flags, no rename primary state)
+- `aria-plugin-benchmarks/.../dogfood-evidence.md` — Aria self in-vivo capture (validates dual_install detection)
+
+**Audit history**:
+
+- post_spec R1: 5 PASS_WITH_WARNINGS, 1 Critical (version conflict) + 12 Major + 17 Minor across 5 agents (tech-lead + backend-architect + qa-engineer + code-reviewer + knowledge-manager)
+- post_spec R2: 5 PASS_WITH_WARNINGS, 5/5 R1 ADDRESSED, 0 new Major, 12 new Minor — pragmatic 2-round convergence per memory `feedback_post_spec_audit_pragmatic_convergence`.
+
+**Known limitations** (deliberately NOT fixed in v1.24.0 — would require regex changes with new false-positive risk; ack path is sufficient daily workaround):
+
+- **(a) False-positive**: `cat <script> && grep .env <script>` triggers the `.env` file-read regex even though the source `<script>` is a benign code file (the substring `.env` in the script content matches without context). Parent DEC §4.3. Workaround: `# guard:ack: <reason>` per-command bypass.
+- **(b) False-negative**: log-file grep patterns are not in the `risky_patterns` whitelist, so `grep -r 'PASSWORD' /var/log/` slips through. Parent DEC §2.6. Workaround: rely on operator discipline + secret-scan PostToolUse REDACT as second-line defense.
+- **(c) False-negative (NEW from TASK-007 dogfood 2026-05-23)**: Bash matcher does NOT catch local `cat | head | tail | less | more <key-file>` for SSH/PEM/PKCS-12 keys (id_rsa / id_ed25519 / *.pem / *.key / *.p12). Only the SSH-wrapper variant (`ssh ... cat id_rsa`) is in the Bash regex; Read/Edit/Write/MultiEdit matcher DOES catch the same file paths via its independent path scan (line 153 of secret-guard.sh). Workarounds: (1) use Read tool instead of Bash `cat` for inspecting key files; (2) secret-scan PostToolUse provides second-line REDACT defense; (3) `# guard:ack:` bypass for legitimate one-off ack'd reads. Owner triage 2026-05-23 (smoke-evidence.md §3.1 F2): Accept as new known-limit; v1.25.x roadmap will extend Bash regex `risky_patterns`.
+
+**Performance budget** (Revised 2026-05-23 post-TASK-007 dogfood):
+- p95 < 400 ms per Bash tool event (empirical Aria-self warm = 337 ms)
+- p95 < 150 ms per Read|Edit|Write|MultiEdit tool event (empirical = ~102 ms)
+- Cold-start (first invocation per session): may reach 600-1400 ms (filesystem + library load)
+- Original 100 ms estimate omitted the ~100-pattern regex sweep + multi-stage jq pipeline cost; revised budget reflects measured warm-path behavior
+- v1.25.x roadmap: hook perf optimization (compile regex / pre-flatten jq pipeline / single-pass POSIX shell) to reclaim sub-100 ms target
+- Owner triage 2026-05-23 (smoke-evidence.md §3.1 F1): Accept with budget revision
+
+**Ship gate** (smoke-evidence.md §3 verdict): **REVIEW → PASS_TRIAGED**
+- 0 unexpected_false_positive ✓
+- 0 unexpected_false_negative ✓ (after F2 reclassified as known-limit per owner triage)
+- 10 daily PreToolUse Bash + Read + Edit events captured with p50/p95 timing
+- 3 block-validation events all blocked correctly (B1 nomad-var-get / B2 Read .env / B3 cat id_rsa → reclassified F2)
+- 3 PostToolUse scan events (1 REDACT applied + 2 pass-through)
+- TASK-008 SilkNode cross-project smoke: P2.5 deferred 7-day post-ship (no SilkNode owner in current session)
+
+**Cross-references**:
+
+- Spec: `openspec/changes/aria-secret-guard-plugin-default/` (archived after merge)
+- Parent decision: `.aria/decisions/2026-05-20-secret-rotation-during-m5-deploy.md` §5 (Layer 3 决议)
+- Brainstorm decision: `.aria/decisions/2026-05-22-aria-secret-guard-plugin-default-brainstorm.md`
+- New memory: `feedback_claude_code_hook_merge_all_fire` (Q1 5-trial empirical evidence)
+
 ## [1.23.1] - 2026-05-22
 
 ### Fixed — state-scanner `_status` lifecycle-head extraction range (aria-plugin #50)
