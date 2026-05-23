@@ -409,6 +409,26 @@ bash_case "v1.3: jq .Items value-extraction BLOCKED" 2 "curl http://nomad/v1/var
 bash_case "v1.3: jq .Items.password BLOCKED"     2 "curl http://nomad/v1/var/x | jq '.Items.password'"
 
 # ──────────────────────────────────────────────────────────────────────────
+# aria-plugin documented-stub-design tests (+2 vs. SilkNode origin).
+# proposal.md §Tool Matcher decision (L52): "v1.2 上游脚本 case statement 已
+# 覆盖 Bash + Read|Edit。Write / MultiEdit 实际行为: case 落入 default
+# (exit 0 pass-through) — 即 PreToolUse 在 Write/MultiEdit 上目前不主动 block,
+# 仅占注册位 (与 PostToolUse 配对触发)。后续 minor 可加 Write 内容扫描。"
+#
+# These tests EXPLICITLY assert the documented pass-through behavior so that
+# (a) future readers find the design intent in the test suite, and (b) any
+# future regression accidentally adding active block on Write|MultiEdit
+# (which would constitute a breaking change to the v1.24.0 registered-stub
+# contract) is caught by the test runner.
+# ──────────────────────────────────────────────────────────────────────────
+
+run_case "stub: Write tool_name documented pass-through (proposal §Tool Matcher)" 0 \
+  '{"tool_name":"Write","tool_input":{"file_path":"/home/dev/proj/.env","content":"SECRET=x"}}'
+
+run_case "stub: MultiEdit tool_name documented pass-through (proposal §Tool Matcher)" 0 \
+  '{"tool_name":"MultiEdit","tool_input":{"file_path":"/home/dev/proj/.env","edits":[]}}'
+
+# ──────────────────────────────────────────────────────────────────────────
 # aria-plugin runtime test (+1 vs. SilkNode origin): ${CLAUDE_PLUGIN_ROOT}
 # substitution. Verifies hooks.json registration form
 #   "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh"

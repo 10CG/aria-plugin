@@ -53,10 +53,14 @@ SETTINGS_JSON="$PROJECT_DIR/.claude/settings.json"
 BANNER_REGEX='^# (Aria(-plugin)?|secret-guard)[^\n]*\bv([0-9]+\.[0-9]+\.[0-9]+)\b'
 
 # ── Helper: extract version from banner (returns empty on no match) ───────
+# Matches BANNER_REGEX (line 53) — requires anchored prefix "# Aria/Aria-plugin/secret-guard"
+# to avoid incidental vX.Y.Z matches in unrelated comments (code-reviewer R1 audit fix).
 extract_banner_version() {
   local file="$1"
   [ -f "$file" ] || { echo ""; return; }
   head -n 20 "$file" 2>/dev/null \
+    | grep -E "$BANNER_REGEX" \
+    | head -n 1 \
     | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' \
     | head -n 1 \
     | sed 's/^v//'
