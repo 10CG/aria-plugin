@@ -99,7 +99,22 @@ fi
 # Previously `.tool_name // ""` returned empty for array/null/object → silent
 # case-star fallthrough to exit 0. Now we explicitly check type and fail-closed
 # on malformed structure.
-tool_type="$(printf '%s' "$input" | jq -r '.tool_name | type' 2>/dev/null)"
+#
+# v1.26.0 O3 perf: single jq call extracting all 4 fields at entry, one per
+# line. Replaces 3 prior jq invocations (type check + tool_name + per-branch
+# command/file_path extract). Saves ~2 × jq startup overhead. Case branches
+# below no longer re-invoke jq for their fields.
+#
+# Note: `readarray -t` per-line is used (not `IFS=$'\t' read` with @tsv)
+# because tab is whitespace IFS — consecutive tabs collapse, dropping empty
+# fields. Per-line preserves empty values (e.g. command="" when tool=Read).
+readarray -t _sg_fields < <(jq -r '(.tool_name | type), (.tool_name // ""), (.tool_input.command // ""), (.tool_input.file_path // "")' 2>/dev/null <<<"$input")
+tool_type="${_sg_fields[0]:-}"
+tool="${_sg_fields[1]:-}"
+command="${_sg_fields[2]:-}"
+file_path="${_sg_fields[3]:-}"
+unset _sg_fields
+
 if [[ "$tool_type" != "string" ]]; then
   if [[ "$tool_type" == "null" ]] || [[ -z "$tool_type" ]]; then
     # Missing/null tool_name on a non-empty input — likely malformed harness
@@ -110,8 +125,6 @@ if [[ "$tool_type" != "string" ]]; then
   echo "[secret-guard] FATAL: malformed PreToolUse input — tool_name is type=$tool_type (expected string). Blocking." >&2
   exit 2
 fi
-
-tool="$(printf '%s' "$input" | jq -r '.tool_name' 2>/dev/null)"
 
 # ── log_ack with hard failure handling ────────────────────────────────────
 # R4-C-1 fix: definition moved here from below `case` block so Read|Edit
@@ -143,7 +156,8 @@ log_ack() {
 # ── R2 Multi-tool dispatch ─────────────────────────────────────────────────
 case "$tool" in
   Read|Edit)
-    file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+    # v1.26.0 O3 perf: file_path already extracted by entry jq call (line ~107).
+    # If file_path absent (e.g. tool_input shape variation), entry call set it to "".
     [[ -z "$file_path" ]] && exit 0
 
     # R2-C-6 fix: case-insensitive + expanded path list. Common high-value
@@ -211,7 +225,7 @@ EOF
 esac
 
 # ── Bash command analysis ─────────────────────────────────────────────────
-command="$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)"
+# v1.26.0 O3 perf: command already extracted by entry jq call (line ~107).
 [[ -z "$command" ]] && exit 0
 
 # R2-I-5 fix: command length cap. A 10 MB command would make the 30+ regex
@@ -533,7 +547,10 @@ declare -a risky_patterns=(
 )
 
 for pat in "${risky_patterns[@]}"; do
-  if echo "$command" | grep -qE "$pat"; then
+  # v1.26.0 O3 perf: bash builtin `=~` (POSIX ERE) replaces `echo | grep -qE`
+  # subprocess fork. ~100 patterns × ~3ms subprocess fork = ~300ms saved per
+  # hook invocation (the dominant cost). bash 3.2+ guaranteed (ubiquitous).
+  if [[ "$command" =~ $pat ]]; then
     if [[ $has_filter -eq 0 ]]; then
       cat >&2 <<EOF
 [secret-guard] BLOCKED: command reads a secret-bearing source without a
