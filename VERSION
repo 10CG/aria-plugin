@@ -1,24 +1,24 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.23.1
-> **发布日期**: 2026-05-22  # state-scanner _status lifecycle-head extraction range (aria-plugin #50)
+> **版本**: 1.24.0
+> **发布日期**: 2026-05-23  # aria-secret-guard-plugin-default — plugin-default PreToolUse/PostToolUse secret-guard + aria-doctor::check_secret_guard_install (5-state schema, 8 unit tests, Rule #6 structural substitute)
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.23.1
+1.24.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
-- **Minor (23)**: `state-scanner-inline-carry-forward-surfacing` — Phase 1.6.1 collector enhancement: surface inline `[carry-forward|TODO|defer(red)?|known[ -]gap|PASS-with-note]` annotations in active `openspec/changes/*/tasks.md`. New snapshot field `openspec.carry_forward_inventory` (additive, schema_version 1.0). 2-tier recommendation rules: `carry_forward_info` (INFO, 1≤total<5) + `carry_forward_pile` (WARNING, total≥5). 16 unit tests (9 core + 7 R1-audit gap fills) + live dogfood (4 baseline → 9 inject → 4 cleanup, atomicity verified) + Rule #6 structural deterministic benchmark (per `feedback_rule6_framing_differs_by_skill_type`). post_spec audit R1 REVISE → R2 PASS_WITH_WARNINGS unanimous (3 agents: tech-lead / backend-architect / qa-engineer). Forgejo Aria #90 (primary) + #89 (superset variant B).
-- **Patch (1)**: `state-scanner-status-extraction-range` (aria-plugin #50) — `_status` collector lifecycle-head 截断修复:`_extract_status` 对长单行 Status 无上限 → `_normalize_status` fallback 误命中子任务叙述里的 token。新增 `_status_lifecycle_head` (首段截断) + `_status_field_overlong` (collector 发 `status_field_truncated` soft_error);token 字典扩 `delivered`/`shipped` → `implemented`。23 regression test + post_spec audit R1→R3 CONVERGED。
+- **Minor (24)**: `aria-secret-guard-plugin-default` — **plugin-default secret-guard + secret-scan hooks** (cherry-pick SilkNode PR #429 v1.2 commit `8eef709` → `aria/hooks/{secret-guard,secret-scan}.sh`, 252 self-tests PASS = 207 secret-guard + 44 secret-scan + 1 new `${CLAUDE_PLUGIN_ROOT}` substitution runtime test). `hooks.json` 注册 PreToolUse 2 entries (Bash + Read\|Edit\|Write\|MultiEdit → secret-guard) + PostToolUse 1 entry (Bash\|Read\|Edit\|Write\|MultiEdit → secret-scan), NotebookEdit 不注册。新 skill `aria-doctor` v1.0.0:`check_secret_guard_install()` 5-state schema (`not_installed`/`single_plugin`/`single_local`/`dual_install`/`corrupted_settings`) + 2 sub-flag (`stale_local_version`/`divergent_content`) + 8 unit tests PASS + banner regex spec + R2 audit BA N1/BA N2/QA NF2 closure。Rule #6 structural substitute artifacts at `aria-plugin-benchmarks/ab-results/2026-05-23-...-structural/` (README + atomicity-guard + dogfood-evidence)。`standards/conventions/secret-hygiene.md` v1.0.0 → v1.1.0 additive (§0 Path↔Layer mapping + §5 Layer 2 enforcement + §6 coexist mode)。post_spec R2 PASS_WITH_WARNINGS converged (5 agents: tech-lead + backend-architect + qa-engineer + code-reviewer + knowledge-manager)。Forgejo Aria #84 + #107 close on ship。
+- **Patch (0)**: —
 
 ## 包含内容
 
-### Skills (31 面向用户 + 6 内部 = 37 total)
+### Skills (32 面向用户 + 6 内部 = 38 total)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -46,6 +46,9 @@
 **看板与可视化 (1个)**
 - aria-dashboard
 
+**环境诊断 (1个, v1.24.0 新增)**
+- aria-doctor — 检测 plugin SOT vs project-local secret-guard 安装状态 (5-state schema)
+
 **项目适配 (3个)**
 - project-analyzer, agent-gap-analyzer, agent-creator
 
@@ -62,7 +65,10 @@
 ### Hooks 系统
 
 - SessionStart → 中断恢复检测 (session-start-check.sh)
-- PreToolUse → handoff-location-guard.sh (v1.21.0 新增, Rule #9 L1 enforcement — 阻止写 .aria/handoff/*.md)
+- PreToolUse Write|Edit|NotebookEdit → handoff-location-guard.sh (v1.21.0, Rule #9 L1 enforcement)
+- PreToolUse Bash → secret-guard.sh (v1.24.0 新增, Rule #7 Layer 2 enforcement)
+- PreToolUse Read|Edit|Write|MultiEdit → secret-guard.sh (v1.24.0 新增, file_path scan)
+- PostToolUse Bash|Read|Edit|Write|MultiEdit → secret-scan.sh (v1.24.0 新增, output REDACT)
 
 ## v1.15.0 核心成果 — US-012 多远程一致性保障
 

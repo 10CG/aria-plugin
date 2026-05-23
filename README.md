@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.23.1 | **Released**: 2026-05-22
+> **Version**: 1.24.0 | **Released**: 2026-05-23
 >
-> AI-DDD methodology plugin for Claude Code — 31 user-facing Skills + 6 internal + 11 Agents + Hooks
+> AI-DDD methodology plugin for Claude Code — 32 user-facing Skills + 6 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 
 ## Prerequisites
 
@@ -24,9 +24,13 @@
 
 ### Hooks (Auto-triggered)
 
-| Hook | Trigger | Purpose |
-|------|---------|---------|
-| `SessionStart` | Session begins | Detect interrupted workflows and prompt recovery |
+| Hook | Matcher | Script | Purpose |
+|------|---------|--------|---------|
+| `SessionStart` | * | session-start-check.sh | Detect interrupted workflows + prompt recovery |
+| `PreToolUse` | Write\|Edit\|NotebookEdit | handoff-location-guard.sh | Rule #9 L1 — block writes to `.aria/handoff/*.md` |
+| `PreToolUse` | Bash | **secret-guard.sh** | Rule #7 Layer 2 — block raw secret reads (cmd pattern scan), v1.24.0+ |
+| `PreToolUse` | Read\|Edit\|Write\|MultiEdit | **secret-guard.sh** | Rule #7 Layer 2 — block secret-bearing file paths (.env, id_rsa, etc.), v1.24.0+ |
+| `PostToolUse` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — REDACT secret-shaped output before reaching LLM context, v1.24.0+ |
 
 **Disable Hooks**:
 ```bash
@@ -37,7 +41,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (30 user-facing + 6 internal = 36 total)
+### Skills (32 user-facing + 6 internal = 38 total)
 
 > Internal skills (6, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1).
 
@@ -87,6 +91,9 @@ export ARIA_HOOKS_DISABLED=true
 **Visualization**
 - aria-dashboard — Project progress dashboard (UPM/Stories/OpenSpec/Audit/Benchmark)
 
+**Environment Diagnosis** *(v1.24.0)*
+- aria-doctor — Detect aria-plugin secret-guard hook install state (`check_secret_guard_install` 5-state schema: not_installed / single_plugin / single_local / dual_install / corrupted_settings)
+
 **Project Adaptation** *(v1.13.0)*
 - project-analyzer — Scan project tech stack, frameworks, and work patterns
 - agent-gap-analyzer — Compare project needs vs Agent capabilities, identify gaps
@@ -127,6 +134,21 @@ After installation, hooks fire automatically:
 ```bash
 # Session start — detect interrupted workflows
 # → checks .aria/workflow-state.json for unfinished work
+
+# PreToolUse Bash — block raw secret reads (v1.24.0+)
+# → e.g. `nomad var get ...` without REDACT filter → BLOCKED with helpful stderr
+# → bypass: append `# guard:ack: <reason ≥8 non-whitespace chars>` to command
+#          (audit-logged to ~/.claude/logs/guard-bypass.log)
+
+# PreToolUse Read|Edit|Write|MultiEdit — block secret-bearing file paths (v1.24.0+)
+# → e.g. reading .env / id_rsa / .pem / .aws/credentials / .kube/config → BLOCKED
+
+# PostToolUse * — scan output for secret-shaped content, REDACT before LLM (v1.24.0+)
+# → warn-only (exit 0 always); replaces secret values in tool_response
+
+# Diagnose install state:
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh
+# → JSON state: not_installed / single_plugin / single_local / dual_install / corrupted_settings
 ```
 
 ### Manual Invocation
