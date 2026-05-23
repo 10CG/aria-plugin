@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.1] - 2026-05-23
+
+### Fixed — GitHub Secret Scanning push protection allowlist (O6 from v1.24.0 roadmap)
+
+Adds `.github/secret_scanning.yml` with `paths-ignore` for hook regression test files:
+
+- `hooks/tests/secret-guard.test.sh`
+- `hooks/tests/secret-scan.test.sh`
+
+**Why**: These test files intentionally contain realistic-looking token patterns (sk_live_/ghp_/sk-silk-/Slack webhook URL/Postgres connection strings) to verify that `secret-scan.sh` + `secret-guard.sh` regex patterns correctly catch them. GitHub's secret scanning push protection cannot distinguish test fixtures from real tokens, so v1.24.0's initial GitHub push was blocked by 5+ `unblock-secret` URLs requiring per-fixture owner action.
+
+**Result**: structural one-time config replaces per-push owner unblock-URL clicking + per-fixture sanitization workarounds. Production hook code, skill code, and documentation are NOT excluded — they should never contain real or fixture secrets. Per memory `feedback_github_secret_scanning_push_range_blocks_history` (recorded during v1.24.0 ship as the experience that motivated this fix).
+
+### Fixed — plugin.json / marketplace.json description Skills count typo
+
+Description fields updated `31个 Skills` → `32个 Skills` to match actual count after v1.24.0 added the `aria-doctor` skill (v1.0.0). README.md / VERSION already had the correct `32` count; this aligns the manifest descriptions. No behavior change.
+
+### Refs
+
+- Source incident: 2026-05-23 v1.24.0 GitHub push block ([handoff §3 risks table](../docs/handoff/2026-05-23-aria-secret-guard-plugin-default-shipped.md))
+- Memory: `feedback_github_secret_scanning_push_range_blocks_history`
+- Roadmap item: O6 from `openspec/archive/2026-05-23-aria-secret-guard-plugin-default/` v1.24.1+ list
+
 ## [1.24.0] - 2026-05-23
 
 ### Added — plugin-default secret-guard + secret-scan hooks (Layer 2 mechanical enforcement of Rule #7)
