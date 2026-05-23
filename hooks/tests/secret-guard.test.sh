@@ -429,26 +429,27 @@ run_case "stub: MultiEdit tool_name documented pass-through (proposal §Tool Mat
   '{"tool_name":"MultiEdit","tool_input":{"file_path":"/home/dev/proj/.env","edits":[]}}'
 
 # ──────────────────────────────────────────────────────────────────────────
-# Known-limit (c) v1.24.0 CHANGELOG: Bash matcher does NOT catch local
-# `cat | head | tail | less | more <key-file>` for SSH/PEM/PKCS-12 keys
-# (id_rsa / *.pem / *.key / *.p12). Only the SSH-wrapper variant
-# (`ssh ... cat id_rsa`) at secret-guard.sh line 398 is covered.
-# Read/Edit/Write/MultiEdit matcher DOES catch the same paths via the
-# independent file_path regex at secret-guard.sh line 153.
+# v1.25.0 O4 closure (was: v1.24.0 known-limit (c) F2): Bash matcher NOW
+# blocks local `<reader> <key-file>` patterns mirroring the Read|Edit branch.
+# Previously these cases asserted exit=0 (documented allow per known-limit
+# (c)); v1.25.0 added the regex line at secret-guard.sh ~L369 closing the
+# gap. v1.24.0 CHANGELOG known-limit (c) is now historically resolved.
 #
-# v1.24.2 qa M N2 closure: pins the documented behavior with explicit test
-# cases — any future "fix" that accidentally blocks these patterns would
-# fail this test and force the author to either update known-limit (c) in
-# CHANGELOG or revert. v1.25.x roadmap O4 may extend Bash regex; until
-# then, these cases ARE expected to allow (exit 0).
+# Coverage parity: mirrors Read|Edit file_path regex at secret-guard.sh L153.
 # ──────────────────────────────────────────────────────────────────────────
-bash_case "known-limit(c): cat ~/.ssh/id_rsa via Bash"  0 'cat ~/.ssh/id_rsa'
-bash_case "known-limit(c): head /etc/ssl/private/foo.key"  0 'head /etc/ssl/private/foo.key'
-bash_case "known-limit(c): tail /home/u/keys/cert.pem"  0 'tail /home/u/keys/cert.pem'
+bash_case "v1.25.0 F2 closure: cat ~/.ssh/id_rsa via Bash blocked"  2 'cat ~/.ssh/id_rsa'
+bash_case "v1.25.0 F2 closure: head /etc/ssl/private/foo.key blocked"  2 'head /etc/ssl/private/foo.key'
+bash_case "v1.25.0 F2 closure: tail /home/u/keys/cert.pem blocked"  2 'tail /home/u/keys/cert.pem'
+bash_case "v1.25.0 F2 closure: less id_ed25519 blocked"  2 'less /home/u/.ssh/id_ed25519'
+bash_case "v1.25.0 F2 closure: cat aws credentials blocked"  2 'cat /home/u/.aws/credentials'
+bash_case "v1.25.0 F2 closure: strings cert.p12 blocked"  2 'strings /tmp/cert.p12'
 
-# Companion confirmation: Read matcher DOES catch the same path (proves
-# the gap is Bash-matcher-specific, not a general hook gap)
-read_case "known-limit(c) companion: Read id_rsa correctly blocked"  2 '/home/u/.ssh/id_rsa'
+# Negative cases: regex must NOT over-trigger on non-key files with similar names
+bash_case "v1.25.0 F2 negative: cat foo.keyfile.txt NOT blocked (keyfile word, no boundary)"  0 'cat foo.keyfile.txt'
+bash_case "v1.25.0 F2 negative: cat plain README.md NOT blocked"  0 'cat README.md'
+
+# Companion confirmation: Read matcher STILL catches the same path (parity preserved)
+read_case "v1.25.0 F2 companion: Read id_rsa still blocked (parity)"  2 '/home/u/.ssh/id_rsa'
 
 # ──────────────────────────────────────────────────────────────────────────
 # aria-plugin runtime test (+1 vs. SilkNode origin): ${CLAUDE_PLUGIN_ROOT}

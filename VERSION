@@ -1,18 +1,19 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.24.2
-> **发布日期**: 2026-05-23  # patch: O5 minor cleanup — python3 dep guard in aria-doctor json_escape + F2 known-limit labeled tests + SKILL.md/CHANGELOG doc fixes
+> **版本**: 1.25.0
+> **发布日期**: 2026-05-23  # minor: O4 closure — Bash matcher regex extension for local `<reader> <key-file>` (closes v1.24.0 known-limit (c) F2 from TASK-007 dogfood)
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.24.2
+1.25.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
+- **Minor (25)**: O4 closure — **Bash matcher regex extension for local `<reader> <key-file>`** patterns. Closes v1.24.0 CHANGELOG known-limit (c) F2 from TASK-007 dogfood: `(cat|head|tail|less|more|strings|hexdump|od|xxd) <key-file>` (id_rsa/id_ed25519/id_ecdsa/.pem/.key/.p12/.pfx/.jks/.gpg/.age/.tfstate/aws-credentials/aws-config/kube-config/kubeconfig) now BLOCKED at PreToolUse Bash matcher. Bash↔Read parity achieved per Read|Edit branch file_path regex (secret-guard.sh L153). +6 positive `bash_case` (now exit=2) + 2 negative regression cases (keyfile/README false-positive guards). Bash branch regex array: 1 new line at L369. Total tests: **271/271 PASS** (was 266 in v1.24.2). v1.24.0 known-limit (c) historical record preserved in [1.24.0] CHANGELOG; v1.25.0 marks closure.
 - **Minor (24)**: `aria-secret-guard-plugin-default` — **plugin-default secret-guard + secret-scan hooks** (cherry-pick SilkNode PR #429 v1.2 commit `8eef709` → `aria/hooks/{secret-guard,secret-scan}.sh`, 252 self-tests PASS = 207 secret-guard + 44 secret-scan + 1 new `${CLAUDE_PLUGIN_ROOT}` substitution runtime test). `hooks.json` 注册 PreToolUse 2 entries (Bash + Read\|Edit\|Write\|MultiEdit → secret-guard) + PostToolUse 1 entry (Bash\|Read\|Edit\|Write\|MultiEdit → secret-scan), NotebookEdit 不注册。新 skill `aria-doctor` v1.0.0:`check_secret_guard_install()` 5-state schema (`not_installed`/`single_plugin`/`single_local`/`dual_install`/`corrupted_settings`) + 2 sub-flag (`stale_local_version`/`divergent_content`) + 8 unit tests PASS + banner regex spec + R2 audit BA N1/BA N2/QA NF2 closure。Rule #6 structural substitute artifacts at `aria-plugin-benchmarks/ab-results/2026-05-23-...-structural/` (README + atomicity-guard + dogfood-evidence)。`standards/conventions/secret-hygiene.md` v1.0.0 → v1.1.0 additive (§0 Path↔Layer mapping + §5 Layer 2 enforcement + §6 coexist mode)。post_spec R2 PASS_WITH_WARNINGS converged (5 agents: tech-lead + backend-architect + qa-engineer + code-reviewer + knowledge-manager)。Forgejo Aria #84 + #107 close on ship。
 - **Patch (2)**: O5 minor cleanup from v1.24.0 post_implementation R1 audit — (a) `aria-doctor::check_secret_guard_install.sh::json_escape()` now gates `python3` availability + falls back to `jq -Rs` + hard-errors if neither (was: silent corrupt JSON on minimal containers per backend-architect M2); (b) 4 new `bash_case`/`read_case` regression tests in `secret-guard.test.sh` pinning v1.24.0 known-limit (c) Bash `cat|head|tail <key-file>` documented allow + companion Read-matcher-DOES-block proof (qa M N2 closure); (c) `<date>` placeholder in `skills/aria-doctor/SKILL.md` resolved to `2026-05-23` (knowledge M N1); (d) CHANGELOG `[1.24.0]` hook registration "3 new entries" wording clarified (knowledge M N2). Total: 214/214 secret-guard + 8/8 aria-doctor tests PASS post-fix.
 - **Patch (1)**: `.github/secret_scanning.yml` allowlist for `hooks/tests/{secret-guard,secret-scan}.test.sh` — prevents GitHub Secret Scanning push protection from blocking on intentional realistic-looking test fixtures (sk_live_/ghp_/sk-silk-/Slack webhook URL/Postgres URL); replaces per-push owner unblock-URL clicking with structural config (per memory `feedback_github_secret_scanning_push_range_blocks_history`). Also fixes plugin.json/marketplace.json description Skills count typo 31→32 (aria-doctor v1.0.0 missed in v1.24.0 description bump).
