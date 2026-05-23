@@ -429,6 +429,28 @@ run_case "stub: MultiEdit tool_name documented pass-through (proposal §Tool Mat
   '{"tool_name":"MultiEdit","tool_input":{"file_path":"/home/dev/proj/.env","edits":[]}}'
 
 # ──────────────────────────────────────────────────────────────────────────
+# Known-limit (c) v1.24.0 CHANGELOG: Bash matcher does NOT catch local
+# `cat | head | tail | less | more <key-file>` for SSH/PEM/PKCS-12 keys
+# (id_rsa / *.pem / *.key / *.p12). Only the SSH-wrapper variant
+# (`ssh ... cat id_rsa`) at secret-guard.sh line 398 is covered.
+# Read/Edit/Write/MultiEdit matcher DOES catch the same paths via the
+# independent file_path regex at secret-guard.sh line 153.
+#
+# v1.24.2 qa M N2 closure: pins the documented behavior with explicit test
+# cases — any future "fix" that accidentally blocks these patterns would
+# fail this test and force the author to either update known-limit (c) in
+# CHANGELOG or revert. v1.25.x roadmap O4 may extend Bash regex; until
+# then, these cases ARE expected to allow (exit 0).
+# ──────────────────────────────────────────────────────────────────────────
+bash_case "known-limit(c): cat ~/.ssh/id_rsa via Bash"  0 'cat ~/.ssh/id_rsa'
+bash_case "known-limit(c): head /etc/ssl/private/foo.key"  0 'head /etc/ssl/private/foo.key'
+bash_case "known-limit(c): tail /home/u/keys/cert.pem"  0 'tail /home/u/keys/cert.pem'
+
+# Companion confirmation: Read matcher DOES catch the same path (proves
+# the gap is Bash-matcher-specific, not a general hook gap)
+read_case "known-limit(c) companion: Read id_rsa correctly blocked"  2 '/home/u/.ssh/id_rsa'
+
+# ──────────────────────────────────────────────────────────────────────────
 # aria-plugin runtime test (+1 vs. SilkNode origin): ${CLAUDE_PLUGIN_ROOT}
 # substitution. Verifies hooks.json registration form
 #   "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh"

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.2] - 2026-05-23
+
+### Fixed — O5 minor cleanup from v1.24.0 post_implementation R1 audit
+
+Closes 4 of 5 actionable minor findings from
+`.aria/audit-reports/post_implementation-R1-2026-05-23-aria-secret-guard-plugin-default-orchestrator.md`:
+
+#### (a) backend-architect M2 — `python3` runtime dependency guard
+
+`aria/skills/aria-doctor/scripts/check_secret_guard_install.sh::json_escape()` previously assumed `python3` unconditionally. On minimal containers lacking python3, the helper would silently produce empty advisory fields in the JSON output (other fields still ran through other code paths, leaving an inconsistent corrupt JSON).
+
+**Fix**: prefer python3 → fall back to `jq -Rs .` (jq is already a required dep used by `settings_corrupted` check) → hard-error if neither available (loud failure, never silent corruption).
+
+#### (b) qa M N2 — F2 known-limit (c) labeled regression tests
+
+v1.24.0 CHANGELOG documents known-limit (c): Bash matcher does NOT catch local `cat | head | tail | less | more <key-file>` for SSH/PEM/PKCS-12 keys. Until v1.24.0, no test pinned this documented behavior — any future "fix" that accidentally blocks these patterns would ship without forcing the author to update CHANGELOG.
+
+**Fix**: 4 new test cases in `aria/hooks/tests/secret-guard.test.sh`:
+- `bash_case "known-limit(c): cat ~/.ssh/id_rsa via Bash" 0`
+- `bash_case "known-limit(c): head /etc/ssl/private/foo.key" 0`
+- `bash_case "known-limit(c): tail /home/u/keys/cert.pem" 0`
+- `read_case "known-limit(c) companion: Read id_rsa correctly blocked" 2` (proves the gap is Bash-matcher-specific, not a general hook gap)
+
+Test counts: secret-guard.test.sh **210 → 214 PASS** (+4 known-limit cases); secret-scan.test.sh **44/44** unchanged; aria-doctor **8/8** unchanged. Total: **266/266 PASS** post-fix.
+
+#### (c) knowledge M N1 — `<date>` placeholder resolution in SKILL.md
+
+`aria/skills/aria-doctor/SKILL.md` L17 + L190 had `openspec/archive/<date>-aria-secret-guard-plugin-default` placeholders left over from pre-archive Spec lifecycle. Resolved to `2026-05-23-aria-secret-guard-plugin-default` (the actual TASK-015 archive date).
+
+#### (d) knowledge M N2 — CHANGELOG "3 new entries" wording clarification
+
+v1.24.0 `[1.24.0]` "Hook registration ... 3 new entries" was ambiguous (PreToolUse array totals 3 entries including pre-existing handoff-location-guard, but the secret-guard additions are 2 PreToolUse + 1 PostToolUse). Reworded to: "+2 PreToolUse entries + 1 PostToolUse entry = 3 new entries; pre-existing handoff-location-guard PreToolUse retained".
+
+### Not fixed in this patch (deferred)
+
+- `knowledge M N1 (b)`: same `<date>` placeholder also exists in **standards/conventions/secret-hygiene.md §10** version-history entry — addressed in companion standards direct-master-commit (not part of this PR).
+- `backend-architect M3`: atomicity-guard.md bidirectional regex forbid — addressed in Aria-main direct-master-commit (sibling).
+- `knowledge M N2 (cosmetic-only items)`: tech-lead M1 VERSION line length / code-reviewer M2 internal accounting drift / qa M N1 timing variance investigation / backend-architect M1 by-design — defer per audit categorization.
+
+### Refs
+
+- Source audit: `.aria/audit-reports/post_implementation-R1-2026-05-23-aria-secret-guard-plugin-default-orchestrator.md`
+- Roadmap item: O5 from `docs/handoff/2026-05-23-aria-secret-guard-plugin-default-shipped.md` §6
+
 ## [1.24.1] - 2026-05-23
 
 ### Fixed — GitHub Secret Scanning push protection allowlist (O6 from v1.24.0 roadmap)
@@ -39,7 +83,7 @@ Spec `aria-secret-guard-plugin-default` (Forgejo Aria [#84](https://forgejo.10cg
 - `aria/hooks/secret-guard.sh` (563 lines, executable) — PreToolUse: regex-blocks ~100 risky read patterns (cloud secret managers, K8s/Vault/Nomad secret APIs, .env / id_rsa / .pem / .aws/credentials / .kube/config / etc.). `# guard:ack: <reason>` inline bypass with `~/.claude/logs/guard-bypass.log` audit trail.
 - `aria/hooks/secret-scan.sh` (378 lines, executable) — PostToolUse: scans tool output, REDACTs known secret-shaped content before reaching LLM context. Warn-only (exit 0 always, fail-open by design).
 
-**Hook registration** (`aria/hooks/hooks.json`, 3 new entries):
+**Hook registration** (`aria/hooks/hooks.json`, +2 PreToolUse entries + 1 PostToolUse entry = 3 new entries; pre-existing handoff-location-guard PreToolUse retained):
 
 - PreToolUse `Bash` → secret-guard.sh
 - PreToolUse `Read|Edit|Write|MultiEdit` → secret-guard.sh
