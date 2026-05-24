@@ -12,7 +12,7 @@ user-invocable: true
 
 # aria-doctor
 
-> **Version**: 1.0.0 (initial — ships with aria-plugin v1.24.0)
+> **Version**: 1.1.0 (ships with aria-plugin v1.27.0+ — adds `--self-test` and `--help` flags)
 > **Status**: Active
 > **Spec**: `openspec/archive/2026-05-23-aria-secret-guard-plugin-default`
 
@@ -30,14 +30,23 @@ copy),返回 **5 primary state** + **2 sub-flag** + 含意建议的 advisory 文
 **Usage**:
 
 ```bash
+# Single check (returns JSON)
 bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh \
   [PROJECT_DIR] [PLUGIN_ROOT]
+
+# Self-test (v1.27.0+): runs all 8 unit tests + env diagnostics, human-readable summary
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh --self-test
+
+# Help (v1.27.0+)
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh --help
 ```
 
 | Arg | Default | 含义 |
 |-----|---------|------|
 | `PROJECT_DIR` | `$CLAUDE_PROJECT_DIR` or `$PWD` | 要检测的项目根目录 |
 | `PLUGIN_ROOT` | `$CLAUDE_PLUGIN_ROOT` or derived from script location | aria-plugin 根目录 |
+| `--self-test` | — (flag) | Run all 8 unit tests + env diagnostics. Exit 0 if all pass, 1 if any fail, 2 if test file missing. |
+| `--help` / `-h` | — (flag) | Print Usage block. |
 
 **Output** (single-line compact JSON):
 
@@ -166,9 +175,21 @@ benchmark 用 **structural substitute** 而非 `/skill-creator` LLM AB
 
 ## Tests
 
+### Direct test-file invocation (developer mode)
+
 ```bash
 bash aria/skills/aria-doctor/tests/check_secret_guard_install.test.sh
 ```
+
+### User-facing self-test (v1.27.0+)
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh --self-test
+```
+
+Wraps the test file with **environment diagnostics** (bash + jq + python3 versions) + **live env check** (current dual_install state via the script itself) + **summary verdict** (`ALL PASS ✓` or `FAILURES detected ✗`). Exit code: 0 all pass, 1 any fail, 2 test file missing (plugin layout drift).
+
+Recommended for: post-install verification / before reporting hook bugs / CI canary checks.
 
 | Test | State | Sub-flags | 验证目标 |
 |------|-------|-----------|---------|
@@ -202,3 +223,4 @@ bash aria/skills/aria-doctor/tests/check_secret_guard_install.test.sh
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-23 | Initial — `check_secret_guard_install()` 5-state schema + 2 sub-flag + 8 unit tests + banner regex spec + atomicity guard. Ships with aria-plugin v1.24.0. |
+| 1.1.0 | 2026-05-24 | **O8 closure** — add `--self-test` flag (wraps existing 8 unit tests with env diagnostics + live env check + summary verdict; exit 0/1/2) + `--help` flag. Backward-compatible: positional `[PROJECT_DIR] [PLUGIN_ROOT]` single-check mode unchanged. Ships with aria-plugin v1.27.0. |
