@@ -5,6 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0] - 2026-05-24
+
+### Added — `aria-submodule-pointer-regression-gate` Phase C.2.4.5 (B+) hardened pre-merge gate (warn-only mode)
+
+Closes Forgejo Aria [#124](https://forgejo.10cg.pub/10CG/Aria/issues/124). Ships Spec [`aria-submodule-pointer-regression-gate`](../openspec/changes/aria-submodule-pointer-regression-gate/proposal.md) (Approved 2026-05-24 via R1+R2 4-agent post_spec audit CONVERGED 3/3 unanimous + 0 new Critical).
+
+**Source incident**: 2026-05-23 PR #123 in `10CG/Aria` rebased against master, conflicted on submodule `aria` pointer. Operator ran `git checkout origin/master -- aria` without a fresh `git fetch` in the same shell session — local `origin/master` ref was stale → staged pointer was old SHA → merge silently reverted 4 dev-claude2 commits (aria-plugin v1.24.1 + atomicity-guard + v1.25.0 + v1.26.0). Caught by post-merge audit + fast-forward fix `a8e0096` in ~10 min. Mechanical gate eliminates this failure mode.
+
+**Mechanism** in `aria/skills/phase-c-integrator/SKILL.md §C.2.4.5` (new sub-step):
+
+- **Hook point**: BETWEEN existing §C.2.4 (Rule #8 `aether ci status` gate) AND existing §C.2.5 (Multi-Remote Push). NO existing section renumbered — minimal-cascade insertion.
+- **Pre-merge**: invoked BEFORE branch-manager merge API call, AFTER §C.2.4 CI gate passes.
+- **Step 1 — fail-loud fetch**: `git fetch origin` with bounded retries (1s/2s/4s × 3). Exit-code-only abort (NO grep of success patterns — too fragile). On all 3 attempts failing → terminal block exit 2.
+- **Step 2 — refspec assertion**: BEFORE/AFTER `git rev-parse origin/master` comparison. If origin/master moved non-ancestor (force-push history rewrite) → block exit 3 with operator confirm.
+- **Step 3 — per-submodule loop**: enumerate from `.gitmodules`; per-submodule `git fetch` + `git ls-tree` + 双向 `merge-base --is-ancestor` to classify {PASS forward / REGRESSION / DIVERGENT}; nil-SHA (first-time submodule) handled as PASS+INFO; no-change handled trivially.
+
+**Override mechanism** (per-PR explicit, NOT sticky config — mirrors Rule #7 `secret-leak-ok-explicit` philosophy):
+
+- **Commit trailer** `Submodule-Rollback: <sub> <old>(→|->)<new> reason=<...>` — accepts both Unicode `→` and ASCII `->` (LANG=C/POSIX safety). SHA normalization via `git rev-parse` resolves short SHAs (≥7 chars). Mismatched SHAs rejected.
+- **PR label** `submodule-rollback-approved` — settable only by repo maintainers via Forgejo API. On API failure, gate falls through to next check (no-label conservative).
+
+**Two-phase rollout** (mirrors Rule #8 cadence):
+
+- **v1.28.0** (this release): `mode=warn` default. Detection + logs `WOULD-BLOCK` to `metrics/submodule-gate-warns.jsonl`; does NOT refuse merge. 14-day observation window for ecosystem FP feedback. Minimum-observation guard ≥3 gate executions before flip.
+- **v1.29.0** (planned, 14d hard date after v1.28.0 ship OR FP <2% over 20+ WOULD-BLOCK events): `mode=block` default. Refuses merge with exit 1.
+
+**Telemetry** (JSONL race-safe via kernel atomic write < PIPE_BUF):
+
+- `aria/metrics/submodule-gate-warns.jsonl` — WOULD-BLOCK events (warn mode) + `human_reviewed_as_fp` field
+- `aria/metrics/submodule-gate-blocks.jsonl` — BLOCK events (block mode, post v1.29.0)
+- `aria/metrics/submodule-gate-overrides.jsonl` — override usage (trailer or label)
+- `aria/metrics/submodule-gate-misses.jsonl` — tripwire detections (post-merge regressions that escaped gate)
+
+**Replay tests**: 13 assertions across 10 scenarios in `aria/skills/phase-c-integrator/tests/test_submodule_gate.sh`. All PASS at ship time:
+1. Happy path forward bump
+2. Pure regression (block mode + warn mode)
+3. Divergent history
+4. Stale-ref fetch recovery (clean + fetch failure)
+5. Legitimate revert with trailer override (valid + mismatched)
+6. No-change
+7. First-time submodule (CRITICAL — qa R1 TEST GAP closed by Rev1)
+8. Submodule removed from feature
+9. Concurrent force-push race (deterministic pre-stage)
+10. Detached HEAD submodule (Rev1 NEW)
+
+**Tripwire** (post-merge mechanical detection of (B+) gate misses):
+
+- Workflow: `.forgejo/workflows/submodule-gate-tripwire.yml` in `10CG/Aria` main repo (NOT `aria/cron/` in aria-plugin)
+- v1.28.0: `on: workflow_dispatch` only (manual trigger for verification)
+- v1.29.0: switch to weekly `on: schedule` cron (Sundays 04:00 UTC)
+- On miss detected: append to `metrics/submodule-gate-misses.jsonl` + file Forgejo issue with `gate-tripwire-count` label
+- Cron always writes `last_run_timestamp` (outage detection per R1 qa M-qa-3)
+
+**Auto-promote (A) post-merge backward-move detector** (Spec §Risks codified pre-commitment): if any of (a) regression escapes (B+) within 12 months OR 100 merges, (b) (B+) fetch-failure incident manifests in audit logs, (c) non-PR-flow regression observed → ship (A) without re-brainstorm. Counter mechanism: mechanical `aria/metrics/submodule-gate-misses.jsonl` + monthly review by simonfishgit.
+
+**Companion convention doc**: `standards/conventions/submodule-pointer-hygiene.md` v1.0.0 (zero-code, NOT numbered CLAUDE.md Rule — convention SOT lives in `standards/conventions/`).
+
+**Rule #6 structural substitute**: `aria-plugin-benchmarks/submodule-gate/README.md` documents 10-scenario fixtures + dogfood evidence + atomicity guard. NOT `/skill-creator` LLM AB (wrong instrument for deterministic git plumbing) per `feedback_deterministic_structural_skill_rule6_substitute`.
+
+**Brainstorm history** (DEC-20260524-002 + R1+R2+R3 audit trajectory):
+
+- Brainstorm R1: 4 agents discuss 3 candidates (A post-merge / B pre-merge / C rebase hook); B unanimous accept, C unanimous REJECT as code (BLOCKER: no git hook injection point for `git checkout -- <path>` in interactive rebase)
+- R2: tech-lead concedes A+B → B only (fail-loud fetch hardening closes 80% stale-ref gap); code-reviewer concedes B only → A+B (disjoint failure modes: post-merge reads tree-embedded SHAs immutable vs pre-merge reads mutable refs); ai-engineer (neutral 3rd) proposes unified anchor (B+) hardened + measured tripwire
+- R3: 4/4 ACCEPT_R3 unanimous validate ai-engineer anchor + 3 Q-NEW MINOR (all spec-resolvable)
+- post_spec R1: 4 agents, 4 Critical + 19 Important + 20 Minor (all addressed in Rev1)
+- post_spec R2: 3 agents, **CONVERGED 3/3 unanimous + 0 new Critical** + 11 cosmetic Minors (batch-fixed Phase B.1)
+
+**Risk class**: Backward-compatible per Aria 向后兼容 principle — v1.28.0 ships warn-only, gives ecosystem 14d to surface false positives before v1.29.0 block flip.
+
+### Added — Convention doc + tripwire workflow + Rule #6 substitute
+
+- NEW file `standards/conventions/submodule-pointer-hygiene.md` (v1.0.0) — 4 conventions (always fetch / no stale-ref checkout / use override for legitimate rollback / sequenced multi-repo gitlink bump)
+- NEW file `.forgejo/workflows/submodule-gate-tripwire.yml` (draft, workflow_dispatch only in v1.28.0)
+- NEW dir `aria/metrics/` + `.gitkeep` (telemetry append-only JSONL files added to `.gitignore` via file-extension-specific pattern `metrics/*.json` / `metrics/*.jsonl`)
+- NEW dir `aria-plugin-benchmarks/submodule-gate/` with structural fixture README
+- NEW helper `aria/skills/phase-c-integrator/scripts/submodule_gate.sh` (Bash, stdlib + git only, ~330 LOC)
+- NEW test `aria/skills/phase-c-integrator/tests/test_submodule_gate.sh` (10 scenarios, 13 assertions, ~440 LOC)
+
+### Updated
+
+- `aria/skills/phase-c-integrator/SKILL.md`: added §C.2.4.5 section detail (~180 lines) + config table row + overview workflow block + minor §C.2.4 cross-ref
+- `CLAUDE.md` 信息地图: added Submodule pointer 卫生 row (NOT numbered Rule)
+
+### Migration
+
+- **Backward-compatible**: existing PR workflows unaffected (warn-only mode). `mode=off` config escape hatch available for emergency bypass.
+- **v1.29.0 flip preparation**: monitor `metrics/submodule-gate-warns.jsonl` during 14d window; file `submodule-rollback-approved` PR label + commit trailer practices for any deliberate rollback workflow.
+- **Multi-terminal Layer L claim** (`refs/aria/coordination`): Phase B claimed `aria/skills/phase-c-integrator/SKILL.md` via Layer L for safe parallel editing.
+
 ## [1.27.0] - 2026-05-24
 
 ### Added — O8 closure: aria-doctor `--self-test` + `--help` user-facing flags (skill v1.0.0 → v1.1.0)

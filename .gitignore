@@ -5,3 +5,9 @@
 
 # Skill-creator benchmark workspaces (kept locally, archived in aria-plugin-benchmarks/ab-results/)
 skills/*-workspace/
+
+# Submodule pointer regression gate telemetry (per-deployment append-only logs, NOT committed)
+# Spec: openspec/changes/aria-submodule-pointer-regression-gate (v1.28.0+)
+# File-extension-specific pattern (not directory-level) so metrics/.gitkeep stays tracked.
+metrics/*.json
+metrics/*.jsonl
