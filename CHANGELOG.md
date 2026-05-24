@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] - 2026-05-24
+
+### Added — O8 closure: aria-doctor `--self-test` + `--help` user-facing flags (skill v1.0.0 → v1.1.0)
+
+Closes v1.24.0 roadmap item O8 (per [Track D handoff §6](../docs/handoff/2026-05-23-aria-secret-guard-plugin-default-shipped.md) → roadmap burndown §6).
+
+**New script flags** in `aria/skills/aria-doctor/scripts/check_secret_guard_install.sh`:
+
+#### `--self-test`
+
+Wraps the existing 8 unit tests (which previously required developers to directly invoke `aria/skills/aria-doctor/tests/check_secret_guard_install.test.sh`) with a user-facing diagnostic harness:
+
+1. **Environment diagnostics** — bash / jq / python3 versions + hard-dep check (fails fast if jq missing)
+2. **Live env check** — invokes the script itself on current `$CLAUDE_PROJECT_DIR` + derived plugin root, displays state + sub_flags + advisory excerpt
+3. **Unit tests** — runs all 8 cases covering 5 primary states + 2 sub-flags + banner-missing edge
+4. **Summary verdict** — `ALL PASS ✓` (exit 0) / `FAILURES detected ✗` (exit 1) / `test file not found` (exit 2, indicates plugin layout drift)
+
+Usage:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh --self-test
+```
+
+Recommended for:
+- Post-install verification (after `aria-plugin` upgrade)
+- Pre-bug-report sanity check
+- CI canary monitoring (`aria-doctor` health in pipeline)
+- Manual diagnostic when secret-guard behaves unexpectedly
+
+#### `--help` / `-h`
+
+Prints Usage block extracted from script header. Documents both check mode (positional `[PROJECT_DIR] [PLUGIN_ROOT]` with JSON output) and self-test/help flags. Useful for discovery + onboarding.
+
+### Backward compatibility
+
+- **Positional single-check mode unchanged** — `bash check_secret_guard_install.sh [PROJECT_DIR] [PLUGIN_ROOT]` still returns single-line JSON identical to v1.26.0
+- aria-doctor skill schema (5 states + 2 sub-flags + advisory) unchanged — atomicity guard contract preserved
+- Unknown flag (`--bogus`) rejected with exit 2 + helpful pointer to `--help` (no silent fall-through to positional parsing that might confuse with absent positional args)
+
+### Test counts (unchanged)
+
+- secret-guard.test.sh: 219/219 PASS
+- secret-scan.test.sh: 44/44 PASS
+- check_secret_guard_install.test.sh: 8/8 PASS (direct invocation)
+- check_secret_guard_install.sh --self-test: 8/8 PASS + env diagnostics + live env check
+- **Total: 271/271 PASS** (no test added; --self-test is a runner wrapper not new test cases)
+
+### Why MINOR (not PATCH)
+
+New user-facing script API (`--self-test` and `--help` flags). Although the underlying schema + check logic unchanged, adding user-callable subcommands is a feature addition consumer scripts may rely on. Per Aria SemVer convention.
+
+### Companion changes
+
+- `aria/skills/aria-doctor/SKILL.md` v1.0.0 → v1.1.0:
+  - §Usage table: added `--self-test` and `--help` flag rows
+  - §Tests: new "User-facing self-test (v1.27.0+)" subsection with usage example + recommended scenarios
+  - §Version history: 1.1.0 entry
+
+### NOT addressed in this release
+
+- aria-doctor self-test cross-project verification (would require running it ON SilkNode / Aether / etc. installations) — deferred to O1 SilkNode P2.5 dogfood (parallel track)
+- Static analysis / schema validation that the script itself emits valid JSON for all states — captured by existing 8 unit tests, no new test added
+
+### Refs
+
+- Roadmap item O8: `docs/handoff/2026-05-23-aria-secret-guard-roadmap-burndown.md` §6
+- v1.26.0 predecessor: aria-plugin PR #62 SHA `8578609`
+- SKILL.md companion: `aria/skills/aria-doctor/SKILL.md` v1.0.0 → v1.1.0
+
 ## [1.26.0] - 2026-05-23
 
 ### Performance — O3 closure: hook perf optimization (~5× cold-start, ~4× warm-path)

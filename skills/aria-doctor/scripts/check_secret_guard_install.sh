@@ -9,26 +9,97 @@
 # Memory: feedback_deterministic_structural_skill_rule6_substitute
 #
 # Usage:
-#   bash check_secret_guard_install.sh [PROJECT_DIR] [PLUGIN_ROOT]
+#   bash check_secret_guard_install.sh [PROJECT_DIR] [PLUGIN_ROOT]   — single check
+#   bash check_secret_guard_install.sh --self-test                    — v1.27.0+: run all 8 unit tests + env diagnostics
+#   bash check_secret_guard_install.sh --help | -h                    — v1.27.0+: usage
 #
-# Args:
+# Args (single check mode):
 #   PROJECT_DIR  — defaults to $CLAUDE_PROJECT_DIR or $PWD
 #   PLUGIN_ROOT  — defaults to $CLAUDE_PLUGIN_ROOT;
 #                  if unset, derived from the directory of this script
 #                  (aria/skills/aria-doctor/scripts → aria/)
 #
-# Stdout: single-line compact JSON
+# Stdout (single check mode): single-line compact JSON
 #   {"state":"<primary>","sub_flags":[...],"advisory":"<text>","details":{...}}
 #
+# Stdout (--self-test mode): human-readable test summary + env diagnostics
+#
 # Exit:
-#   0 — check succeeded (any state, including corrupted_settings)
-#   2 — usage error (e.g. plugin root not resolvable)
+#   0 — check succeeded (any state, including corrupted_settings) OR self-test all pass
+#   1 — self-test had failures
+#   2 — usage error (e.g. plugin root not resolvable, unknown flag)
 
 set -u
 
-PROJECT_DIR="${1:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_PLUGIN_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"  # scripts → aria-doctor → skills → aria
+
+# v1.27.0 O8: --self-test / --help dispatch (mutually exclusive with positional check mode)
+case "${1:-}" in
+  --help|-h)
+    sed -n '/^# Usage:/,/^# Exit:/p' "$0" | head -16 | sed 's/^# \?//'
+    exit 0
+    ;;
+  --self-test)
+    # Self-test runner: invoke the unit-test file + report env diagnostics.
+    # Tests cover all 5 primary states + 2 sub-flags + banner-missing edge.
+    test_file="$SCRIPT_DIR/../tests/check_secret_guard_install.test.sh"
+    if [ ! -f "$test_file" ]; then
+      echo "[aria-doctor self-test] ERROR: test file not found at $test_file" >&2
+      echo "  Likely cause: aria-plugin layout drift or partial install." >&2
+      exit 2
+    fi
+    echo "=== aria-doctor::check_secret_guard_install self-test ==="
+    echo "  test file: $test_file"
+    echo "  plugin root (default): $DEFAULT_PLUGIN_ROOT"
+    echo
+    echo "--- Environment diagnostics ---"
+    for dep in bash jq python3; do
+      if command -v "$dep" >/dev/null 2>&1; then
+        ver=$("$dep" --version 2>&1 | head -1 || echo "(no --version)")
+        echo "  ✓ $dep: $ver"
+      else
+        echo "  ✗ $dep: NOT FOUND" >&2
+        [[ "$dep" == "jq" ]] && hard_dep_missing=1
+      fi
+    done
+    if [[ "${hard_dep_missing:-0}" == "1" ]]; then
+      echo
+      echo "[aria-doctor self-test] HARD-FAIL: jq missing (required); aborting." >&2
+      exit 1
+    fi
+    echo
+    echo "--- Live environment check (current project + plugin root) ---"
+    if live_json=$(bash "$0" 2>/dev/null); then
+      state=$(printf '%s' "$live_json" | jq -r '.state' 2>/dev/null || echo '?')
+      sub=$(printf '%s' "$live_json" | jq -cr '.sub_flags' 2>/dev/null || echo '?')
+      adv=$(printf '%s' "$live_json" | jq -r '.advisory' 2>/dev/null | head -c 120)
+      echo "  state: $state | sub_flags: $sub"
+      echo "  advisory: $adv..."
+    else
+      echo "  ✗ live check FAILED (script invocation error)" >&2
+    fi
+    echo
+    echo "--- Unit tests (8 cases covering 5 primary states + 2 sub-flags + banner-missing edge) ---"
+    if bash "$test_file"; then
+      echo
+      echo "[aria-doctor self-test] ALL PASS ✓"
+      exit 0
+    else
+      rc=$?
+      echo
+      echo "[aria-doctor self-test] FAILURES detected (exit $rc) ✗" >&2
+      exit 1
+    fi
+    ;;
+  --*)
+    echo "[aria-doctor] unknown flag: $1" >&2
+    echo "  see: bash $0 --help" >&2
+    exit 2
+    ;;
+esac
+
+PROJECT_DIR="${1:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 PLUGIN_ROOT="${2:-${CLAUDE_PLUGIN_ROOT:-$DEFAULT_PLUGIN_ROOT}}"
 
 PLUGIN_HOOK="$PLUGIN_ROOT/hooks/secret-guard.sh"
