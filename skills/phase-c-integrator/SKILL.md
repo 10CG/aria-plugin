@@ -44,6 +44,7 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `experiments.agent_team_audit_points` | `["pre_merge"]` | 旧配置 (向后兼容) |
 | `upm.milestone_driven` | `false` | 启用 C.2.6 里程碑子进度追加 (opt-in) |
 | `phase_c_integrator.pre_merge_gate.enabled` | `true` | 启用 C.2.4 pre-merge precondition gate (v1.3.0+) |
+| `phase_c_integrator.submodule_gate.mode` | `"warn"` v1.28.0 / `"block"` v1.29.0+ | C.2.4.5 submodule pointer regression gate 模式 (Spec aria-submodule-pointer-regression-gate) |
 | `phase_c_integrator.pre_merge_gate.primitive_preference` | `["aether-ci-cli"]` | gate primitive 优先级链 (现仅 aether CLI; aether-pre-merge-check skill 从未实施) |
 | `phase_c_integrator.pre_merge_gate.no_aether_fallback` | `"skip_with_warning"` | 无 aether 时降级 (`skip_with_warning` / `abort`) |
 | `phase_c_integrator.pre_merge_gate.wait_timeout_seconds` | `1800` | wait+retry max 等待时长 (默认 30 min) |
@@ -176,6 +177,25 @@ C.2.4 - Pre-Merge Precondition Gate (v1.3.0+):
     primitive_used: "aether-ci-cli" | "manual"
     primitive_version_sha: "f29abee"   # aether-cli #116 baseline
 
+C.2.4.5 - Submodule Pointer Regression Gate (v1.28.0+):
+  触发条件:
+    - C.2.4 verdict=green (CI gate 已通过)
+    - 即将调用 branch-manager merge action
+    - 配置 phase_c_integrator.submodule_gate.mode: "warn" (v1.28.0 default) | "block" (v1.29.0 default)
+  primitive 调用:
+    - git fetch origin (bare, 更新所有 ref) — 强制, 失败 abort
+    - git -C <submodule> fetch origin — 每 submodule
+    - git -C <submodule> merge-base --is-ancestor MASTER_PTR FEATURE_PTR — 主 ancestry 检查
+    - 双向 ancestry 区分 regression (case c) vs divergence (case d)
+  三态结果:
+    pass:   所有 submodule pointer 是 forward bump 或 no-change 或 first-time
+    block:  至少一个 submodule pointer 是 regression 或 divergence (v1.29.0+); v1.28.0 warn-only
+    bypass: per-PR commit trailer `Submodule-Rollback: ...` 或 PR label `submodule-rollback-approved` 允许 + audit log
+  output:
+    gate_verdict: "pass" | "block" | "warn" | "bypass"
+    affected_submodules: [{path, master_sha, feature_sha, verdict, override}]
+    telemetry_written: <metrics file path>
+
 C.2.5 - Multi-Remote Push Enforcement:
   触发条件:
     - Phase C.2 合并成功 (master 已 fast-forward)
@@ -267,6 +287,200 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 - aether binary 过期 (无 `--in-flight` flag) → fail-fast,**不**继续执行 (避免 silent skip)
 
 **Race condition 处理**: gate 检查与 merge call 之间,main 可能新触发 CI run。窗口最小化 (gate green 后立即调 merge),不消除 race。深度 mitigation 留 future Spec。
+
+---
+
+### C.2.4.5 Submodule Pointer Regression Gate (v1.28.0+)
+
+> **新增于 v1.28.0** — 实施 Spec [`aria-submodule-pointer-regression-gate`](../../../openspec/changes/aria-submodule-pointer-regression-gate/proposal.md) (Approved 2026-05-24, DEC-20260524-002)。
+> 源于 2026-05-23 PR #123 silent submodule pointer regression incident (`6fea5d7` 静默回滚 4 commits, 被 post-merge audit catch + fast-forward fix `a8e0096`)。
+> Closes Forgejo Aria [#124](https://forgejo.10cg.pub/10CG/Aria/issues/124)。
+
+**Two-phase rollout**:
+- **v1.28.0**: `mode=warn` 默认 — 检测 + 日志 `WOULD-BLOCK`, 不阻止 merge
+- **v1.29.0**: `mode=block` 默认 — 检测到 regression/divergence + 无 override → 拒绝 merge
+- Flip date: v1.28.0 ship + 14 calendar days, OR FP rate <2% over 20+ WOULD-BLOCK events (whichever first), with minimum-observation guard ≥3 gate executions
+
+**触发条件**:
+- §C.2.4 verdict=green (CI gate 已通过)
+- 即将调用 branch-manager merge action
+- 配置 `phase_c_integrator.submodule_gate.mode`: `"warn"` (v1.28.0) | `"block"` (v1.29.0+) | `"off"` (skip 完全)
+
+**执行流程** (Bash gate, 见 `scripts/submodule_gate.sh`):
+
+```bash
+# Step 1: fail-loud fetch with bounded retries (1s/2s/4s × 3 attempts)
+# Drop fragile `grep success patterns` — use exit code only (AD-FOLLOWUP-1)
+BEFORE_REMOTE=$(git rev-parse origin/master 2>/dev/null || echo "FIRST_RUN")
+
+for delay in 1 2 4; do
+    if git fetch origin 2>&1; then FETCH_OK=1; break; fi
+    sleep "$delay"
+done
+[[ "${FETCH_OK:-0}" != 1 ]] && {
+    log_telemetry "FETCH_FAILURE" "$BEFORE_REMOTE" "(unknown)" "fetch_exhausted_retries"
+    echo "BLOCK: git fetch origin failed after 3 attempts" >&2
+    exit 1
+}
+
+# Step 2: refspec assertion (skip on FIRST_RUN)
+AFTER_REMOTE=$(git rev-parse origin/master)
+if [[ "$BEFORE_REMOTE" != "FIRST_RUN" && "$BEFORE_REMOTE" != "$AFTER_REMOTE" ]]; then
+    if ! git merge-base --is-ancestor "$BEFORE_REMOTE" "$AFTER_REMOTE" 2>/dev/null; then
+        echo "BLOCK: origin/master rewritten (non-ancestor advance) — operator confirm required" >&2
+        exit 1
+    fi
+fi
+
+# Step 3: per-submodule loop
+exit_code=0
+while IFS= read -r SUB; do
+    [[ -z "$SUB" ]] && continue
+    git -C "$SUB" fetch origin 2>&1 >/dev/null || true
+
+    FEATURE_PTR=$(git ls-tree HEAD "$SUB" | awk '{print $3}')
+    MASTER_PTR=$(git ls-tree origin/master "$SUB" | awk '{print $3}')
+
+    # nil-SHA: first-time submodule (master had no gitlink)
+    [[ -z "$MASTER_PTR" ]] && {
+        echo "INFO: $SUB first introduced this PR (no prior master gitlink); gate PASS"
+        continue
+    }
+    # No-change
+    [[ "$FEATURE_PTR" == "$MASTER_PTR" ]] && {
+        echo "OK: $SUB unchanged"
+        continue
+    }
+
+    echo "GATE: submodule=$SUB master=$MASTER_PTR feature=$FEATURE_PTR"
+
+    # Forward bump?
+    if git -C "$SUB" merge-base --is-ancestor "$MASTER_PTR" "$FEATURE_PTR" 2>/dev/null; then
+        echo "PASS: $SUB forward bump"
+        continue
+    fi
+
+    # Distinguish regression vs divergent
+    if git -C "$SUB" merge-base --is-ancestor "$FEATURE_PTR" "$MASTER_PTR" 2>/dev/null; then
+        VERDICT="REGRESSION"
+    else
+        VERDICT="DIVERGENT"
+    fi
+
+    # Check override (commit trailer OR PR label)
+    if check_override "$SUB" "$MASTER_PTR" "$FEATURE_PTR"; then
+        echo "ALLOW: $SUB $VERDICT overridden (audit logged)"
+        log_override "$SUB" "$VERDICT" "$MASTER_PTR" "$FEATURE_PTR"
+        continue
+    fi
+
+    # Mode dispatch
+    MODE="${ARIA_SUBMODULE_GATE_MODE:-warn}"
+    if [[ "$MODE" == "warn" ]]; then
+        echo "WOULD-BLOCK: submodule=$SUB master=$MASTER_PTR feature=$FEATURE_PTR reason=$VERDICT"
+        log_warn "$SUB" "$VERDICT" "$MASTER_PTR" "$FEATURE_PTR"
+    else
+        echo "BLOCK: $VERDICT — submodule=$SUB master=$MASTER_PTR feature=$FEATURE_PTR" >&2
+        echo "       Override 1: commit trailer 'Submodule-Rollback: $SUB $MASTER_PTR->$FEATURE_PTR reason=<reason>'" >&2
+        echo "       Override 2: PR label 'submodule-rollback-approved'" >&2
+        log_block "$SUB" "$VERDICT" "$MASTER_PTR" "$FEATURE_PTR"
+        exit_code=1
+    fi
+done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
+
+exit $exit_code
+```
+
+**Override mechanism** (per-PR explicit, NOT sticky config):
+
+1. **Commit trailer** in merge commit message (accepts both Unicode `→` and ASCII `->`):
+   ```
+   Submodule-Rollback: aria a8e0096→3b688a9 reason=v1.24.1 introduced critical regression
+   Submodule-Rollback: aria a8e0096->3b688a9 reason=同 (ASCII alternative for LANG=C/POSIX safety)
+   ```
+   Parser resolves short SHAs (≥7 chars) via `git rev-parse` before comparison to FEATURE/MASTER pointers. Mismatched SHAs in trailer → reject override.
+
+2. **PR label** `submodule-rollback-approved` (settable only by repo maintainers via Forgejo):
+   - Fetched via `forgejo GET /repos/<owner>/<repo>/issues/<PR>/labels`
+   - On API failure: treat as no-label (gate proceeds to mode dispatch)
+
+3. Override audit log to `metrics/submodule-gate-overrides.jsonl` (JSONL append-only, race-safe):
+   ```json
+   {"timestamp":"...","pr_id":N,"submodule":"...","master_sha":"...","feature_sha":"...","verdict":"REGRESSION","reason":"...","override_type":"trailer"|"label"}
+   ```
+
+**Verdict 三态** (output):
+- `pass` — all submodules: forward / no-change / first-time
+- `warn` (v1.28.0) — WOULD-BLOCK logged, merge proceeds
+- `block` (v1.29.0+) — merge refused, exit 1
+- `bypass` — override applied, audit logged, merge proceeds
+
+**Output schema** (JSON):
+```json
+{
+  "verdict": "pass" | "warn" | "block" | "bypass",
+  "affected_submodules": [
+    {
+      "path": "aria",
+      "master_sha": "a8e0096",
+      "feature_sha": "3b688a9",
+      "verdict": "REGRESSION",
+      "override": "trailer" | "label" | null
+    }
+  ],
+  "telemetry_files": {
+    "warns": "metrics/submodule-gate-warns.jsonl",
+    "overrides": "metrics/submodule-gate-overrides.jsonl",
+    "blocks": "metrics/submodule-gate-blocks.jsonl",
+    "misses": "metrics/submodule-gate-misses.jsonl"
+  }
+}
+```
+
+**配置参数**:
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `mode` | `"warn"` (v1.28.0) / `"block"` (v1.29.0+) | `"warn"` 仅日志 / `"block"` 拒绝 merge / `"off"` 跳过 gate |
+| `fetch_retries` | `[1, 2, 4]` | 指数退避秒数 |
+| `metrics_dir` | `"metrics/"` (relative to aria-plugin root, NOT main repo) | 4 JSONL append-only 文件位置 |
+| `forgejo_api_timeout_s` | `5` | PR label fetch timeout |
+| `nil_sha_action` | `"pass_with_info"` | first-time submodule (master 无 gitlink) → PASS + INFO log |
+
+**降级行为**:
+- `mode: off` → 完全跳过 §C.2.4.5 (与 v1.27.x 行为 100% 一致, 用于紧急 bypass 全 cycle)
+- `git fetch origin` 3-attempt failure → terminal block (per `wait_recoverable` pattern, owner remediation: 检查 auth/network/URL drift)
+- `git ls-tree` empty output (nil-SHA case) → PASS + INFO (first-time submodule case)
+- `git merge-base --is-ancestor` exit 128 (SHA not in submodule DB after fetch) → BLOCK + "submodule fetch incomplete, retry" hint
+
+**Performance budget**:
+- Warm cache (local dev): ~310ms per submodule × 3 submodules ≈ ~930ms (well under §C.2.4 ~3-5s)
+- CI cold-path: ~610-2110ms per submodule × 3 submodules ≈ ~1.8-6.3s (slightly higher than §C.2.4, ~comparable). Bounded retries on fetch failure add up to 7s only when fetch fails (excluded from steady-state budget).
+- Phase B may add background-subshell parallel submodule loop if CI dogfood shows >5s sustained.
+
+**Race condition 处理** (per backend-architect R3 missing scenario):
+- Concurrent force-push to `origin/master` during gate execution: refspec assertion (Step 2) compares BEFORE/AFTER rev-parse
+- Ancestry-forward change → continue (legitimate)
+- Non-ancestor history rewrite → abort with operator confirm
+- Deterministic pre-staged fixture in T-replay-9 validates detection logic (not true concurrency)
+
+**Tripwire** (mechanical detection of (B+) gate misses):
+- Weekly Forgejo Actions workflow at `.forgejo/workflows/submodule-gate-tripwire.yml` in `10CG/Aria` main repo (NOT `aria/cron/` in aria-plugin)
+- Compares master HEAD~1 vs HEAD submodule gitlinks ancestry
+- On regression escaped (B+) → append to `metrics/submodule-gate-misses.jsonl` + file Forgejo issue with label `gate-tripwire-count`
+- Auto-promote (A) post-merge detector without re-brainstorm if any tripwire condition met:
+  1. Regression escapes (B+) within 12 months OR 100 merges (whichever first)
+  2. (B+) fetch-failure incident manifests
+  3. Non-PR-flow regression (direct master push bypassing PR)
+- v1.28.0 ships workflow as `on: workflow_dispatch` only; v1.29.0 commit switches to `on: schedule` cron
+
+**Helper 实现**: `${ARIA_PLUGIN_ROOT:-aria}/skills/phase-c-integrator/scripts/submodule_gate.sh` (Bash, stdlib + git only)
+
+**Cross-references**:
+- Spec: `openspec/changes/aria-submodule-pointer-regression-gate/proposal.md`
+- DEC: `.aria/decisions/2026-05-24-aria-124-submodule-pointer-regression-gate.md`
+- Convention doc: `standards/conventions/submodule-pointer-hygiene.md` (zero-code companion, NOT numbered Rule)
+- Forgejo Aria #124
+- Source incident: PR #123 merge `6fea5d7` + fast-forward fix `a8e0096`
 
 ---
 
