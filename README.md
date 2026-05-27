@@ -169,10 +169,22 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install
 /aria:knowledge-manager
 ```
 
+## Aria 2.0 — Autonomous Runtime
+
+This plugin (aria-plugin) is the **interactive layer** of Aria — interactive Skills + Agents for use with Claude Code.
+
+For the **Aria 2.0 autonomous runtime** (10CG Lab internal infrastructure that executes Aria methodology cycles autonomously, currently in development per US-026 M6 milestone), see:
+
+- [Aria main repository](https://github.com/10CG/Aria) — methodology + Aria 2.0 PRD + autonomous runtime documentation
+- [aria-orchestrator](https://github.com/10CG/aria-orchestrator) — Layer 1 (Hermes + Luxeno-routed GLM models) + Layer 2 (aria-runner + Claude Code + aria-plugin) implementation
+
+**aria-plugin does NOT bump to v2.0** when Aria v2.0.0 releases — semantic boundary preserved (plugin = universally available interactive tools; Aria main repo = methodology + 10CG Lab-internal runtime). Plugin users: **no action needed**. See [docs/release-notes-v2.0.0.md `§Plugin Compatibility`](https://github.com/10CG/Aria/blob/master/docs/release-notes-v2.0.0.md) in the Aria main repo for full semantic boundary explanation.
+
 ## Related Projects
 
-- [Aria](https://github.com/10CG/Aria) — Aria main project (methodology research)
+- [Aria](https://github.com/10CG/Aria) — Aria main project (methodology research + Aria 2.0 autonomous runtime)
 - [aria-standards](https://github.com/10CG/aria-standards) — Aria methodology standards
+- [aria-orchestrator](https://github.com/10CG/aria-orchestrator) — Aria 2.0 autonomous runtime (10CG Lab internal)
 
 ## License
 
