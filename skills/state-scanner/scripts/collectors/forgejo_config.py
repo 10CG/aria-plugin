@@ -28,11 +28,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ._common import CollectorResult, _run
+from ._common import CollectorResult, _run, resolve_forgejo_hosts
 
-# Known Forgejo hostnames. Extend here when onboarding new instances;
-# kept as a module constant for easy patching.
-_KNOWN_FORGEJO_HOSTS: tuple[str, ...] = ("forgejo.10cg.pub",)
+# Forgejo hostnames now resolved per-call via _common.resolve_forgejo_hosts(project_root).
+# Precedence: ARIA_FORGEJO_HOSTS env > .aria/config.json > legacy ("forgejo.10cg.pub",).
+# Per OpenSpec aria-forgejo-hosts-parameterization (v1.30.0).
 
 # Matches, in order:
 #   1. YAML top-level key:     ^forgejo:                  (or fullwidth `：`)
@@ -48,15 +48,17 @@ _FORGEJO_HEADING = re.compile(r"^\s*>?\s*#{1,3}\s+forgejo\b", re.MULTILINE | re.
 _FENCED_BLOCK = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 
 
-def _detect_forgejo_host(remote_url: str) -> str | None:
+def _detect_forgejo_host(remote_url: str, known_hosts: tuple[str, ...]) -> str | None:
     """Return the matched Forgejo hostname if `remote_url` references a known
     instance; otherwise None. Matches both SSH-style
-    (`ssh://git@forgejo.10cg.pub/...`, `git@forgejo.10cg.pub:...`) and HTTPS
-    (`https://forgejo.10cg.pub/...`).
+    (`ssh://git@<host>/...`, `git@<host>:...`) and HTTPS (`https://<host>/...`).
+
+    `known_hosts` is param-injected by `collect_forgejo_config()` so the resolver
+    (env / .aria/config.json / legacy fallback) controls what's "known".
     """
     if not remote_url:
         return None
-    for host in _KNOWN_FORGEJO_HOSTS:
+    for host in known_hosts:
         if host in remote_url:
             return host
     return None
@@ -103,7 +105,8 @@ def collect_forgejo_config(project_root: Path) -> CollectorResult:
         r.data = {"forgejo_remote_detected": False}
         return r
 
-    host = _detect_forgejo_host(stdout.strip())
+    known_hosts = resolve_forgejo_hosts(project_root)
+    host = _detect_forgejo_host(stdout.strip(), known_hosts)
     if host is None:
         r.data = {"forgejo_remote_detected": False}
         return r

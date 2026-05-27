@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<!-- v1.29.0 placeholder: reserved for aria-submodule-gate-block-flip ship (D+14 hard date 2026-06-07).
+     When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
+     Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
+
+## [1.30.0] - 2026-05-27
+
+### Added — `aria-forgejo-hosts-parameterization` universal-layer Forgejo host config (env + .aria/config.json)
+
+Closes boundary audit P0 items C1+C2+C3+C4 (`.aria/notes/2026-05-27-boundary-audit-10cg-hardcode.md`). Ships Spec [`aria-forgejo-hosts-parameterization`](../openspec/changes/aria-forgejo-hosts-parameterization/proposal.md) (Approved 2026-05-27 via R1 REVISE × 3 → Rev1 → R2 PASS_WITH_WARNINGS × 3 unanimous + Rev1.1 W-1 polish, Level 2 baseline per `feedback_audit_convergence_patterns`).
+
+**Source**: 2026-05-27 aria-fleet strategic memo (`.aria/notes/2026-05-27-aria-fleet-three-layer-architecture.md` §4 边界切割规则) — 通用层禁止 hardcode 10CG-specific 值 (per aria-fleet DEC D2). 4 处 hardcode 阻碍 aria-plugin cross-org 复用,本 minor 修。
+
+**Mechanism**:
+
+- **New canonical resolver** `aria/skills/state-scanner/scripts/collectors/_common.py::resolve_forgejo_hosts(project_root)` — 3-layer precedence: `ARIA_FORGEJO_HOSTS` env (comma-separated) > `.aria/config.json` `state_scanner.issue_scan.platform_hostnames.forgejo` > legacy fallback `("forgejo.10cg.pub",)`. Used by all forgejo-aware collectors.
+- **forgejo_config.py**: removed module-level `_KNOWN_FORGEJO_HOSTS` constant (architectural fix per R1 ba M-2: module-level execution can't access `project_root`). `_detect_forgejo_host()` signature changed to accept `known_hosts` param (injected by `collect_forgejo_config(project_root)`).
+- **issue_scan.py `_load_config()`**: env override applied AS FINAL LAYER (after config.json merge, per Rev1.1 fix R2 ba W-1 / qa R2 minor — pre-merge placement would let merge loop silently overwrite env). Restructured to drop early-return so env override fires regardless of whether `.aria/config.json` exists.
+- **issue_scan.py `_detect_platform()` Level 3**: removed `forgejo.10cg.pub` URL substring heuristic (L198) — eliminates dual-codepath drift risk; Level 2 `platform_hostnames` map is sole authority for forgejo detection. github.com Level 3 fallback retained (single universal host, not org-specific).
+- **DEFAULTS.json**: `forgejo.10cg.pub` retained as legacy backward-compat fallback (DEC D2 compliance: D2 禁止**新增** hardcode, legacy fallback under parameterized wrapper allowed with deprecation roadmap M7+).
+
+**Backward compat guarantee**: zero behavior change for existing installs without explicit env or config override — `forgejo.10cg.pub` still detected via DEFAULTS.json fallback path.
+
+**Edge case handling**:
+
+- `ARIA_FORGEJO_HOSTS=""` / `"   "` (empty/whitespace) → fall through to config/default (NOT silently disable)
+- `.aria/config.json` `forgejo: []` (empty list) → fall through to default (avoid footgun)
+- Duplicate hosts preserved (callers idempotent)
+
+**Backward-compat config layer order** (highest precedence first): env > config.json > DEFAULT_CONFIG (Python) ≡ DEFAULTS.json (file).
+
+**Tests**: 27 new unit tests (16 in `tests/test_forgejo_config.py` + 11 in `tests/test_issue_scan_helpers.py`); 631/631 full state-scanner suite PASS unchanged. Dual-path dogfood smoke verified: default path detects `forgejo.10cg.pub`, env override path with `ARIA_FORGEJO_HOSTS=alt.example.com` correctly returns `forgejo_remote_detected: false` (legacy host no longer in known_hosts).
+
+**Rule #6 substitute** (per `feedback_deterministic_structural_skill_rule6_substitute` — deterministic structural Skill, no LLM AB): structural fixture at `aria-plugin-benchmarks/forgejo-hosts-parameterization/README.md` (4 hardcode 删/改 map + 12 AC behavior 表 + edge case cheatsheet + dogfood smoke evidence).
+
+**Out of scope** (defer to Sprint 2+): C5+C6 CI backend abstraction (`pre_merge_gate.py`); C7 standards SSH URL; C8 aria-orchestrator PATH; Feishu 通知抽象; Git provider ABC (M7+ aria-fleet 主线).
+
 ## [1.28.0] - 2026-05-24
 
 ### Added — `aria-submodule-pointer-regression-gate` Phase C.2.4.5 (B+) hardened pre-merge gate (warn-only mode)

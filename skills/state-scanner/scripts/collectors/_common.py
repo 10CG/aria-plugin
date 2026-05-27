@@ -12,13 +12,81 @@ Invariants preserved from the pre-split scan.py:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("state-scanner.scan")
+
+# ----- Forgejo hosts canonical resolver -------------------------------------
+# Used by ALL forgejo-aware collectors (forgejo_config.py + issue_scan.py).
+# See OpenSpec aria-forgejo-hosts-parameterization for design rationale.
+
+ARIA_FORGEJO_HOSTS_ENV = "ARIA_FORGEJO_HOSTS"
+_LEGACY_FORGEJO_FALLBACK: tuple[str, ...] = ("forgejo.10cg.pub",)
+
+
+def _parse_env_forgejo_hosts() -> tuple[str, ...] | None:
+    """Parse `ARIA_FORGEJO_HOSTS` env var (comma-separated host list).
+
+    Returns None when env var is unset, empty, or all-whitespace — callers
+    fall through to config / defaults. Duplicates preserved.
+    """
+    raw = os.environ.get(ARIA_FORGEJO_HOSTS_ENV, "")
+    if not raw.strip():
+        return None
+    hosts = tuple(h.strip() for h in raw.split(",") if h.strip())
+    return hosts or None
+
+
+def _read_config_forgejo_hosts(project_root: Path) -> tuple[str, ...] | None:
+    """Read `.aria/config.json` → `state_scanner.issue_scan.platform_hostnames.forgejo`.
+
+    Fail-soft: missing file / parse error / key absent / non-list value → None.
+    Empty list `[]` → None (fall through to defaults — explicit empty equals unset,
+    avoids silently disabling all forgejo detection).
+    """
+    cfg_path = project_root / ".aria" / "config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        with cfg_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    hosts = (
+        ((raw.get("state_scanner") or {}).get("issue_scan") or {})
+        .get("platform_hostnames", {})
+        .get("forgejo")
+    )
+    if not isinstance(hosts, list) or not hosts:
+        return None
+    cleaned = tuple(h for h in hosts if isinstance(h, str) and h.strip())
+    return cleaned or None
+
+
+def resolve_forgejo_hosts(project_root: Path) -> tuple[str, ...]:
+    """Canonical 3-layer precedence resolver for Forgejo hostnames.
+
+    Precedence (highest first):
+      1. ARIA_FORGEJO_HOSTS env (comma-separated)
+      2. .aria/config.json → state_scanner.issue_scan.platform_hostnames.forgejo
+      3. Legacy fallback ("forgejo.10cg.pub",)
+
+    Returns an immutable tuple; never empty (fallback guaranteed). Callers must
+    treat the result as authoritative — do NOT re-implement precedence locally.
+    """
+    env_hosts = _parse_env_forgejo_hosts()
+    if env_hosts:
+        return env_hosts
+    config_hosts = _read_config_forgejo_hosts(project_root)
+    if config_hosts:
+        return config_hosts
+    return _LEGACY_FORGEJO_FALLBACK
 
 
 @dataclass

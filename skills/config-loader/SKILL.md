@@ -96,6 +96,12 @@ state_scanner.issue_scan.platform_hostnames:
   default:
     forgejo: ["forgejo.10cg.pub"]
     github: ["github.com"]
+  # Forgejo hosts precedence (v1.30.0+, per OpenSpec aria-forgejo-hosts-parameterization):
+  #   1. ARIA_FORGEJO_HOSTS env var (comma-separated)  ← highest
+  #   2. .aria/config.json platform_hostnames.forgejo
+  #   3. DEFAULTS.json fallback (forgejo.10cg.pub legacy)
+  # Env override applies to forgejo key only; github key untouched.
+  # Empty env (""/whitespace) and empty config list ([]) fall through to defaults.
 
 state_scanner.issue_scan.cache_ttl_seconds:
   type: integer
