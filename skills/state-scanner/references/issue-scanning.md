@@ -643,7 +643,7 @@ fi
 |------|------|--------|------|
 | `enabled` | boolean | `false` | opt-in 开关，需显式设为 `true` |
 | `platform` | string\|null | `null` | 显式指定平台 (`forgejo`/`github`)；`null` 则自动检测 |
-| `platform_hostnames` | object | `{"forgejo":["forgejo.10cg.pub"],"github":["github.com"]}` | hostname → 平台映射，用户可追加自托管域名 |
+| `platform_hostnames` | object | `{"forgejo":["forgejo.10cg.pub"],"github":["github.com"]}` | hostname → 平台映射，用户可追加自托管域名。**v1.30.0+**: `forgejo` 子键可通过 `ARIA_FORGEJO_HOSTS` env var (comma-separated) override (优先级最高,适用于临时切换不同 Forgejo 实例);per OpenSpec aria-forgejo-hosts-parameterization |
 | `cache_ttl_seconds` | integer | `900` | 缓存有效期 (15 分钟) |
 | `cache_path` | string | `.aria/cache/issues.json` | 缓存文件路径 |
 | `stage_timeout_seconds` | integer | `12` | 整阶段超时 (修复 m9) |

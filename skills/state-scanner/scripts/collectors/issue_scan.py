@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run, log
+from ._common import CollectorResult, _parse_env_forgejo_hosts, _run, log
 from .git import _enumerate_submodule_paths
 
 # ----- Constants ------------------------------------------------------------
@@ -100,26 +100,38 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     }
     merged["label_filter"] = list(DEFAULT_CONFIG["label_filter"])
 
-    if not cfg_path.is_file():
-        return merged
-    try:
-        with cfg_path.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        log.warning("issue_scan: config read/parse failed: %s", e)
-        return merged
+    # Read + merge config.json if present (fail-soft on any IO/parse error).
+    if cfg_path.is_file():
+        try:
+            with cfg_path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning("issue_scan: config read/parse failed: %s", e)
+            raw = None
 
-    block = (raw.get("state_scanner") or {}).get("issue_scan") or {}
-    for key, default in DEFAULT_CONFIG.items():
-        if key in block and block[key] is not None:
-            merged[key] = block[key]
-    # platform_hostnames needs a merge, not a replace, so user-provided keys
-    # extend the default mapping rather than blow it away.
-    hostnames = block.get("platform_hostnames")
-    if isinstance(hostnames, dict):
-        for k, v in hostnames.items():
-            if isinstance(v, list):
-                merged["platform_hostnames"][k] = list(v)
+        if raw is not None:
+            block = (raw.get("state_scanner") or {}).get("issue_scan") or {}
+            for key, default in DEFAULT_CONFIG.items():
+                if key in block and block[key] is not None:
+                    merged[key] = block[key]
+            # platform_hostnames needs a merge, not a replace, so user-provided keys
+            # extend the default mapping rather than blow it away.
+            hostnames = block.get("platform_hostnames")
+            if isinstance(hostnames, dict):
+                for k, v in hostnames.items():
+                    if isinstance(v, list):
+                        merged["platform_hostnames"][k] = list(v)
+
+    # Env override AS FINAL LAYER (applied regardless of whether config.json
+    # exists or parsed successfully) — env wins over both config.json AND
+    # DEFAULT_CONFIG. Position matters: pre-merge placement would let the merge
+    # loop above silently overwrite env with config.json. Per OpenSpec
+    # aria-forgejo-hosts-parameterization (v1.30.0) Rev1.1.
+    env_hosts = _parse_env_forgejo_hosts()
+    if env_hosts:
+        merged["platform_hostnames"]["forgejo"] = list(env_hosts)
+        # Other platform_hostnames keys (github, etc.) untouched.
+
     return merged
 
 
@@ -190,13 +202,16 @@ def _detect_platform(
     for platform, hosts in hostmap.items():
         if hostname in (hosts or []):
             return platform
-    # Level 3: URL substring heuristic (lower priority than explicit map)
+    # Level 3: URL substring heuristic (lower priority than explicit map).
+    # Only handles GitHub (single universal host github.com). Forgejo hosts are
+    # intentionally NOT included here — they MUST come from Level 2
+    # platform_hostnames map (resolved via env / .aria/config.json / DEFAULTS.json)
+    # so that custom Forgejo instances work uniformly. Per OpenSpec
+    # aria-forgejo-hosts-parameterization (v1.30.0) §E — removes legacy
+    # forgejo.10cg.pub dual-codepath drift risk.
     low = remote_url.lower()
     if "github.com" in low:
         return "github"
-    # Well-known forgejo domain fallback (matches SKILL.md example).
-    if "forgejo.10cg.pub" in low:
-        return "forgejo"
     # Level 4: give up
     return None
 

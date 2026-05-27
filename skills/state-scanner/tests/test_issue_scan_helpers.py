@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from _helpers import tmp_project, write_file
+from _helpers import tmp_project, tmp_repo, write_file
 from collectors.issue_scan import (
     ERR_AUTH_FAILED,
     ERR_CLI_MISSING,
@@ -105,6 +105,126 @@ class TestPlatformDetection(unittest.TestCase):
         self.assertIsNone(
             _detect_platform(self.BASE_CFG, "https://gitlab.example.com/foo/bar")
         )
+
+    def test_forgejo_level3_substring_fallback_removed(self):
+        """OpenSpec v1.30.0 §E + AC §4: L198 `forgejo.10cg.pub` Level 3 URL
+        substring heuristic was deleted. Now forgejo identification MUST come
+        from Level 2 platform_hostnames map. An empty hostmap → return None
+        for forgejo URL (previously would hit Level 3 hardcode)."""
+        empty_cfg = {"platform": None, "platform_hostnames": {}}
+        self.assertIsNone(
+            _detect_platform(empty_cfg, "https://forgejo.10cg.pub/10CG/Aria.git")
+        )
+
+    def test_github_level3_substring_fallback_preserved(self):
+        """AC sanity: github.com Level 3 fallback NOT removed (github is single
+        universal host, not org-specific, intentionally kept)."""
+        empty_cfg = {"platform": None, "platform_hostnames": {}}
+        self.assertEqual(
+            _detect_platform(empty_cfg, "https://github.com/foo/bar"), "github"
+        )
+
+    def test_custom_forgejo_host_via_level2_only(self):
+        """AC §10: custom forgejo host MUST come from platform_hostnames
+        (env-injected via _load_config). Verifies Level 2 is sole authority."""
+        custom_cfg = {
+            "platform": None,
+            "platform_hostnames": {"forgejo": ["forge.example.com"]},
+        }
+        self.assertEqual(
+            _detect_platform(custom_cfg, "https://forge.example.com/org/repo.git"),
+            "forgejo",
+        )
+        # Legacy host with custom-only hostmap → no match
+        self.assertIsNone(
+            _detect_platform(custom_cfg, "https://forgejo.10cg.pub/10CG/X.git")
+        )
+
+
+class TestLoadConfigEnvOverride(unittest.TestCase):
+    """OpenSpec v1.30.0 §B — env override AS FINAL LAYER in `_load_config()`.
+    Verifies env beats both DEFAULT_CONFIG and config.json; position matters
+    per Rev1.1 fix R2 ba W-1 / qa R2 minor."""
+
+    def setUp(self):
+        import os
+        self._saved_env = os.environ.pop("ARIA_FORGEJO_HOSTS", None)
+
+    def tearDown(self):
+        import os
+        if self._saved_env is not None:
+            os.environ["ARIA_FORGEJO_HOSTS"] = self._saved_env
+        else:
+            os.environ.pop("ARIA_FORGEJO_HOSTS", None)
+
+    def test_no_env_no_config_default_preserved(self):
+        """Vanilla install: forgejo.10cg.pub in DEFAULT_CONFIG fallback."""
+        with tmp_repo() as repo:
+            cfg = _load_config(repo)
+            self.assertEqual(cfg["platform_hostnames"]["forgejo"], ["forgejo.10cg.pub"])
+
+    def test_env_override_replaces_default(self):
+        """env wins over DEFAULT_CONFIG (no config.json)."""
+        import os
+        os.environ["ARIA_FORGEJO_HOSTS"] = "alt.example.com"
+        with tmp_repo() as repo:
+            cfg = _load_config(repo)
+            self.assertEqual(cfg["platform_hostnames"]["forgejo"], ["alt.example.com"])
+
+    def test_env_override_replaces_config_json(self):
+        """env wins over config.json (key Rev1.1 W-1 fix verification)."""
+        import os
+        os.environ["ARIA_FORGEJO_HOSTS"] = "env-wins.com"
+        with tmp_repo() as repo:
+            (repo / ".aria").mkdir()
+            (repo / ".aria" / "config.json").write_text(
+                '{"state_scanner":{"issue_scan":{"platform_hostnames":'
+                '{"forgejo":["config-loses.com"]}}}}'
+            )
+            cfg = _load_config(repo)
+            self.assertEqual(cfg["platform_hostnames"]["forgejo"], ["env-wins.com"])
+
+    def test_config_json_wins_over_default_when_no_env(self):
+        """No env → config.json over DEFAULT_CONFIG (existing behavior preserved)."""
+        with tmp_repo() as repo:
+            (repo / ".aria").mkdir()
+            (repo / ".aria" / "config.json").write_text(
+                '{"state_scanner":{"issue_scan":{"platform_hostnames":'
+                '{"forgejo":["custom.example.com"]}}}}'
+            )
+            cfg = _load_config(repo)
+            self.assertEqual(cfg["platform_hostnames"]["forgejo"], ["custom.example.com"])
+
+    def test_empty_env_falls_through_to_config(self):
+        """ARIA_FORGEJO_HOSTS='' → empty/whitespace ignored, config wins."""
+        import os
+        os.environ["ARIA_FORGEJO_HOSTS"] = ""
+        with tmp_repo() as repo:
+            (repo / ".aria").mkdir()
+            (repo / ".aria" / "config.json").write_text(
+                '{"state_scanner":{"issue_scan":{"platform_hostnames":'
+                '{"forgejo":["config-host.com"]}}}}'
+            )
+            cfg = _load_config(repo)
+            self.assertEqual(cfg["platform_hostnames"]["forgejo"], ["config-host.com"])
+
+    def test_env_multi_host_preserved(self):
+        """ARIA_FORGEJO_HOSTS='h1,h2,h3' → 3 hosts in cfg."""
+        import os
+        os.environ["ARIA_FORGEJO_HOSTS"] = "h1.com,h2.com,h3.com"
+        with tmp_repo() as repo:
+            cfg = _load_config(repo)
+            self.assertEqual(
+                cfg["platform_hostnames"]["forgejo"], ["h1.com", "h2.com", "h3.com"]
+            )
+
+    def test_env_does_not_affect_github_key(self):
+        """env override only touches forgejo; github key untouched."""
+        import os
+        os.environ["ARIA_FORGEJO_HOSTS"] = "alt.example.com"
+        with tmp_repo() as repo:
+            cfg = _load_config(repo)
+            self.assertEqual(cfg["platform_hostnames"]["github"], ["github.com"])
 
 
 class TestErrorClassification(unittest.TestCase):

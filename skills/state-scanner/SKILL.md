@@ -54,6 +54,7 @@ allowed-tools: Read, Glob, Grep, Bash
 | `state_scanner.auto_execute_rules` | `["commit_only", "quick_fix", "doc_only"]` | 允许自动执行的规则 |
 | `state_scanner.audit_log_path` | `".aria/audit.log"` | 审计日志路径 |
 | `state_scanner.mechanical_mode` | `true` | v3.0.0+: `true` 走 scan.py 路径, `false` 回退 v2.x prose 路径 (计划 v1.19.0+ 移除, v1.18.0 ship 时仍保留) |
+| `state_scanner.issue_scan.platform_hostnames.forgejo` | `["forgejo.10cg.pub"]` | v1.30.0+: Forgejo hosts 可通过 `ARIA_FORGEJO_HOSTS` env var (comma-separated) 覆盖, 优先级 env > config > default; 同时影响 `forgejo_config` 和 `issue_scan` 两 collector (per OpenSpec aria-forgejo-hosts-parameterization) |
 | `workflow.auto_proceed` | `false` | Phase 间自动推进 |
 
 ---
