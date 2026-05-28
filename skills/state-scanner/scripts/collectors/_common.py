@@ -102,12 +102,23 @@ class CollectorResult:
 def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
     """subprocess wrapper: returns (rc, stdout, stderr). Never raises on non-zero rc.
 
+    **Contract guarantee**: stdout/stderr are ALWAYS strings (possibly empty),
+    never None. Callers can safely call ``.splitlines()`` / ``.strip()`` /
+    ``.startswith()`` without explicit None checks.
+
     Locale safety (#61 fix, 2026-05-20): explicit `encoding="utf-8"` +
     `errors="replace"` prevents crashes on Windows CJK locale where the default
     `text=True` would fall back to `locale.getpreferredencoding()` (e.g. GBK on
     Chinese Windows) and fail on UTF-8 git output (commit messages with CJK
     characters or emoji per aria-standards git-commit.md 双语规范). Matches the
     defensive pattern already used at openspec.py:38, readme.py:30, upm.py:335.
+
+    Defensive None guard (#131 fix, 2026-05-28): ``(p.stdout or "")`` /
+    ``(p.stderr or "")`` belt-and-suspenders for any future Python subprocess
+    thread race that surfaces None outputs despite ``capture_output=True``.
+    Forgejo Aria #131 reported AttributeError on ``out.splitlines()`` from a
+    v1.20.0 install (before #61 fix landed the encoding parameter); v1.30.3
+    documents and codifies the str-only return contract explicitly.
     """
     try:
         p = subprocess.run(
@@ -120,7 +131,9 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
             timeout=timeout,
             check=False,
         )
-        return p.returncode, p.stdout, p.stderr
+        # #131 fix: enforce str return contract — defensive against any future
+        # subprocess thread race that surfaces None outputs despite capture_output.
+        return p.returncode, (p.stdout or ""), (p.stderr or "")
     except subprocess.TimeoutExpired as e:
         return 124, "", f"timeout after {timeout}s: {e}"
     except FileNotFoundError as e:

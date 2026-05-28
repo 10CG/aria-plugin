@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.30.3] - 2026-05-28
+
+### Fixed — defensive None guard in `_common.py::_run` (Forgejo Aria #131)
+
+Closes Forgejo Aria [#131](https://forgejo.10cg.pub/10CG/Aria/issues/131) (state-scanner scan.py exit 30 on Windows CJK locale, AttributeError on `out.splitlines()`). 1-file fix.
+
+**Root cause (already fixed pre-#131)**: missing `encoding="utf-8"` in subprocess wrapper — under Windows GBK locale, `text=True` would fall back to `locale.getpreferredencoding()` and crash on UTF-8 git output (commit messages with CJK / emoji per aria-standards `git-commit.md` 双语规范). **Fixed in Forgejo aria-plugin #61 (v1.21+, 2026-05-20)**. The Aria #131 report came from a v1.20.0 install — user only needs to upgrade.
+
+**v1.30.3 belt-and-suspenders**: codifies the str-only return contract explicitly:
+
+- `scripts/collectors/_common.py::_run`: return changed from `(p.returncode, p.stdout, p.stderr)` to `(p.returncode, (p.stdout or ""), (p.stderr or ""))` — defensive against any future subprocess thread race that surfaces None outputs despite `capture_output=True`.
+- Docstring adds "**Contract guarantee**" section documenting stdout/stderr are ALWAYS strings (possibly empty), never None — callers can safely call `.splitlines()` / `.strip()` / `.startswith()` without explicit None checks.
+
+**Verification**: smoke test with mocked `subprocess.run` returning `stdout=None, stderr=None` confirms guard emits empty strings; full 631/631 test suite unchanged.
+
+**Forward-compat**: the None guard is a pure-defensive no-op under normal subprocess behavior (post-#61 `encoding=utf-8` ensures stdout/stderr are always strings). It only fires if Python's subprocess implementation ever changes / has a bug / is mocked with None.
+
+**Tests**: 631/631 PASS (no new tests; inline smoke test verified mock-None scenario).
+
 ## [1.30.2] - 2026-05-28
 
 ### Fixed — multi-terminal-coordination 3-issue bundle (sandbox blockers + RECOMMENDATION_RULES + phase-d-closer multi-track)
