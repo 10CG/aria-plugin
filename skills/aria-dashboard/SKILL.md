@@ -79,9 +79,11 @@ allowed-tools: Bash, Read, Write, Glob, Grep
      排序: 按 timestamp 降序，取最近 5 条
 
   5. AB Benchmark (基准测试摘要):
-     路径: Glob "aria-plugin-benchmarks/ab-results/*/summary.yaml"
+     路径优先级 (命中即停止):
+       (a) Glob "aria-plugin-benchmarks/ab-results/*/benchmark.json" (新格式, /skill-creator 标准产出)
+       (b) Glob "aria-plugin-benchmarks/ab-results/*/summary.yaml"   (旧格式, 向后兼容)
      提取: overall 区块统计 + 按 delta 排序的 top skills
-     选取: 按日期最新的 summary.yaml
+     选取: 按目录名日期排序，取最新一个 (跨格式同优先级合并后选最新)
 ```
 
 **容错规则**: 任何数据源不存在或解析失败时，对应区块显示"未配置"，不报错，不中断。
@@ -270,7 +272,7 @@ Created 日期 fallback chain (依次尝试, 第一个命中即返回):
 ```
 扫描: Glob ".aria/audit-reports/*.md"
 
-每个文件提取 YAML frontmatter (--- ... ---):
+主路径 — 每个文件提取 YAML frontmatter (--- ... ---):
   checkpoint: string
   mode: string (convergence | challenge)
   rounds: number
@@ -279,6 +281,22 @@ Created 日期 fallback chain (依次尝试, 第一个命中即返回):
   context: string
   agents: [string]
   verdict: string (可选, audit-engine 规范输出字段)
+
+Fallback 路径 — frontmatter 缺失时 (Forgejo Issue #126 兼容旧报告, 2026-05-28):
+  扫描文件前 30 行的 markdown header pattern:
+    `**Verdict**:` / `**verdict**:` / `^Verdict:`  → verdict 字段
+    `**Date**:` / `**Timestamp**:` / `^Date:`       → timestamp 字段
+    `**Round**:` / `**Rounds**:` / `^Round`         → rounds 字段
+    `**Mode**:` / `^Mode:`                          → mode 字段
+    `**Checkpoint**:` / `^Checkpoint:`              → checkpoint 字段
+    `**Converged**:` / `^Converged:`                → converged 字段
+    (字段未匹配时填 null; checkpoint 缺失时从文件名前缀 fallback, e.g. `post_spec-R1-...md` → `post_spec`)
+    (rounds 缺失时从文件名 `R{N}` 段 fallback)
+    (agents 缺失时从文件名 `-{agent_role}.md` 后缀 fallback)
+    (timestamp 缺失时退回 file mtime)
+  显式标记 `_source: "frontmatter" | "markdown_fallback" | "filename_fallback"` 供 UI 加 badge 提示数据完整度
+
+新报告 (2026-05-28+) 由 audit-engine 强制 frontmatter, fallback 主要服务 Issue #126 之前生成的旧报告 (实测 42/105 无 frontmatter)。
 
 # 2026-04-23 修复 #23 Major 2 — Minor 4-9 延期到 v1.17.x
 verdict 解析优先级 (先读 frontmatter 显式字段, 再做 fallback 推导):
@@ -304,15 +322,26 @@ verdict CSS class 映射 (规范化):
 ### 5. parse-benchmark
 
 ```
-查找: Glob "aria-plugin-benchmarks/ab-results/*/summary.yaml"
-选取: 按目录名日期排序，取最新一个
+查找 (跨两种格式取最新; 详细 schema 见 references/data-schema.md §5):
+  (a) Glob "aria-plugin-benchmarks/ab-results/*/benchmark.json"  (新格式, /skill-creator 标准产出)
+  (b) Glob "aria-plugin-benchmarks/ab-results/*/summary.yaml"    (旧格式, 向后兼容)
+选取: 合并两个 glob 结果, 按目录名日期排序，取最新一个
 
-提取 overall 区块:
-  total_skills, with_better, mixed, equal, without_better
-  avg_delta, with_skill_win_rate
+新格式 (benchmark.json, 优先) — 字段映射:
+  metadata.skill_name           → skill 名
+  metadata.timestamp[:10]       → date (YYYY-MM-DD)
+  configurations                → ["pre-fix"/"without_skill", "post-fix"/"with_skill"] (单 skill 双 config)
+  runs[?config in {"with_skill","post-fix"}].pass_rate      → with_skill_pass_rate
+  runs[?config in {"without_skill","pre-fix"}].pass_rate    → without_skill_pass_rate
+  delta.pass_rate (or computed)                              → delta_pass_rate
+  delta.verdict (or computed by threshold)                   → verdict
+  → 包装为 single-skill summary (total_skills=1) 兜底; 若多 skill, repeat per skill_name
 
-提取 results 区块:
-  每个 skill 的 delta_pass_rate + verdict
+旧格式 (summary.yaml, 向后兼容):
+  overall 区块: total_skills, with_better, mixed, equal, without_better, avg_delta, with_skill_win_rate
+  results 区块: 每个 skill 的 delta_pass_rate + verdict
+
+通用提取:
   按 delta 降序排序，取 top 5 展示
 
 未找到时: 所有数值显示 0，chips 区域显示空状态

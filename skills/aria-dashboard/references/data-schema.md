@@ -307,13 +307,64 @@ audits:
 按优先级查找（命中即停止）:
 
 ```
-1. aria-plugin-benchmarks/ab-results/latest/summary.yaml
-2. aria-plugin-benchmarks/ab-results/*/summary.yaml (取最近日期)
+1. aria-plugin-benchmarks/ab-results/latest/benchmark.json   (新格式, /skill-creator 标准产出)
+2. aria-plugin-benchmarks/ab-results/latest/summary.yaml     (旧格式, 向后兼容)
+3. aria-plugin-benchmarks/ab-results/*/benchmark.json        (新格式, 取最近日期)
+4. aria-plugin-benchmarks/ab-results/*/summary.yaml          (旧格式, 取最近日期)
 ```
 
-使用 Glob `aria-plugin-benchmarks/ab-results/*/summary.yaml` 搜索，按文件名日期排序取最新。
+使用 Glob 合并两个格式的结果, 按目录名日期排序取最新。新格式 (benchmark.json) 自 2026-05-13 起为 `/skill-creator benchmark` 的标准产出格式; 旧格式 (summary.yaml) 用于历史记录与跨项目 aggregator 兼容。
 
-### 提取规则
+### 提取规则 (新格式 — benchmark.json)
+
+benchmark.json 是单 skill 单次 benchmark 的完整记录, 顶层 schema:
+
+```json
+{
+  "metadata": {
+    "skill_name": "state-scanner",
+    "skill_path": "aria/skills/state-scanner/",
+    "skill_modification": "...",
+    "timestamp": "2026-05-13T17:00Z",
+    "iteration": 1,
+    "rule_6_framing": "..."
+  },
+  "configurations": ["pre-fix", "post-fix"],
+  "test_suite": "...",
+  "runs": [
+    {"config": "pre-fix",  "test_pass_count": 3,  "test_total": 13, "pass_rate": 0.231, "failures": [...]},
+    {"config": "post-fix", "test_pass_count": 13, "test_total": 13, "pass_rate": 1.0,   "failures": []}
+  ],
+  "delta": {"pass_rate": 0.769, "verdict": "STRONG_POSITIVE_DELTA"},
+  "live_verify": {...},
+  "regression": {...},
+  "notes": "..."
+}
+```
+
+**字段映射到 dashboard 内部模型**:
+
+| dashboard 字段 | benchmark.json 路径 | 说明 |
+|----------------|---------------------|------|
+| `skill_name` | `metadata.skill_name` | |
+| `date` | `metadata.timestamp[:10]` | YYYY-MM-DD |
+| `with_skill_pass_rate` | `runs[?config in {"with_skill","post-fix"}].pass_rate` | "post-fix" / "with_skill" 任一 |
+| `without_skill_pass_rate` | `runs[?config in {"without_skill","pre-fix"}].pass_rate` | "pre-fix" / "without_skill" 任一 |
+| `delta_pass_rate` | `delta.pass_rate` (优先) 或 `with_skill_pass_rate - without_skill_pass_rate` | |
+| `verdict` | `delta.verdict` (优先) 或按 delta 计算 | STRONG_POSITIVE_DELTA / POSITIVE_DELTA / NEUTRAL / NEGATIVE_DELTA |
+
+**包装规则**: benchmark.json 是单 skill 记录, dashboard 把它包装成 `overall` 区块 (total_skills=1) 兜底显示。若多个 benchmark.json 共存 (跨 skill), 取最新日期目录的那一个 (单 skill 一次性显示); 完整跨 skill aggregate 需 `/skill-creator benchmark --aggregate` 产出 summary.yaml (推荐工作流: benchmark 单 skill 写 benchmark.json, 周期性 aggregate 到 summary.yaml 给 dashboard cross-skill 视图)。
+
+**verdict computed by threshold** (当 `delta.verdict` 缺失时):
+
+```
+delta >= 0.5   → STRONG_POSITIVE_DELTA
+0.2 <= delta < 0.5  → POSITIVE_DELTA
+-0.05 <= delta < 0.2 → NEUTRAL / EQUAL
+delta < -0.05  → NEGATIVE_DELTA
+```
+
+### 提取规则 (旧格式 — summary.yaml)
 
 summary.yaml 是标准 YAML 格式:
 

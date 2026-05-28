@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.30.1] - 2026-05-28
+
+### Fixed — dashboard parser + audit-engine Agent dispatch contract (2-bug bundle)
+
+Closes Forgejo Aria [#125](https://forgejo.10cg.pub/10CG/Aria/issues/125) (dashboard AB benchmark parser outdated) + [#126](https://forgejo.10cg.pub/10CG/Aria/issues/126) (audit reports missing YAML frontmatter — 42/105 invisible to dashboard parser). 3-file doc-only fix.
+
+**#125 — dashboard AB benchmark parser dual-format**:
+
+- `aria/skills/aria-dashboard/SKILL.md` §Step 1.5 + §5 parse-benchmark: parser 路径优先级改为 `benchmark.json` (新格式, /skill-creator 标准产出 since 2026-05-13) → `summary.yaml` (旧格式, 向后兼容). Glob 命中合并按目录名日期排序取最新。
+- `aria/skills/aria-dashboard/references/data-schema.md` §5: 新格式 schema 完整记录 (metadata / configurations / runs[] / delta / live_verify / regression / notes) + 字段映射表 (metadata.timestamp[:10]→date, runs[?config in {post-fix, with_skill}].pass_rate→with_skill_pass_rate, delta.pass_rate→delta_pass_rate, delta.verdict→verdict). Verdict 阈值 fallback (≥0.5 STRONG_POSITIVE_DELTA / ≥0.2 POSITIVE_DELTA / ≥-0.05 NEUTRAL / <-0.05 NEGATIVE_DELTA) 当 `delta.verdict` 缺失时。
+- **Source incident**: 2026-05-27 aria-dashboard dogfood (Aria 项目首次 generate dashboard), parser glob `*/summary.yaml` 在新格式 dir 命中为空 → fallback 到 2026-04-09 summary.yaml (1 skill +0.82 delta, 几乎一个月前), 跨项目 dogfood 时给 owner 误导印象 "benchmark 一个月没跑了"。
+
+**#126 — audit-engine Agent dispatch contract + dashboard fallback parser**:
+
+- `aria/skills/audit-engine/SKILL.md` §审计报告生成 新增 `Agent dispatch contract: 强制 frontmatter 输出` 子节: dispatched agent prompt **必须** 嵌入完整 frontmatter template (8 字段: checkpoint/mode/rounds/converged/oscillation/overridden_by_user/degraded/verdict/timestamp/context/agents), 原文嵌入不得简化. Phase Skills (a-planner / b-developer / c-integrator / d-closer) 调用 audit-engine 时, 由 audit-engine 自身负责注入指令, 调用方传 checkpoint/mode/context/agent_role 即可。
+- `aria/skills/aria-dashboard/SKILL.md` §4 parse-audit: 加 markdown-header fallback (frontmatter 缺失时扫描前 30 行 `**Verdict**:` / `**Date**:` / `**Round**:` / `**Mode**:` / `**Checkpoint**:` / `**Converged**:` markdown header pattern; 字段未匹配时填 null; checkpoint 缺失时从文件名前缀 fallback 如 `post_spec-R1-...md` → `post_spec`; rounds 缺失时从文件名 `R{N}` 段 fallback; agents 缺失时从文件名 `-{agent_role}.md` 后缀 fallback; timestamp 缺失时退回 file mtime). 显式标记 `_source: "frontmatter" | "markdown_fallback" | "filename_fallback"` 供 UI 加 badge 提示数据完整度。
+- **Source incident**: 2026-05-27 aria-dashboard dogfood: 105 audit reports 中 63 (60%) 有 frontmatter, **42 (40%) 无 frontmatter**. 更严重: v1.29.0 flip Phase A.2 用 Agent 工具触发的 6 个 audit (4 R1 + 2 R2) 全部无 frontmatter, dashboard 显示 "63 reports" 但实际 105, 最近 5 个 audit timestamp 反而几周前 (mtime 排序 fallback 异常)。supply-side (audit-engine prompt template) + consumer-side (dashboard fallback) 双向加固。
+
+**Backward-compat guarantee**:
+
+- 旧格式 summary.yaml 与新格式 benchmark.json 并存时, dashboard 跨格式 glob 合并, 取最新日期 (无 silent skip);
+- 旧报告 (42 个无 frontmatter) 通过 markdown-header fallback 兜底可见, 字段不全用 null + filename 推断 + mtime 标记;
+- 新报告 (2026-05-28+) 由 audit-engine 强制 frontmatter, fallback 主要服务历史报告。
+
+**Out of scope**:
+
+- One-shot backfill 历史 42 个无 frontmatter audit reports 写入 frontmatter (Issue #126 §Proposal Option C) — 推迟到独立 follow-up, 因 fallback 已兜底可见。
+- audit-engine 自身脚本化 prompt template injection (当前依赖 audit-engine SKILL.md prose contract, 由 Claude Code 解读后注入 agent prompt) — 进一步 mechanize 是 v1.31+ 主线。
+
+**Rule #6 substitute** (per `feedback_deterministic_structural_skill_rule6_substitute` precedent — deterministic structural Skill, no LLM AB needed): 2 bug 的 root-cause analysis + Issue #125/#126 dogfood evidence (105 reports / 63-with-frontmatter / 42-without count) + fix 后 SKILL.md prose contract direct 验证 (no test code, doc-only fix).
+
+**Tests**: 0 new tests — 3-file doc-only fix (SKILL.md + references), no script logic changed.
+
 ## [1.30.0] - 2026-05-27
 
 ### Added — `aria-forgejo-hosts-parameterization` universal-layer Forgejo host config (env + .aria/config.json)
