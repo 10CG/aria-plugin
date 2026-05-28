@@ -42,116 +42,9 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 
 ## 执行流程
 
-### 输入
+4 步: **D.1 进度更新** (progress-updater skill, single-pass / milestone-driven 双模) → **D.post post_closure audit** (可选, audit.enabled+checkpoint enabled 时触发 convergence/max_rounds=1, 经验提取非阻塞) → **D.2 Spec 归档** (openspec-archive skill) → **D.3 Session handoff** (4-level fallback 触发, 路径硬编码 `docs/handoff/`)。
 
-```yaml
-context:
-  phase_cycle: "Phase4-Cycle9"
-  module: "mobile"
-  spec_id: "add-auth-feature"         # 来自 Phase A
-  commit_sha: "abc1234"               # 来自 Phase C
-  pr_url: "https://..."               # 来自 Phase C
-
-config:
-  skip_steps: []
-  params:
-    update_kpi: true
-    archive_spec: true
-```
-
-### 步骤执行
-
-```yaml
-D.1 - 进度更新:
-  skill: progress-updater
-  skip_if:
-    - no_upm: true                    # 模块无 UPM 配置
-  action:
-    - 读取当前 UPMv2-STATE
-    - 更新 Cycle 进度
-    - 写入新的状态
-    # milestone_driven 模式: 若 C.2.6 已追加 sub-bullets，
-    # D.1 只需 finalize (标记 COMPLETED + 关联 spec archive 路径)
-    # 不需要重建历史，sub-bullets 已在过程中由 C.2.6 实时写入
-  output:
-    upm_updated: true
-    new_state:
-      cycle: 10
-      completed_tasks: [TASK-001, ...]
-
-D.post - post_closure 审计检查点 (新增):
-  checkpoint: post_closure
-  trigger: D.1 完成后、D.2 归档前
-  condition: audit.enabled == true
-             AND audit.checkpoints.post_closure != "off"
-  限制: 仅使用 convergence 模式 + max_rounds=1 (侧重经验提取，非质量阻塞)
-
-  步骤:
-    1. 检查触发条件 (audit.enabled + checkpoint enabled)
-    2. 如启用: 调用 audit-engine
-       - checkpoint: "post_closure"
-       - mode: "convergence"  # 强制 convergence，忽略全局 mode 配置
-       - max_rounds: 1        # 强制单轮，忽略全局 max_rounds 配置
-       - context: 本次交付的 UPM 路径 (经验积累上下文)
-    3. 不阻塞: 无论 verdict 结果如何，均继续执行 D.2
-       (代码已合并，此检查点仅做经验提取，不做质量门禁)
-
-  on_fail: 记录审计报告但不阻塞，继续 D.2
-  on_skip: 直接进入 D.2
-
-D.2 - Spec 归档:
-  skill: openspec-archive
-  skip_if:
-    - no_openspec: true               # 无活跃 Spec
-    - spec_not_complete: true         # Spec 未完成
-  action:
-    - 验证所有任务完成
-    - 移动 Spec 到 archive/
-    - 更新 Spec 状态
-  output:
-    spec_archived: true
-    archive_path: "openspec/archive/add-auth-feature/"
-
-D.3 - Session handoff (新增 2026-05-14 by H0 spec):
-  trigger_check: 任一满足即 prompt (用户可拒, 不强制)
-  output_path_hardcoded: "docs/handoff/{YYYY-MM-DD}-{slug}.md"
-  template: "aria/templates/session-handoff.md"
-  forbidden_path: ".aria/handoff/"   # L1 hook 会拦, L5 此处也硬约束
-  skip_if:
-    - user_declines: true
-  action:
-    1. 评估触发条件 (见 §D.3 触发条件 below)
-    2. 触发命中 → fill template (9-section skeleton) → write to docs/handoff/
-    3. 更新 docs/handoff/latest.md pointer
-    4. (optional) 提示 user commit handoff doc
-  output:
-    handoff_written: true
-    handoff_path: "docs/handoff/2026-05-14-h0-cycle-done.md"
-    latest_pointer_updated: true
-```
-
-### 输出
-
-```yaml
-success: true
-steps_executed: [D.1, D.2, D.3]
-steps_skipped: []
-results:
-  D.1:
-    upm_updated: true
-    new_cycle: 10
-  D.2:
-    spec_archived: true
-    archive_path: "..."
-  D.3:
-    handoff_written: true
-    handoff_path: "docs/handoff/2026-05-14-h0-cycle-done.md"
-    latest_pointer_updated: true
-
-context_for_next: null  # Phase D 是最后阶段
-```
-
----
+**完整 step-by-step (输入 context schema + D.1/D.post/D.2/D.3 详细 action + 输出)**: 见 [references/execution-steps.md](./references/execution-steps.md)。
 
 ## 跳过规则
 
@@ -221,103 +114,15 @@ skip_evaluation:
 
 ## 使用示例
 
-### 示例 1: 完整收尾
+3 个典型场景: (1) 完整收尾 (D.1+D.2 都跑) / (2) 仅更新进度 (D.2 跳过, 无关联 Spec) / (3) 全部跳过 (D.1+D.2 都跳过, 无 UPM 无 Spec)。
 
-```yaml
-输入:
-  context:
-    module: "mobile"
-    spec_id: "add-auth-feature"
-
-执行:
-  D.1: 更新 UPM → Cycle 10
-  D.2: 归档 Spec → archive/
-
-输出:
-  upm_updated: true
-  spec_archived: true
-```
-
-### 示例 2: 仅更新进度
-
-```yaml
-输入:
-  context:
-    spec_id: null  # 无关联 Spec
-
-执行:
-  D.1: 更新 UPM
-  D.2: 跳过 (无 Spec)
-
-输出:
-  steps_skipped: [D.2]
-  upm_updated: true
-```
-
-### 示例 3: 全部跳过
-
-```yaml
-输入:
-  context:
-    module: "shared"  # 无 UPM
-    spec_id: null     # 无 Spec
-
-执行:
-  D.1: 跳过 (无 UPM)
-  D.2: 跳过 (无 Spec)
-
-输出:
-  steps_skipped: [D.1, D.2]
-  reason: "收尾阶段无需执行"
-```
-
----
+**完整 YAML 示例 (输入 context / 执行过程 / 输出 schema)**: 见 [references/usage-examples.md](./references/usage-examples.md)。
 
 ## 进度更新内容
 
-### D.1 更新模式
+D.1 支持 **single-pass** (默认, 完整 update) 和 **milestone-driven** (multi-PR cycle, C.2.6 增量追加 + D.1 finalize) 两种模式。UPMv2-STATE 5 字段更新 (cycleNumber/lastUpdateAt/stateToken/completedTasks/kpiSnapshot)。Spec 归档 4-step (验证 [x] / 更新 status / 移动 dir / 记录 commit info)。
 
-D.1 支持两种更新模式，通过 `.aria/config.json` 中的 `upm.milestone_driven` 控制:
-
-| 维度 | 默认模式 (single-pass) | Milestone-driven 模式 |
-|------|----------------------|----------------------|
-| 配置 | `upm.milestone_driven: false` | `upm.milestone_driven: true` |
-| C.2.6 行为 | 不执行 | 每次 PR 合并后追加 sub-bullet + 状态升级为 `[~]` |
-| D.1 工作量 | 完整 single-pass 更新所有 Story | 仅 finalize: 将 `[~]` → `[x]` + 关联 spec archive 路径 |
-| 适用场景 | 单 PR 功能 / 快速迭代 | multi-PR cycle (如 schema expand-migrate-contract 3 PR) |
-| 中间透明度 | 低 (1-2 周期间 UPM 停留在 `[ ]`) | 高 (每次 PR 合并即可见进度) |
-| 向后兼容 | 原有行为不变 | opt-in，不影响已有配置 |
-
-**Milestone-driven 模式下 D.1 的 finalize 职责**:
-1. 将所有 `[~]` Story 标记升级为 `[x] COMPLETED`
-2. 在 Story 的最后一条 sub-bullet 后追加 `archive: openspec/archive/{spec_id}/`
-3. 更新 UPMv2-STATE Header (`lastUpdateAt`, `stateToken`, `completedTasks`)
-4. 不重建历史记录 — sub-bullets 已由 C.2.6 在过程中实时写入
-
-**相关文档**: 参见 [phase-c-integrator C.2.6](../phase-c-integrator/SKILL.md) — 修复 Forgejo #22 (2026-04-23)
-
-### UPMv2-STATE 更新
-
-```yaml
-更新字段:
-  - cycleNumber: +1 或保持
-  - lastUpdateAt: 当前时间
-  - stateToken: 重新计算
-  - completedTasks: 添加已完成任务
-  - kpiSnapshot: 更新覆盖率等指标
-```
-
-### Spec 归档
-
-```yaml
-归档操作:
-  1. 验证 tasks.md 所有任务标记 [x]
-  2. 更新 proposal.md 状态为 Complete
-  3. 移动目录: changes/{id}/ → archive/{id}/
-  4. 记录归档时间和提交信息
-```
-
----
+**完整模式对比表 + Milestone-driven 4-step finalize 职责 + UPMv2-STATE 字段定义 + Spec 归档操作**: 见 [references/progress-update-details.md](./references/progress-update-details.md)。
 
 ## 错误处理
 

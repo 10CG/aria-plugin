@@ -71,147 +71,11 @@ agent-team-audit (单轮执行引擎)
 
 ## 执行流程
 
-### 入口逻辑
+4 阶段: (1) 入口逻辑 (config + mode + agents 加载) → (2) **Pre-merge gate** — `pre_merge` checkpoint 专属横向完整性检查 (Issue #26, 与 #27 互补) → (3) **Convergence 模式** (全员讨论 → 汇总 → 四元组比较 → 收敛/振荡) → (4) **Challenge 模式** (讨论组+挑战组对抗 → objections resolved 判定)。
 
-```
-1. 读取配置: config-loader → audit.* 块
-   - audit.enabled == false → 静默返回
-   - checkpoint 未启用 → 静默返回
+**完整流程定义 (4 阶段 详细 step / pre_merge gate 5-step 流程 + 错误输出 / convergence 4-step / challenge 4-step + Round 计数)**: 见 [references/execution-modes.md](./references/execution-modes.md)。
 
-2. 确定模式:
-   - mode 参数显式指定 → 使用指定值
-   - audit.mode == "adaptive" → 按 adaptive_rules 推导
-   - checkpoints 显式配置 > adaptive_rules 推导 > 默认 off
-
-3. 加载 Agent 分组:
-   - agents_config 参数 > config.json teams[checkpoint] > 默认分组
-
-4. 执行审计 (按模式分支)
-```
-
-### Pre-merge: Checkpoint Report Completeness Gate
-
-> **新增**: 2026-04-23, 修复 Forgejo Issue #26 checkpoint 完整性 gate — 与 Issue #27
-> (change_id dangling reference gate, 见"审计报告生成 → Pre-write Validation"章节) 互补。
->
-> **#26 + #27 互补说明**:
-> - **#26 (本节)** = 横向完整性 — 该跑的 checkpoint 都跑了 (completeness)
-> - **#27 (写盘前)** = 纵向真实性 — 报告引用的 change_id 都真实存在 (authenticity)
-> 两者均在 pre_merge 阶段运行，错误输出均走 audit trail。
-
-**触发条件**: 仅在 `checkpoint == "pre_merge"` 时执行，在调用任何 Agent 之前运行。
-
-```
-Checkpoint Report Completeness Gate (pre_merge 专属):
-
-  Step 1: 读取配置
-    config-loader → audit.checkpoints.*
-    config-loader → audit.allow_incomplete_checkpoints (默认 false)
-
-  Step 2: 豁免检查
-    如果 audit.allow_incomplete_checkpoints == true
-      → 跳过校验，继续执行 pre_merge 审计
-      → 记录 [WARN] incomplete checkpoint gate bypassed by config，写入 audit trail
-
-  Step 3: 枚举需校验的 checkpoint
-    对 audit.checkpoints 中每个 key，满足以下全部条件则纳入校验：
-      - value == "on"（字符串）或 value 为非 "off" 的模式字符串
-      - key != "pre_merge"（排除自身）
-      - key != "post_closure"（事后审计，不做前置依赖）
-
-  Step 4: 检查报告文件存在性
-    对每个纳入校验的 checkpoint_name：
-      扫描目录: {project_root}/.aria/audit-reports/
-      匹配模式:
-        - {checkpoint_name}-*.md         (无 change_id 变体)
-        - {checkpoint_name}-*-*.md       (含 change_id 变体)
-      任意文件匹配 → 该 checkpoint 通过
-      无文件匹配   → 记录为 missing_checkpoint
-
-  Step 5: 校验结果路由
-    missing_checkpoints 为空 → 校验通过，进入正常 pre_merge 审计流程
-    missing_checkpoints 非空 → 拒绝执行 pre_merge 审计，输出 ERROR (见下方)，中止
-```
-
-**校验失败输出**:
-
-```
-ERROR: pre_merge audit 前序 checkpoint 报告缺失:
-  - {checkpoint_name} 配置 "on" 但未找到 .aria/audit-reports/{checkpoint_name}-*.md
-  [若多个缺失则逐行列出]
-
-Fix 任一:
-  1. 补跑缺失 checkpoint 审计 (对应 Phase Skill 重新调用)
-  2. 在 .aria/config.json 将该 checkpoint 改为 "off" (若本轮确实不需要)
-  3. 在 .aria/config.json 设 audit.allow_incomplete_checkpoints: true
-     (不推荐, 豁免需 audit trail 记录 [WARN])
-```
-
-**豁免设计原则**: `allow_incomplete_checkpoints` 默认 `false`，需在 `.aria/config.json`
-显式声明才能开启。豁免模式下 pre_merge 审计继续执行，但 audit trail 必须记录
-`[WARN] incomplete checkpoint gate bypassed: missing={checkpoint_names}`。
-
----
-
-### Convergence 模式
-
-全员讨论 → 汇总引擎 → 结论提取 → 四元组比较 → 收敛/振荡检测。
-
-```
-Round N:
-  1. 调用 agent-team-audit 单轮引擎
-     - spawn Agent team (convergence_agents)
-     - 各 Agent 独立分析
-     - 返回原始 issues 列表
-
-  2. 汇总引擎处理
-     - 合并所有 Agent 输出
-     - 去重: 基于 {category, scope} (复用 agent-team-audit 算法)
-     - 冲突标记: 同 scope 矛盾意见保留双方, 标记 conflicted
-     - 结构化提取: 转换为结论记录 (见数据 Schema)
-
-  3. 收敛判定 (详见收敛判定算法)
-     - 四元组集合比较: Round N vs Round N-1
-     - 振荡检测: Round N vs Round N-2
-     - 全票 PASS 检查
-
-  4. 路由:
-     收敛 → 计算 verdict → 生成审计报告
-     振荡 → 取最后轮结论 → 报告 + 振荡标记
-     未收敛 + 有余量 → Round N+1
-     未收敛 + max_rounds 耗尽 → 降级策略
-```
-
-### Challenge 模式
-
-讨论组提案 → 挑战组质疑 → 全员合并 → objections resolved 判定。
-
-```
-Round N (一个完整周期):
-  Step 1: 讨论组 spawn → discussion_output
-     - proposal (统一提案文本)
-     - decisions [{severity, category, scope, summary}]
-     - rationale [string]
-
-  Step 2: 挑战组 spawn (输入: discussion_output) → challenge_output
-     - objections [{agent, target_decision, severity, point, status: "new"}]
-
-  Step 3: 全员讨论 (输入: discussion_output + challenge_output) → 修正 proposal
-
-  Step 4: 挑战组再审 (输入: 修正 proposal) → 更新 objections status
-     - status: new → resolved | overruled
-
-  收敛判定:
-     - 提案结论四元组集合无变化 (vs Round N-1)
-     - AND objections 全部 status=resolved (无 unresolved)
-     - 满足 → 生成审计报告
-     - 不满足 → Round N+1 或降级策略
-```
-
-**Round 计数**: 一个 Round = 讨论组提案 + 挑战组质疑的完整周期。
-全员合并讨论属于下一 Round 的开头。max_rounds=5 意味着最多 5 个完整周期。
-
-详细 Schema 见 [references/challenge-mode-schema.md](./references/challenge-mode-schema.md)。
+**Schema 细节**: convergence 见 [references/convergence-algorithm.md](./references/convergence-algorithm.md), challenge 见 [references/challenge-mode-schema.md](./references/challenge-mode-schema.md)。
 
 ---
 
@@ -423,83 +287,13 @@ audit-engine 在 dispatch agent (经 agent-team-audit) 时**必须**把 8-field 
 
 ---
 
-### 存储位置 (v1.17.4+ 唯一性 schema)
+### 报告存储 + Verdict (v1.17.4+ schema)
 
-```
-.aria/audit-reports/{checkpoint}-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md
-```
+存储路径: `.aria/audit-reports/{checkpoint}-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md` — 5-field uniqueness schema 防 4-agent 并行同毫秒落盘碰撞 (Round-2 audit P0.2 fix)。
 
-**字段定义**:
+Verdict 计算: PASS (0 Critical + 0 Major) / PASS_WITH_WARNINGS (0 Critical + ≥1 Major) / FAIL (≥1 Critical)。报告 frontmatter 11 字段含 checkpoint/mode/rounds/converged/verdict/timestamp 等。
 
-| 字段 | 来源 | 示例 |
-|---|---|---|
-| `{checkpoint}` | audit-engine config (post_spec / pre_merge / post_implementation 等) | `pre_merge` |
-| `{round}` | audit-engine 内部计数器 (R1=首轮, R2..N=收敛轮) | `R1` |
-| `{timestamp_ms}` | UTC 毫秒精度 ISO 8601 (替换 `:` 为 `-` 兼容文件系统) | `2026-04-25T220340-123Z` |
-| `{spec_id}` | OpenSpec change_id (从 dispatch context) | `audit-engine-report-filename-uniqueness` |
-| `{agent_role}` | 4-agent fixed roster | `qa-engineer` / `code-reviewer` / `backend-architect` / `tech-lead` |
-
-**完整示例**:
-```
-.aria/audit-reports/pre_merge-R1-2026-04-25T220340-123Z-audit-engine-report-filename-uniqueness-qa-engineer.md
-```
-
-**碰撞防护设计**:
-- `agent_role` suffix 区分 4 个并行 dispatch 的 agent (即使同毫秒落盘也不冲突)
-- `timestamp_ms` 毫秒精度 (1ms 内 4 个文件并行写, agent_role 兜底唯一性)
-- `R{round}` 区分多轮收敛输出 (R1 / R2 / R3 不冲突)
-- `{spec_id}` 区分多 Spec 共享同 round 的并发审计
-
-**向后兼容 (reader 行为)**:
-- audit-engine 扫描 `.aria/audit-reports/*.md` 时同时接受新旧 schema
-- 旧文件名 `{checkpoint}-{timestamp}.md` (无 round/role suffix) 视为单 agent 单轮 (R1, role=`legacy`)
-- finding aggregation 时 legacy 文件归入对应 checkpoint 的 R1, 与新 R1 文件并集
-- writer 仅生成新 schema (本 Spec 合并即生效, 不再回写旧格式)
-
-**为何引入此 schema** (Round-2 audit P0.2 finding):
-旧 schema `{checkpoint}-{timestamp}.md` 时间戳实际粒度仅到分钟/秒, 4-agent strict 模式
-并行 dispatch → 同一秒/分钟落盘 → 后写覆盖前写, agent finding 永久丢失,
-导致 `R_N == R_{N-1}` 收敛比较缺少完整 finding 集。新 schema 通过
-`{round}-{timestamp_ms}-{agent_role}` 三重唯一性消除碰撞。
-
-### Verdict 计算
-
-```
-verdict = PASS               if 0 Critical + 0 Major
-verdict = PASS_WITH_WARNINGS  if 0 Critical + >=1 Major
-verdict = FAIL               if >=1 Critical
-```
-
-继承 agent-team-audit 的 severity/verdict 体系。审计报告同时包含:
-- `converged`: 收敛状态 (true/false)
-- `verdict`: 质量判定 (PASS/PASS_WITH_WARNINGS/FAIL)
-
-### 组合含义
-
-| converged | verdict | 含义 |
-|-----------|---------|------|
-| true | PASS | 正常通过 |
-| true | PASS_WITH_WARNINGS | 收敛但有 Major 问题 |
-| true | FAIL | 收敛但有 Critical 问题, 阻塞流程 |
-| false | * | 未收敛, 触发降级策略 |
-
-### 报告 Frontmatter
-
-```yaml
----
-checkpoint: {checkpoint_name}
-mode: convergence | challenge
-rounds: {N}
-converged: true | false
-oscillation: false
-overridden_by_user: false
-degraded: false
-verdict: PASS | PASS_WITH_WARNINGS | FAIL
-timestamp: {ISO 8601}
-context: {被审计内容路径}
-agents: [{agent_list}]
----
-```
+**完整 schema (5-field uniqueness 字段定义 / 碰撞防护 / backward-compat reader / 引入背景) + Verdict 计算 + converged×verdict 组合含义 + 报告 Frontmatter 模板**: 见 [references/report-storage.md](./references/report-storage.md)。
 
 详细报告格式见 [references/report-format.md](./references/report-format.md)。
 

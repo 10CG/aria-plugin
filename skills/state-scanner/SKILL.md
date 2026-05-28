@@ -111,76 +111,15 @@ AI 负责: 根据 `interrupt.status` 值:
 
 ### 阶段 1: 状态采集 (scan.py 机械产出)
 
-> **字段完整定义 (source-of-truth)**: [state-snapshot-schema.md](./references/state-snapshot-schema.md)
+scan.py 按顺序执行 14 个 collector 子阶段, 每个产出 snapshot 一个固定顶层字段 (`git` / `upm` / `changes` / `requirements` / `openspec` / `architecture` / `readme` / `standards` / `audit` / `custom_checks` / `sync_status` / `issue_status` (opt-in) / `forgejo_config` / `handoff` / `coordination_fetch` (Step 1.16, multi-terminal) / `tracks_multibranch` (Step 1.17, multi-terminal) + `errors[]` 聚合)。
 
-scan.py 按顺序执行以下子阶段, 每个子阶段对应一个 collector 模块, 产出固定 snapshot 顶层字段:
+**Opt-in 子阶段**: 1.11 custom_checks (需 `.aria/state-checks.yaml`) / 1.13 issue_scan (config flag) / 1.12 sync_check (可关闭)。
 
-| 子阶段 | 职责 | Snapshot 顶层字段 | collector 模块 |
-|--------|------|-------------------|---------------|
-| 1      | Git / UPM / 变更 | `git`, `upm`, `changes` | `collectors/git.py`, `collectors/upm.py`, `collectors/changes.py` |
-| 1.5    | 需求追踪 | `requirements` | `collectors/requirements.py` |
-| 1.6    | OpenSpec | `openspec` (含 `carry_forward_inventory` v1.23.0+) | `collectors/openspec.py` |
-| 1.7    | 架构文档 | `architecture` | `collectors/architecture.py` |
-| 1.8    | README 同步 | `readme` | `collectors/readme.py` |
-| 1.9    | Standards 子模块 | `standards` | `collectors/standards.py` |
-| 1.10   | 审计 | `audit` | `collectors/audit.py` |
-| 1.11   | 自定义检查 (opt-in) | `custom_checks` | `collectors/custom_checks.py` |
-| 1.12   | 同步检测 (单 + 多远程 parity) | `sync_status` | `collectors/sync.py`, `collectors/multi_remote.py` |
-| 1.13   | Issue 感知 (opt-in) | `issue_status` *(仅 `issue_scan.enabled=true` 时出现)* | `collectors/issue_scan.py` |
-| 1.14   | Forgejo 配置 | `forgejo_config` | `collectors/forgejo_config.py` |
-| 1.15   | Session-handoff doc | `handoff` | `collectors/handoff.py` |
-| **1.16** | **Coordination fetch** (multi-terminal) | `coordination_fetch` | `collectors/coordination_fetch.py` |
-| **1.17** | **Cross-branch handoff track rebuild** (multi-terminal) | `tracks_multibranch` | `collectors/handoff_multibranch.py` |
-| 聚合   | 失败软错误列表 | `errors` | scan.py 聚合 |
+**AI 职责**: 仅验证 scan.py 退出码, 读 snapshot 传入阶段 2。**不得**手动逐字段解析或补齐。
 
-**opt-in 阶段** (未启用则对应 snapshot 字段 `configured: false`, scan.py 不阻塞):
+**完整 collector 子阶段表 + opt-in 配置 + Step 1.16/1.17 multi-terminal detail + 子阶段深度参考链接 + TASK-005/006 design decision notes**: 见 [references/phase-1-collectors.md](./references/phase-1-collectors.md)。
 
-- **1.11 custom_checks**: 需项目根有 `.aria/state-checks.yaml`
-- **1.13 issue_scan**: 默认 `false`, 需 `.aria/config.json` 设 `state_scanner.issue_scan.enabled=true`
-- **1.12 sync_check**: 默认 `true`, 可关闭 `state_scanner.sync_check.enabled=false`
-
-**Step 1.16: 调用 `coordination_fetch` collector — git fetch + 30s 缓存 (per multi-terminal-coordination tasks 1.3)**
-
-`collectors/coordination_fetch.py` 在 scan.py 执行序列末尾调用，负责:
-
-1. 检查 `.aria/cache/coordination-fetch.json` 缓存 — 若距上次 fetch < 30s (`FETCH_CACHE_TTL`) 则直接返回 `cached=True`，看板顶部标"缓存于 Xs 前"。
-2. 否则运行 `git fetch origin refs/heads/* refs/aria/coordination --no-tags`，更新缓存时间戳。
-3. fetch 失败时 **不崩溃**: 返回 `success=False` + `error_kind`(`network`/`auth_403`/`non_ff`/`git_missing`/`other`)，由 TASK-007 offline 降级消费 — 顶部红条告警"⚠ 离线: 看板可能陈旧"。
-
-Snapshot 字段: `coordination_fetch` (additive, schema v1.0+, 详见 `collectors/coordination_fetch.py` 模块 docstring)。
-
-**子阶段深度参考** (实现 + schema 细节):
-- Phase 1.12 同步检测 (方向性守卫 / 多远程 parity): [sync-detection.md](./references/sync-detection.md)
-- Phase 1.13 Issue 感知 (平台检测 / 10 种 fetch_error / submodule 聚合): [issue-scanning.md](./references/issue-scanning.md)
-- 所有字段 enum / 边界条件 / additive 演进规则: [state-snapshot-schema.md](./references/state-snapshot-schema.md)
-
-**AI 阶段 1 职责**: 仅验证 scan.py 退出码 (0/1/2 语义见 Step 0 表格), 读 snapshot 传入阶段 2。不得手动逐字段解析或补齐。
-
-**Step 1.17 (TASK-004): `tracks_multibranch` collector** — 扫描所有 `origin/*` 分支的 `docs/handoff/*.md`, 解析 frontmatter, 重建多 track 列表。Snapshot key: `tracks_multibranch`.
-
-<!-- TODO(TASK-005 integration): 阶段 2 推荐决策生成 **之前**, 若 snapshot 含 tracks_multibranch 且 exists==true,
-     调用 renderers/track_board.render_track_board(snapshot) 渲染多 track 看板并展示给用户,
-     再进入推荐规则匹配。当前 TASK-005 仅提供渲染函数; 集成调用点由后续 phase 指定.
-     Renderer path: aria/skills/state-scanner/scripts/renderers/track_board.py -->
-
-<!-- TASK-006 integration — DECISION (Round 6 audit closure, 2026-05-20):
-
-     latest_md_writer 是 **deliberately D.3-scoped** — 不在 scan.py 内自动触发,
-     不在 P1 内引入 production call-site。理由:
-     - P1 标榜 "纯读零行为变更",自动写 latest.md 违反此承诺
-     - phase-d-closer D.3 step 本就负责 "session 结束写新 handoff + 更新 latest.md",
-       writer 是 D.3 的工具,而非 collection pipeline 的工具
-     - 多 track 防接错棒由 render_track_board(snapshot) 提供(读全分支 frontmatter
-       重建看板),**不依赖** latest.md 重写
-     - 老 session 读 latest.md 保持向后兼容(最近一次 D.3 写的内容仍在)
-
-     Writer path: aria/skills/state-scanner/scripts/writers/latest_md_writer.py
-     Return dict: {action: "pointer"|"banner"|"skipped", path: str, content_lines: int}
-     依赖: snapshot["tracks_multibranch"]["tracks"] (TASK-004 产出).
-
-     phase-d-closer D.3 集成实施由 TASK-029(文档同步)或独立 follow-up task 承担,
-     **不阻塞 P2**。完整决策记录见
-     .aria/notes/multi-terminal-coordination-p1-closeout.md §Finding #2。 -->
+**字段定义 source-of-truth**: [references/state-snapshot-schema.md](./references/state-snapshot-schema.md)。
 
 ---
 
@@ -192,97 +131,13 @@ P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。在 Phase 1 结束、Phase 
 
 ---
 
-### 阶段 2: 推荐决策
+### 阶段 2/3/4: 推荐决策 / 用户确认 / 工作流启动
 
-**入口断言 (v3.0.0 硬约束)**:
+阶段 2 = 推荐决策 (snapshot 入口断言 + 推荐规则匹配 + audit 集成 + **handoff awareness mandatory** [H0 spec 防 4 起历史 bug] + inter-cycle resume sanity check)。
+阶段 3 = 用户确认 ([1]-[4] 编号选项 + 自定义组合, auto_proceed 仅 ≥90% confidence 触发)。
+阶段 4 = 工作流启动 (输出 workflow + context 给 workflow-runner, 含 complexity_level for adaptive audit)。
 
-1. 读取 `.aria/state-snapshot.json`:
-   - 文件缺失 → abort, 提示 "Step 0 未执行或 scan.py 失败, 请重跑 /state-scanner"
-2. 验证 `snapshot_schema_version`:
-   - 字段缺失 → abort, 提示 "snapshot 格式异常, 可能是过期版本"
-   - 值 != `"1.0"` → abort, 提示 "scan.py schema 版本 (X.Y) 与 SKILL.md 契约 (1.0) 不兼容, 请升级 aria-plugin"
-3. 通过 → 基于 snapshot 各字段按优先级匹配推荐规则
-
-**推荐规则类别** (详见 [RECOMMENDATION_RULES.md](./RECOMMENDATION_RULES.md)):
-
-- 基础工作流: commit_only → quick_fix → feature_with_spec → feature_new
-- 需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec
-- 审计相关: audit_unconverged (存在未收敛审计报告)
-- 自定义检查: custom_check_failed (severity=error 阻断) / custom_check_warning (severity=warning 降级 + fix 提示)
-- 同步检测: submodule_drift / branch_behind_upstream / multi_remote_drift
-- Issue 感知: open_blocker_issues (blocker/critical label 降级)
-- PRD 状态: prd_draft_blocking (Draft PRD 关联 ≥5 Story 时优先推荐审阅拍板)
-
-**audit 状态集成**: 当 `audit.enabled == true` 时, 推荐输出中展示:
-- 上次审计的 `verdict` 和 `converged` 状态
-- 若 `audit.has_unconverged == true`, 提示用户处理 (查看报告 / 重新审计 / 接受当前结论)
-
-**handoff awareness 集成** (Phase 1.15, H0 spec 2026-05-14):
-
-AI 在阶段 2 推荐生成 **之前** MUST 检查 `snapshot.handoff`:
-
-1. 若 `handoff.exists == true` 且 `handoff.age_hours < 720` (30 days):
-   - **Read `handoff.latest_path`** — 读最新 session handoff 完整内容,理解上 session 写明的 carry-forward 优先级 / next-step 建议
-   - **H5 fix (2026-05-16)**: `handoff.latest_path` 已经是 pointer-resolved (collector 机械优先 `docs/handoff/latest.md` pointer target, mtime 仅 fallback)。AI **不再需要** 单独 parse latest.md — 直接信任 `latest_path`。`latest_source` 字段透明展示来源 (`pointer`/`mtime`);若 `mtime` 且存在 `handoff_pointer_target_missing` soft_error,提示用户 latest.md pointer stale 需修
-   - 推荐输出 §当前状态 段展示 `latest_filename` + `age_hours` + `latest_source` (例: "上次 handoff: 2026-05-15-foo.md (12.1h ago, via pointer)")
-   - 推荐生成时,handoff §next session 入口 / §未完成 列表的 priority items 应**优先**于 generic 推荐规则
-
-2. 若 `handoff.misplaced_files != []`:
-   - 触发 `RECOMMENDATION_RULES.md` `handoff_drift` rule (Layer 3 enforcement)
-   - 推荐输出 §同步状态 段展示 misplaced count + canonical_dir reminder
-   - 主推荐应是 "迁移漂移文件" 工作流 (优先于其他常规工作流,但低于 audit_unconverged)
-
-3. 若 `handoff.exists == false`:
-   - 不阻塞推荐,但提示首次 session 用户 phase-d-closer D.3 会引导写 handoff
-
-**避免 4 次 dogfood 痛点重演**: 跳过 handoff 读取直接出推荐是历史已 4 起的 bug (SilkNode 2026-05-09 + Aria self 2026-05-13 ×3),H0 spec 的根本目的就是机械化此步骤。
-
-**完整性兜底 (inter-cycle resume — sanity check, post-G2/G3/G4 ship)**:
-
-> 自 v1.18.0 起 (state-scanner-inter-cycle-surfacing G2/G3/G4 已实装), inter-cycle 优先级信号由 collector 字段直接产出 (`upm.followups[]` / `upm.handoff_doc` / `requirements.stories.priority_items[]`)。AI 不再需要主动 Read/Grep。
->
-> Sanity check: 若 `upm.configured == true` 且 `raw_block != null`, 但以下任一字段缺失 — 检查 collector 实现可能退化:
-> - `upm.followups` 字段不存在, 但 UPM 文本含 `## Pending Followups` 标题 (mechanical grep 验证)
-> - `upm.handoff_doc` 键缺失 (而非 null), 表示 scan.py 版本可能过旧
-> - `requirements.stories.priority_items` 字段不存在但 `stories.items[]` 含 in_progress 项
->
-> 任一失配 → soft warn: "snapshot 字段构造异常, inter-cycle 优先级可能不完整。检查 collectors/upm.py 与 collectors/requirements.py 版本"。 此 sanity check 不阻塞推荐, 但提示开发者排查 collector 版本漂移。
-
-### 阶段 3: 用户确认
-
-```yaml
-展示内容:
-  - 当前状态摘要
-  - 主推荐工作流 (标记 "推荐")
-  - 2-3 个备选方案
-  - 自定义组合选项
-
-用户可以:
-  - 选择推荐 [1]
-  - 选择备选 [2-4]
-  - 输入自定义 (如 "B.2 + C.1")
-```
-
-**默认行为: 必须展示 [1]-[4] 编号选项并等待用户选择。** 高置信度自动执行仅在 `.aria/config.json` 中 `auto_proceed=true` 且置信度 >90% 时触发，否则始终展示编号选项。详见 [references/confidence-scoring.md](./references/confidence-scoring.md)。
-
-### 阶段 4: 工作流启动
-
-```yaml
-输出到 workflow-runner:
-  workflow: 确认的工作流名称或自定义步骤
-  context:
-    phase_cycle: 当前进度
-    module: 活跃模块
-    changed_files: 变更文件列表
-    skip_steps: 智能跳过的步骤
-    complexity_level: Level1/Level2/Level3   # 传递给 workflow-runner
-    audit:                                   # 审计配置摘要 (仅 audit.enabled=true 时)
-      enabled: true
-      mode: adaptive                        # 当前审计模式
-      active_checkpoints: [post_spec, ...]  # 启用的检查点
-```
-
-**adaptive 集成**: state-scanner 的复杂度评估 (`changes.complexity`, scan.py 输出字段) 通过 `context.complexity_level` 传递给 workflow-runner。workflow-runner 在调用 Phase Skills 时将 Level 信息传递给 audit-engine，用于 adaptive 模式下按 `adaptive_rules` 决定各检查点使用 convergence 还是 challenge 模式 (Level 1 = off, Level 2 = convergence, Level 3 = challenge，可通过 config 覆盖)。
+**完整流程 (阶段 2 入口断言 + 推荐规则类别 + audit 集成 + handoff awareness 3-branch logic + inter-cycle sanity check / 阶段 3 用户确认 / 阶段 4 workflow-runner 输出 schema + adaptive 集成)**: 见 [references/recommendation-stages.md](./references/recommendation-stages.md)。
 
 ---
 
@@ -400,68 +255,9 @@ workflow-runner v2.0
 
 ## Status 字段最佳实践
 
-state-scanner 通过 `_normalize_status` 把 OpenSpec proposal.md / User Story 的 `Status:` 行归一化为 lifecycle state (`archived` / `deprecated` / `pending` / `in_progress` / `implemented` / `approved` / `reviewed` / `active` / `ready` / `done` / `unknown`),驱动 `pending_archive` / `requirements` / 各类推荐规则。
+`_normalize_status` 归一化 11 个 lifecycle state (archived / deprecated / pending / in_progress / implemented / approved / reviewed / active / ready / done / unknown), 驱动 pending_archive / requirements / 推荐规则。首段截断规则 (aria-plugin #50): em-dash 后 narrative 不参与归类。
 
-### Supported token set
-
-按 priority 顺序 (从最高到最低):
-
-| 类别 | tokens | normalized state |
-|------|--------|------------------|
-| 终态 (irreversible) | `archived` | `archived` |
-| | `deprecated` | `deprecated` |
-| 待开始 | `draft`, `pending`, `placeholder` | `pending` |
-| 进行中 | `in progress`, `in_progress`, `in-progress`, `进行中` | `in_progress` |
-| 已批准 | `approved` | `approved` |
-| **已实施** (post-merge, awaiting verify/archive) | `implemented`, `delivered`, `shipped` | `implemented` |
-| 已评审 | `reviewed` | `reviewed` |
-| 活跃 | `active` | `active` |
-| 就绪 | `ready` | `ready` |
-| 完成 (fallback) | `done`, `complete` | `done` |
-
-### 推荐 Status 行格式
-
-✅ **单 token** — 最安全:
-```markdown
-> **Status**: Approved
-> **Status**: Implemented
-> **Status**: Active
-```
-
-✅ **`<token> — <narrative>`** — em-dash 后任意内容,只看首 token 决定语义:
-```markdown
-> **Status**: Approved (Rev2 CONVERGED) — Phase A done, ready for Phase B
-> **Status**: Implemented (Phase B PR-A merged) — post-deploy 验证后归档
-```
-
-> **lifecycle-head 截断 (aria-plugin #50, 2026-05-21)**: `_normalize_status` 只读
-> Status 的**首段** (第一个分隔符前的内容) 决定 lifecycle。分隔符 = em-dash `—` /
-> en-dash `–` / 空格包围的 ASCII hyphen ` - ` / 半全角分号 `;` `；` / 全角句号 `。`。
-> 分隔符**后**的 narrative **不参与** lifecycle 归类 —— 因此 lifecycle keyword 必须
-> 写在首段;把它写在分隔符后属于 Status 写法违规。`raw_status` 字段仍保留**完整**
-> Status 文本供人类展示,不被截断 (`raw_status` full / `status` from-head 职责分离)。
-> 逗号 `,` 与 ASCII 句号 `.` **不是**分隔符 (保护 `Approved, revised` / `v2.0` 版本串)。
-> 首段超 200 字符且无分隔符 → collector 发 `status_field_truncated` soft_error。
-
-### Anti-pattern: substring shadows
-
-Word-boundary regex 匹配 (`\b<token>\b`) 已根治大部分 substring shadow 风险 (修复见 Forgejo Aria #101),但部分 narrative 仍要小心:
-
-❌ **避免** narrative 含 token 字面 (无 word boundary 风险时不会触发,但容易让人误读):
-```markdown
-> **Status**: WIP - 已完成 mock 测试   ← "done" 不会被错误命中,但语义模糊
-```
-
-❌ **历史陷阱** (已修复,不再触发 — 仅作教育示例):
-```markdown
-"Approved Phase A done"  ← 历史会误归 done, 现在 word boundary 正确归 approved
-"Implemented stubs"      ← 历史会误归 unknown, 现在 implemented
-"Inactive — deprecated"  ← 历史会误归 active, 现在 deprecated 优先级更高
-```
-
-### Implementation note
-
-实现细节见 `scripts/collectors/_status.py` — `_normalize_status` (归一化) + `_has_token` (word-boundary) + `_status_lifecycle_head` (首段截断,#50) + `_status_field_overlong` (超长谓词,collector 发 soft_error 用)。归一化逻辑 backed by regression test (`tests/test_openspec.py`):`TestStatusNormalizationIssue101Fix` (13,#101 substring shadow) + `TestStatusNormalizationIssue73Fix` (8,#73 transitional) + `TestStatusExtractionRangeIssue50Fix` (20,#50 首段截断 + delivered/shipped + 边界);soft_error e2e 见 `TestOpenspecCollector` + `test_requirements.py::TestPrdScanning`。
+**完整 token set 表 / 推荐 Status 格式 / 首段截断分隔符规则 / Anti-pattern substring shadows / Implementation note**: 见 [references/status-field-guide.md](./references/status-field-guide.md)。
 
 ---
 

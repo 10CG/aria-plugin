@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.32.0] - 2026-05-28
+
+### Changed — `aria-skills-progressive-disclosure-restructure` 4 SKILL.md restructured per Anthropic /skill-creator guidance
+
+应 owner 请求 + 按 Anthropic 官方 `/skill-creator` skill guidance (SKILL.md <500 lines, progressive disclosure pattern), 重构 4 个 user-facing SKILL.md + 1 个 RECOMMENDATION_RULES.md。3-iteration restructure (iter-1 → iter-2 → iter-3), AB benchmark 36 runs (24+12) 验证 progressive disclosure 工作如预期。
+
+**Final SKILL.md sizes** (original → restructured):
+
+- `audit-engine/SKILL.md`: 627 → **341** lines (-46%)
+- `phase-d-closer/SKILL.md`: 502 → **199** lines (-60%)
+- `aria-dashboard/SKILL.md`: 594 → **150** lines (-75%) 🏆
+- `state-scanner/SKILL.md`: 670 → **317** lines (-53%)
+- `state-scanner/RECOMMENDATION_RULES.md`: 1523 → **126** lines (split to 3 sub-files)
+
+**全部 4 SKILL.md 现 well under Anthropic 500-line guidance**, 平均缩减 58%。
+
+**15 new references/ sub-files**:
+
+- `audit-engine/references/`: agent-dispatch-contract.md (Forgejo #126 contract, iter-1) + pre-write-validation.md (Issue #27 change_id check, iter-1) + execution-modes.md (4-stage execution + pre_merge gate, iter-2) + report-storage.md (5-field uniqueness schema + verdict 计算, iter-2)
+- `phase-d-closer/references/`: handoff-mechanics.md (§D.3 4-level trigger + multi-track latest.md, iter-1) + execution-steps.md (D.1/D.post/D.2/D.3 step-by-step, iter-3) + usage-examples.md (3 scenarios, iter-3) + progress-update-details.md (single-pass vs milestone-driven, iter-3)
+- `aria-dashboard/references/`: parse-rules.md (5 parser detailed rules, iter-1) + execution-flow.md (4-step generation flow, iter-2) + html-templates.md (7 HTML fragment templates + CSS class mappings, iter-2)
+- `state-scanner/references/`: layer-l-integration.md (multi-terminal design intent, iter-1) + status-field-guide.md (11 lifecycle tokens + 首段截断, iter-2) + phase-1-collectors.md (16 collector sub-stages, iter-2) + recommendation-stages.md (阶段 2/3/4 推荐决策, iter-2)
+- `state-scanner/references/rules/`: basic-rules.md + advanced-rules.md + operations.md (RECOMMENDATION_RULES.md split by category, iter-1)
+
+**Content preservation**: ~99.8% byte-identical (Δ +50 lines across ~10K = new reference file frontmatter + 1-2 line SKILL.md cross-link summaries). 内容**原文搬迁**, 不删不改, 仅文件位置变更。
+
+**AB Benchmark verified** (36 runs total):
+
+- **Iter-1 (24 runs vs v1.31.0 baseline)**: tokens -0.4% (parity), time +0.3% (parity), output lines -11.9% (more concise)
+- **Iter-2 (12 runs vs iter-1)**: tokens -3.9% (improved!), time -0.4% (parity), output lines -12.6% (more concise)
+- **Cumulative vs v1.31.0**: tokens **-4.3%**, time parity, output **-23.0%**
+
+Per-skill iter-2 results:
+- aria-dashboard (-75% SKILL.md): -6.4% tokens, -7.8% time, **-33.6% lines** 🏆 (biggest reduction = biggest gain)
+- state-scanner (-53% SKILL.md): -4.5% tokens, +2.5% time, -4.5% lines
+- audit-engine (-46% SKILL.md): -0.9% tokens, +3.3% time, -1.9% lines
+
+**Pattern**: Bigger SKILL.md reduction correlates with bigger AI improvement — progressive disclosure works as Anthropic guidance predicts.
+
+**Verification**:
+
+- Link integrity: 0 broken `references/` links across all 4 SKILL.md
+- Tests: **631/631 PASS** (incidental fix: `normalize_snapshot.py` add `age_hours` to DROP_KEYS for stability test)
+- Workspace artifacts: `.aria/skill-restructure-workspace/` contains iter-1/2 snapshots + 24+12 subagent outputs + benchmark.json + review.html (gitignored, dev-local)
+
+**Rollback boundary**: iter-1 was committed separately at aria-plugin `80b8470` (this commit's predecessor). To revert iter-2+3 alone: `git revert HEAD~..HEAD`. To revert all restructure: `git revert <80b8470 commit> + this commit`.
+
+**Rule #6 substitute** (per `feedback_deterministic_structural_skill_rule6_substitute` precedent — deterministic structural Skill restructure, no LLM AB needed as primary verification): byte-identical content extraction + 0 broken links + 631/631 tests + AB benchmark (used as supplementary verification per owner's `/skill-creator` 官方指引 request, exceeded expected positive outcome).
+
+**Tests**: 0 new code tests (doc-only restructure). 631/631 PASS via normalize_snapshot.py incidental fix.
+
 ## [1.31.0] - 2026-05-28
 
 ### Added — `aria-ci-backend-abstraction` CI backend 抽象层 (Sprint 2 boundary audit P0 C5+C6)

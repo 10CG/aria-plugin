@@ -1,0 +1,76 @@
+# Phase 1 Collectors — Detailed Reference
+
+> 详细 collector 模块表 + Step 1.16/1.17 multi-terminal coordination 细节。从 SKILL.md §阶段 1 状态采集 提取 (iter-2, 2026-05-28)。
+
+## 阶段 1: 状态采集 (scan.py 机械产出)
+
+> **字段完整定义 (source-of-truth)**: [state-snapshot-schema.md](./state-snapshot-schema.md)
+
+scan.py 按顺序执行以下子阶段, 每个子阶段对应一个 collector 模块, 产出固定 snapshot 顶层字段:
+
+| 子阶段 | 职责 | Snapshot 顶层字段 | collector 模块 |
+|--------|------|-------------------|---------------|
+| 1      | Git / UPM / 变更 | `git`, `upm`, `changes` | `collectors/git.py`, `collectors/upm.py`, `collectors/changes.py` |
+| 1.5    | 需求追踪 | `requirements` | `collectors/requirements.py` |
+| 1.6    | OpenSpec | `openspec` (含 `carry_forward_inventory` v1.23.0+) | `collectors/openspec.py` |
+| 1.7    | 架构文档 | `architecture` | `collectors/architecture.py` |
+| 1.8    | README 同步 | `readme` | `collectors/readme.py` |
+| 1.9    | Standards 子模块 | `standards` | `collectors/standards.py` |
+| 1.10   | 审计 | `audit` | `collectors/audit.py` |
+| 1.11   | 自定义检查 (opt-in) | `custom_checks` | `collectors/custom_checks.py` |
+| 1.12   | 同步检测 (单 + 多远程 parity) | `sync_status` | `collectors/sync.py`, `collectors/multi_remote.py` |
+| 1.13   | Issue 感知 (opt-in) | `issue_status` *(仅 `issue_scan.enabled=true` 时出现)* | `collectors/issue_scan.py` |
+| 1.14   | Forgejo 配置 | `forgejo_config` | `collectors/forgejo_config.py` |
+| 1.15   | Session-handoff doc | `handoff` | `collectors/handoff.py` |
+| **1.16** | **Coordination fetch** (multi-terminal) | `coordination_fetch` | `collectors/coordination_fetch.py` |
+| **1.17** | **Cross-branch handoff track rebuild** (multi-terminal) | `tracks_multibranch` | `collectors/handoff_multibranch.py` |
+| 聚合   | 失败软错误列表 | `errors` | scan.py 聚合 |
+
+## Opt-in 阶段 (未启用则对应 snapshot 字段 `configured: false`, scan.py 不阻塞)
+
+- **1.11 custom_checks**: 需项目根有 `.aria/state-checks.yaml`
+- **1.13 issue_scan**: 默认 `false`, 需 `.aria/config.json` 设 `state_scanner.issue_scan.enabled=true`
+- **1.12 sync_check**: 默认 `true`, 可关闭 `state_scanner.sync_check.enabled=false`
+
+## Step 1.16: `coordination_fetch` collector — git fetch + 30s 缓存
+
+`collectors/coordination_fetch.py` 在 scan.py 执行序列末尾调用, 负责:
+
+1. 检查 `.aria/cache/coordination-fetch.json` 缓存 — 若距上次 fetch < 30s (`FETCH_CACHE_TTL`) 则直接返回 `cached=True`, 看板顶部标"缓存于 Xs 前"。
+2. 否则运行 `git fetch origin refs/heads/* refs/aria/coordination --no-tags`, 更新缓存时间戳。
+3. fetch 失败时 **不崩溃**: 返回 `success=False` + `error_kind`(`network`/`auth_403`/`non_ff`/`git_missing`/`other`), 由 TASK-007 offline 降级消费 — 顶部红条告警"⚠ 离线: 看板可能陈旧"。
+
+Snapshot 字段: `coordination_fetch` (additive, schema v1.0+, 详见 `collectors/coordination_fetch.py` 模块 docstring)。
+
+## Step 1.17 (TASK-004): `tracks_multibranch` collector
+
+扫描所有 `origin/*` 分支的 `docs/handoff/*.md`, 解析 frontmatter, 重建多 track 列表。Snapshot key: `tracks_multibranch`.
+
+## 子阶段深度参考 (实现 + schema 细节)
+
+- Phase 1.12 同步检测 (方向性守卫 / 多远程 parity): [sync-detection.md](./sync-detection.md)
+- Phase 1.13 Issue 感知 (平台检测 / 10 种 fetch_error / submodule 聚合): [issue-scanning.md](./issue-scanning.md)
+- 所有字段 enum / 边界条件 / additive 演进规则: [state-snapshot-schema.md](./state-snapshot-schema.md)
+
+## AI 阶段 1 职责
+
+仅验证 scan.py 退出码 (0/10/20/30 语义见 SKILL.md §Step 0 表格), 读 snapshot 传入阶段 2。不得手动逐字段解析或补齐。
+
+## Design Decision Notes (HTML-comment placeholders)
+
+### TASK-005 integration design
+
+阶段 2 推荐决策生成 **之前**, 若 snapshot 含 `tracks_multibranch` 且 `exists==true`, 调用 `renderers/track_board.render_track_board(snapshot)` 渲染多 track 看板并展示给用户, 再进入推荐规则匹配。当前 TASK-005 仅提供渲染函数; 集成调用点由后续 phase 指定。Renderer path: `aria/skills/state-scanner/scripts/renderers/track_board.py`。
+
+### TASK-006 integration — DECISION (Round 6 audit closure, 2026-05-20)
+
+`latest_md_writer` 是 **deliberately D.3-scoped** — 不在 scan.py 内自动触发, 不在 P1 内引入 production call-site。理由:
+
+- P1 标榜 "纯读零行为变更", 自动写 latest.md 违反此承诺
+- phase-d-closer D.3 step 本就负责 "session 结束写新 handoff + 更新 latest.md", writer 是 D.3 的工具, 而非 collection pipeline 的工具
+- 多 track 防接错棒由 `render_track_board(snapshot)` 提供 (读全分支 frontmatter 重建看板), **不依赖** latest.md 重写
+- 老 session 读 latest.md 保持向后兼容 (最近一次 D.3 写的内容仍在)
+
+Writer path: `aria/skills/state-scanner/scripts/writers/latest_md_writer.py`。Return dict: `{action: "pointer"|"banner"|"skipped", path: str, content_lines: int}`. 依赖: `snapshot["tracks_multibranch"]["tracks"]` (TASK-004 产出)。
+
+phase-d-closer D.3 集成实施由 TASK-029 (文档同步) 或独立 follow-up task 承担, **不阻塞 P2**。完整决策记录见 `.aria/notes/multi-terminal-coordination-p1-closeout.md §Finding #2`。
