@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Pre-merge precondition gate helper for phase-c-integrator C.2.4.
 
-Forgejo Issue #60 — consume aether `aether ci status --in-flight` primitive
-(aether-cli #116, SHA f29abee 2026-05-06) and compute three-state verdict
-(green / wait / fail) on the aria side. The aether-pre-merge-check skill
-(P0-B) was never shipped; verdict computation lives in this helper.
+Rule #8 (CLAUDE.md) — verify (a) PR CI passing + (b) main branch no in-flight
+runs before merge. v1.31.0+ supports pluggable CI backends via the
+ci_backends/ package (AetherBackend default, GitHubActionsBackend stub).
+
+Exception contract (v1.31.0+, Hard Constraint #7 — NIE-propagation):
+- Backend query_*() may raise NotImplementedError (stub backend). gate_check
+  MUST propagate NIE to caller, NOT catch and route through no_ci_fallback.
+  Callers MUST handle NIE explicitly. This breaks the old "exceptions are
+  always translated to verdict=fail" contract — see Rule #8 wording in
+  CLAUDE.md + SKILL.md §C.2.4.X for full rationale.
+- AetherQueryError (or other backend transport errors) IS caught and
+  translated to verdict=FAIL with raw_message (backward-compatible path).
 
 stdlib + subprocess only (no third-party deps). Cross-platform: assumes
 POSIX-like shell for `which`. Windows users go through Git Bash / WSL.
@@ -20,32 +28,29 @@ Exit code: 0 = success (any verdict). Non-zero = helper failure
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import json
-import os
-import shutil
-import subprocess
 import sys
-import time
+import warnings
 from typing import Any
 
-# aether-cli baseline (from spec D1 §Contract Source).
-AETHER_CLI_MIN_SHA = "f29abee"
-AETHER_CLI_MIN_DATE = "2026-05-06"
-
-# Subprocess retry backoff (seconds) when primitive_call_timeout fires.
-RETRY_BACKOFF = (5, 15, 45)
-MAX_RETRY_ATTEMPTS = len(RETRY_BACKOFF)
+from ci_backends import (
+    BACKENDS,
+    AetherQueryError,
+    CIBackend,
+    cached_probe,
+)
 
 # Verdict enum values.
 VERDICT_GREEN = "green"
 VERDICT_WAIT = "wait"
 VERDICT_FAIL = "fail"
 
+# v1.31.0+ default config (Hard Constraint #8: ci_backends list order is
+# the explicit precedence; absent vs [] disambiguation per AC-4.5).
 DEFAULT_CONFIG = {
     "enabled": True,
-    "primitive_preference": ["aether-ci-cli"],
-    "no_aether_fallback": "skip_with_warning",
+    "ci_backends": None,  # None/missing = auto-detect; [] = explicit disable
+    "no_ci_fallback": "skip_with_warning",
     "wait_timeout_seconds": 1800,
     "wait_check_intervals": [30, 60, 120, 300, 300],
     "primitive_call_timeout_seconds": 30,
@@ -53,179 +58,148 @@ DEFAULT_CONFIG = {
     "user_escape_hatch": True,
 }
 
-
-def detect_aether() -> tuple[bool, str | None]:
-    """Return (available, aether_binary_path)."""
-    binary = shutil.which("aether")
-    if binary:
-        return True, binary
-    config_yaml = os.path.expanduser("~/.aether/config.yaml")
-    if os.path.exists(config_yaml):
-        # Config exists but binary missing — treat as not available so
-        # caller routes through no_aether_fallback rather than failing
-        # mid-call. The presence of config is informational only.
-        return False, None
-    return False, None
+# Legacy key alias map for soft-deprecation (Hard Constraint #3).
+# Old keys still readable until v2.0; new key wins on conflict (Hard #9).
+_OLD_TO_NEW: dict[str, str] = {
+    "primitive_preference": "ci_backends",  # value-shape changes — see _translate_value
+    "no_aether_fallback": "no_ci_fallback",
+}
 
 
-def verify_aether_in_flight_flag(binary: str, timeout: int = 10, attempts: int = 2) -> bool:
-    """Return True if `aether ci status --help` advertises `--in-flight`.
+def _translate_value(old_key: str, old_value: Any) -> Any:
+    """Per-key value-shape translation for legacy alias (Rev1 complete table).
 
-    Older binaries (pre PR #116, before 2026-05-06) lack this flag and
-    must be upgraded before the gate can function. We grep stdout to
-    avoid version-string parsing.
-
-    R2 hardening (CR-M1): bumped default timeout 5s → 10s + 2 attempts to
-    avoid false negatives on cold caches / slow filesystems. A single slow
-    `aether --help` should not flip a binary's flag-presence verdict.
+    Translation map:
+      primitive_preference: ["aether-ci-cli"]  → ci_backends: [{"name": "aether-ci-cli"}]
+                            ["foo", "bar"]    → ci_backends: [{"name": "foo"}, {"name": "bar"}]
+                            []                → ci_backends: []  (preserves explicit-disable semantic)
+      no_aether_fallback:   "skip_with_warning" → no_ci_fallback: "skip_with_warning"  (no shape change)
+                            "abort"             → no_ci_fallback: "abort"              (no shape change)
     """
-    last_haystack = ""
-    for _ in range(attempts):
-        try:
-            result = subprocess.run(
-                [binary, "ci", "status", "--help"],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+    if old_key == "primitive_preference":
+        if not isinstance(old_value, list):
+            return old_value  # defensive: malformed config, pass through
+        return [{"name": n} for n in old_value]
+    if old_key == "no_aether_fallback":
+        return old_value  # string enum, no shape change
+    return old_value  # defensive: unknown key (shouldn't reach since _OLD_TO_NEW filters)
+
+
+def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Translate legacy config keys to v1.31.0 schema with deprecation warnings.
+
+    Operates at the `phase_c_integrator.pre_merge_gate` config sub-dict level
+    (caller responsibility to pass the right sub-dict, not top-level config).
+    Per Hard Constraint #3 (alias support) + #9 (new key wins on conflict).
+    """
+    out = dict(config)  # shallow copy
+    for old, new in _OLD_TO_NEW.items():
+        if old in out:
+            if new in out:
+                # Conflict: new wins, old discarded (Hard Constraint #9).
+                warnings.warn(
+                    f"both_keys_present: ignoring `{old}`, using `{new}`",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                del out[old]
+            else:
+                # Soft alias: translate old → new + warn.
+                warnings.warn(
+                    f"`{old}` is deprecated; use `{new}`; "
+                    f"will be removed in v2.0",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                out[new] = _translate_value(old, out.pop(old))
+    return out
+
+
+def resolve_ci_backend(config: dict[str, Any]) -> CIBackend | None:
+    """Resolve CI backend per [DEC 2026-05-28] §Q3 (b) config-first + probe fallback.
+
+    Semantics (Hard Constraint #8 + AC-4.5):
+      - config["ci_backends"] absent OR None  → auto-detect via BACKENDS list order
+      - config["ci_backends"] is empty list [] → explicit disable (return None
+        immediately, caller routes per no_ci_fallback). This is the canonical
+        way for user to bypass CI backend integration in v1.31.0+.
+      - config["ci_backends"] non-empty list  → try in user-specified order,
+        return first that probes True;exhausted → None
+
+    Returns None signals caller to route through no_ci_fallback path.
+    """
+    explicit = config.get("ci_backends")
+    if explicit is not None:
+        # User provided config (including [] = explicit disable per AC-4.5).
+        if not explicit:
+            return None
+        name_map = {b.name: b for b in BACKENDS}
+        for entry in explicit:
+            backend_cls = name_map.get(
+                entry.get("name") if isinstance(entry, dict) else entry
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            continue
-        last_haystack = (result.stdout or "") + (result.stderr or "")
-        if "in-flight" in last_haystack:
-            return True
-    # Loop exhausted. last_haystack is "" if every attempt raised (returns
-    # False), or the last successful-but-not-matching output. The final check
-    # is intentionally redundant — covers the rare path where subprocess.run
-    # succeeded on the final attempt but the binary still lacks --in-flight.
-    return "in-flight" in last_haystack
+            if backend_cls and cached_probe(backend_cls):
+                return _instantiate(backend_cls, config)
+        return None
+    # Auto-detect (config missing or None).
+    for backend_cls in BACKENDS:
+        if cached_probe(backend_cls):
+            return _instantiate(backend_cls, config)
+    return None
 
 
-def _run_aether_with_retry(
-    binary: str, args: list[str], timeout: int
-) -> tuple[int, str, str]:
-    """Run aether subprocess with timeout + retry. Return (exit_code, stdout, stderr).
+def _instantiate(backend_cls: type[CIBackend], config: dict[str, Any]) -> CIBackend:
+    """Instantiate backend with config-derived params where applicable.
 
-    Retries on TimeoutExpired only; other exceptions bubble up. SIGTERM-induced
-    timeout returns exit_code -15 in Python's subprocess convention; we map
-    that to a synthetic -1 exit code in the caller for clarity.
+    Currently only AetherBackend accepts a timeout param; future backends
+    may accept different config-derived constructor args via this single
+    extension point.
     """
-    last_exc: subprocess.TimeoutExpired | None = None
-    for attempt in range(MAX_RETRY_ATTEMPTS):
-        try:
-            result = subprocess.run(
-                [binary] + args,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            return result.returncode, result.stdout or "", result.stderr or ""
-        except subprocess.TimeoutExpired as exc:
-            last_exc = exc
-            if attempt < MAX_RETRY_ATTEMPTS - 1:
-                time.sleep(RETRY_BACKOFF[attempt])
-    # All retries exhausted — return synthetic timeout exit code.
-    stderr = f"primitive call timeout after {MAX_RETRY_ATTEMPTS} attempts"
-    if last_exc is not None:
-        stderr += f" (last: {last_exc})"
-    return -1, "", stderr
-
-
-def _query_aether(
-    binary: str, branch: str, in_flight_only: bool, timeout: int
-) -> tuple[bool, dict[str, Any] | None, str]:
-    """Call `aether ci status` and parse JSON. Return (ok, parsed_data, error_msg).
-
-    `parsed_data` is the contents of the top-level `data` field on success.
-    Malformed JSON / unexpected schema → ok=False with error_msg populated.
-    """
-    args = ["ci", "status", "--branch", branch, "--json"]
-    if in_flight_only:
-        args.append("--in-flight")
-    code, stdout, stderr = _run_aether_with_retry(binary, args, timeout=timeout)
-    if code != 0:
-        msg = stderr.strip() or f"aether exit {code}"
-        return False, None, msg
-    try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        return False, None, f"malformed JSON from aether: {exc}"
-    if not isinstance(payload, dict) or payload.get("status") != "ok":
-        return False, None, f"unexpected aether payload shape: {stdout[:200]}"
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        return False, None, "aether payload missing data object"
-    return True, data, ""
-
-
-def _normalize_pr_ci_status(runs: list[dict[str, Any]]) -> str:
-    """Map aether CIRun list → passing | failing | pending.
-
-    Selects the most recent run by `started_at` (descending) rather than
-    relying on aether's list ordering — R2 patch (CR-M3) defends against a
-    future aether change to oldest-first ordering. Falls back to runs[0] if
-    no run has a parseable started_at. Conservative mapping: unknown
-    statuses route to pending so the caller waits rather than races.
-    """
-    if not runs:
-        return "pending"
-
-    def _started_key(run: dict[str, Any]) -> str:
-        # ISO 8601 strings sort lexicographically when normalized to UTC Z.
-        # Use empty-string fallback so runs with missing started_at sort first
-        # (least recent) and don't shadow newer runs.
-        return run.get("started_at") or ""
-
-    sorted_runs = sorted(runs, key=_started_key, reverse=True)
-    latest = sorted_runs[0]
-    status = (latest.get("status") or "").lower()
-    if status in ("success", "passing", "passed", "completed"):
-        return "passing"
-    if status in ("failure", "failing", "failed", "error", "cancelled", "canceled"):
-        return "failing"
-    return "pending"
-
-
-def _translate_in_flight_run(aether_run: dict[str, Any]) -> dict[str, Any]:
-    """aether CIRun dict → internal in_flight_runs[] schema.
-
-    Field mapping per SKILL.md §C.2.4 Output schema:
-      id          → run_id
-      branch      → branch
-      started_at  → started_at (assumed ISO 8601 from aether)
-      [computed]  → elapsed_seconds (now - started_at)
-    Missing/malformed fields default rather than raise; gate must be robust.
-    """
-    started_at = aether_run.get("started_at") or ""
-    elapsed = 0
-    if started_at:
-        try:
-            # aether emits ISO 8601 with trailing Z; fromisoformat needs +00:00.
-            iso = started_at.replace("Z", "+00:00")
-            started_dt = _dt.datetime.fromisoformat(iso)
-            now_dt = _dt.datetime.now(_dt.timezone.utc)
-            elapsed = max(0, int((now_dt - started_dt).total_seconds()))
-        except (ValueError, TypeError):
-            elapsed = 0
-    return {
-        "run_id": aether_run.get("id") or aether_run.get("run_id") or 0,
-        "branch": aether_run.get("branch") or "",
-        "started_at": started_at,
-        "elapsed_seconds": elapsed,
-    }
+    if backend_cls.name == "aether-ci-cli":
+        timeout = int(config.get("primitive_call_timeout_seconds", 30))
+        return backend_cls(timeout=timeout)
+    return backend_cls()
 
 
 def compute_verdict(
-    main_in_flight_runs: list[dict[str, Any]], pr_ci_status: str
-) -> str:
-    """Compute three-state verdict per SKILL.md §C.2.4 step 5."""
+    main_in_flight_runs: list[dict[str, Any]],
+    pr_ci_status: str,
+    backend_name: str = "aether-ci-cli",
+    cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compute three-state verdict per SKILL.md §C.2.4 step 5.
+
+    Hard Constraint #10 (Rev1) — extended signature accepts backend_name for
+    primitive_used output field (replaces hardcoded "aether-ci-cli"). Default
+    "aether-ci-cli" preserves backward compat for old test code calling with
+    positional args (main_in_flight_runs, pr_ci_status).
+
+    Returns full output dict (was: returns str). Backward-compat note: old
+    callers expecting `str` must use new signature explicitly.
+
+    Note: Returns dict for v1.31.0+ to consolidate the verdict + output_build
+    code path that gate_check used to do in two steps. Old `compute_verdict`
+    that returned str is replaced — Hard Constraint #10 locks new signature.
+    """
+    # Verdict computation (preserved logic from pre_merge_gate.py L217-228).
     if pr_ci_status in ("failing", "error"):
-        return VERDICT_FAIL
-    if pr_ci_status == "pending":
-        return VERDICT_WAIT
-    # pr_ci_status == "passing"
-    if not main_in_flight_runs:
-        return VERDICT_GREEN
-    return VERDICT_WAIT
+        verdict = VERDICT_FAIL
+    elif pr_ci_status == "pending":
+        verdict = VERDICT_WAIT
+    elif main_in_flight_runs:
+        # pr_ci_status == "passing" + main has in-flight runs → wait
+        verdict = VERDICT_WAIT
+    else:
+        # pr_ci_status == "passing" + main no in-flight → green
+        verdict = VERDICT_GREEN
+
+    return _build_output(
+        verdict=verdict,
+        pr_ci_status=pr_ci_status,
+        in_flight_runs=main_in_flight_runs,
+        primitive_used=backend_name,
+        raw_message="",
+    )
 
 
 def _build_output(
@@ -234,28 +208,41 @@ def _build_output(
     in_flight_runs: list[dict[str, Any]],
     primitive_used: str,
     raw_message: str = "",
+    primitive_version_sha: str = "",
 ) -> dict[str, Any]:
+    """Build the canonical output dict per SKILL.md §C.2.4 Output schema."""
+    # For Aether backend, populate primitive_version_sha from module constant.
+    # For other backends, leave empty (or future: backend-specific version).
+    if primitive_used == "aether-ci-cli" and not primitive_version_sha:
+        from ci_backends.aether import AETHER_CLI_MIN_SHA
+        primitive_version_sha = AETHER_CLI_MIN_SHA
     return {
         "verdict": verdict,
         "pr_ci_status": pr_ci_status,
         "in_flight_runs": in_flight_runs,
         "primitive_used": primitive_used,
-        "primitive_version_sha": AETHER_CLI_MIN_SHA,
+        "primitive_version_sha": primitive_version_sha,
         "raw_message": raw_message,
     }
 
 
-def _no_aether_output(no_aether_fallback: str) -> dict[str, Any]:
-    """Build output for the no-aether-detected case per fallback config."""
-    if no_aether_fallback == "abort":
+def _no_ci_output(no_ci_fallback: str) -> dict[str, Any]:
+    """Build output for the no-backend-available case per fallback config.
+
+    Renamed from _no_aether_output (Rev1 R1 tech F-05 — backend-agnostic
+    naming). Message text updated to reference "CI backend" instead of
+    "aether" specifically.
+    """
+    if no_ci_fallback == "abort":
         return _build_output(
             verdict=VERDICT_FAIL,
             pr_ci_status="pending",
             in_flight_runs=[],
             primitive_used="manual",
             raw_message=(
-                "aether binary not available and no_aether_fallback=abort: "
-                "install aether or set no_aether_fallback=skip_with_warning"
+                "no CI backend available and no_ci_fallback=abort: "
+                "install a supported CI backend (aether-ci-cli currently) "
+                "or set no_ci_fallback=skip_with_warning"
             ),
         )
     # skip_with_warning (default): treat as green so workflow proceeds, but
@@ -266,7 +253,7 @@ def _no_aether_output(no_aether_fallback: str) -> dict[str, Any]:
         in_flight_runs=[],
         primitive_used="manual",
         raw_message=(
-            "aether binary not available; gate skipped per no_aether_fallback=skip_with_warning"
+            "no CI backend available; gate skipped per no_ci_fallback=skip_with_warning"
         ),
     )
 
@@ -278,10 +265,27 @@ def gate_check(
 ) -> dict[str, Any]:
     """Run the pre-merge gate end-to-end. Return SKILL.md §C.2.4 output dict.
 
-    Exceptions are caught and translated into verdict=fail with raw_message —
-    callers can rely on a structured return rather than try/except.
+    Exception semantics (v1.31.0+, Hard Constraint #7):
+      - NotImplementedError from backend.query_*() PROPAGATES (abort, NOT
+        caught and routed to no_ci_fallback). Callers MUST handle NIE
+        explicitly. This indicates a stub backend that needs implementation;
+        silently skipping defeats Rule #8.
+      - AetherQueryError (transport/parse failures) IS caught and translated
+        to verdict=FAIL with raw_message (backward-compat path).
+      - Other exceptions propagate (unchanged from prior behavior).
+
+    Query order (Hard Constraint #1, ground truth gate_check L309-329):
+      main in-flight FIRST → PR CI SECOND (early-fail on main in-flight short-
+      circuits PR query, matches current Aether subprocess invocation count).
     """
-    cfg = {**DEFAULT_CONFIG, **(config or {})}
+    # Alias translation BEFORE merge with DEFAULT_CONFIG (Hard Constraint #9).
+    # If we merged first, DEFAULT_CONFIG's new keys would always shadow user's
+    # old-key values (new-wins rule would discard user intent). So:
+    # 1. Normalize user config (translate user's old keys to new keys + warn)
+    # 2. THEN merge with default (user's translated new key overrides default)
+    user_normalized = _normalize_config(config or {})
+    cfg = {**DEFAULT_CONFIG, **user_normalized}
+
     if not cfg["enabled"]:
         return _build_output(
             verdict=VERDICT_GREEN,
@@ -290,63 +294,57 @@ def gate_check(
             primitive_used="manual",
             raw_message="pre_merge_gate.enabled=false; gate skipped",
         )
-    available, binary = detect_aether()
-    if not available or binary is None:
-        return _no_aether_output(cfg["no_aether_fallback"])
-    if not verify_aether_in_flight_flag(binary):
+
+    backend = resolve_ci_backend(cfg)
+    if backend is None:
+        return _no_ci_output(cfg["no_ci_fallback"])
+
+    # Backend-specific precheck (e.g. AetherBackend verifies --in-flight flag
+    # presence). Default precheck() returns (True, "") for backends with no
+    # version constraints.
+    ok, precheck_err = backend.precheck()
+    if not ok:
         return _build_output(
             verdict=VERDICT_FAIL,
             pr_ci_status="pending",
             in_flight_runs=[],
-            primitive_used="aether-ci-cli",
-            raw_message=(
-                f"aether binary at {binary} lacks --in-flight flag; "
-                f"upgrade to aether-cli >= commit {AETHER_CLI_MIN_SHA} "
-                f"({AETHER_CLI_MIN_DATE})"
-            ),
+            primitive_used=backend.name,
+            raw_message=precheck_err,
         )
-    timeout = int(cfg["primitive_call_timeout_seconds"])
-    main_ok, main_data, main_err = _query_aether(
-        binary, branch=main_branch, in_flight_only=True, timeout=timeout
-    )
-    if not main_ok:
+
+    # Query order: main in-flight FIRST then PR CI SECOND (Rev1.1 corrected,
+    # matches ground truth L309-329). Hard Constraint #7: NIE propagates.
+    try:
+        in_flight = backend.query_branch_in_flight(main_branch)
+    except NotImplementedError:
+        raise  # Hard Constraint #7: propagate, do NOT route to no_ci_fallback
+    except AetherQueryError as exc:
         return _build_output(
             verdict=VERDICT_FAIL,
             pr_ci_status="pending",
             in_flight_runs=[],
-            primitive_used="aether-ci-cli",
-            raw_message=f"main in-flight query failed: {main_err}",
+            primitive_used=backend.name,
+            raw_message=str(exc),
         )
-    pr_ok, pr_data, pr_err = _query_aether(
-        binary, branch=pr_branch, in_flight_only=False, timeout=timeout
-    )
-    if not pr_ok:
+
+    try:
+        pr_status = backend.query_pr_ci(pr_branch)
+    except NotImplementedError:
+        raise  # Hard Constraint #7
+    except AetherQueryError as exc:
         return _build_output(
             verdict=VERDICT_FAIL,
             pr_ci_status="pending",
             in_flight_runs=[],
-            primitive_used="aether-ci-cli",
-            raw_message=f"PR CI status query failed: {pr_err}",
+            primitive_used=backend.name,
+            raw_message=str(exc),
         )
-    main_runs_raw = main_data.get("runs") or []
-    pr_runs_raw = pr_data.get("runs") or []
-    if not isinstance(main_runs_raw, list) or not isinstance(pr_runs_raw, list):
-        return _build_output(
-            verdict=VERDICT_FAIL,
-            pr_ci_status="pending",
-            in_flight_runs=[],
-            primitive_used="aether-ci-cli",
-            raw_message="aether returned non-list runs field",
-        )
-    in_flight_runs = [_translate_in_flight_run(r) for r in main_runs_raw if isinstance(r, dict)]
-    pr_ci_status = _normalize_pr_ci_status([r for r in pr_runs_raw if isinstance(r, dict)])
-    verdict = compute_verdict(in_flight_runs, pr_ci_status)
-    return _build_output(
-        verdict=verdict,
-        pr_ci_status=pr_ci_status,
-        in_flight_runs=in_flight_runs,
-        primitive_used="aether-ci-cli",
-        raw_message="",
+
+    return compute_verdict(
+        main_in_flight_runs=in_flight.runs,
+        pr_ci_status=pr_status.state,
+        backend_name=backend.name,
+        cfg=cfg,
     )
 
 

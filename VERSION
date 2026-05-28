@@ -1,13 +1,13 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.30.3
-> **发布日期**: 2026-05-28  # patch: defensive None guard in `_common.py::_run` — Forgejo Aria #131 reported v1.20.0 install crashing with AttributeError on out.splitlines() (root cause encoding= missing 已 #61 v1.21+ fixed); v1.30.3 codifies str-only return contract `(p.stdout or "")` / `(p.stderr or "")` belt-and-suspenders。
+> **版本**: 1.31.0
+> **发布日期**: 2026-05-28  # minor: aria-ci-backend-abstraction — pre_merge_gate.py 去 Aether-only 假设, 引入 CI backend 抽象层 (CIBackend ABC + CIStatus/InFlightStatus dataclass + AetherBackend full migration + GitHubActionsBackend stub) + soft alias for legacy config keys (no_aether_fallback → no_ci_fallback, primitive_preference → ci_backends);62 unit tests (21 rewritten + 41 new) + Rule #6 structural substitute fixture;closes boundary audit P0 C5+C6. Rule #8 wording 通用化 in CLAUDE.md + SKILL.md §C.2.4.X CI Backends 新段. v1.29.0 reserved for aria-submodule-gate-block-flip (D+14 ship 2026-06-07);v1.30.1 patch closed #125+#126;v1.30.2 patch closed #57+#56+#67.
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.30.3
+1.31.0
 ```
 
 ## 说明
