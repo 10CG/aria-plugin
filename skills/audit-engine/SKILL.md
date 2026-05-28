@@ -409,101 +409,21 @@ else → continue to Round N+1
 
 ## 审计报告生成
 
-### Agent dispatch contract: 强制 frontmatter 输出 (Forgejo Issue #126, 2026-05-28)
+### Agent dispatch contract (v1.30.1+)
 
-> **不可协商**: 任何通过 audit-engine spawn 的 agent (经由 agent-team-audit, 含 convergence /
-> challenge 模式所有 round) 必须在 agent prompt 中嵌入 frontmatter template 要求, 否则 agent
-> 自由发挥会导致 audit report 缺 YAML frontmatter, dashboard parser 无法解析 (40% reports
-> 在 Issue #126 dogfood 中无 frontmatter, 最新 R1/R2 audit 全部不可见)。
+audit-engine 在 dispatch agent (经 agent-team-audit) 时**必须**把 8-field YAML frontmatter template 嵌入 prompt 原文, 否则 agent 自由发挥会导致 audit report 缺 frontmatter, dashboard parser 无法解析 (Forgejo Aria #126 实测 40% 报告无 frontmatter 不可见)。
 
-**调用方契约** (Phase Skills → audit-engine → agent-team-audit → Agent):
+**完整契约 + 模板原文 + 责任分工 + backward-compat**: 见 [references/agent-dispatch-contract.md](./references/agent-dispatch-contract.md)。
 
-在 dispatch agent 时, prompt **必须** 显式包含以下指令 (原文嵌入, 不得简化):
+### Pre-write validation: change_id 锚点检查 (2026-04-23, Issue #27)
 
-```
-你的输出必须以 YAML frontmatter 开头, 严格按以下 template (字段全填, 不要省略):
+写盘前验证 `change_id` 有对应的 `openspec/changes/{id}/proposal.md` 或 `openspec/archive/*-{id}/proposal.md` 背书; 缺失则拒绝写盘并提示 fix。豁免开关: `.aria/config.json` `audit.allow_dangling_change_ids=true` (默认 false)。
 
----
-checkpoint: {checkpoint_name}      # post_spec / post_implementation / pre_merge / post_closure 等
-mode: convergence | challenge       # 当前 audit 模式
-rounds: {N}                         # 本 agent 参与的当前 round 号 (R1/R2/...)
-converged: {true|false|null}        # 本 round 后是否收敛 (单 agent 视角无法判定时填 null)
-oscillation: false                  # 振荡标记 (单 agent 默认 false, 由 audit-engine 聚合时覆盖)
-overridden_by_user: false           # owner 强制 override 标记
-degraded: false                     # 降级模式标记
-verdict: PASS | PASS_WITH_WARNINGS | FAIL   # 本 agent 视角的 verdict
-timestamp: {ISO 8601 ms}            # 你的输出生成时间 (UTC, 如 2026-05-28T13:24:00.123Z)
-context: {被审计内容路径或 spec_id}
-agents: [{your_role}]               # 单元素数组, 如 [tech-lead] 或 [qa-engineer]
----
-
-(frontmatter 之后是 Markdown 正文, 含 ## 审计结论 / ## Verdict / ## 轮次记录 等章节)
-```
-
-**完整模板**: 见 [references/report-format.md](./references/report-format.md)。
-**Phase Skill 调用方**: phase-a-planner / phase-b-developer / phase-c-integrator / phase-d-closer
-在调用 audit-engine 时, 由 audit-engine 自身负责把上述指令注入 agent prompt — 调用方传入
-checkpoint / mode / context / agent_role 等参数即可, 不需要重复 frontmatter 模板。
-
-**违反后果**: agent 输出无 frontmatter → dashboard parser 跳过该报告 (Issue #126 实测 40% 丢失) →
-audit history 不可见 → 跨项目 dogfood 时 owner 误判 "最近无 audit"。
-
-**Backward-compat for legacy reports** (Issue #126 fix 之前生成的 42 个无 frontmatter 报告):
-aria-dashboard parse-audit 已加 markdown-header fallback (parser 优先 frontmatter, 缺失时
-扫描 `**Verdict**:` / `**Date**:` / `**Round**:` 等 markdown header 行)。新报告强制 frontmatter,
-旧报告通过 fallback 兜底可见 — 但 fallback 字段不全, owner 倾向跑 one-shot backfill 时,
-脚本路径预留为未来 follow-up (本 fix 不强制 backfill, 仅供给侧约束 + 消费侧 fallback)。
+**完整 4-step 验证流程 + ERROR 提示文本 + 豁免设计**: 见 [references/pre-write-validation.md](./references/pre-write-validation.md)。
 
 ---
 
-### Pre-write Validation: change_id 锚点检查
-
-> **新增**: 2026-04-23, 修复 Forgejo Issue #27 dangling reference — 与 Issue #26 FR-1
-> (checkpoint 报告完整性 gate) 互补。
-
-在任何审计报告写盘前，必须先验证 `change_id` 有对应的 proposal.md 背书。
-验证在 verdict 计算完成后、文件 I/O 开始前执行。
-
-```
-Pre-write validation (写盘前强制执行):
-
-  输入: change_id (从调用方 context 读取)
-
-  Step 1: 检查豁免配置
-    config-loader → audit.allow_dangling_change_ids
-    如果 == true → 跳过校验, 直接写盘 (记录 warn 级日志)
-
-  Step 2: 查找活跃 Spec
-    路径: {project_root}/openspec/changes/{change_id}/proposal.md
-    存在 → 校验通过, 继续写盘
-
-  Step 3: 查找已归档 Spec (通配日期前缀)
-    路径: {project_root}/openspec/archive/*-{change_id}/proposal.md
-    任意匹配 → 校验通过, 继续写盘
-
-  Step 4: 校验失败
-    → 拒绝写盘
-    → 输出以下 ERROR 并中止:
-```
-
-```
-ERROR: change_id "{change_id}" 未在 openspec/changes/ 或 openspec/archive/ 找到对应 proposal.md
-Fix 任一:
-  1. 创建 openspec/changes/{change_id}/proposal.md 并 draft
-  2. 归档的 change 确认命名匹配 (archive/{YYYY-MM-DD}-{change_id}/)
-  3. 在 .aria/config.json 设 audit.allow_dangling_change_ids: true (不推荐, 仅临时)
-```
-
-**作用域**: 所有 checkpoint 均受此校验保护 (post_spec / pre_merge / post_closure 等)。
-审计 mode (convergence / challenge) 不影响校验逻辑。
-
-**豁免设计原则**: `allow_dangling_change_ids` 默认 `false`，需在 `.aria/config.json`
-显式声明才能开启。豁免不改变 ERROR 为 WARN 的语义 — 写盘仍执行，但日志必须记录
-`[WARN] dangling change_id allowed by config: {change_id}`，便于事后审计。
-
----
-
-存储位置 (v1.17.4+ 唯一性 schema):
+### 存储位置 (v1.17.4+ 唯一性 schema)
 
 ```
 .aria/audit-reports/{checkpoint}-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md

@@ -79,6 +79,10 @@ DROP_KEYS = frozenset(
         "cached",
         "age_seconds",
         "refs_fetched",
+        # v1.32.0: handoff.age_hours — derived from now() at scan time, varies
+        # between consecutive runs at sub-second precision (0.22 vs 0.23, etc).
+        # Pre-existing brittleness exposed by the post-#57-fix faster fetch path.
+        "age_hours",
     }
 )
 

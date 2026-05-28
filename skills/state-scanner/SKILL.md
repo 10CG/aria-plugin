@@ -186,77 +186,9 @@ Snapshot 字段: `coordination_fetch` (additive, schema v1.0+, 详见 `collector
 
 ## Layer L Phase B 集成 (multi-terminal-coordination v1.22.x+)
 
-> **状态**: P2 Layer L 已 ship (TASK-010~022, 108 tests PASS).
-> P3 TASK-024 将把 `phase1_gate` 集成到 state-scanner 主流程(本节记录设计意图与调用关系)。
+P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。在 Phase 1 结束、Phase 2 推荐前, 若 `tracks_multibranch` 检测到 cross-owner collision, 阶段 2 推荐会触发 `phase1_gate` (急切认领闸门, **opt-in**, 默认关闭) — 9-step 序列含二次 git fetch / acquire_claim / heartbeat 设置 / 放行 Phase B。
 
-本节概览 Phase 1 结束后、Phase 2 推荐决策前的 Layer L 多终端协调集成点。
-
-### 何时触发 phase1_gate
-
-`scripts/phase1_gate.py` 实现**急切认领闸门 (eager-claim gate)**，在以下条件下触发:
-
-- 当前项目配置了 `state_scanner.coordination.enabled = true`(**opt-in**,默认 `false`)
-- **同容器并发检测 (TASK-023)**: 同一 `container-id` 内有 ≥2 个 active claim (Phase B 或以上)时强提示
-- **cross-owner collision**: `tracks_multibranch` snapshot 包含同一 `track-id`、不同 `owner` 的活跃 track → 触发闸门，要求用户 reconcile 后再 claim
-- **Design A 条件触发**: 闸门仅在用户确认要进入 Phase B 时调用，**不在 scan.py 内自动执行**
-
-调用时序:
-
-```
-Phase 1.17 (handoff_multibranch) 产出 tracks_multibranch
-          │
-          ▼
-阶段 2 推荐: AI 检查 tracks_multibranch.collision_type
-    ├── cross_owner → 强提示 + 触发 phase1_gate (pre-Phase B)
-    ├── self_multi_container → soft hint (不阻塞)
-    └── none → 正常推荐 Phase B
-          │
-          ▼ (用户确认进入 Phase B)
-phase1_gate 9-step 序列:
-    1. 二次 git fetch (fresh view)
-    2. acquire_claim (orphan ref 写入 claim YAML)
-    3. heartbeat 周期设置 (10min, 由 phase-b-developer mid-cycle 调用)
-    4. 放行 Phase B 工作流
-```
-
-### acquire_claim / heartbeat / release 调用关系
-
-这三个操作均由 `lib/` 模块实现 (TASK-010~018 ship):
-
-| 操作 | 调用方 | 时机 | 实现位置 |
-|------|--------|------|---------|
-| `acquire_claim` | `phase1_gate` | Phase B 启动前 | `lib/coordination_ref.py` + `lib/claim_lifecycle.py` |
-| `heartbeat` | `phase-b-developer` mid-cycle | 每 10min (caller 负责调度) | `lib/claim_lifecycle.py::update_heartbeat()` |
-| `release` | `phase-d-closer` D.2 归档后 | cycle 完成 / 放弃时 | `lib/claim_lifecycle.py::release_claim()` + `lib/reconcile.py` |
-
-> **P2 已 ship**: `acquire_claim` / `heartbeat` API 已完成 (单测覆盖);`release` + GC `archive_done_claims` 写路径 deferred to P3 (code-reviewer 确认)。
-
-### track_board 与 latest_md_writer 输出关系
-
-```
-Phase 1.17 tracks_multibranch snapshot
-          │
-          ├──▶ renderers/track_board.render_track_board(snapshot)
-          │         → 多 track 表格 (阶段 2 推荐前展示给用户)
-          │         → 渲染 collision badge (🔴 cross-owner / 🟡 self-multi)
-          │
-          └──▶ writers/latest_md_writer.write_latest_md(snapshot)
-                    → D.3 scoped (由 phase-d-closer 调用,非 scan.py 自动)
-                    → 单 track: 更新 latest.md pointer
-                    → 多 track: 写 deprecation banner (不覆盖 track pointer)
-```
-
-`latest_md_writer` **不**在 scan.py 内自动触发 (Finding #2, P1 closeout)。它是 D.3 工具,Phase 1 防接错棒来自 `render_track_board` 读全分支 frontmatter,不依赖 `latest.md`。
-
-### worktree 触发条件 (P3 TASK-024/025 设计目标)
-
-P3 TASK-024 将实现 **Design A 条件触发**:
-
-- **触发**: `tracks_multibranch.has_collision == true` (cross-owner) → 推荐 worktree 独立 checkout
-- **不触发**: no collision / self-multi-container → 正常单 worktree 工作流
-- **实施**: phase1_gate 在检测到 cross-owner collision 后,询问用户"是否创建独立 worktree (推荐) 或强制使用当前 worktree (高风险)?"
-
-> **状态**: TASK-024/025 是 P3 scope,本节仅记录设计意图供 P3 实施参考。
+**完整设计意图 (phase1_gate 触发条件 / acquire_claim+heartbeat+release 调用关系 / track_board+latest_md_writer 输出 / P3 TASK-024/025 worktree 触发设计)**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md)。
 
 ---
 
@@ -356,90 +288,9 @@ AI 在阶段 2 推荐生成 **之前** MUST 检查 `snapshot.handoff`:
 
 ## 输出格式
 
-> 完整输出格式参见 [references/output-formats.md](./references/output-formats.md)
+推荐输出含以下区块 (按顺序): 📍 当前状态 / 📊 变更分析 / 📄 需求状态 / 🏗️ 架构状态 / 📋 OpenSpec 状态 / 🛡️ 审计状态 / 🔧 自定义检查 / 🔄 同步状态 / 🎫 Open Issues / 🎯 推荐工作流。每区块只在数据可用时显示, 空状态优雅降级。
 
-### 标准输出示例
-
-```
-╔══════════════════════════════════════════════════════════════╗
-║                    PROJECT STATE ANALYSIS                     ║
-╚══════════════════════════════════════════════════════════════╝
-
-📍 当前状态
-───────────────────────────────────────────────────────────────
-  分支: feature/add-auth
-  模块: mobile
-  Phase/Cycle: Phase4-Cycle9
-  变更: 3 文件 (lib/*.dart, test/*.dart)
-  OpenSpec: add-auth-feature (approved)
-
-📊 变更分析
-───────────────────────────────────────────────────────────────
-  类型: 功能代码 + 测试
-  复杂度: Level 2
-  架构影响: 无
-  测试覆盖: ✅ 有对应测试
-
-📄 需求状态
-───────────────────────────────────────────────────────────────
-  配置状态: ✅ 已配置
-  ⚠️ PRD Draft 待拍板: prd-phase3-commercial-launch.md
-     关联: 20 US | Soft Launch: 2026-04-30
-  ✅ PRD Approved: prd-aria-v2.md (7 US)
-  User Stories: 8 个 (ready: 3, in_progress: 2, done: 3)
-  OpenSpec 覆盖: 5/8 (62.5%)
-  (注: 无 Draft PRD 或无 prd_files 数据时省略 PRD 行, 保持原简洁格式)
-
-🏗️ 架构状态
-───────────────────────────────────────────────────────────────
-  System Architecture: ✅ 存在
-  状态: active | 需求链路: ✅ 完整
-
-📋 OpenSpec 状态
-───────────────────────────────────────────────────────────────
-  活跃变更: 2 个 | 已归档: 5 个 | 待归档: 0 个
-
-🛡️ 审计状态
-───────────────────────────────────────────────────────────────
-  审计系统: ✅ 已启用 (adaptive 模式)
-  活跃检查点: post_spec, post_implementation, pre_merge
-  上次审计: post_spec — PASS (收敛, 2 轮)
-
-🔧 自定义检查
-───────────────────────────────────────────────────────────────
-  ✅ db-migration-status: OK
-  ⚠️ benchmark-summary-freshness: STALE (warning)
-     修复建议: python3 scripts/aggregate-results.py
-  ✅ license-audit: OK
-
-🔄 同步状态
-───────────────────────────────────────────────────────────────
-  当前分支: master (落后 origin/master 3 commits)
-  远程引用: 2h 前同步
-  子模块:
-    ✅ standards: 同步
-    ⚠️  aria: 落后远程 4 commits
-        修复建议: git submodule update --remote aria
-
-🎫 Open Issues
-───────────────────────────────────────────────────────────────
-  平台: Forgejo (10CG/Aria) — 3 open
-  📌 #6  state-scanner issue scan         [enhancement]
-         → 已关联 OpenSpec: state-scanner-issue-awareness
-  数据来源: cache (2m ago) | ttl: 15m
-
-🎯 推荐工作流
-───────────────────────────────────────────────────────────────
-  ➤ [1] feature-dev (推荐)
-      理由: 已有 OpenSpec，代码和测试就绪
-  ○ [2] quick-fix
-  ○ [3] full-cycle
-  ○ [4] 自定义组合
-
-🤔 选择 [1-4] 或输入自定义:
-```
-
-各场景的输出变体 (未配置、链路不完整、待归档、头脑风暴建议等) 见 [references/output-formats.md](./references/output-formats.md)。
+**完整标准输出示例 + 各场景输出变体 (未配置、链路不完整、待归档、头脑风暴建议等)**: 见 [references/output-formats.md](./references/output-formats.md)。
 
 ---
 

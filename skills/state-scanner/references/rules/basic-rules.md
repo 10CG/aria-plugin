@@ -1,0 +1,546 @@
+# State Scanner — 基础工作流规则
+
+> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含基础工作流 (commit_only / quick_fix / feature_with_spec 等) + 架构相关 + 需求相关规则。Total: 13 + 3 + 5 = 21 规则。
+
+---
+
+## 规则详情
+
+### 1. commit_only (最高优先级)
+
+```yaml
+id: commit_only
+priority: 1
+description: 变更已就绪，只需提交
+
+conditions:
+  all:
+    - on_feature_branch: true       # 不在 main/develop/master
+    - has_staged_changes: true      # 有已暂存的文件
+    - no_unstaged_changes: true     # 无未暂存的修改
+
+recommendation:
+  workflow: custom
+  steps: [C.1]
+  reason: "变更已暂存，只需提交"
+
+detection:
+  git_commands:
+    - "git branch --show-current"   # 检查当前分支
+    - "git diff --cached --name-only"  # 检查暂存区
+    - "git diff --name-only"        # 检查未暂存
+```
+
+### 1.3 readme_outdated
+
+```yaml
+id: readme_outdated
+priority: 1.3
+description: README.md 版本号或日期与项目不一致
+
+conditions:
+  any:
+    - readme_version_mismatch: true   # VERSION/plugin.json 与 README 版本不同
+    - readme_date_mismatch: true      # CHANGELOG 最新日期与 README 日期不同
+    - readme_skill_count_mismatch: true  # aria/skills/ 目录计数与 README "N Skills" 不同
+    - readme_badge_mismatch: true     # plugin.json version 与 README badge URL 版本不同
+
+  detection:
+    version_source:
+      - VERSION file
+      - aria/.claude-plugin/plugin.json (version field)
+    date_source:
+      - CHANGELOG.md (最新条目日期, 非 wall-clock)
+    readme_paths:
+      - README.md (根目录)
+      - aria/README.md (子模块)
+    skill_count_source:
+      - "ls aria/skills/ (排除 user-invocable: false)"
+    badge_source:
+      - "README.md badge URL 中的版本号 (正则: Plugin-v[\\d.]+)"
+
+recommendation:
+  workflow: doc-update
+  steps: [update-readme]
+  reason: "README.md 版本信息过时，建议更新以保持一致"
+  non_blocking: true  # 不阻塞其他工作流
+```
+
+### 1.35 multi_remote_drift
+
+```yaml
+id: multi_remote_drift
+priority: 1.35
+description: 检测到多远程 HEAD 不一致, 存在推送遗漏风险
+
+conditions:
+  any:
+    - multi_remote.overall_parity: false   # 排除 ahead (has_pending_push) 和 unknown (has_unreachable_remote)
+
+  detection:
+    method: "per-remote SHA comparison across main + submodules"
+    source:
+      - sync_status.multi_remote.main_repo.remotes[*].parity
+      - sync_status.multi_remote.submodules[*].remotes[*].parity
+
+recommendation:
+  workflow: null
+  steps: []
+  reason: "检测到 HEAD 未同步到部分远程, 建议: git -C <path> push <remote> <branch>"
+  non_blocking: true
+```
+
+### 1.4 standards_missing
+
+```yaml
+id: standards_missing
+priority: 1.4
+description: standards 子模块已注册但未初始化
+
+conditions:
+  all:
+    - gitmodules_has_standards: true   # .gitmodules 有 standards 条目
+    - standards_dir_empty: true        # standards/ 目录不存在或为空
+
+  detection:
+    check_1: "grep -q 'standards' .gitmodules 2>/dev/null"
+    check_2: "ls standards/ 2>/dev/null | head -1"
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅提示
+  info: "⚠️ aria-standards 子模块已注册但未初始化"
+  suggestion: "git submodule update --init standards"
+  non_blocking: true  # 建议性，不阻塞
+```
+
+### 1.45 forgejo_config_missing
+
+```yaml
+id: forgejo_config_missing
+priority: 1.45
+description: Forgejo 远程已配置但缺少 CLAUDE.local.md 中的 API 配置
+
+conditions:
+  all:
+    - forgejo_remote_detected: true
+    - forgejo_config_status: "missing" | "incomplete"
+
+  detection:
+    remote_check:
+      - "git remote -v | grep forgejo.10cg.pub"
+    config_check:
+      - "CLAUDE.local.md 存在性 + forgejo: 块检测"
+
+recommendation:
+  workflow: null  # 无自动工作流
+  steps: []
+  reason: "检测到 Forgejo 远程但缺少 API 配置。运行 /forgejo-sync 可引导创建 CLAUDE.local.md"
+  non_blocking: true
+```
+
+### 2. quick_fix
+
+```yaml
+id: quick_fix
+priority: 2
+description: 简单修复，快速流程
+
+conditions:
+  all:
+    - changed_files: <= 3
+    - change_type:
+        any: [bugfix, typo, config, format]
+
+  change_type_detection:
+    bugfix:
+      - commit_intent: contains "fix", "修复", "bug"
+      - file_pattern: not new files
+    typo:
+      - commit_intent: contains "typo", "拼写", "错字"
+    config:
+      - file_pattern: "*.json", "*.yaml", "*.yml", "*.toml"
+    format:
+      - commit_intent: contains "format", "格式"
+
+recommendation:
+  workflow: quick-fix
+  phases: [B, C]
+  skip_steps: [B.3]
+  reason: "简单修复，使用快速流程"
+```
+
+### 3. feature_with_spec
+
+```yaml
+id: feature_with_spec
+priority: 3
+description: 已有 OpenSpec，跳过规划
+
+conditions:
+  all:
+    - has_openspec: true
+    - openspec_status: approved
+
+  openspec_detection:
+    scan_path: "openspec/changes/*"
+    status_check:
+      - proposal.md exists
+      - status field = "approved" or "in_progress"
+
+recommendation:
+  workflow: feature-dev
+  phases: [B, C]
+  skip_steps: [A.1, A.2, A.3]
+  conditional_skips:
+    - if: no_architecture_changes
+      skip: [B.3]
+  reason: "已有 OpenSpec，跳过规划阶段"
+```
+
+### 4. fuzziness_requirement
+
+```yaml
+id: fuzziness_requirement
+priority: 4
+description: 需求描述模糊，需要澄清
+
+conditions:
+  all:
+    - requirements_configured: true
+    - requirement_fuzziness: high  # 需求文本含歧义关键词
+
+  fuzziness_detection:
+    indicators:
+      - vague_terms: ["可能", "大概", "也许", "待定", "TBD"]
+      - missing_acceptance_criteria: true
+      - no_examples: true
+
+recommendation:
+  workflow: requirements-refine
+  steps: [requirements-review, clarification]
+  reason: "需求描述模糊，建议先澄清再实现"
+```
+
+### 4.2 missing_prd
+
+```yaml
+id: missing_prd
+priority: 4.2
+description: 项目无 PRD 文档
+
+conditions:
+  all:
+    - requirements_configured: true
+    - prd_exists: false
+    - stories_total: > 0  # 有 Story 但无 PRD
+
+  detection:
+    check: "docs/requirements/prd-*.md" not exists
+
+recommendation:
+  workflow: create-prd
+  steps: [prd-drafting]
+  reason: "有 User Story 但缺少 PRD，建议创建产品需求文档"
+```
+
+### 4.4 prd_refinement
+
+```yaml
+id: prd_refinement
+priority: 4.4
+description: PRD 存在但需要细化
+
+conditions:
+  all:
+    - prd_exists: true
+    - prd_status: draft
+    - prd_completeness: < 70%  # PRD 关键章节不完整
+
+  completeness_check:
+    required_sections:
+      - objectives
+      - user_stories_link
+      - success_metrics
+      - constraints
+
+recommendation:
+  workflow: refine-prd
+  steps: [prd-review, prd-update]
+  reason: "PRD 关键章节不完整，建议细化"
+```
+
+### 5. prd_draft_blocking (2026-04-23 新增, fix #18 PRD Status extraction)
+
+<!-- 优先级 5: 低于 custom_check_failed (p=1.95) / branch_behind_upstream (p=1.98) / submodule_drift (p=1.97) / audit_unconverged (p=1.9); 高于常规开发路径 feature_with_spec (p=3) / quick_fix (p=2) -->
+<!-- 与 #17 (v1.16.1 regex heading-aware) 复用 Pattern 1-5 提取 prd_files[].status -->
+
+```yaml
+id: prd_draft_blocking
+priority: 5
+description: "存在 Draft PRD 且关联 ≥5 Story 时, 优先推荐审阅 PRD 拍板"
+
+conditions:
+  any:
+    - requirements_status.prd_files[]:
+        all:
+          - status: { in: ["Draft", "draft", "draft (等待用户拍板)"] }  # 大小写不敏感匹配
+          - linked_stories: ">= 5"
+
+  detection:
+    source: "Phase 1.5 requirements_status.prd_files[]"
+    field_check: "status case-insensitive startsWith 'draft' AND linked_stories >= 5"
+    prerequisite: "requirements_status.configured == true AND prd_files 非空"
+
+recommendation:
+  workflow: null            # 不推荐开发工作流
+  recommendation_id: review-prd
+  title: "审阅 Draft PRD → 拍板"
+  reason_template: "Draft PRD {path} 关联 {linked_stories} 个 Story. 开发前建议先拍板, 避免 PRD 范围调整后返工."
+  non_blocking: false       # 阻断性降级 — 不触发常规 workflow 推荐; 用户须明确选择忽略
+  degradation: true         # 降级推荐优先级, 常规 feature/fix 推荐作为备选展示
+
+  output_example: |
+    ⚠️ Draft PRD 待拍板: docs/requirements/prd-phase3-commercial-launch.md
+       关联 20 个 Story. 建议先拍板, 再开始开发, 避免范围返工.
+    ○ [2] 忽略 PRD 状态, 继续开发
+```
+
+### 5. doc_only (原优先级 5, 与 prd_draft_blocking 同级, 后匹配)
+
+```yaml
+id: doc_only
+priority: 5
+description: 仅文档变更
+
+conditions:
+  all:
+    - all_files_match: "*.md"
+    - no_code_changes: true
+
+  file_type_detection:
+    docs: ["*.md", "*.mdx", "*.rst"]
+    code: ["*.dart", "*.py", "*.js", "*.ts", "*.java", "*.go"]
+
+recommendation:
+  workflow: doc-update
+  steps: [B.3, C.1]
+  reason: "仅文档变更"
+```
+
+### 6. feature_new (兜底规则)
+
+```yaml
+id: feature_new
+priority: 6
+description: 新功能开发，完整流程
+
+conditions:
+  all:
+    - complexity: >= Level2
+    - has_openspec: false
+
+  complexity_assessment:
+    Level1:
+      - changed_files: <= 3
+      - single_module: true
+    Level2:
+      - changed_files: 4-10
+      - or: multi_module, new_api, new_service
+    Level3:
+      - changed_files: > 10
+      - or: architecture_change, breaking_change
+
+recommendation:
+  workflow: full-cycle
+  phases: [A, B, C, D]
+  reason: "新功能开发，建议完整流程"
+```
+
+---
+
+
+---
+
+## 架构相关规则详情
+
+### 1.6 architecture_missing
+
+```yaml
+id: architecture_missing
+priority: 1.6
+description: PRD 存在但缺少 System Architecture
+
+conditions:
+  all:
+    - prd_exists: true
+    - prd_status: approved
+    - architecture_exists: false
+
+  detection:
+    prd_check: "docs/requirements/prd-*.md" exists and status = approved
+    arch_check: "docs/architecture/system-architecture.md" not exists
+
+recommendation:
+  workflow: create-architecture
+  steps: [arch-scaffolder or manual creation]
+  reason: "PRD 已批准，需要创建 System Architecture"
+  suggestion:
+    - "参考 standards/core/documentation/system-architecture-spec.md"
+    - "或使用 arch-scaffolder skill 自动生成骨架"
+```
+
+### 1.7 architecture_outdated
+
+```yaml
+id: architecture_outdated
+priority: 1.7
+description: Architecture 状态为 outdated，需要更新
+
+conditions:
+  all:
+    - architecture_exists: true
+    - architecture_status: outdated
+
+  detection:
+    arch_check: "docs/architecture/system-architecture.md"
+    status_field: Status = outdated
+
+recommendation:
+  workflow: update-architecture
+  steps: [arch-update]
+  reason: "System Architecture 已过时，建议先更新"
+  context:
+    last_updated: "{architecture.last_updated}"
+    prd_updated: "{prd.last_updated}"
+```
+
+### 1.8 architecture_chain_broken
+
+```yaml
+id: architecture_chain_broken
+priority: 1.8
+description: PRD → Architecture 链路不完整
+
+conditions:
+  all:
+    - architecture_exists: true
+    - chain_valid: false
+
+  detection:
+    chain_issues:
+      - architecture 未引用 parent_prd
+      - prd 更新时间晚于 architecture
+      - parent_prd 不存在
+
+recommendation:
+  workflow: fix-architecture
+  steps: [arch-update, requirements-sync]
+  reason: "需求链路不完整，建议修复"
+  context:
+    issues: "{chain_issues}"
+```
+
+---
+
+
+---
+
+## 需求相关规则详情
+
+### 1.5 requirements_issues (高优先级)
+
+```yaml
+id: requirements_issues
+priority: 1.5
+description: 需求文档存在问题，需要先修复
+
+conditions:
+  all:
+    - requirements_configured: true
+    - requirements_validation_errors: true
+
+  validation_detection:
+    invoke: requirements-validator (check mode)
+    check: validation_result.errors > 0
+
+recommendation:
+  workflow: requirements-check
+  steps: [requirements-validator, requirements-sync]
+  reason: "需求文档存在问题，建议先修复"
+```
+
+### 3.5 pending_stories
+
+```yaml
+id: pending_stories
+priority: 3.5
+description: 有就绪 Story 可开始实现
+
+conditions:
+  all:
+    - requirements_configured: true
+    - stories_ready: > 0
+    - no_active_development: true  # 无进行中的 Story
+
+  stories_detection:
+    scan_path: "docs/requirements/user-stories/US-*.md"
+    status_field: "Status"
+    ready_statuses: [ready]
+
+recommendation:
+  workflow: start-implementation
+  steps: [create-branch, phase-b-developer]
+  reason: "有 {n} 个就绪 Story 可开始实现"
+  context:
+    ready_stories: [US-001, US-002, ...]
+```
+
+### 3.8 missing_openspec
+
+```yaml
+id: missing_openspec
+priority: 3.8
+description: 就绪 Story 缺少技术方案
+
+conditions:
+  all:
+    - requirements_configured: true
+    - stories_ready: > 0
+    - story_without_openspec: true
+
+  detection:
+    for_each: ready_story
+    check: openspec_link is null or openspec not exists
+
+recommendation:
+  workflow: create-openspec
+  steps: [openspec:proposal]
+  reason: "有就绪 Story，建议创建技术方案"
+  context:
+    uncovered_stories: [US-001, US-003]
+```
+
+### 6.5 requirements_info (信息提示)
+
+```yaml
+id: requirements_info
+priority: 6.5
+description: 需求追踪未配置（仅信息提示，不阻塞）
+
+conditions:
+  all:
+    - requirements_configured: false
+
+  detection:
+    check: docs/requirements/ directory not exists
+
+recommendation:
+  workflow: null  # 不推荐工作流，仅提示
+  info: "提示: 如需使用需求追踪，可创建 docs/requirements/ 目录"
+  suggestion:
+    - "参考 standards/templates/prd-template.md 创建 PRD"
+    - "或继续使用 OpenSpec 作为轻量替代"
+```
+
+---
+
