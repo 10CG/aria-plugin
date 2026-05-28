@@ -114,11 +114,15 @@ def parse_handoff_frontmatter(content: str) -> Optional[dict]:
 
         * No ``---`` frontmatter fence at the top of the file (legacy doc
           written before v1.1.0 — graceful ``legacy`` fallback per §2.3.4).
-        * YAML parsing failure (``yaml.YAMLError`` or ``ImportError``).
-        * Parsed result is not a ``dict`` (e.g. a bare YAML scalar).
+        * Frontmatter body is empty or contains a line without ``:``.
         * One or more of the 5 required keys is absent from the parsed dict
           (schema incomplete — treated same as no frontmatter per §2.3.4).
         * Any required field value is not a plain string (type error).
+
+    Implementation note: prior to v1.30.2 this used PyYAML (``yaml.safe_load``);
+    fix for Forgejo aria-plugin #57 Finding 2 replaced PyYAML with a stdlib
+    parser (`_parse_simple_yaml_frontmatter`) because PyYAML is not installed
+    in fresh Claude Code sandboxes and the plugin had no install hook.
 
     Callers (TASK-004) must handle ``None`` as the ``legacy`` track signal
     and fall back to mtime + filename parsing, consistent with the H5
@@ -161,47 +165,83 @@ def parse_handoff_frontmatter(content: str) -> Optional[dict]:
         return None
 
     raw_yaml = m.group(1)
-
-    try:
-        import yaml  # lazy import — stdlib not available; yaml is optional dep
-        parsed = yaml.safe_load(raw_yaml)
-    except Exception:
-        # YAML parse failure or yaml not installed → treat as malformed legacy.
-        return None
-
-    if not isinstance(parsed, dict):
-        # Bare scalar / list YAML at frontmatter position — not a valid schema.
+    parsed = _parse_simple_yaml_frontmatter(raw_yaml)
+    if parsed is None:
+        # Parse failure → treat as malformed legacy.
         return None
 
     # Verify all 5 required keys are present (§2.3.1 "必含 ✅").
     if not _FRONTMATTER_REQUIRED_KEYS.issubset(parsed.keys()):
         return None
 
-    # Verify every required value is a plain string (or coerce datetime to ISO string).
-    # YAML auto-parses ISO 8601 timestamps (e.g. `updated-at: 2026-05-20T04:50:34Z`)
-    # to ``datetime.datetime`` objects, which is harmless for ``updated-at`` but
-    # initially caused this function to reject 100% of real-world v1.22.0 handoffs
-    # as "legacy" at first dogfood run (zero-day production bug, fixed inline).
-    # Per §2.3.1 schema, all 5 fields are string-typed; we coerce datetime back
-    # to a normalized ISO 8601 string with trailing 'Z' for UTC.
-    import datetime as _dt
-
+    # All values from the stdlib parser are already strings (no datetime coercion
+    # needed, unlike yaml.safe_load which auto-parses ISO timestamps to datetime
+    # objects and caused a v1.22.0 zero-day production bug). Verify type defensively.
     result: dict = {}
     for key in _FRONTMATTER_REQUIRED_KEYS:
         val = parsed[key]
-        if isinstance(val, _dt.datetime):
-            # Normalize to ISO 8601 UTC with trailing 'Z'.
-            if val.tzinfo is None:
-                val = val.replace(tzinfo=_dt.timezone.utc)
-            val = val.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        elif isinstance(val, _dt.date):
-            val = val.isoformat()
         if not isinstance(val, str):
-            # YAML might coerce e.g. `status: true` → bool; reject silently.
             return None
         result[key] = val
 
     return result
+
+
+def _parse_simple_yaml_frontmatter(raw: str) -> Optional[dict]:
+    """Stdlib-only parser for the §2.3.1 5-field session-handoff frontmatter schema.
+
+    Replaces the PyYAML dependency (fix for Forgejo aria-plugin #57 Finding 2,
+    2026-05-28). PyYAML is not present in fresh Claude Code sandboxes (`pip` /
+    `pip3` also absent — only `uv`), so PyYAML-dependent code paths produced
+    100% legacy-fallback in `handoff_multibranch` collector, defeating the
+    purpose of Layer H multi-terminal coordination.
+
+    **Scope**: only handles flat ``key: value`` pairs with string-typed scalar
+    values (the §2.3.1 schema requires exactly 5 such fields). Does **not**
+    support nested mappings, multi-line strings (``|`` / ``>``), flow-style
+    sequences, anchors, or any other YAML feature. This is deliberate — the
+    schema is intentionally minimal so a 20-line stdlib parser suffices.
+
+    Args:
+        raw: The text between the opening and closing ``---`` fence (without
+            the fence markers themselves).
+
+    Returns:
+        A ``dict`` of {key: str-value} entries, or ``None`` if parsing fails
+        (empty input / line without ``:`` / empty key or value).
+
+    Notes:
+        - Values are returned as raw strings (no datetime / bool / int coercion);
+          ISO 8601 timestamps stay as strings (avoiding the v1.22.0 datetime
+          coercion zero-day bug).
+        - Surrounding single or double quotes are stripped (``"value"`` and
+          ``'value'`` both yield ``value``).
+        - Lines starting with ``#`` are comments (ignored).
+        - Blank lines are ignored.
+    """
+    if not raw or not raw.strip():
+        return None
+
+    result: dict = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Split on the *first* ':' (ISO timestamps contain colons in the time
+        # portion, e.g. `updated-at: 2026-05-19T22:31:13Z` — only split once).
+        if ":" not in stripped:
+            return None
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip()
+        # Strip matching surrounding quotes (single or double).
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        if not key or not value:
+            return None
+        result[key] = value
+
+    return result if result else None
 
 # ─────────────────────────────────────────────────────────────────────────────
 

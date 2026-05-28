@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.30.2] - 2026-05-28
+
+### Fixed — multi-terminal-coordination 3-issue bundle (sandbox blockers + RECOMMENDATION_RULES + phase-d-closer multi-track)
+
+Closes Forgejo aria-plugin [#57](https://forgejo.10cg.pub/10CG/aria-plugin/issues/57) (sandbox zero-day double: refspec invalid + PyYAML missing) + [#56](https://forgejo.10cg.pub/10CG/aria-plugin/issues/56) (RECOMMENDATION_RULES follower 推荐缺失) + [#67](https://forgejo.10cg.pub/10CG/aria-plugin/issues/67) (phase-d-closer D.3 latest.md History mechanical check). 6-file fix (4 code + 2 doc); 631/631 tests PASS.
+
+**#57 Finding 1 — `coordination_fetch.py` refspec invalid**:
+
+- `scripts/collectors/coordination_fetch.py`: replaced module-level constant `_FETCH_REFSPECS = ["refs/heads/*", COORDINATION_REF]` with function `_build_fetch_refspecs(remote)` returning `[f"+refs/heads/*:refs/remotes/{remote}/*", COORDINATION_REF]`. Wildcards in refspecs require explicit `src:dst` form per git-fetch(1); the single-src form produces `fatal: invalid refspec refs/heads/*` with rc=128. Call site at `cmd = ["git", "fetch", remote, "--no-tags", *fetch_refspecs]`.
+- Live verified: `coordination_fetch.success=true` (was `false`), `refs_fetched=["+refs/heads/*:refs/remotes/origin/*", "refs/aria/coordination"]`.
+
+**#57 Finding 2 — PyYAML dependency removed**:
+
+- `scripts/collectors/handoff.py::parse_handoff_frontmatter`: replaced `yaml.safe_load` (PyYAML) with new private helper `_parse_simple_yaml_frontmatter(raw)` — 20-line stdlib-only parser handling flat `key: value` pairs with string-typed scalars (the §2.3.1 schema requires exactly 5 such fields, no nested/list/multi-line). Supports comment lines (`#`), blank lines, surrounding-quote stripping. **No datetime coercion** (ISO timestamps stay as strings — avoids v1.22.0 datetime zero-day bug entirely).
+- `scripts/collectors/handoff_multibranch.py`: removed PyYAML availability probe + `handoff_yaml_unavailable` soft_error; module docstring updated to note stdlib-only parsing.
+- Live verified: 93 non-legacy tracks parsed successfully on Aria dogfood (was 0 with PyYAML probe firing).
+
+**#56 — RECOMMENDATION_RULES.md 3 multi-terminal rules**:
+
+- `multi_terminal_follower_detected` (priority 1.51): detects follower role via `tracks_multibranch.tracks[]` lookup — current container has no `status==active` track but other container does. Recommends `standby-observer` workflow + info on leader's track/phase. `non_blocking: false` (strong signal).
+- `follower_safe_tasks_suggested` (priority 1.52, triggered by 1.51): lists non-conflict candidate tasks (local hygiene / cross-repo / carry-forward / docs+audit) + explicit anti-suggestions (no new OpenSpec in active scope / no leader-track D.3 handoff / no submodule pointer bump). `non_blocking: true`.
+- `multi_terminal_handoff_dual` (priority 1.53, D.3 phase): when multi-track + leader pointer still in latest.md, recommend follower writes **separate** handoff doc (slug with follower track-id) + cross-ref to phase-d-closer SKILL.md §latest.md 维护 子步骤 1+2 mechanical.
+
+**#67 — `phase-d-closer/SKILL.md` §latest.md 维护 restructure**:
+
+- Original §"latest.md pointer 更新" (single-track linear succession model, 3 lines) split into 2 mechanical sub-steps:
+  - **子步骤 1 (always, 不可跳过)**: History 表格 prepend 新条目 (format + position rules: committerdate desc, leader 先于 follower 同日, scope-note classification)
+  - **子步骤 2 (conditional)**: Pointer 行更新 — 3-row decision table based on `snapshot.tracks_multibranch` (single-track → update / multi-track + 主线 → update / multi-track + follower → DO NOT update)
+- Edge cases documented (首个 follower / rebase resolve)
+- Forbidden patterns extended: ❌ multi-track follower 跳过 History prepend (实证: nexus PR #107 漏 History entry, 后开 PR #109 补救) + ❌ multi-track follower 更新 pointer 行.
+
+**Test stability fix — `normalize_snapshot.py`** (pre-existing test brittleness exposed by #57 fix):
+
+- Added `last_fetch_at` to `TIMESTAMP_KEYS` (was static `<missing>` pre-#57 fix when fetch always failed; now legitimately moves forward each run).
+- Added `cached`, `age_seconds`, `refs_fetched` to `DROP_KEYS` (TTL-based cache metadata varies between consecutive runs: run 1 fresh / run 2 cache hit). Unique to coordination_fetch namespace, no collision risk.
+- `test_two_consecutive_runs_diff_zero` now PASS (was failing because my refspec fix made fetch actually succeed, exposing the cache-vs-fresh diff that was previously masked by uniform failure).
+
+**Backward-compat guarantee**:
+
+- v1.22.x+ frontmatter docs: parsed identically by stdlib parser (no semantic change)
+- Legacy (no-frontmatter) docs: still graceful `legacy` fallback per §2.3.4
+- coordination_fetch cache file format unchanged
+
+**Out of scope**:
+
+- PyYAML install hook / dependency declaration (Option A from #57 proposal): not needed since Option B (stdlib parser) eliminates the dependency entirely
+- One-shot backfill of historical legacy docs with retrofitted frontmatter: deferred (collector gracefully handles legacy via `legacy: true` flag)
+
+**Rule #6 substitute**: code changes covered by unit tests (`test_p1_layer_h.py` 4 frontmatter parse tests + 631/631 full suite); doc changes (RECOMMENDATION_RULES.md + phase-d-closer SKILL.md) follow `feedback_deterministic_structural_skill_rule6_substitute` precedent (deterministic structural Skill, no LLM AB needed).
+
+**Tests**: 631/631 PASS (no new tests added — existing test_p1_layer_h.py coverage for parse_handoff_frontmatter sufficient; smoke-test inline verification done during fix).
+
 ## [1.30.1] - 2026-05-28
 
 ### Fixed — dashboard parser + audit-engine Agent dispatch contract (2-bug bundle)

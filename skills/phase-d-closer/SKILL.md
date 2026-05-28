@@ -424,18 +424,41 @@ slug 规则 (优先级):
 | `{next_session_entry}` | "/aria:state-scanner" (Aria projects); 其他项目按 `.aria/config.json::next_session_command` |
 | `{start_date}` | 上次 handoff 的 last_modified_iso (from snapshot.handoff) |
 
-### latest.md pointer 更新
+### latest.md 维护 (D.3 mechanical, 2 个独立子步骤)
 
-新 handoff 写完后, 自动更新 `docs/handoff/latest.md`:
-- Latest 字段指向新 doc 的相对路径
-- "历史 handoff" 表格首行 prepend 新条目 (Status: **Active (Latest)**)
-- 前一 Latest 改为 "Active (parallel predecessor)" 或 "superseded" (由 user 判断)
+> **v1.30.2 重要变更** (Forgejo aria-plugin #67): 拆分为 2 个 mechanical 子步骤 + 加 multi-track 显式判定。原 single-track linear succession 模型在 multi-terminal coordination 场景下歧义, follower cycle 容易把"pointer 不动"误读为"latest.md 不动", **连 History prepend 也忘了做** (实证: nexus PR #107 漏 History entry, 后开 PR #109 补救)。
+
+**子步骤 1 (always, 不可跳过)**: History 表格 prepend 新条目
+
+  - 不管 single-track 还是 multi-track, follower 还是 leader, **都要做**
+  - 格式: `- {YYYY-MM-DD HH:MM} — [{name}](./{filename}) ({scope-note} — {summary})`
+  - 位置: 按 committerdate desc 排序; 同日多个 cycle 按 HH:MM 排; 同日 leader 先于 follower
+  - `{scope-note}`: 标 `leader` / `follower:{track-id}` / `(empty)` for single-track
+  - `{summary}`: 1 句话 ≤ 80 chars 描述 cycle 核心交付
+
+**子步骤 2 (conditional)**: Pointer 行 (`**Latest**:` 字段) 更新
+
+  判定逻辑 (mechanical, 检查 `snapshot.tracks_multibranch`):
+
+  | 场景 | Pointer 更新? | 理由 |
+  |------|--------------|------|
+  | **Single-track** (`tracks_multibranch.exists == false` 或 `len(tracks) <= 1`) | ✅ 更新到新 doc | 无多终端, pointer = 唯一 latest |
+  | **Multi-track + 本 cycle 是项目主线** (其他 container 无 `status==active` track in `tracks_multibranch`) | ✅ 更新到新 doc | 本 cycle 是主线, 接替 pointer |
+  | **Multi-track + 本 cycle 是 follower scope** (其他 container 有 `status==active` track + 当前 pointer 指向该 leader doc) | ❌ **不更新** pointer (保留 leader 主线 doc) | follower 不抢主线 |
+
+  - **前一 Latest 处理** (仅子步骤 2 触发时): 改为 "Active (parallel predecessor)" 或 "superseded" (由 user 判断)
+
+**Edge cases**:
+
+- **首个 follower cycle (无 leader doc)**: 退化为 single-track 模式, 做子步骤 1 + 2
+- **Follower cycle 横跨 leader 主线写新 handoff**: rebase resolve 时仍应保留 follower History entry (per existing convention)
 
 ### Forbidden patterns (L5 hardcode)
 
 - ❌ 写到 `.aria/handoff/` (L1 hook 会拦)
 - ❌ 文件名含空格或特殊字符 (用 hyphen)
-- ❌ 跳过 latest.md 更新 (导致 stale pointer)
+- ❌ 跳过 latest.md 子步骤 1 (History prepend) — **任何 cycle 都不可跳过**, 否则 cycle 在 latest.md 隐形 (实证: nexus PR #107)
+- ❌ Multi-track follower **更新 pointer 行** (子步骤 2 在 follower 模式下应跳过, 保留 leader 主线 doc)
 - ❌ 用 datetime.now() 计算 — 用 UTC `date -u`
 
 ---

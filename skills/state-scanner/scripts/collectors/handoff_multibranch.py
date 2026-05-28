@@ -40,8 +40,8 @@ Design notes:
 - Same ``track_id`` appearing on multiple branches is intentionally preserved
   (collision detection per session-handoff.md §2.3.5).  TASK-005 renders the
   collision signals.
-- If PyYAML is unavailable, a ``soft_error`` is emitted but scanning continues;
-  all docs fall back to ``legacy`` in that mode (graceful degradation per §2.3.4).
+- Frontmatter parsing uses a stdlib-only YAML-subset parser (since v1.30.2,
+  fix for Forgejo aria-plugin #57 Finding 2) — no external dep required.
 - Performance: limited to ``refs/remotes/origin/`` (shallow ref list from
   TASK-003 fetch) — history is not walked.
 - If the remote branch count exceeds MAX_BRANCHES_SCANNED (20) only the first 20
@@ -254,25 +254,9 @@ def collect_handoff_multibranch(
     r = CollectorResult()
     error_messages: list[str] = []
 
-    # ── PyYAML availability probe ─────────────────────────────────────────────
-    # If yaml is not importable, parse_handoff_frontmatter will return None for
-    # every doc (YAML parse fails silently inside the helper).  We surface a
-    # soft_error here for operator visibility, but continue scanning in full
-    # legacy-degradation mode per §2.3.4.
-    yaml_available = True
-    try:
-        import yaml as _yaml_probe  # noqa: F401
-    except ImportError:
-        yaml_available = False
-        r.soft_error(
-            "handoff_yaml_unavailable",
-            "PyYAML is not installed — all handoff docs will be treated as "
-            "legacy tracks. Run `pip install pyyaml` to enable frontmatter "
-            "parsing.",
-        )
-        log.warning(
-            "handoff_multibranch: PyYAML unavailable; running in full legacy-fallback mode"
-        )
+    # PyYAML probe removed in v1.30.2 — parse_handoff_frontmatter now uses a
+    # stdlib parser (fix for Forgejo aria-plugin #57 Finding 2). Frontmatter
+    # parsing no longer requires any external dep.
 
     # ── Enumerate remote branches ─────────────────────────────────────────────
     branches, list_err = _list_origin_branches(project_root)
@@ -349,7 +333,7 @@ def collect_handoff_multibranch(
                 legacy_count += 1
                 continue
 
-            # Attempt frontmatter parse (returns None when yaml unavailable too)
+            # Attempt frontmatter parse (stdlib parser since v1.30.2, no external dep)
             fm = parse_handoff_frontmatter(content)
 
             if fm is not None:
@@ -391,10 +375,9 @@ def collect_handoff_multibranch(
                 legacy_count += 1
                 log.debug(
                     "handoff_multibranch: legacy fallback for '%s' on branch '%s' "
-                    "(no frontmatter or incomplete schema; yaml_available=%s)",
+                    "(no frontmatter or incomplete schema)",
                     filename,
                     branch,
-                    yaml_available,
                 )
 
     r.data = {

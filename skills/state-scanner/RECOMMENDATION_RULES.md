@@ -23,6 +23,9 @@
 | `submodule_drift` | 1.97 | (降级提示) | 任一子模块 `tree_vs_remote == true` | 70% | No — 非阻塞，附加 update 建议 |
 | `branch_behind_upstream` | 1.98 | (降级提示) | 当前分支落后 upstream >= 5 commits | 65% | No — 非阻塞，附加 pull 建议 |
 | `open_blocker_issues` | 1.99 | (降级提示) | 存在 blocker/critical label 的 open issue | 70% | No — 仅 issue_scan.enabled=true 时触发 |
+| `multi_terminal_follower_detected` | 1.51 | standby-observer | 本 container 在 `tracks_multibranch` 无 active owned track, 其他 container 有 | 90% | No — 仅信息提示, 不强制行为 |
+| `follower_safe_tasks_suggested` | 1.52 | (信息提示) | Rule 1 触发, 推荐 non-conflict 候选 task | 85% | No — 候选清单仅供参考 |
+| `multi_terminal_handoff_dual` | 1.53 | phase-d-closer-follower | D.3 阶段 + 多 track + leader pointer 仍在 latest.md | 88% | No — phase-d-closer 阶段建议 |
 | `prd_draft_blocking` | 5 | review-prd | Draft PRD 且关联 ≥5 Story | 80% | No — 需 owner 拍板 |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
@@ -848,6 +851,113 @@ recommendation:
       - "#{number} [{repo}] {title}"  # v1.1.0+: 每个匹配的 issue 一条, 含 repo 来源
   non_blocking: true  # 降级，不阻断任何现有推荐
 ```
+
+---
+
+## Multi-Terminal 协调规则 (v1.30.2 新增, Forgejo aria-plugin #56)
+
+3 个规则消费 `tracks_multibranch` snapshot key (v1.22.0 已实装 Layer H + Layer L collector). 让 follower-container 跑 `/aria:state-scanner` 时不再需要 AI/user 自行判断 race 风险, scanner 直接 surface follower 状态 + 安全候选任务 + D.3 多 track handoff 指南。
+
+**前提**: `coordination_fetch` + `handoff_multibranch` 数据可用 (v1.30.2 修了 #57 双 zero-day, sandbox 内现在能产生有效 `tracks_multibranch` 数据)。
+
+### 1.51 multi_terminal_follower_detected
+
+```yaml
+id: multi_terminal_follower_detected
+priority: 1.51
+description: 本 container 在 multi-track 看板中无 active owned track, 是 follower 角色
+
+conditions:
+  all:
+    - tracks_multibranch.exists: true
+    - len(tracks_multibranch.tracks) >= 2
+    - NOT exists track in tracks where (
+        track.owner_container == current_container_id
+        AND track.status in ["active", "in_progress"]
+      )
+    - exists track in tracks where (
+        track.owner_container != current_container_id
+        AND track.status in ["active", "in_progress"]
+      )
+
+  detection:
+    snapshot_path: "tracks_multibranch.tracks[]"
+    field_check: "current container has no active track; other container has ≥1 active"
+    current_container_id_source: "ARIA_CONTAINER_ID env, OR git config user.email, OR hostname"
+
+recommendation:
+  workflow: standby-observer
+  info: "🚦 本 container 是 follower — leader '{leader_owner}' 在 track '{track_id}' Phase {phase} active"
+  context:
+    leader_owner: "from track.owner_container"
+    leader_track: "from track.track_id"
+    leader_phase: "from track.phase"
+  suggestion:
+    - "不开 us-类 PR 启动 (避免与 leader 主线 race)"
+    - "查看 leader 的 latest handoff (docs/handoff/latest.md → leader's pointer)"
+  non_blocking: false  # follower 检测是强信号, 建议直接 ack
+```
+
+**Rationale (placement 1.51)**: 紧邻 `requirements_issues` (1.5) 之后, 在 architecture/state 检测之前 — multi-terminal 协调状态是当前 cycle 的 in-flight context, 应在所有"建议执行什么"类规则之前 surface。
+
+### 1.52 follower_safe_tasks_suggested
+
+```yaml
+id: follower_safe_tasks_suggested
+priority: 1.52
+description: Rule 1.51 触发后, 推荐 follower 可安全做的 non-conflict 候选 task
+
+conditions:
+  all:
+    - multi_terminal_follower_detected: true   # Rule 1.51 已触发
+
+recommendation:
+  workflow: null  # 信息提示, 不强制 workflow
+  info: "📋 Follower-safe 候选任务 (避免撞 leader 主线):"
+  display:
+    - "**(a) Local hygiene** — `git branch --merged main` cleanup + cache cleanup"
+    - "**(b) Cross-repo work** — aria-plugin / aria-standards / aria-orchestrator 的 issue/PR (跨 repo 不撞主仓 leader)"
+    - "**(c) Carry-forward items** — openspec `[carry-forward|TODO|defer]` 注释 (Phase 1.6.1 已浮出)"
+    - "**(d) Docs / audit** — handoff doc retrofit (legacy frontmatter), CLAUDE.md currency audit *(谨慎 — 若 leader 同时 touch CLAUDE.md 仍有 race)*"
+  anti_suggestions:
+    explicit_warn:
+      - "❌ 启动新 OpenSpec change in active tracks scope"
+      - "❌ 写 leader-track 的 phase-d-closer handoff (用 Rule 1.53 separate handoff)"
+      - "❌ bump submodule pointer (leader 可能在 in-flight)"
+  non_blocking: true  # 候选清单仅供参考
+```
+
+### 1.53 multi_terminal_handoff_dual
+
+```yaml
+id: multi_terminal_handoff_dual
+priority: 1.53
+description: D.3 阶段 + 多 track + leader pointer 仍在 latest.md → 推荐 follower 写 separate handoff
+
+conditions:
+  all:
+    - phase_context == "D.3"  # 来自调用方 (phase-d-closer 触发 state-scanner)
+    - tracks_multibranch.exists: true
+    - len(tracks_multibranch.tracks) >= 2
+    - exists track in tracks where (
+        track.owner_container != current_container_id
+        AND track.status == "active"
+      )
+    - handoff.latest_path != null
+    # handoff.latest_path 指向 leader 的 doc (不是本 cycle 即将写的 doc)
+
+recommendation:
+  workflow: phase-d-closer-follower
+  info: "✍️ D.3 多 track 模式 — 推荐写 separate follower handoff (slug 含 follower track-id)"
+  guidance:
+    - "新 handoff filename: `docs/handoff/{YYYY-MM-DD}-{follower-track-id}-{slug}.md`"
+    - "**不要** overwrite `docs/handoff/latest.md` pointer 行 (保留 leader 主线 doc)"
+    - "**仍要** prepend follower entry 到 latest.md History 表格 (per phase-d-closer SKILL.md §latest.md 维护 子步骤 1, v1.30.2 mechanical 拆分)"
+    - "frontmatter 必填 5 字段, 标 `status: active`"
+  non_blocking: false  # phase-d-closer 阶段强建议
+```
+
+---
 
 ### 自定义检查状态检测
 

@@ -39,7 +39,17 @@ from typing import Any
 # --- Constants -----------------------------------------------------------
 
 TIMESTAMP_KEYS = frozenset(
-    {"fetched_at", "last_updated", "timestamp", "last_active_at", "generated_at"}
+    {
+        "fetched_at",
+        "last_updated",
+        "timestamp",
+        "last_active_at",
+        "generated_at",
+        # v1.30.2: coordination_fetch.last_fetch_at — written on every successful
+        # fetch, changes between runs (was static '<missing>' pre-#57 fix when
+        # fetch always failed; now legitimately moves forward).
+        "last_fetch_at",
+    }
 )
 
 # Ephemeral path fields. NOTE: `output` is intentionally NOT in this set —
@@ -60,6 +70,15 @@ DROP_KEYS = frozenset(
         # handoff_doc) — no collision with other v1.0 schema fields.
         "raw_row",
         "raw_match",
+        # v1.30.2: coordination_fetch ephemeral cache metadata — TTL-based, varies
+        # between consecutive runs (run 1: cached=false, run 2: cached=true within
+        # 30s). Stability test (test_two_consecutive_runs_diff_zero) requires drop.
+        # Unique to coordination_fetch.{cached, age_seconds, refs_fetched};
+        # no collision risk. (refs_fetched is empty `[]` on cache-hit but populated
+        # on fresh fetch — same ephemeral metadata category.)
+        "cached",
+        "age_seconds",
+        "refs_fetched",
     }
 )
 

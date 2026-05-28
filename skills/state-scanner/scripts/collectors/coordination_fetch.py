@@ -1,6 +1,6 @@
 """Phase 1 (multi-terminal-coordination) — coordination fetch collector.
 
-Runs `git fetch <remote> refs/heads/* refs/aria/coordination --no-tags`
+Runs `git fetch <remote> --no-tags +refs/heads/*:refs/remotes/<remote>/* refs/aria/coordination`
 and caches the fetch timestamp in `.aria/cache/coordination-fetch.json`
 with a 30-second TTL so rapid successive scans skip redundant network I/O.
 
@@ -71,8 +71,19 @@ FETCH_CACHE_TTL: int = 30  # seconds — skip fetch if last fetch was < TTL ago
 
 COORDINATION_REF: str = "refs/aria/coordination"
 
-# Refspecs passed to git fetch
-_FETCH_REFSPECS: list[str] = ["refs/heads/*", COORDINATION_REF]
+
+def _build_fetch_refspecs(remote: str) -> list[str]:
+    """Build the refspec list for ``git fetch <remote> --no-tags ...``.
+
+    Wildcards in refspecs require the explicit ``src:dst`` form per
+    git-fetch(1); the previous ``refs/heads/*`` (single-src form, treated as
+    src==dst by git) is **invalid** and produces ``fatal: invalid refspec
+    refs/heads/*`` with rc=128.  Concrete (non-wildcard) refs like
+    ``refs/aria/coordination`` remain valid in single-src form.
+
+    Fix for Forgejo aria-plugin #57 Finding 1 (2026-05-28).
+    """
+    return [f"+refs/heads/*:refs/remotes/{remote}/*", COORDINATION_REF]
 
 # Cache file location relative to project_root
 _CACHE_RELATIVE: str = ".aria/cache/coordination-fetch.json"
@@ -231,7 +242,8 @@ def collect_coordination_fetch(
                     return r
 
     # ── Run git fetch ─────────────────────────────────────────────────────────
-    cmd = ["git", "fetch", remote, "--no-tags"] + _FETCH_REFSPECS
+    fetch_refspecs = _build_fetch_refspecs(remote)
+    cmd = ["git", "fetch", remote, "--no-tags", *fetch_refspecs]
     log.debug("coordination_fetch: running %s (cwd=%s)", " ".join(cmd), project_root)
 
     rc, _stdout, stderr = _run(cmd, cwd=project_root, timeout=30)
@@ -240,13 +252,13 @@ def collect_coordination_fetch(
 
     if rc == 0:
         # Success: update cache and return success payload
-        _write_cache(cache_file, fetch_at_iso, _FETCH_REFSPECS)
+        _write_cache(cache_file, fetch_at_iso, fetch_refspecs)
         r.data = {
             "success": True,
             "cached": False,
             "last_fetch_at": fetch_at_iso,
             "age_seconds": 0,
-            "refs_fetched": list(_FETCH_REFSPECS),
+            "refs_fetched": list(fetch_refspecs),
             "error_kind": None,
             "error_msg": None,
             "degraded": False,
