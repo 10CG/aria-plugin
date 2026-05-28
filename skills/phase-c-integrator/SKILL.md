@@ -45,8 +45,8 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `upm.milestone_driven` | `false` | 启用 C.2.6 里程碑子进度追加 (opt-in) |
 | `phase_c_integrator.pre_merge_gate.enabled` | `true` | 启用 C.2.4 pre-merge precondition gate (v1.3.0+) |
 | `phase_c_integrator.submodule_gate.mode` | `"warn"` v1.28.0 / `"block"` v1.29.0+ | C.2.4.5 submodule pointer regression gate 模式 (Spec aria-submodule-pointer-regression-gate) |
-| `phase_c_integrator.pre_merge_gate.primitive_preference` | `["aether-ci-cli"]` | gate primitive 优先级链 (现仅 aether CLI; aether-pre-merge-check skill 从未实施) |
-| `phase_c_integrator.pre_merge_gate.no_aether_fallback` | `"skip_with_warning"` | 无 aether 时降级 (`skip_with_warning` / `abort`) |
+| `phase_c_integrator.pre_merge_gate.ci_backends` | `null` (auto-detect) / `[]` (explicit disable) / `[{name: "..."}]` (explicit list) | **v1.31.0+** CI backend 选择 (替代旧 `primitive_preference`). 见 §C.2.4.X CI Backends |
+| `phase_c_integrator.pre_merge_gate.no_ci_fallback` | `"skip_with_warning"` | 无可用 CI backend 时降级 (`skip_with_warning` / `abort`). **v1.31.0+** 替代旧 `no_aether_fallback` (alias 仍读, 发 deprecation warning, v2.0 移除) |
 | `phase_c_integrator.pre_merge_gate.wait_timeout_seconds` | `1800` | wait+retry max 等待时长 (默认 30 min) |
 | `phase_c_integrator.pre_merge_gate.wait_check_intervals` | `[30,60,120,300,300]` | 指数退避秒数; 数组耗尽后重复 `intervals[-1]` |
 | `phase_c_integrator.pre_merge_gate.primitive_call_timeout_seconds` | `30` | 单次 aether subprocess 调用 timeout |
@@ -235,7 +235,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 **执行流程**:
 
 1. **Aether binary pre-flight check**: `aether --help | grep -q "in-flight"` 验证 binary 含 P0-A flag,缺失 → fail-fast 提示 "请升级 aether ≥ commit f29abee (2026-05-06)"
-2. **Aether init detection**: `which aether 2>/dev/null` 优先, 次选 `~/.aether/config.yaml` 是否存在;两者都 false → 按 `no_aether_fallback` 配置降级
+2. **Backend resolution** (v1.31.0+): `resolve_ci_backend(cfg)` 按 config 显式 `ci_backends` 顺序探测,或 fallback 到 BACKENDS list 静态顺序 (Aether-first, GHA-stub-second);所有 backend probe=False → 按 `no_ci_fallback` 配置降级。详见 §C.2.4.X CI Backends
 3. **Query main in-flight**: `aether ci status --branch main --in-flight --json` → parse `data.runs[]`
 4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending`
 5. **Verdict 计算** (aria 端):
@@ -251,7 +251,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 **Subprocess 调用规范**:
 - `subprocess.run(..., timeout=primitive_call_timeout_seconds)` 强制 (默认 30s)
 - timeout 触发 → max 3 attempts retry (backoff 5s/15s/45s) → 仍超时则 `fail` verdict
-- exit-code 映射: `0` = success / `1-126` = aether 错误 → `fail` / `127` = binary not found → `no_aether_fallback` / `-SIGTERM` = subprocess timeout → retry → 仍失败则 `fail`
+- exit-code 映射 (per-backend, Aether 示例): `0` = success / `1-126` = aether 错误 → `fail` / `127` = binary not found → `no_ci_fallback` / `-SIGTERM` = subprocess timeout → retry → 仍失败则 `fail`。**NIE-propagation 例外 (v1.31.0+, Hard Constraint #7)**: stub backend (e.g. GHA v1.31.0) query 方法 raise `NotImplementedError` → gate **abort** (raise to caller),**不**走 `no_ci_fallback`
 
 **Helper 实现**: `${ARIA_PLUGIN_ROOT:-aria}/skills/phase-c-integrator/scripts/pre_merge_gate.py` (stdlib + subprocess only)
 
@@ -273,8 +273,8 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `enabled` | `true` | gate 总开关 (false → 完全跳过 C.2.4,向后兼容) |
-| `primitive_preference` | `["aether-ci-cli"]` | 现仅 CLI (skill 从未实施) |
-| `no_aether_fallback` | `"skip_with_warning"` | 无 aether 时 (`skip_with_warning` / `abort`) |
+| `ci_backends` | `null` (auto-detect) / `[]` (disable) / `[{name: "..."}]` | **v1.31.0+** backend 选择. Alias: 旧 `primitive_preference` 仍读 + deprecation warning |
+| `no_ci_fallback` | `"skip_with_warning"` | 无可用 backend 时 (`skip_with_warning` / `abort`). Alias: 旧 `no_aether_fallback` 仍读 + deprecation warning |
 | `wait_timeout_seconds` | `1800` | wait+retry max (默认 30 min) |
 | `wait_check_intervals` | `[30,60,120,300,300]` | 指数退避 (秒); 数组耗尽后重复 `intervals[-1]` |
 | `primitive_call_timeout_seconds` | `30` | 单次 subprocess 调用 timeout |
@@ -282,11 +282,83 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 
 **降级行为**:
 - `enabled: false` → 完全跳过 C.2.4 (与 v1.2.0 行为 100% 一致)
-- 无 aether (binary not in PATH AND `~/.aether/config.yaml` not exists) AND `no_aether_fallback: skip_with_warning` → 跳过 + workflow report 警告
-- 无 aether AND `no_aether_fallback: abort` → BLOCK + 提示 "本项目要求 aether,请安装"
+- 无可用 backend (所有 backend probe=False, e.g. Aether 未装 + GHA 未 authed) AND `no_ci_fallback: skip_with_warning` → 跳过 + workflow report 警告
+- 无可用 backend AND `no_ci_fallback: abort` → BLOCK + 提示安装支持的 CI backend
+- 显式禁用 (`ci_backends: []`) → 视为"无可用 backend" 路径,按 `no_ci_fallback` 降级 (canonical way to disable v1.31.0+)
+- Stub backend NIE (e.g. `gh` 装但 GHA stub query 未实现) → **不走 fallback,直接 abort** (Hard Constraint #7)
 - aether binary 过期 (无 `--in-flight` flag) → fail-fast,**不**继续执行 (避免 silent skip)
 
 **Race condition 处理**: gate 检查与 merge call 之间,main 可能新触发 CI run。窗口最小化 (gate green 后立即调 merge),不消除 race。深度 mitigation 留 future Spec。
+
+---
+
+### C.2.4.X CI Backends (v1.31.0+)
+
+> **新增于 v1.31.0** — 实施 Spec [`aria-ci-backend-abstraction`](../../../openspec/changes/aria-ci-backend-abstraction/proposal.md) (Approved 2026-05-28, post_spec R2 CONVERGED unanimous PASS_WITH_WARNINGS × 3)。源于 2026-05-27 boundary audit P0 C5+C6 — pre_merge_gate.py 去 Aether-only 假设。
+
+**Backend 抽象**: `pre_merge_gate.py` 通过 `aria/skills/phase-c-integrator/scripts/ci_backends/` 包提供的 `CIBackend` ABC + `CIStatus` / `InFlightStatus` dataclass 调用 CI primitive。每个 backend 实现两个 abstract method (`query_pr_ci` / `query_branch_in_flight`) + 一个 ClassVar (`name`) + classmethod `probe()`。
+
+**Supported backends (v1.31.0)**:
+
+| Backend | name | Status | Real implementation? |
+|---------|------|--------|---------------------|
+| Aether | `aether-ci-cli` | ✅ Default, full | Yes (10CG Lab internal, migrated from v1.30.0 pre_merge_gate.py) |
+| GitHub Actions | `github-actions` | 🚧 Stub | No — `probe()` real (`gh` CLI + auth check), `query_*()` raise `NotImplementedError`. Real implementation deferred to v1.32.0+ next cycle |
+
+**Backend selection algorithm** (`resolve_ci_backend(config)`):
+
+```
+if config["ci_backends"] is [] (empty list):
+    return None  # explicit disable per AC-4.5
+elif config["ci_backends"] is non-empty list:
+    try each entry in user-specified order, return first probe()=True
+elif config["ci_backends"] is None or missing:
+    iterate BACKENDS list (Aether → GHA), return first probe()=True
+```
+
+**BACKENDS list order** (`ci_backends/__init__.py` static import, Hard Constraint #8):
+
+```python
+BACKENDS: list[type[CIBackend]] = [AetherBackend, GitHubActionsBackend]
+```
+
+→ Aether-first precedence locked. **不允许** decorator-based registration / `setuptools.entry_points` / 任何 dynamic discovery。
+
+**Config schema example**:
+
+```jsonc
+{
+  "phase_c_integrator": {
+    "pre_merge_gate": {
+      "enabled": true,
+      "ci_backends": null,                         // auto-detect (default)
+      // OR: "ci_backends": [],                    // explicit disable
+      // OR: "ci_backends": [{"name": "aether-ci-cli"}],  // explicit list
+      "no_ci_fallback": "skip_with_warning",       // when no backend available
+      // Legacy alias (auto-translated + DeprecationWarning, removed in v2.0):
+      // "primitive_preference": ["aether-ci-cli"],
+      // "no_aether_fallback": "skip_with_warning"
+    }
+  }
+}
+```
+
+**Hard Constraint #7 (NIE-propagation safety)**:
+
+Stub backend (e.g. `GitHubActionsBackend` in v1.31.0) `probe()` returns True 但 `query_*()` raise `NotImplementedError`。`gate_check()` **必须 propagate NIE to caller**,**不允许** catch-and-route-to-`no_ci_fallback`。理由:防止"装了 `gh` 但实际用 Aether 的项目"因 GHA stub 抢先注册而 Rule #8 静默降级。如需禁用 backend probing,显式设 `ci_backends: []`。
+
+**Probe cache (Hard Constraint #11, Option B)**:
+
+`ci_backends/__init__.py` exports `cached_probe(backend_cls)` + `reset_probe_cache()`。模块-level dict (`_probe_cache`) 缓存 probe 结果。**禁止** `@functools.lru_cache` (test isolation hazard)。测试 setUp/tearDown 必须调 `reset_probe_cache()` 防止状态泄漏。
+
+**Adding a new backend** (e.g. GitLab CI):
+
+1. Create `ci_backends/gitlab_ci.py` 继承 `CIBackend`,实现 `name` / `probe` / `query_pr_ci` / `query_branch_in_flight` (optionally `precheck`)
+2. Update `ci_backends/__init__.py` 加 import + 加到 `BACKENDS` list (位置决定 precedence)
+3. 加 unit tests 在 `tests/test_ci_backends.py`
+4. 加 doc entry in this table
+
+**NIE 是 stub 临时状态**: 如果新 backend 计划只做 stub,所有 `query_*()` 必须 raise `NotImplementedError` 带 operable message (含 `"PR welcome"` 提示 + 显式 disable instructions per `ci_backends: []`)。Hard Constraint #4 + AC-2.5 enforced via test。
 
 ---
 

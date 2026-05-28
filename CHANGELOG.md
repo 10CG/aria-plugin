@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.31.0] - 2026-05-28
+
+### Added — `aria-ci-backend-abstraction` CI backend 抽象层 (Sprint 2 boundary audit P0 C5+C6)
+
+Closes boundary audit P0 items C5+C6 (`.aria/notes/2026-05-27-boundary-audit-10cg-hardcode.md`). Ships Spec [`aria-ci-backend-abstraction`](../openspec/changes/aria-ci-backend-abstraction/proposal.md) (Approved 2026-05-28 via R1 REVISE × 2 + PASS_WITH_WARNINGS × 1 → Rev1 → R2 PASS_WITH_WARNINGS × 3 unanimous CONVERGED + Rev1.1 polish, L3 baseline per `feedback_audit_convergence_patterns`).
+
+**Source**: 2026-05-27 aria-fleet strategic memo (`.aria/notes/2026-05-27-aria-fleet-three-layer-architecture.md` §4 边界切割规则) + 2026-05-27 boundary audit memo §修复 2 — 通用层禁止 hardcode 10CG-specific 假设 (Aether 唯一 CI 平台).
+
+**Mechanism — new `ci_backends/` package** (`aria/skills/phase-c-integrator/scripts/ci_backends/`):
+
+- **`base.py`**: `CIBackend` ABC (4 members: `name` ClassVar + 3 abstract `probe` / `query_pr_ci` / `query_branch_in_flight` + 1 optional `precheck`) + `CIStatus` dataclass + `InFlightStatus` dataclass (with `has_runs` property)
+- **`aether.py`**: `AetherBackend` full migration from pre_merge_gate.py — `probe()` + `precheck()` + query methods. Behavior byte-for-byte preserved (Hard Constraint #1). Plus `AetherQueryError` exception.
+- **`github_actions.py`**: `GitHubActionsBackend` stub — `probe()` real (`gh auth status`), `query_*()` raise `NotImplementedError`. Real impl deferred to v1.32.0+ next cycle.
+- **`__init__.py`**: static `BACKENDS = [AetherBackend, GitHubActionsBackend]` (Aether-first precedence locked, Hard Constraint #8) + `cached_probe` + `reset_probe_cache` helper (Option B per Hard Constraint #11).
+
+**`pre_merge_gate.py` refactor**:
+
+- New `DEFAULT_CONFIG`: `ci_backends: null` (auto-detect) + `no_ci_fallback: "skip_with_warning"` (renamed)
+- New `_normalize_config()` + `_translate_value()` — soft alias for legacy keys (`primitive_preference` / `no_aether_fallback`) with `DeprecationWarning`. Alias normalization runs BEFORE merge with DEFAULT_CONFIG (Hard Constraint #9 sequencing).
+- New `resolve_ci_backend(config)`: `ci_backends: []` = explicit disable (AC-4.5); missing/null = auto-detect; non-empty list = user-specified order.
+- `compute_verdict()` signature extended (Hard Constraint #10): now returns dict with `backend_name` param.
+- `gate_check()` refactored: dispatch via `backend.precheck()` + `backend.query_branch_in_flight()` + `backend.query_pr_ci()`. Query order: main in-flight FIRST then PR CI SECOND (Rev1.1 per R2 ba N-1 — matches ground truth L309-329). NIE propagation (Hard Constraint #7): stub backend `NotImplementedError` MUST propagate (abort, NOT route to `no_ci_fallback`).
+- Renamed `_no_aether_output()` → `_no_ci_output()`.
+
+**Test suite (62 total, AC-7.2 ≥27 well-exceeded)**:
+
+- `test_pre_merge_gate.py` — 37 tests: 21 rewritten (mock collapse) + 16 new (TestGHAStubAbortNotSkip + TestAliasKeyPath + TestBothKeysPresentNewWins + TestBackendRegistry + TestNormalizeConfigSequencing + TestProbeCacheIsolation)
+- `test_ci_backends.py` — 25 new tests (TestCIStatus + TestInFlightStatus + TestCIBackendABC + TestAetherBackendProbe/Query/Precheck + TestGitHubActionsBackendStub + TestRegistry)
+- **62/62 PASS** + state-scanner 631/631 zero regression verified
+
+**Documentation updates**:
+
+- `CLAUDE.md` Rule #8 L432-444 rewritten to backend-agnostic phrasing + Hard Constraint #7 NIE-propagation explicit + backward-compat alias note
+- `aria/skills/phase-c-integrator/SKILL.md` ~14 references updated + new §C.2.4.X CI Backends section (~80 lines)
+- `aria/skills/config-loader/SKILL.md` config schema entries updated with alias deprecation notes
+- `standards/` zero touch verified
+
+**Rule #6 substitute** (deterministic Skill per `feedback_deterministic_structural_skill_rule6_substitute`):
+
+`aria-plugin-benchmarks/aria-ci-backend-abstraction/README.md` — structural fixture + 5 real-machine dogfood smoke evidence + AC behavior table (15+ rows). `/skill-creator benchmark` NOT applicable — no LLM prompt variable in deterministic Python refactor.
+
+**Out of Scope** (explicit deferrals):
+
+- GHA backend real implementation → v1.32.0+ next cycle (~4-6h L2 Spec)
+- GitLab CI / Forgejo Actions backends → aria-fleet M7+
+- GitProvider ABC → aria-fleet M7+ 主线
+
+**Convergence indicators**:
+
+- 3-agent independent surface (R1 post_spec): `_compute_verdict` undefined signature (tech F-03 + ba a3f8c2d1 + qa F-04) — substance convergence pattern
+- R2 unanimous PASS_WITH_WARNINGS: agent withdrawal + verdict improvement + 无振荡
+- Rev1.1 catch 1 paper-fix (ba R2 N-1 §B.4 query order) — meta dogfood
+
 ## [1.30.3] - 2026-05-28
 
 ### Fixed — defensive None guard in `_common.py::_run` (Forgejo Aria #131)

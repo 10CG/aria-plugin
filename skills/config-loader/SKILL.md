@@ -180,16 +180,18 @@ phase_c_integrator.pre_merge_gate.enabled:
   type: boolean
   default: true
 
-phase_c_integrator.pre_merge_gate.primitive_preference:
-  type: array of string
-  valid_values: [aether-ci-cli]
-  default: ["aether-ci-cli"]
-  # 注: aether-pre-merge-check skill 从未实施 (P0-B not shipped),仅 CLI primitive 可用
+phase_c_integrator.pre_merge_gate.ci_backends:
+  type: null | array of {name: string} | array of string
+  default: null  # null/missing = auto-detect via static BACKENDS list; [] = explicit disable; non-empty list = user-specified order
+  # v1.31.0+ replaces legacy `primitive_preference` (alias still works, emits DeprecationWarning, removed in v2.0)
+  # Supported names: "aether-ci-cli" (real), "github-actions" (stub v1.31.0+)
+  # See aria/skills/phase-c-integrator/SKILL.md §C.2.4.X CI Backends
 
-phase_c_integrator.pre_merge_gate.no_aether_fallback:
+phase_c_integrator.pre_merge_gate.no_ci_fallback:
   type: string
   valid_values: [skip_with_warning, abort]
   default: "skip_with_warning"
+  # v1.31.0+ replaces legacy `no_aether_fallback` (alias still works, emits DeprecationWarning, removed in v2.0)
 
 phase_c_integrator.pre_merge_gate.wait_timeout_seconds:
   type: integer
