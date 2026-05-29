@@ -214,6 +214,23 @@ context_for_next:
 
 ---
 
+## Context 占用感知 (暂停 vs 继续, #104)
+
+Phase B 多任务实施期, "当前会话继续 vs 暂停 (形成自然 commit boundary)" 是关键决策点。
+**不要凭感觉估** context 余量 (实证 #104: 凭感觉 +22% 偏差导致不必要暂停)。调用 [aria-context-monitor](../aria-context-monitor/SKILL.md) 机读 runtime-truth:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/aria-token-telemetry/scripts/token_telemetry.py" --project-root .
+```
+
+- `source=relay_cache` (confidence=high): 读 `used_percentage` — runtime 真值, 0 偏差
+- `source=transcript_fallback` (estimate): 读 `used_percentage_proxy` — window 可能低估, 放宽解读
+
+**决策阈值** (advisory): `<70%` 继续 / `70-85%` 找 commit boundary / `>85%` 建议在当前任务收尾后暂停 + commit。
+本 skill **只提供数据, 不自动中断** — 暂停决策由 AI 判断。relay 未装时引导 `setup_relay.sh`。
+
+---
+
 ## 跳过规则
 
 | 条件 | 跳过步骤 | 检测方法 |

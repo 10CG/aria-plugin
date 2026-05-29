@@ -1,18 +1,19 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.32.0
-> **发布日期**: 2026-05-28  # minor: aria-skills-progressive-disclosure-restructure — 4 SKILL.md 按 Anthropic /skill-creator 官方 guidance 重构 (audit-engine 627→341 / phase-d-closer 502→199 / aria-dashboard 594→150 / state-scanner 670→317; avg -58% lines, all 4 well under 500-line threshold). 15 new references/ sub-files (8 iter-1 + 7 iter-2 + 3 iter-3 minus 1 RECOMMENDATION_RULES split = correct count). RECOMMENDATION_RULES.md 1523→126 (split to references/rules/{basic,advanced,operations}.md). 99.8% byte-identical content preservation. AB benchmark (iter-1 24 runs + iter-2 12 runs) verified: tokens -3.9% (cumulative -4.3% vs v1.31.0), output lines -23.0%, time parity. 631/631 tests PASS. v1.29.0 reserved for aria-submodule-gate-block-flip (D+14 ship 2026-06-07).
+> **版本**: 1.33.0
+> **发布日期**: 2026-05-29  # minor: aria-context-monitor (#104) — 新增 2 skill (aria-context-monitor user-facing + aria-token-telemetry internal) + statusLine relay 机制, 让 AI 机读 runtime-truth context 占用 (消除 #104 实证 22% 凭感觉偏差). 3 档 fallback (relay_cache > transcript > unavailable) + window 4 档 resolve (cached_size_reuse>config>empirical_peak>default). aria-doctor v1.2.0 加 check_context_relay (3 态+jq). config-loader 注册 context_monitor namespace. 25 deterministic tests (15 py + 10 sh) = Rule #6 structural substitute. TASK-001 BLOCKING gate live-verified context_window_size 存在 (runtime 2.1.156). Skills 32→33 user-facing + 6→7 internal = 40 total.
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.32.0
+1.33.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
+- **Minor (30)**: `aria-context-monitor` (#104) — 新增 `aria-context-monitor` (user-facing) + `aria-token-telemetry` (internal, user-invocable:false, 复用 git-remote-helper US-012 Layer 3 先例) 两 skill + statusLine relay 机制。AI 机读当前会话 context 占用 (runtime-truth, 零猜测), 辅助 Phase B/C "继续 vs 暂停" 决策。核心: Claude Code runtime 渲染 statusLine 时 pipe 含 `context_window_size`/`used_percentage` 的 JSON 到 stdin → relay 行写 `.aria/cache/context-window.json` → telemetry 读。3 档 fallback (relay_cache high / transcript estimate / unavailable) + window 4 档 resolve。口径分离: relay 路径 `used_percentage` (runtime total_input/window) vs transcript 路径 `used_percentage_proxy` ((input+cache)/window), 不混用 (根因修复 #104 22% drift)。`setup_relay.sh` 幂等注入 (marker 锚点 + atomic $$ tmp→rename + 复用 $input + 位置敏感)。`aria-doctor` v1.1.0→v1.2.0 加 `check_context_relay` (3 态 relay-installed/statusline-no-relay/no-statusline + jq 可用性)。config-loader 注册 `context_monitor.{staleness_threshold_seconds:300, window_tokens:null}`。25 deterministic tests (15 py token_telemetry + 10 sh setup_relay) + 6 fixtures = Rule #6 structural substitute (per `feedback_deterministic_structural_skill_rule6_substitute`, internal data-layer skill 不适用 LLM AB)。TASK-001 BLOCKING pre-Phase-B gate live-verified `context_window_size` 存在 (runtime 2.1.156) → 回退条款未触发。post_spec R2 PASS_WITH_WARNINGS converged + Phase B.2 code-review PASS (0 Critical/0 Important, 4 Minor 全吸收: relay used_percentage 一致性校验 + total_input_tokens/exceeds_200k 口径注 + setup 退出码表)。Closes Forgejo Aria #104。Skills 32→33 user-facing + 6→7 internal = 40 total。
 - **Minor (29)**: `aria-skills-progressive-disclosure-restructure` — 4 SKILL.md (audit-engine 627→341 / phase-d-closer 502→199 / aria-dashboard 594→150 / state-scanner 670→317; avg -58%) + RECOMMENDATION_RULES.md (1523→126) restructured per Anthropic `/skill-creator` official guidance (SKILL.md <500 lines, progressive disclosure to `references/`). 15 new references/ sub-files: audit-engine/references/{agent-dispatch-contract,pre-write-validation,execution-modes,report-storage}.md + phase-d-closer/references/{handoff-mechanics,execution-steps,usage-examples,progress-update-details}.md + aria-dashboard/references/{parse-rules,execution-flow,html-templates}.md + state-scanner/references/{layer-l-integration,status-field-guide,phase-1-collectors,recommendation-stages}.md + state-scanner/references/rules/{basic-rules,advanced-rules,operations}.md. 99.8% byte-identical content preservation (Δ ~+50 lines = new file frontmatter + 1-2 line SKILL.md cross-link summaries). AB benchmark **24 runs iter-1 (vs v1.31.0)** + **12 runs iter-2 (vs iter-1)** verified: cumulative tokens -4.3%, output lines -23.0% (more concise AI responses), time parity. Per-skill: aria-dashboard best (-66% size → -6.4% tokens / -33.6% lines), audit-engine moderate, state-scanner +2-5% gains. 631/631 tests PASS unchanged (normalize_snapshot.py + `age_hours` added to DROP_KEYS as iter-1 incidental fix). Rule #6 substitute per `feedback_deterministic_structural_skill_rule6_substitute` (byte-identical extraction + 0 broken links + 631 tests). Closes no specific issue — `/skill-creator` driven refactor per owner request to apply progressive disclosure across all skills.
 - **Patch (5)**: defensive None guard in `_common.py::_run` — Forgejo Aria #131 reported v1.20.0 install crashing with `AttributeError: 'NoneType' object has no attribute 'splitlines'` at `git.py:187` on Windows CJK locale with non-ASCII commit messages. Root cause (missing `encoding="utf-8"`) **已在 #61 (v1.21+) fixed** — user only needs to upgrade. v1.30.3 codifies str-only return contract: `return p.returncode, (p.stdout or ""), (p.stderr or "")` belt-and-suspenders against any future subprocess thread race + docstring "Contract guarantee" explicitly states stdout/stderr ALWAYS strings (never None). 1-file fix (`_common.py`), 0 new tests (existing 631/631 unchanged; smoke test verified `subprocess.run` returning None → guard emits empty string).
 - **Patch (4)**: multi-terminal-coordination 3-issue bundle — (a) Forgejo aria-plugin #57 Finding 1 (`coordination_fetch.py` refspec): `["refs/heads/*", COORDINATION_REF]` invalid → `_build_fetch_refspecs(remote)` dynamic builder w/ `+refs/heads/*:refs/remotes/{remote}/*` src:dst form; (b) #57 Finding 2 (PyYAML dependency): `handoff.py::parse_handoff_frontmatter` 用 `_parse_simple_yaml_frontmatter` 20-line stdlib parser 替换 `yaml.safe_load` (5-field flat key:value, no nested/list/datetime coerce). `handoff_multibranch.py` 移除 PyYAML availability probe。live verified: coordination_fetch.success=true, 93 non-legacy tracks parsed; (c) #56 RECOMMENDATION_RULES.md 新增 3 multi-terminal rules: `multi_terminal_follower_detected` (1.51, follower 检测) + `follower_safe_tasks_suggested` (1.52, safe-task 清单) + `multi_terminal_handoff_dual` (1.53, D.3 separate handoff); (d) #67 `phase-d-closer/SKILL.md` §latest.md pointer 更新 重组为 `latest.md 维护` + 拆 2 mechanical 子步骤 (子步骤 1 = History prepend always; 子步骤 2 = Pointer update conditional based on tracks_multibranch detection); Forbidden patterns 加 follower 跳 History prepend 警告。`normalize_snapshot.py` 加 `last_fetch_at` → TIMESTAMP_KEYS + `cached`/`age_seconds`/`refs_fetched` → DROP_KEYS (修 test_two_consecutive_runs_diff_zero 因 #57 fix exposed)。631/631 tests PASS。
@@ -27,7 +28,7 @@
 
 ## 包含内容
 
-### Skills (32 面向用户 + 6 内部 = 38 total)
+### Skills (33 面向用户 + 7 内部 = 40 total)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -56,14 +57,18 @@
 - aria-dashboard
 
 **环境诊断 (1个, v1.24.0 新增)**
-- aria-doctor — 检测 plugin SOT vs project-local secret-guard 安装状态 (5-state schema)
+- aria-doctor — 检测 plugin SOT vs project-local secret-guard 安装状态 (5-state schema) + relay 3 态 (v1.33.0 check_context_relay)
+
+**Context 感知 (1个, v1.33.0 新增, #104)**
+- aria-context-monitor — 机读当前会话 context 占用 (runtime-truth), 辅助"继续 vs 暂停"决策
 
 **项目适配 (3个)**
 - project-analyzer, agent-gap-analyzer, agent-creator
 
-**基础设施 (6个, 内部, user-invocable: false)**
+**基础设施 (7个, 内部, user-invocable: false)**
 - agent-router, agent-team-audit, arch-common, audit-engine, config-loader
 - git-remote-helper (v1.15.0 新增, US-012 Layer 3)
+- aria-token-telemetry (v1.33.0 新增, #104; context/token 数据层, aria-context-monitor + #18 estimator 共享)
 
 ### Agents (11个)
 

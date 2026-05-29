@@ -61,6 +61,11 @@
     }
   },
 
+  "context_monitor": {
+    "staleness_threshold_seconds": 300,
+    "window_tokens": null
+  },
+
   "tdd": {
     "strictness": "advisory"
   },

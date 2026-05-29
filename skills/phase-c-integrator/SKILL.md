@@ -708,6 +708,18 @@ context_for_next:
 
 ---
 
+## Context 占用感知 (合并前长会话, #104)
+
+C.2 合并前若会话已很长 (多 cycle 累积), 用 [aria-context-monitor](../aria-context-monitor/SKILL.md) 判断"本 cycle 收尾后是否该暂停换会话", 避免 pre-merge gate 等待期硬撞 context 上限丢上下文:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/aria-token-telemetry/scripts/token_telemetry.py" --project-root .
+```
+
+`used_percentage` (relay 路径) `>85%` → 建议 merge 完成后即暂停 + 写 handoff。advisory, 不自动中断。详见 phase-b-developer 同名章节。
+
+---
+
 ## 跳过规则
 
 | 条件 | 跳过步骤 | 检测方法 |

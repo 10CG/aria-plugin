@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.33.0] - 2026-05-29
+
+### Added — `aria-context-monitor` (#104): 让 AI 机读 runtime-truth context 占用
+
+**Why**: aria 十步循环 Phase B/C 实施期, AI 频繁需"继续推进 vs 暂停"决策, 最优依据是剩余 context 容量。此前靠"感觉"判断常失准 (实证 #104: 估剩 ~23% 实际 45%, +22% 偏差 → 不必要暂停)。
+
+**新增 2 skill**:
+- **`aria-context-monitor`** (user-facing) — 消费 telemetry, 返回结构化 occupancy (used%/remaining%/window + confidence + staleness)。决策阈值建议: <70% 继续 / 70-85% 找 commit boundary / >85% 建议暂停。**只提供数据, 不自动中断**。
+- **`aria-token-telemetry`** (internal, `user-invocable: false`) — 共享数据层 (复用 git-remote-helper US-012 Layer 3 先例)。`scripts/token_telemetry.py` (stdlib-only): relay cache 读 (schema_version 校验 + JSONDecodeError/OSError→unavailable 防御) + transcript JSONL usage 解析 + window 4 档 resolve。raw counts 接口独立于 window% (#18 estimator 复用基础)。
+
+**核心机制 — statusLine relay**: Claude Code runtime 渲染 statusLine 时 pipe 含 `context_window_size`/`used_percentage`/`model.id[1m]` 的 JSON 到 stdin。`scripts/setup_relay.sh` 幂等注入 relay 行 (marker 锚点检测 + 复用 `$input` + 注入在 `input=$(cat)` 后 + atomic `$$` tmp→rename) → 写 `.aria/cache/context-window.json` → telemetry 读。无 statusLine 时建最小 reference。
+
+**3 档 fallback**: relay_cache (high, runtime-truth) > transcript_fallback (estimate) > unavailable。**口径分离**: relay 路径填 `used_percentage` (runtime total_input/window), transcript 路径填 `used_percentage_proxy` ((input+cache_read+cache_creation)/window) — 两者不混用 (根因修复 #104 22% drift)。**window 4 档**: cached_size_reuse > config > empirical_peak > default(200K)。staleness 默认 300s (config 可覆盖)。
+
+**集成**:
+- **aria-doctor v1.1.0 → v1.2.0**: 新增 `check_context_relay()` (`scripts/check_context_relay.sh`) — relay 3 态检测 (relay-installed / statusline-no-relay / no-statusline) + jq 可用性 + advisory。read-only。
+- **config-loader**: 注册 `context_monitor.{staleness_threshold_seconds: 300, window_tokens: null}` namespace (DEFAULTS.json + config-example.md 文档)。
+- **phase-b/c-developer SKILL.md**: 加 "Context 占用感知 (暂停 vs 继续)" 调用点 + 阈值建议 (advisory)。
+
+**测试 (Rule #6 deterministic structural substitute)**: internal data-layer skill 不适用 LLM AB (per `feedback_deterministic_structural_skill_rule6_substitute`)。25 deterministic tests: `test_token_telemetry.py` 15 (relay fresh/stale/corrupt/schema-mismatch/missing-used% + transcript fallback/no-usage/raw-counts + window 4 档 + staleness) + `setup_relay.test.sh` 10 (inject/custom-bar-preserve/position/run-twice-idempotent/pre-existing-marker/minimal-reference/dry-run) + 6 fixtures at `aria-plugin-benchmarks/context-monitor/`。
+
+**Phase A/B 闭环**: TASK-001 BLOCKING pre-Phase-B gate live-verified `context_window_size` 存在 (runtime 2.1.156) → 回退条款未触发。post_spec R2 PASS_WITH_WARNINGS converged (qa+tech-lead PWW + code-reviewer PASS)。Phase B.2 code-review PASS (0 Critical / 0 Important; 4 Minor 全吸收: `_from_relay` used_percentage 一致性校验 + schema.md total_input_tokens/exceeds_200k 口径注 + setup 退出码表)。
+
+Closes Forgejo Aria [#104](https://forgejo.10cg.pub/10CG/Aria/issues/104)。关联 aria-plugin #18 (ai-native-estimator, 复用 aria-token-telemetry, 后续 cycle)。Skills 32→33 user-facing + 6→7 internal = 40 total。
+
 ## [1.32.0] - 2026-05-28
 
 ### Changed — `aria-skills-progressive-disclosure-restructure` 4 SKILL.md restructured per Anthropic /skill-creator guidance

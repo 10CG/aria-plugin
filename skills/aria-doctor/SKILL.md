@@ -20,6 +20,32 @@ user-invocable: true
 
 ## Functions
 
+### `check_context_relay()`
+
+检测 aria-context-monitor statusLine relay 安装状态(#104),返回 **3 态** + jq 可用性 + advisory。纯诊断,read-only。
+
+**Script**: `scripts/check_context_relay.sh`
+
+**Usage**:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_context_relay.sh [--settings PATH]
+bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_context_relay.sh --help
+```
+
+返回 JSON: `{ state, jq_available, statusline_script, advisory }`
+
+| state | 含义 |
+|-------|------|
+| `relay-installed` | relay marker 已注入 → aria-context-monitor 走 runtime-truth (`source=relay_cache`) |
+| `statusline-no-relay` | statusLine 已配但无 relay marker → 运行 `setup_relay.sh` 注入 |
+| `no-statusline` / `no-settings` | 无 statusLine → 建最小 reference 或走 transcript fallback |
+| `statusline-inline-or-missing-script` | command 非脚本文件 → 手动注入 |
+
+`jq_available=false` 时:relay 写入侧不工作 (relay 块用 jq),仅 transcript fallback 可用;advisory 含安装提示。诊断脚本本身在无 jq 时仍手工拼 JSON 输出 (graceful)。
+
+Exit code: 0 always (state 编码结果)。Ships with aria-plugin v1.33.0。
+
 ### `check_secret_guard_install()`
 
 检测 aria-plugin secret-guard hook 当前安装状态(plugin SOT vs project-local
@@ -224,3 +250,4 @@ Recommended for: post-install verification / before reporting hook bugs / CI can
 |---------|------|---------|
 | 1.0.0 | 2026-05-23 | Initial — `check_secret_guard_install()` 5-state schema + 2 sub-flag + 8 unit tests + banner regex spec + atomicity guard. Ships with aria-plugin v1.24.0. |
 | 1.1.0 | 2026-05-24 | **O8 closure** — add `--self-test` flag (wraps existing 8 unit tests with env diagnostics + live env check + summary verdict; exit 0/1/2) + `--help` flag. Backward-compatible: positional `[PROJECT_DIR] [PLUGIN_ROOT]` single-check mode unchanged. Ships with aria-plugin v1.27.0. |
+| 1.2.0 | 2026-05-29 | **#104** — add `check_context_relay()` (`scripts/check_context_relay.sh`): aria-context-monitor statusLine relay 3-state detection + jq availability + advisory. Read-only diagnostic. Ships with aria-plugin v1.33.0. |

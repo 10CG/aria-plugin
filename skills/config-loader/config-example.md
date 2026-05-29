@@ -37,6 +37,11 @@
     "audit_log_path": ".aria/audit.log"
   },
 
+  "context_monitor": {
+    "staleness_threshold_seconds": 300,
+    "window_tokens": null
+  },
+
   "tdd": {
     "strictness": "advisory"
   },
@@ -315,6 +320,14 @@
 | `ui-ux-designer` | post_spec、pre_merge | UX 决策合理性、UI 变更审查 |
 
 非适用检查点（如 `post_brainstorm`、`mid_implementation`、`post_closure`）保持最小团队配置，避免 Token 消耗过高。
+
+### context_monitor.staleness_threshold_seconds
+
+relay cache (`.aria/cache/context-window.json`) 的新鲜度阈值（秒，默认 `300`）。`staleness_seconds` 超过此值时 `aria-context-monitor` 不再信任 relay cache 的 `used_percentage`，降级到 transcript fallback（`confidence=estimate`）。
+
+### context_monitor.window_tokens
+
+transcript fallback 时的 context window 大小覆盖值（默认 `null`）。仅当 relay cache 不可用且无 `cached_size_reuse` 时使用（window 4 档 resolve 的第 2 档）。relay 命中时直接用 runtime 提供的 `context_window_size`，此项被忽略。
 
 ---
 

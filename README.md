@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.32.0 | **Released**: 2026-05-28
+> **Version**: 1.33.0 | **Released**: 2026-05-29
 >
-> AI-DDD methodology plugin for Claude Code — 32 user-facing Skills + 6 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
+> AI-DDD methodology plugin for Claude Code — 33 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 
 ## Prerequisites
 
@@ -41,9 +41,9 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (32 user-facing + 6 internal = 38 total)
+### Skills (33 user-facing + 7 internal = 40 total)
 
-> Internal skills (6, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1).
+> Internal skills (7, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1), aria-token-telemetry (v1.33.0 +1).
 
 **Ten-Step Cycle Core**
 - state-scanner — Project state scan with intelligent workflow recommendations
@@ -87,12 +87,16 @@ export ARIA_HOOKS_DISABLED=true
 **Infrastructure**
 - config-loader *(internal, non-user-invocable)* — Configuration loading
 - git-remote-helper *(internal, non-user-invocable)* — Git multi-remote parity detection and push verification shared infrastructure (US-012, Layer 3)
+- aria-token-telemetry *(internal, non-user-invocable)* — Context/token telemetry shared data layer (relay cache read + transcript usage parse + window 4-tier resolve; #104, reused by #18 estimator)
+
+**Context Awareness** *(v1.33.0, #104)*
+- aria-context-monitor — Machine-read current session context occupancy (runtime-truth via statusLine relay) to inform "continue vs pause" decisions
 
 **Visualization**
 - aria-dashboard — Project progress dashboard (UPM/Stories/OpenSpec/Audit/Benchmark)
 
 **Environment Diagnosis** *(v1.24.0)*
-- aria-doctor — Detect aria-plugin secret-guard hook install state (`check_secret_guard_install` 5-state schema: not_installed / single_plugin / single_local / dual_install / corrupted_settings)
+- aria-doctor — Detect aria-plugin secret-guard hook install state (`check_secret_guard_install` 5-state schema) + statusLine relay state (`check_context_relay` 3-state + jq, v1.33.0)
 
 **Project Adaptation** *(v1.13.0)*
 - project-analyzer — Scan project tech stack, frameworks, and work patterns
