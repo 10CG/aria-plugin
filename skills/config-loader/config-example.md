@@ -332,6 +332,10 @@
 
 relay cache (`.aria/cache/context-window.json`) 的新鲜度阈值（秒，默认 `300`）。`staleness_seconds` 超过此值时 `aria-context-monitor` 不再信任 relay cache 的 `used_percentage`，降级到 transcript fallback（`confidence=estimate`）。
 
+### audit.scope_skip_paths  (#58, v1.35.0+)
+
+file-scope 二次过滤路径清单 (默认 `["deploy/", "docs/", ".forgejo/workflows/", ".github/workflows/", "*.md"]`)。**仅 audit-on 项目生效** (audit 默认全 off)。当本次变更的**全部**文件 ⊆ scope_skip_paths 时, audit mode 降级 (challenge → convergence, 不 skip; 保留安全网)。任一业务文件 ∉ 清单 → 标准 audit。**匹配语义**: 目录项 (尾斜杠, 如 `deploy/`) 用 `path.startswith(prefix)`; 后缀项 (如 `*.md`) 用 `path.endswith('.md')`。0 变更文件 → 不生效 (pass-through)。
+
 ### context_monitor.window_tokens
 
 transcript fallback 时的 context window 大小覆盖值（默认 `null`）。仅当 relay cache 不可用且无 `cached_size_reuse` 时使用（window 4 档 resolve 的第 2 档）。relay 命中时直接用 runtime 提供的 `context_window_size`，此项被忽略。

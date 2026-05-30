@@ -128,6 +128,18 @@ context_for_next:
 | 已有活跃 Spec | A.1 | 扫描 openspec/changes/ |
 | 复杂度 Level1 | A.1 | 变更文件 ≤3 + 简单类型 |
 | 已有 tasks.yaml | A.2, A.3 | 检查 detailed-tasks.yaml |
+| **emergency hotfix lane** | A.1, A.2, A.3 | `hotfix/*` 分支 (见下) |
+
+### emergency hotfix lane (#58, v1.35.0, advisory)
+
+prod 紧急修复走 lighter lane (state-scanner `emergency_hotfix` 规则触发, `hotfix/*` 分支)。**跳 Phase A.1-A.3** (无独立 spec; commit body + `Prod-Validated:` trailer 取代)。lane 概览:
+
+- **本 skill (Phase A)**: 跳 A.1-A.3
+- **phase-b-developer**: B.2 单测可被 manual prod validation 替代 —— 仅当 commit 含 `Prod-Validated:` trailer + 根因块 (phase-b 机检; 无 → block 回标准 lane)
+- **audit-engine / phase-c-integrator**: pre_merge audit (若 enabled) 降级 convergence
+- 仍走 Phase C/D
+
+详见各 phase skill + `standards/conventions/git-commit.md §6.4` (Prod-Validated trailer)。
 
 ### 跳过逻辑
 

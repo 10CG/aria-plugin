@@ -92,6 +92,8 @@
     "mode": "adaptive",
     "max_rounds": 5,
 
+    "scope_skip_paths": ["deploy/", "docs/", ".forgejo/workflows/", ".github/workflows/", "*.md"],
+
     "convergence_criteria": {
       "conclusion_match": true,
       "unanimous_pass": true

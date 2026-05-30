@@ -708,6 +708,16 @@ context_for_next:
 
 ---
 
+## emergency hotfix: pre_merge → convergence (#58, v1.35.0)
+
+当本 cycle 走 emergency_hotfix lane (state-scanner `emergency_hotfix` 规则触发, `hotfix/*` 分支) 时, C.2 的 pre_merge audit 调用点 **仅 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时**, 把 audit mode 降级到 **convergence** (不 challenge) —— prod 紧急修复不必跑 15-30min challenge ceremony。
+
+- advisory: phase-c-integrator 在 pre_merge 调 audit-engine 时传 emergency_hotfix lane 信号, audit-engine 据此 + file-scope 过滤共同 resolve 最终 mode (双降级幂等, 都 → convergence)。
+- C.2.4 pre-merge precondition gate (CI passing 等) **不豁免** —— hotfix 仍须过 Rule #8 CI gate (紧急不等于跳 CI 验证)。
+- 详见 [audit-engine SKILL.md](../audit-engine/SKILL.md) §emergency hotfix lane。
+
+---
+
 ## Context 占用感知 (合并前长会话, #104)
 
 C.2 合并前若会话已很长 (多 cycle 累积), 用 [aria-context-monitor](../aria-context-monitor/SKILL.md) 判断"本 cycle 收尾后是否该暂停换会话", 避免 pre-merge gate 等待期硬撞 context 上限丢上下文:

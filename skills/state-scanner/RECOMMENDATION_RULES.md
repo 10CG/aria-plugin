@@ -27,6 +27,7 @@
 | `follower_safe_tasks_suggested` | 1.52 | (信息提示) | Rule 1 触发, 推荐 non-conflict 候选 task | 85% | No — 候选清单仅供参考 |
 | `multi_terminal_handoff_dual` | 1.53 | phase-d-closer-follower | D.3 阶段 + 多 track + leader pointer 仍在 latest.md | 88% | No — phase-d-closer 阶段建议 |
 | `prd_draft_blocking` | 5 | review-prd | Draft PRD 且关联 ≥5 Story | 80% | No — 需 owner 拍板 |
+| `emergency_hotfix` | 1.85 | emergency-hotfix | `hotfix/*` 分支 (主) / commit `hotfix(` prefix (corroborating) | 85% | No — 紧急但需人判断 (#58, 详见 references/rules/basic-rules.md) |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
 | `feature_with_spec` | 3 | feature-dev | 有 approved OpenSpec | 88% | No — 进入开发是重大步骤 |
 | `pending_stories` | 3.5 | start-implementation | 有就绪 Story 可实现 | 75% | No |

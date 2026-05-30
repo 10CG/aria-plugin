@@ -238,6 +238,22 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/aria-token-telemetry/scripts/token_t
 | 已在功能分支 | B.1 | 当前分支不是 main/develop |
 | 无测试文件 | B.2 (降级) | 变更文件无对应 *_test.* |
 | 无架构变更 | B.3 | 无 ARCHITECTURE.md 变更 |
+| **emergency hotfix 单测替代** | B.2 单测 (manual prod validation 替代) | `hotfix/*` 分支 + `Prod-Validated:` trailer (见下) |
+
+### emergency hotfix: B.2 单测替代 + Prod-Validated trailer gate (#58, v1.35.0)
+
+prod 紧急修复 (emergency_hotfix lane, `hotfix/*` 分支) 中, ops/config 改动 (无业务逻辑可单测) 可用 **manual prod validation 替代 B.2 单测** —— 但需 **机械 gate**:
+
+```
+若 (hotfix/* 分支 AND 拟跳单测):
+    grep commit message for "^Prod-Validated:" trailer
+    ├── 存在 → 允许 manual prod validation 替代单测 (lighter lane 继续)
+    └── 缺失 → BLOCK, 回标准 lane (必须写单测 或 补 Prod-Validated trailer + 根因块)
+```
+
+- **机检 = trailer 存在性** (防"忘记留验证证据"); **内容真实性**靠 owner PR review + audit trail 事后追溯 (不事前防伪)。
+- trailer 格式 + 根因块见 `standards/conventions/git-commit.md §6.4`。
+- 非 hotfix 分支 / 非跳单测 → 此 gate 不触发, 标准 B.2 不变。
 
 ### 跳过逻辑
 

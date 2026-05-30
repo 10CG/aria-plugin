@@ -169,6 +169,33 @@ recommendation:
   reason: "简单修复，使用快速流程"
 ```
 
+### 2.5. emergency_hotfix (#58, v1.35.0)
+
+> prod 紧急修复 lighter lane (advisory)。优先级数值 **1.85** (< quick_fix 2, 与 audit_unconverged 1.9 同档但更急)。**主触发 = `hotfix/*` 分支**; commit `hotfix(...)` prefix 仅 corroborating (best-effort, future commit 开发期未提交)。
+
+```yaml
+id: emergency_hotfix
+priority: 1.85       # < quick_fix 2; 排序靠前 (数字越小越优先)
+confidence: 85%
+auto_execute: No     # 紧急但需人判断, 不自动执行
+description: prod 紧急修复 lighter lane (advisory)
+
+conditions:
+  any:
+    - branch: matches "hotfix/*"           # 主触发 (git.current_branch)
+    - commit_intent: prefix "hotfix("       # corroborating (best-effort, git.recent_commits[0].subject)
+
+recommendation:
+  workflow: emergency-hotfix
+  phases: [B, C, D]
+  skip_steps: [A.1, A.2, A.3]              # commit body + Prod-Validated trailer 取代独立 spec
+  reason: "prod 紧急修复, lighter lane"
+  notes:
+    - "B.2 单测可被 manual prod validation 替代 —— 仅当 commit 含 Prod-Validated: trailer + 根因块 (phase-b-developer 机检; 无 trailer → block 回标准 lane)"
+    - "pre_merge audit (若 enabled) 降级 convergence (不 challenge)"
+    - "commit 必含: 根因 + Prod-Validated: <evidence> trailer (见 standards/conventions/git-commit.md)"
+```
+
 ### 3. feature_with_spec
 
 ```yaml

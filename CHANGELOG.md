@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.35.0] - 2026-05-30
+
+### Added — `emergency-hotfix-and-audit-file-scope` (#58): prod hotfix lane + audit file-scope filter
+
+**Why** (SilkNode hotfix PR #268, prod cron 5-day silent failure): prod 紧急修复必须 lighter weight, 且 audit 应按 file scope 而非仅复杂度 Level 调节严格度。**triage** (filed v1.16.0, 现 v1.34.x, 18 minor drift): sub-item #3 (推荐 adaptive_rules) **已是 v1.34.0 默认 → 关闭**; 本 release 做剩 2 gap。
+
+**#1 emergency hotfix lane (advisory)**:
+- **state-scanner** 新 `emergency_hotfix` 规则 (priority 1.85 < quick_fix 2; **主触发 `hotfix/*` 分支**, commit `hotfix(` prefix corroborating; confidence 85% / auto_execute No) — 双写 basic-rules.md + RECOMMENDATION_RULES.md。
+- **phase-a-planner**: lane 概览 + 跳 Phase A.1-A.3。
+- **phase-b-developer**: **Prod-Validated commit trailer 机检 gate** — hotfix 分支跳单测 (B.2) 时机械 grep `^Prod-Validated:` 存在性; 有 → 允许 manual prod validation 替代单测; **无 → block, 回标准 lane**。存在性机检 (防"忘记留证"); 内容真实性靠 owner PR review + audit trail。
+- **audit-engine / phase-c-integrator**: emergency hotfix pre_merge audit (仅 `audit.enabled` + checkpoint != off) 降级 **convergence** (不 challenge)。C.2.4 CI gate **不豁免**。
+- **standards/conventions/git-commit.md §6.4**: `Prod-Validated:` 单行 trailer schema (evidence 换行用分号) + hotfix commit 格式。
+
+**#2 audit file-scope 二次过滤**:
+- **audit-engine**: mode (checkpoints/adaptive_rules) 解析**后**, 当本次变更**全部** ⊆ `audit.scope_skip_paths` 时 → `min(resolved_mode, convergence)` (challenge → convergence; off/convergence 不变)。**降级而非 skip** (issue 实证 deploy script challenge 能找到 wget HTTP 4xx 退出 0 真退化 → deploy 不能全 skip)。变更文件 audit-engine **自取** `git diff --name-only $(git merge-base HEAD <base>)` (base 可配/`symbolic-ref`, fallback 全失 → skip+warn; **merge-base 而非 `HEAD`** —— pre_merge 时 hotfix 已 commit, `diff HEAD` 会漏已提交变更); `len==0` pass-through (防 vacuous-true)。仅 audit-on 项目生效。
+- **config-loader**: `audit.scope_skip_paths` 默认 `["deploy/","docs/",".forgejo/workflows/",".github/workflows/","*.md"]` (目录 startswith / 后缀 endswith)。
+
+**post_spec audit (3-round CONVERGED)**: R1 (3/3 REVISE, 3 Critical: file-scope 数据源错配 + Prod-Validated gate 无 enforcer + DEC-6 时机) → Rev1 → R2 (2 PWW + 1 NEW Critical: `git diff HEAD` pre_merge 漏已提交变更) → Rev2 (merge-base diff) → R3 (0 new Critical)。**连续 2 轮拦截 git 数据源/ref load-bearing 缺陷**。Phase B.2 code-review PASS (0 Critical; 1 Important "B.3→B.2 单测步骤" cross-skill drift 已修)。
+
+**测试**: Rule #6 doc-existence structural fixture 10/10 PASS (behavior-conformance advisory/prose 标 dogfood-only)。
+
+Source Aria [#58](https://forgejo.10cg.pub/10CG/Aria/issues/58)。DEC-20260530-002。Skills 不变 (34 user-facing + 7 internal = 41)。
+
 ## [1.34.1] - 2026-05-30
 
 ### Fixed — `secret-guard` CRLF fail-closed 阻断 Windows 全部工具 (#132, P0)
