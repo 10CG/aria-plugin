@@ -74,6 +74,8 @@ case "${1:-}" in
       state=$(printf '%s' "$live_json" | jq -r '.state' 2>/dev/null || echo '?')
       sub=$(printf '%s' "$live_json" | jq -cr '.sub_flags' 2>/dev/null || echo '?')
       adv=$(printf '%s' "$live_json" | jq -r '.advisory' 2>/dev/null | head -c 120)
+      # crlf-strip(#132 sibling): display values → strip trailing CR (Windows native jq CRLF; cosmetic — avoids stray CR in diagnostic output)
+      state="${state%$'\r'}"; sub="${sub%$'\r'}"; adv="${adv%$'\r'}"
       echo "  state: $state | sub_flags: $sub"
       echo "  advisory: $adv..."
     else
