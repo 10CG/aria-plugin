@@ -153,6 +153,65 @@ class TranscriptPathTests(unittest.TestCase):
         self.assertNotIn("window", usage, "raw counts must not carry window")
 
 
+class IterTranscriptUsage(unittest.TestCase):
+    """#18 estimator per-turn iterator (additive; parse_transcript_usage unchanged)."""
+
+    def _write(self, lines):
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        return path
+
+    def test_iter_returns_all_turns_with_meta(self):
+        path = self._write([
+            json.dumps({"type": "assistant", "uuid": "u1", "parentUuid": None,
+                        "sessionId": "s1", "timestamp": "2026-05-30T06:00:00.100Z",
+                        "message": {"usage": {"input_tokens": 5, "output_tokens": 10,
+                                              "cache_creation_input_tokens": 1, "cache_read_input_tokens": 100}}}),
+            json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}),
+            json.dumps({"type": "assistant", "uuid": "u2", "parentUuid": "u1",
+                        "sessionId": "s1", "timestamp": "2026-05-30T06:01:00.200Z",
+                        "message": {"usage": {"input_tokens": 8, "output_tokens": 20,
+                                              "cache_creation_input_tokens": 2, "cache_read_input_tokens": 200}}}),
+        ])
+        turns = tt.iter_transcript_usage(path)
+        self.assertEqual(len(turns), 2, "both assistant-usage turns returned in order")
+        self.assertEqual(turns[0]["uuid"], "u1")
+        self.assertEqual(turns[1]["uuid"], "u2")
+        self.assertEqual(turns[0]["timestamp"], "2026-05-30T06:00:00.100Z")
+        self.assertEqual(turns[0]["session_id"], "s1")
+        self.assertEqual(turns[1]["usage"]["output_tokens"], 20, "raw field names passthrough")
+        self.assertIn("cache_creation_input_tokens", turns[1]["usage"])
+
+    def test_iter_skips_non_assistant_and_corrupt(self):
+        path = self._write([
+            json.dumps({"type": "user", "message": {"content": "x"}}),
+            "{ broken json,,,",
+            json.dumps({"type": "assistant", "uuid": "u9", "sessionId": "s",
+                        "timestamp": "2026-05-30T06:00:00Z",
+                        "message": {"usage": {"input_tokens": 1, "output_tokens": 1,
+                                              "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}}),
+        ])
+        turns = tt.iter_transcript_usage(path)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]["uuid"], "u9")
+
+    def test_iter_missing_file_returns_empty_no_raise(self):
+        self.assertEqual(tt.iter_transcript_usage("/no/such/file.jsonl"), [])
+        self.assertEqual(tt.iter_transcript_usage(""), [])
+
+    def test_iter_null_timestamp_tolerated(self):
+        path = self._write([
+            json.dumps({"type": "assistant", "uuid": "u1", "sessionId": "s",
+                        "message": {"usage": {"input_tokens": 1, "output_tokens": 1,
+                                              "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}}),
+        ])
+        turns = tt.iter_transcript_usage(path)
+        self.assertEqual(len(turns), 1)
+        self.assertIsNone(turns[0]["timestamp"], "missing timestamp → None (wall_clock null-safe upstream)")
+
+
 class WindowResolveTiers(unittest.TestCase):
     """window 4-tier resolve: cached_size_reuse > config > empirical_peak > default."""
 

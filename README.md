@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.33.0 | **Released**: 2026-05-29
+> **Version**: 1.34.0 | **Released**: 2026-05-30
 >
-> AI-DDD methodology plugin for Claude Code — 33 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
+> AI-DDD methodology plugin for Claude Code — 34 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (33 user-facing + 7 internal = 40 total)
+### Skills (34 user-facing + 7 internal = 41 total)
 
 > Internal skills (7, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1), aria-token-telemetry (v1.33.0 +1).
 
@@ -91,6 +91,9 @@ export ARIA_HOOKS_DISABLED=true
 
 **Context Awareness** *(v1.33.0, #104)*
 - aria-context-monitor — Machine-read current session context occupancy (runtime-truth via statusLine relay) to inform "continue vs pause" decisions
+
+**Effort Estimation** *(v1.34.0, #18)*
+- ai-native-estimator — Token-axis cycle workload estimation v1 (phase-d auto-capture + forecast/velocity query; Token replaces 4-8h human-hour assumption)
 
 **Visualization**
 - aria-dashboard — Project progress dashboard (UPM/Stories/OpenSpec/Audit/Benchmark)

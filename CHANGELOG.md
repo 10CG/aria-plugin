@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.34.0] - 2026-05-30
+
+### Added — `ai-native-estimator` (#18): Token 轴 cycle 工作量估算 (v1 薄切片)
+
+**Why**: aria 传统估算建立在 4-8h 人工时假设上, 在 1 Human + Claude Code 模式下失效 (同一小时 AI 可产出 1 行或 1000 行)。v1 用 **Token (AI 侧 runtime-truth)** 替代, 先做能自动测的 Token 轴, 积累 variance 数据。
+
+**新增 skill**:
+- **`ai-native-estimator`** (user-facing) — 查询 API: `forecast(spec_level)` (N≥`min_samples`(3) → median(work_metric); N<3 → uncalibrated bootstrap; cross-level 隔离) / `history()` / `velocity(window=10)`。
+- **`aria-token-telemetry`** (internal) 新增 `iter_transcript_usage(path) → list[{uuid, timestamp, session_id, usage}]` (additive per-turn 迭代器; 现有 `parse_transcript_usage` 不动)。
+
+**采集机制 — phase-d-closer D.4** (v1.1.0 → v1.2.0): 收尾末位子步自动 capture 本 cycle token 消耗到 `.aria/estimator/variance.jsonl` (advisory, 非阻塞)。cycle 粒度 watermark `{last_uuid, last_timestamp, session_id, transcript_path}`; **幂等主机制 = 空区间** (重跑无新 turn → range 空 → skip); `cycle_id = {spec_slug}-{end_uuid[:8]}` (range 末 uuid 锚, cycle 内稳定)。
+
+**数据模型**: `work_metric = output_tokens + cache_creation_input_tokens` (cache_read 排除, 是上下文重载非"工作"); variance.jsonl 存全部四 raw 分量 (work_metric 可重算)。`wall_clock_seconds` = 被动元数据 (**calendar-elapsed ≠ effort/workload**; 不进 forecast/work_metric; null-safe)。聚类键 = `spec_level`。
+
+**config-loader**: 注册 `ai_native_estimator.{enabled:true, min_samples:3, window:10, bootstrap_seed:{L1:30000,L2:150000,L3:500000}}`。
+
+**测试 (Rule #6 deterministic structural substitute)**: 40 tests (21 estimator covering all 11 Success Criteria + 19 token-telemetry incl 15 零回归)。
+
+**post_spec audit (3-round CONVERGED)**: R1 (3/3 REVISE, 3 convergent Critical: `parse_transcript_usage` 复用错配 + transcript 字段未验 + cycle_meta 来源) → Rev1 (spike-verified transcript schema: uuid/timestamp/sessionId, 无数字 turn_index) → R2 (2 PWW + 1 NEW Critical: cycle_id 幂等自相矛盾, backend 发现 + qa corroborate) → Rev2 (幂等改 watermark 空区间) → R3 (2/2 PWW, 0 new Critical, CONVERGED)。**实施前拦截 2 个 load-bearing 缺陷**。Phase B.2 code-review PASS (0 Critical/0 Important, 3 Minor 全吸收)。
+
+**v1 defer (DEC-20260530-001)**: Attention 轴 / L1+L2 预估 / task-planner 等 5 集成 / S/M/L/XL 替代 / per-task 粒度 / usd_cost / multi-terminal 并发写。
+
+Source aria-plugin [#18](https://forgejo.10cg.pub/10CG/aria-plugin/issues/18) (依赖 #104 `aria-token-telemetry`)。Skills 33→34 user-facing + 7 internal = 41 total。
+
 ## [1.33.0] - 2026-05-29
 
 ### Added — `aria-context-monitor` (#104): 让 AI 机读 runtime-truth context 占用

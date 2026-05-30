@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 
 # Phase D - 收尾阶段 (Closer)
 
-> **版本**: 1.1.0 | **十步循环**: D.1-D.3 (D.3 added by H0 spec 2026-05-14)
+> **版本**: 1.2.0 | **十步循环**: D.1-D.4 (D.3 added by H0 2026-05-14; D.4 estimator capture by #18 2026-05-30)
 
 ## 快速开始
 
@@ -37,6 +37,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 | D.1 | progress-updater | 进度更新 | upm_updated |
 | D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug) | spec_archived |
 | D.3 | session-handoff (本 Skill 内嵌) | 写 session handoff doc 到 `docs/handoff/` | handoff_written |
+| D.4 | ai-native-estimator (capture) | 采集本 cycle token 工作量 (advisory, 非阻塞, #18 v1) | estimator_captured |
 
 ---
 
@@ -157,6 +158,29 @@ session 结束时引导写 handoff doc, 让下一个 session zero-context 可恢
 **latest.md 维护**: 2 个 mechanical 子步骤 — 子步骤 1 History prepend (always) + 子步骤 2 Pointer 更新 (conditional by `snapshot.tracks_multibranch` multi-track detection)。
 
 **完整说明 (触发条件 4 级 fallback / 输出路径 slug 规则 / 模板 variable 字典 / latest.md 2 子步骤 + 3-row decision table + edge cases / Forbidden patterns)**: 见 [references/handoff-mechanics.md](./references/handoff-mechanics.md)。
+
+---
+
+## §D.4 Estimator Capture (2026-05-30, #18 v1)
+
+收尾**末位**子步 (D.3 之后), 自动采集本 cycle 的 token 工作量到 estimator 历史 (advisory, **非阻塞**)。
+
+**触发**: `ai_native_estimator.enabled != false` (config-loader)。
+
+**执行**:
+```bash
+EST="${CLAUDE_PLUGIN_ROOT:-aria}/skills/ai-native-estimator/scripts/estimator.py"
+python3 "$EST" --project-root . capture \
+  --spec-slug <本 cycle Spec slug> \
+  --spec-level <读 openspec/changes/{spec}/proposal.md frontmatter `Level` 行; 无 Spec 省略> \
+  --n-tasks <detailed-tasks.yaml task 数; 无省略>
+```
+
+- **幂等**: 无新 turn → `{"skipped": true}` (watermark 空区间, 安全可重跑)
+- **非阻塞**: 任何失败 (无 transcript / config disabled) → skip + warn, **不影响收尾闭环**
+- cycle_id 由 estimator 从 transcript range 末 uuid 生成 (phase-d 不传时刻)
+
+**完整数据模型 + 查询**: 见 [ai-native-estimator](../ai-native-estimator/SKILL.md)。
 
 ---
 

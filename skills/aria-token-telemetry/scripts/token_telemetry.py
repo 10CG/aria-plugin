@@ -227,6 +227,57 @@ def parse_transcript_usage(jsonl_path: str) -> dict | None:
     }
 
 
+def iter_transcript_usage(jsonl_path: str) -> list:
+    """Iterate ALL assistant-turn usage records from transcript JSONL (#18 estimator).
+
+    Unlike parse_transcript_usage (which returns only the LAST turn), this returns
+    a per-turn list in file order, each carrying the record's uuid / timestamp /
+    session_id alongside the raw usage. Used by ai-native-estimator for cycle-grain
+    watermark range capture + wall_clock derivation. Never raises (returns [] on error).
+
+    Returns: list[{
+      "uuid": str|None, "timestamp": str|None, "session_id": str|None,
+      "usage": { input_tokens, output_tokens,
+                 cache_creation_input_tokens, cache_read_input_tokens },  # raw field names
+    }]  in transcript order (only assistant records with a usage block).
+    """
+    if not jsonl_path:
+        return []
+    turns = []
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue  # tolerate partial/corrupt lines
+                if not isinstance(rec, dict) or rec.get("type") != "assistant":
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not (isinstance(usage, dict) and "input_tokens" in usage):
+                    continue
+                turns.append({
+                    "uuid": rec.get("uuid"),
+                    "timestamp": rec.get("timestamp"),
+                    "session_id": rec.get("sessionId"),
+                    "usage": {
+                        "input_tokens": usage.get("input_tokens", 0) or 0,
+                        "output_tokens": usage.get("output_tokens", 0) or 0,
+                        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
+                        "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
+                    },
+                })
+    except (FileNotFoundError, OSError):
+        return []
+    return turns
+
+
 def resolve_window(usage: dict, cm_config: dict, last_known_size) -> tuple[int, str]:
     """Resolve window size for transcript fallback. Returns (size, window_source).
 

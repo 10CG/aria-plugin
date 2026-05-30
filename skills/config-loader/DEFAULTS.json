@@ -66,6 +66,13 @@
     "window_tokens": null
   },
 
+  "ai_native_estimator": {
+    "enabled": true,
+    "min_samples": 3,
+    "window": 10,
+    "bootstrap_seed": { "L1": 30000, "L2": 150000, "L3": 500000 }
+  },
+
   "tdd": {
     "strictness": "advisory"
   },

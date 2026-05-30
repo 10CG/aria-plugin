@@ -1,18 +1,19 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.33.0
-> **发布日期**: 2026-05-29  # minor: aria-context-monitor (#104) — 新增 2 skill (aria-context-monitor user-facing + aria-token-telemetry internal) + statusLine relay 机制, 让 AI 机读 runtime-truth context 占用 (消除 #104 实证 22% 凭感觉偏差). 3 档 fallback (relay_cache > transcript > unavailable) + window 4 档 resolve (cached_size_reuse>config>empirical_peak>default). aria-doctor v1.2.0 加 check_context_relay (3 态+jq). config-loader 注册 context_monitor namespace. 25 deterministic tests (15 py + 10 sh) = Rule #6 structural substitute. TASK-001 BLOCKING gate live-verified context_window_size 存在 (runtime 2.1.156). Skills 32→33 user-facing + 6→7 internal = 40 total.
+> **版本**: 1.34.0
+> **发布日期**: 2026-05-30  # minor: ai-native-estimator (#18) — 新增 ai-native-estimator (user-facing) Token 轴工作量估算 v1 + token-telemetry 新增 iter_transcript_usage() (additive). phase-d-closer D.4 收尾自动 capture cycle token 工作量 (cycle 粒度 watermark, 幂等=空区间). forecast/history/velocity 查询 (spec_level 聚类, N<3 uncalibrated bootstrap). work_metric=output+cache_creation; wall_clock 被动元数据(非工作量). 40 deterministic tests (21 estimator + 19 token-telemetry) = Rule #6. post_spec 3-round CONVERGED (2 Critical caught pre-impl: parse_transcript_usage 复用错配 + cycle_id 幂等). Skills 33→34 user-facing + 7 internal = 41 total.
 > **仓库**: https://github.com/10CG/aria-plugin
 
 ## 版本号
 
 ```
-1.33.0
+1.34.0
 ```
 
 ## 说明
 
 - **Major (1)**: 稳定核心架构，十步循环 + OpenSpec 规范
+- **Minor (31)**: `ai-native-estimator` (#18) — 新增 user-facing skill `ai-native-estimator` (Token 轴工作量估算 v1 薄切片) + `aria-token-telemetry` 新增 `iter_transcript_usage()` (additive per-turn 迭代器, 现有 parse_transcript_usage 不动)。让 aria 用 **Token (AI 侧 runtime-truth)** 而非传统 4-8h 人工时估算 cycle 工作量。phase-d-closer 新增 **D.4** 收尾子步 (v1.1.0→v1.2.0): 自动 capture 本 cycle token 消耗到 `.aria/estimator/variance.jsonl` (cycle 粒度 watermark `{last_uuid, last_timestamp, session_id, transcript_path}`; **幂等主机制=空区间** 重跑无新 turn skip; cycle_id={spec_slug}-{end_uuid[:8]} range 末 uuid 锚)。查询: `forecast(spec_level)` (N≥3 median / N<3 uncalibrated bootstrap + cross-level 隔离) / `history` / `velocity` (window+两列)。`work_metric = output + cache_creation` (cache_read 排除); `wall_clock_seconds` = 被动元数据 (calendar-elapsed ≠ effort, 不进 forecast)。config-loader 注册 `ai_native_estimator.{enabled, min_samples:3, window:10, bootstrap_seed}`。**40 deterministic tests** (21 estimator + 19 token-telemetry incl 15 零回归) = Rule #6 structural substitute。**post_spec 3-round CONVERGED**: R1 (3/3 REVISE, 3 convergent Critical) → Rev1 → R2 (2 PWW + 1 NEW Critical: cycle_id 幂等自相矛盾, backend 发现 + qa corroborate) → Rev2 → R3 (2/2 PWW, 0 new Critical) —— spike-verified transcript schema 实施前拦截 2 个 load-bearing 缺陷。Phase B.2 code-review PASS (0 Critical/0 Important, 3 Minor 全吸收)。v1 defer: Attention 轴 / L1-L2 预估 / task-planner 等 5 集成 / per-task 粒度 (见 DEC-20260530-001)。Source aria-plugin #18 (依赖 #104 token-telemetry)。Skills 33→34 user-facing + 7 internal = 41 total。
 - **Minor (30)**: `aria-context-monitor` (#104) — 新增 `aria-context-monitor` (user-facing) + `aria-token-telemetry` (internal, user-invocable:false, 复用 git-remote-helper US-012 Layer 3 先例) 两 skill + statusLine relay 机制。AI 机读当前会话 context 占用 (runtime-truth, 零猜测), 辅助 Phase B/C "继续 vs 暂停" 决策。核心: Claude Code runtime 渲染 statusLine 时 pipe 含 `context_window_size`/`used_percentage` 的 JSON 到 stdin → relay 行写 `.aria/cache/context-window.json` → telemetry 读。3 档 fallback (relay_cache high / transcript estimate / unavailable) + window 4 档 resolve。口径分离: relay 路径 `used_percentage` (runtime total_input/window) vs transcript 路径 `used_percentage_proxy` ((input+cache)/window), 不混用 (根因修复 #104 22% drift)。`setup_relay.sh` 幂等注入 (marker 锚点 + atomic $$ tmp→rename + 复用 $input + 位置敏感)。`aria-doctor` v1.1.0→v1.2.0 加 `check_context_relay` (3 态 relay-installed/statusline-no-relay/no-statusline + jq 可用性)。config-loader 注册 `context_monitor.{staleness_threshold_seconds:300, window_tokens:null}`。25 deterministic tests (15 py token_telemetry + 10 sh setup_relay) + 6 fixtures = Rule #6 structural substitute (per `feedback_deterministic_structural_skill_rule6_substitute`, internal data-layer skill 不适用 LLM AB)。TASK-001 BLOCKING pre-Phase-B gate live-verified `context_window_size` 存在 (runtime 2.1.156) → 回退条款未触发。post_spec R2 PASS_WITH_WARNINGS converged + Phase B.2 code-review PASS (0 Critical/0 Important, 4 Minor 全吸收: relay used_percentage 一致性校验 + total_input_tokens/exceeds_200k 口径注 + setup 退出码表)。Closes Forgejo Aria #104。Skills 32→33 user-facing + 6→7 internal = 40 total。
 - **Minor (29)**: `aria-skills-progressive-disclosure-restructure` — 4 SKILL.md (audit-engine 627→341 / phase-d-closer 502→199 / aria-dashboard 594→150 / state-scanner 670→317; avg -58%) + RECOMMENDATION_RULES.md (1523→126) restructured per Anthropic `/skill-creator` official guidance (SKILL.md <500 lines, progressive disclosure to `references/`). 15 new references/ sub-files: audit-engine/references/{agent-dispatch-contract,pre-write-validation,execution-modes,report-storage}.md + phase-d-closer/references/{handoff-mechanics,execution-steps,usage-examples,progress-update-details}.md + aria-dashboard/references/{parse-rules,execution-flow,html-templates}.md + state-scanner/references/{layer-l-integration,status-field-guide,phase-1-collectors,recommendation-stages}.md + state-scanner/references/rules/{basic-rules,advanced-rules,operations}.md. 99.8% byte-identical content preservation (Δ ~+50 lines = new file frontmatter + 1-2 line SKILL.md cross-link summaries). AB benchmark **24 runs iter-1 (vs v1.31.0)** + **12 runs iter-2 (vs iter-1)** verified: cumulative tokens -4.3%, output lines -23.0% (more concise AI responses), time parity. Per-skill: aria-dashboard best (-66% size → -6.4% tokens / -33.6% lines), audit-engine moderate, state-scanner +2-5% gains. 631/631 tests PASS unchanged (normalize_snapshot.py + `age_hours` added to DROP_KEYS as iter-1 incidental fix). Rule #6 substitute per `feedback_deterministic_structural_skill_rule6_substitute` (byte-identical extraction + 0 broken links + 631 tests). Closes no specific issue — `/skill-creator` driven refactor per owner request to apply progressive disclosure across all skills.
 - **Patch (5)**: defensive None guard in `_common.py::_run` — Forgejo Aria #131 reported v1.20.0 install crashing with `AttributeError: 'NoneType' object has no attribute 'splitlines'` at `git.py:187` on Windows CJK locale with non-ASCII commit messages. Root cause (missing `encoding="utf-8"`) **已在 #61 (v1.21+) fixed** — user only needs to upgrade. v1.30.3 codifies str-only return contract: `return p.returncode, (p.stdout or ""), (p.stderr or "")` belt-and-suspenders against any future subprocess thread race + docstring "Contract guarantee" explicitly states stdout/stderr ALWAYS strings (never None). 1-file fix (`_common.py`), 0 new tests (existing 631/631 unchanged; smoke test verified `subprocess.run` returning None → guard emits empty string).
@@ -28,7 +29,7 @@
 
 ## 包含内容
 
-### Skills (33 面向用户 + 7 内部 = 40 total)
+### Skills (34 面向用户 + 7 内部 = 41 total)
 
 **十步循环核心 (9个)**
 - state-scanner, workflow-runner, phase-a-planner, phase-b-developer
@@ -61,6 +62,9 @@
 
 **Context 感知 (1个, v1.33.0 新增, #104)**
 - aria-context-monitor — 机读当前会话 context 占用 (runtime-truth), 辅助"继续 vs 暂停"决策
+
+**工作量估算 (1个, v1.34.0 新增, #18)**
+- ai-native-estimator — Token 轴 cycle 工作量估算 v1 (phase-d 自动采集 + forecast/velocity 查询)
 
 **项目适配 (3个)**
 - project-analyzer, agent-gap-analyzer, agent-creator
