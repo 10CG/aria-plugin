@@ -380,11 +380,26 @@ def collect_handoff_multibranch(
                     branch,
                 )
 
+    # Collision summary (TASK-000, #133) — additive, advisory-only.
+    # Built from the lossy track->ClaimRecord approximation via lib.collision;
+    # MUST NOT be used as a gating input downstream (DEC-20260519-001).
+    # Fail-soft: if lib import was unavailable, degrade to "none" rather than
+    # raising (collision is an advisory surface, never load-bearing).
+    if _COLLISION_AVAILABLE:
+        try:
+            collision = _classify_collision_summary(tracks, now=now)
+        except Exception as exc:  # noqa: BLE001 — advisory field never breaks scan
+            collision = {"kind": "none", "groups": []}
+            error_messages.append(f"collision classify failed (degraded to none): {exc}")
+    else:
+        collision = {"kind": "none", "groups": []}
+
     r.data = {
         "exists": len(tracks) > 0,
         "tracks": tracks,
         "branches_scanned": branches_scanned,
         "legacy_count": legacy_count,
+        "collision": collision,
         "errors": error_messages,
     }
     return r
