@@ -70,6 +70,14 @@ try:
     from ..lib.constants import HEARTBEAT_INTERVAL, STALE_TTL, CLOCK_SKEW_WARN_THRESHOLD
     from ..lib.claim_schema import ClaimRecord
     from ..lib.reconcile import reconcile_all, ReconcileVerdict
+    # Collision helpers: single source of truth in lib/collision.py (TASK-000 #133).
+    # The renderer no longer keeps a private copy — both renderer and the
+    # handoff_multibranch collector consume the same classification logic.
+    from ..lib.collision import (
+        split_owner_container as _split_owner_container,
+        track_to_claim_record as _track_to_claim_record,
+        classify_claims as _classify_collision,
+    )
     _RECONCILE_AVAILABLE = True
 except ImportError:
     # Fallback: inject the state-scanner root (parent of lib/) into sys.path so
@@ -90,6 +98,11 @@ except ImportError:
         from lib.constants import HEARTBEAT_INTERVAL, STALE_TTL, CLOCK_SKEW_WARN_THRESHOLD  # type: ignore[import]
         from lib.claim_schema import ClaimRecord  # type: ignore[import]
         from lib.reconcile import reconcile_all, ReconcileVerdict  # type: ignore[import]
+        from lib.collision import (  # type: ignore[import]
+            split_owner_container as _split_owner_container,
+            track_to_claim_record as _track_to_claim_record,
+            classify_claims as _classify_collision,
+        )
         _RECONCILE_AVAILABLE = True
     except ImportError:
         # Last resort: lib package still not importable (very unusual environment).
@@ -99,6 +112,13 @@ except ImportError:
             _sys.path.insert(0, _LIB_DIR)
         from constants import HEARTBEAT_INTERVAL, STALE_TTL  # type: ignore[import]
         CLOCK_SKEW_WARN_THRESHOLD = 30  # local sentinel — lib unavailable
+        # lib.collision could not be imported (it uses relative imports that need
+        # the lib package). Bind the names so module-level references stay valid;
+        # they are only ever *called* on the reconcile-available path, which is
+        # disabled here, so the basic _detect_collisions fallback is used instead.
+        _split_owner_container = None  # type: ignore[assignment]
+        _track_to_claim_record = None  # type: ignore[assignment]
+        _classify_collision = None  # type: ignore[assignment]
         _RECONCILE_AVAILABLE = False
 
 # Maximum characters for the TRACK column before truncation.
@@ -237,124 +257,15 @@ def _classify_track(track: dict, now: datetime) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Collision detection — TASK-017 upgrade
+# Collision detection — TASK-017 upgrade; helpers relocated in TASK-000 (#133)
 # ---------------------------------------------------------------------------
-
-
-def _split_owner_container(owner_container: str) -> tuple[str, str, str]:
-    """Split an owner_container string into (owner, container, session).
-
-    Expected format: "owner/container/session" (3 parts).
-    Handles shorter / malformed strings gracefully by filling missing parts
-    with empty-string sentinels so callers can still reason about owner.
-
-    Examples:
-        "hikari/devbox-A/s-7f3a"  → ("hikari", "devbox-A", "s-7f3a")
-        "devbox-A/sess-001"       → ("", "devbox-A", "sess-001")   # 2-part
-        "solo"                    → ("", "", "solo")                # 1-part
-        ""                        → ("", "", "")
-    """
-    parts = (owner_container or "").split("/")
-    if len(parts) >= 3:
-        return parts[0], parts[1], "/".join(parts[2:])
-    if len(parts) == 2:
-        # Two-part: treat as container/session (owner unknown)
-        return "", parts[0], parts[1]
-    # One-part or empty
-    return "", "", parts[0] if parts else ""
-
-
-def _track_to_claim_record(track: dict) -> "ClaimRecord":
-    """Approximate a Layer H track dict as a ClaimRecord placeholder for reconcile.
-
-    Layer H data (handoff frontmatter) lacks independent heartbeat_at; we use
-    updated_at as a near-approximation for both claimed_at and heartbeat_at.
-    This is intentionally lossy — the reconcile result is advisory/visual only.
-
-    P2 note: when true Layer L ClaimRecords are available from read_claims(),
-    the board should bypass this function and feed them directly to reconcile_all.
-
-    Raises ValueError if required fields are missing/unparseable — caller must
-    catch and fall back to the basic collision detector.
-    """
-    if not _RECONCILE_AVAILABLE:
-        raise ValueError("reconcile module not available")
-
-    owner_container = track.get("owner_container") or ""
-    owner, container, session = _split_owner_container(owner_container)
-
-    track_id = track.get("track_id") or ""
-    if not track_id:
-        raise ValueError("track_id missing")
-
-    updated_at = track.get("updated_at") or ""
-    if not updated_at:
-        raise ValueError("updated_at missing — cannot approximate claimed_at")
-
-    # Validate that updated_at is parseable ISO 8601 (reconcile requires this)
-    try:
-        from datetime import datetime as _dt
-        _dt.fromisoformat(updated_at.replace("Z", "+00:00"))
-    except (ValueError, AttributeError) as exc:
-        raise ValueError(f"updated_at not valid ISO 8601: {updated_at!r}") from exc
-
-    # Map track status to a ClaimRecord-compatible status value.
-    # Layer H "legacy" → treat as "active" (Layer L has no "legacy" status).
-    status_raw = (track.get("status") or "active").lower().strip()
-    if status_raw in ("active", "legacy"):
-        status = "active"
-    elif status_raw == "done":
-        status = "done"
-    elif status_raw == "abandoned":
-        # ClaimRecord STATUS_WRITABLE only has active/yielded/done; map abandoned→done
-        # so reconcile routes it to superseded (terminal bucket) correctly.
-        status = "done"
-    else:
-        status = "active"
-
-    phase = track.get("phase") or ""
-
-    return ClaimRecord(
-        schema_version="1",
-        track_id=track_id,
-        owner=owner or "unknown",
-        container=container or "unknown",
-        session=session or "unknown",
-        phase=phase,
-        status=status,
-        claimed_at=updated_at,
-        heartbeat_at=updated_at,
-        superseded_from=None,
-    )
-
-
-def _classify_collision(
-    claims: "list[ClaimRecord]",
-) -> tuple[str, str]:
-    """Classify a set of active claims for the same track_id.
-
-    Returns (collision_kind, severity_emoji):
-        collision_kind: 'cross_owner' | 'self_multi_container' | 'none'
-        severity_emoji: '🔴' | '🟡' | ''
-
-    Logic (per session-handoff.md §2.3.5):
-        cross_owner          → ≥2 distinct owner values across active claims
-        self_multi_container → same owner, ≥2 distinct container values
-        none                 → ≤1 active claim or all same owner+container
-    """
-    active = [c for c in claims if c.status not in ("done", "abandoned")]
-    if len(active) < 2:
-        return "none", ""
-
-    owners = {c.owner for c in active}
-    if len(owners) >= 2:
-        return "cross_owner", "🔴"
-
-    containers = {c.container for c in active}
-    if len(containers) >= 2:
-        return "self_multi_container", "🟡"
-
-    return "none", ""
+#
+# _split_owner_container / _track_to_claim_record / _classify_collision were
+# promoted to lib/collision.py (single source of truth) so the renderer AND the
+# handoff_multibranch collector share one implementation. They are imported at
+# the top of this module (aliased to the same private names). Behaviour is
+# identical; this removes the divergent private copy that was the phantom-field
+# root cause (sister R1 C1). See lib/collision.py.
 
 
 def _render_collision_lines(
