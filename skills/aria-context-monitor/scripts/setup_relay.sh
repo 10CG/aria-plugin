@@ -42,6 +42,7 @@ relay_block() {
 # >>> aria-context-monitor relay >>>
 # 复用上方 input=$(cat) 捕获的 $input (一次性 stdin 已耗尽, 不可再 cat).
 __aria_cwd=$(printf '%s' "$input" | jq -r '.workspace.current_dir // .cwd // ""' 2>/dev/null)
+__aria_cwd="${__aria_cwd%$'\r'}"   # crlf-strip(#132 sibling): Windows native jq emits CRLF; $() keeps trailing \r → the [ -d ] gate below would fail and relay would silently skip writing the cache. Single-scalar path → strip trailing CR.
 if [ -n "$__aria_cwd" ] && [ -d "$__aria_cwd/.aria" ]; then
   mkdir -p "$__aria_cwd/.aria/cache" 2>/dev/null
   __aria_tmp="$__aria_cwd/.aria/cache/.context-window.$$.tmp"
@@ -58,6 +59,7 @@ resolve_script_path() {
   [ -f "$SETTINGS" ] || { echo ""; return; }
   local cmd
   cmd=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
+  cmd="${cmd%$'\r'}"   # crlf-strip(#132 sibling): marker/path value → strip trailing CR (Windows native jq CRLF)
   [ -n "$cmd" ] || { echo ""; return; }
   # 提取以 .sh 结尾的 token (常见: "bash /path/script.sh")
   local p
@@ -69,6 +71,7 @@ detect_state() {
   if [ ! -f "$SETTINGS" ]; then echo "no-settings"; return; fi
   local cmd
   cmd=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
+  cmd="${cmd%$'\r'}"   # crlf-strip(#132 sibling): comparison value → strip trailing CR (Windows native jq CRLF)
   if [ -z "$cmd" ]; then echo "no-statusline"; return; fi
   local sp
   sp=$(resolve_script_path)
@@ -131,7 +134,9 @@ case "$STATE" in
       echo ""
       echo '# 最小 context bar (仅参考, 无个人偏好 — instance-layer 偏好请自行扩展)'
       echo 'used=$(printf '"'"'%s'"'"' "$input" | jq -r '"'"'.context_window.used_percentage // "?"'"'"' 2>/dev/null)'
+      echo 'used=${used%$'"'"'\r'"'"'}'   # crlf-strip(#132 sibling): Windows native jq CRLF would render a stray CR in the status bar
       echo 'model=$(printf '"'"'%s'"'"' "$input" | jq -r '"'"'.model.display_name // "Claude"'"'"' 2>/dev/null)'
+      echo 'model=${model%$'"'"'\r'"'"'}'   # crlf-strip(#132 sibling): same — single-scalar display value
       echo 'printf "%s | ctx %s%%" "$model" "$used"'
     } > "$REF"
     chmod +x "$REF" 2>/dev/null

@@ -54,6 +54,7 @@ if [ "$jq_available" = true ]; then
 else
   cmd=$(grep -o '"command"[^,}]*' "$SETTINGS" 2>/dev/null | head -1)
 fi
+cmd="${cmd%$'\r'}"   # crlf-strip(#132 sibling): marker/path comparison value → strip trailing CR (Windows native jq CRLF)
 
 if [ -z "$cmd" ]; then
   emit "no-statusline" "" "statusLine 未配 — 运行 setup_relay.sh 建最小 reference + relay (或 aria-context-monitor 走 transcript fallback)。"
