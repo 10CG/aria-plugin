@@ -238,15 +238,27 @@ def classify(tracks: "list[dict]", *, now: Optional[datetime] = None) -> dict:
     overall_kind = "none"
     groups: list[list[str]] = []
 
+    _TERMINAL = ("done", "abandoned")
     for tid in sorted(verdicts.keys()):
         verdict = verdicts[tid]
 
-        # Active (non-terminal) candidates for this track_id: yielders + winner.
+        # Active (non-terminal) candidates for this track_id.
+        #   - yielders: always active candidates
+        #   - winner:   the selected candidate (None when stale-takeover-eligible)
+        #   - superseded: terminal claims (done/abandoned) PLUS the stale winner
+        #     when reconcile demoted it (rule 6). We must recover that stale
+        #     winner — it is a non-terminal contender — or a 2-claim collision
+        #     where the winner is stale would mis-classify as "none".
+        # classify_claims re-filters terminal internally, so including all of
+        # superseded would be safe too, but we filter here to keep groups clean.
         active_claims: list[ClaimRecord] = list(verdict.yielders)
         if verdict.winner is not None:
             active_claims.append(verdict.winner)
+        active_claims.extend(
+            c for c in verdict.superseded if c.status not in _TERMINAL
+        )
 
-        kind, _emoji = classify_claims(active_claims)
+        kind, _ = classify_claims(active_claims)  # render-only emoji dropped
         if kind == "none":
             continue
 

@@ -21,13 +21,16 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+# Add the state-scanner root (parent of lib/) so that ``lib`` is importable as a
+# package — collision.py uses relative imports (from .claim_schema), so it must be
+# imported as ``lib.collision``, NOT as a top-level ``collision`` with lib/ on path.
+# Also add scripts/ for the collectors package. Mirrors test_reconcile_golden_table.
+_SS_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_SS_ROOT))
+sys.path.insert(0, str(_SS_ROOT / "scripts"))
 
-import collision  # noqa: E402
+from lib import collision  # noqa: E402
 from collectors.handoff_multibranch import collect_handoff_multibranch  # noqa: E402
-
-_NOW = None  # let reconcile_all default; freshness irrelevant for collision kind
 
 
 def _track(track_id, oc, *, status="active", updated="2026-05-30T10:00:00Z"):
@@ -172,7 +175,7 @@ def test_track_to_claim_record_raises_on_missing_fields():
 
 
 def test_classify_claims_returns_kind_and_emoji():
-    from claim_schema import ClaimRecord
+    from lib.claim_schema import ClaimRecord
 
     def _cr(owner, container, session):
         return ClaimRecord(
@@ -214,12 +217,21 @@ def _build_multibranch_repo(tmp: str, branch_tracks: dict) -> None:
     (root / "README.md").write_text("seed\n", encoding="utf-8")
     _git(tmp, "add", "README.md")
     _git(tmp, "commit", "-q", "-m", "seed")
-
-    handoff_dir = root / "docs" / "handoff"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
+    # Capture the default branch name (master vs main varies by git config).
+    default_branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=tmp, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
 
     for branch, (track_id, oc) in branch_tracks.items():
+        # Branch from the default branch's seed commit. After committing the
+        # handoff doc on a prior feature branch, switching away removes that
+        # committed docs/handoff/ tree from the working copy — so we must
+        # re-create the directory on each fresh branch.
+        _git(tmp, "checkout", "-q", default_branch)
         _git(tmp, "checkout", "-q", "-b", branch)
+        handoff_dir = root / "docs" / "handoff"
+        handoff_dir.mkdir(parents=True, exist_ok=True)
         fname = f"2026-05-30-{branch}.md"
         fm = (
             "---\n"
@@ -239,7 +251,6 @@ def _build_multibranch_repo(tmp: str, branch_tracks: dict) -> None:
             capture_output=True, text=True,
         ).stdout.strip()
         _git(tmp, "update-ref", f"refs/remotes/origin/{branch}", sha)
-        _git(tmp, "checkout", "-q", "master") if branch != "master" else None
 
 
 def test_real_collector_emits_cross_owner_collision():

@@ -16,6 +16,10 @@ Return schema (top-level snapshot key: ``tracks_multibranch``):
         "tracks": list[dict],   # One entry per (branch, file) pair — see below
         "branches_scanned": int,
         "legacy_count": int,    # Tracks that fell back to legacy (no frontmatter)
+        "collision": {          # TASK-000 (#133) — additive, ADVISORY-ONLY
+            "kind": str,        # "none" | "cross_owner" | "self_multi_container"
+            "groups": list,     # list[list[str]] — per colliding track_id: oc members
+        },
         "errors": list[str],    # Accumulated non-fatal error messages
     }
 
@@ -64,6 +68,26 @@ from pathlib import Path
 
 from ._common import CollectorResult, _run, log
 from .handoff import parse_handoff_frontmatter
+
+# ---------------------------------------------------------------------------
+# Collision classification (TASK-000, concurrent-session-upm-safety #133).
+# Persist the advisory collision summary (tracks_multibranch.collision) so that
+# downstream consumers (state-scanner Phase 2 advisory / track_board renderer)
+# read one source of truth instead of recomputing — and so the field is no
+# longer a phantom (sister R1 C1).  Import is guarded: lib/ is a sibling of
+# scripts/, not under collectors/, so we inject the state-scanner root onto
+# sys.path (mirrors scripts/renderers/track_board.py's strategy).
+# ---------------------------------------------------------------------------
+try:
+    import sys as _sys
+    from pathlib import Path as _Path
+    _SS_ROOT = str(_Path(__file__).resolve().parent.parent.parent)  # state-scanner/
+    if _SS_ROOT not in _sys.path:
+        _sys.path.insert(0, _SS_ROOT)
+    from lib.collision import classify as _classify_collision_summary  # type: ignore[import]
+    _COLLISION_AVAILABLE = True
+except ImportError:
+    _COLLISION_AVAILABLE = False  # fail-soft: collision summary degrades to none
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -267,6 +291,7 @@ def collect_handoff_multibranch(
             "tracks": [],
             "branches_scanned": 0,
             "legacy_count": 0,
+            "collision": {"kind": "none", "groups": []},
             "errors": [list_err],
         }
         return r
@@ -387,7 +412,11 @@ def collect_handoff_multibranch(
     # raising (collision is an advisory surface, never load-bearing).
     if _COLLISION_AVAILABLE:
         try:
-            collision = _classify_collision_summary(tracks, now=now)
+            # now=None -> classify/reconcile use datetime.now(timezone.utc).
+            # Collision kind does not depend on freshness, so a fixed "now" is
+            # unnecessary here (only stale-takeover labelling would, which the
+            # summary does not surface).
+            collision = _classify_collision_summary(tracks)
         except Exception as exc:  # noqa: BLE001 — advisory field never breaks scan
             collision = {"kind": "none", "groups": []}
             error_messages.append(f"collision classify failed (degraded to none): {exc}")
