@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.36.0] - 2026-05-30
+
+### Added / Fixed — `shell-jq-crlf-hardening` (#132 follow-up): systematic Windows-CRLF hardening of jq consumption
+
+**Why**: #132 (secret-guard fail-closed on Windows) was one instance of a class — Windows native jq emits CRLF, and bash consumers strip only `\n`, leaving `\r` on every captured value. This Spec hardens all plugin shell scripts + builds a regression moat.
+
+**CR-handling decision table** (gate/comparison value → strip; data body / jq -n constructor → leave):
+- `secret-scan.sh`: type-check (:116) + tool (:118) strip trailing CR — under CRLF the type gate tripped and silently SKIPPED redaction (secret leak). `content` (:123) is the data body reinjected to the LLM → **NOT stripped** (blanket strip would corrupt user content; Spec C2, caught by post_spec audit pre-implementation).
+- `setup_relay.sh`: injected statusLine `__aria_cwd` (cwd gate → cache write), `used`/`model` bar values, and install-detection `cmd` → strip CR. The jq→file writer needs no change.
+- `check_context_relay.sh:53` `cmd`: defensive strip (detection empirically robust to trailing CR).
+- `check_secret_guard_install.sh:74-76`: display strings (cosmetic).
+- check_parity boolean captures + JSON accumulators: verified `jq --argjson` tolerates `true\r` (RFC 8259 whitespace) → no change.
+
+**Regression moat**:
+- `hooks/tests/lib/crlf-shim.sh` — reusable cross-platform CRLF test framework (awk re-appends `\r\n` per line to simulate Windows native jq; covers readarray-pipe + command-subst shapes; bidirectional self-check; silent-bypass two-state assertion). Self-test 8/8.
+- `hooks/tests/jq-crlf-guard.sh` — scans production scripts for unguarded jq read-consumption; allowlist (`jq -n` / `# crlf-ok` / verified-safe T3); test-phase landing (not pre-commit). Self-test 7/7, clean on 14 files.
+- `standards/conventions/shell-jq-crlf-hygiene.md` — decision table + positive patterns + exceptions + #61/#131/#132 same-family list.
+
+**post_spec audit**: challenge mode, 3-round CONVERGED (R1 2 REVISE / 2 Critical → Rev1 → R2 code-reviewer PASS + qa REVISE / 1 NEW Major → Rev2 → R3 PASS). Caught 2 load-bearing Critical pre-implementation (C1 non-vacuous bidirectional assertion for silent-bypass; C2 content-body corruption).
+
+311 shell assertions PASS (secret-guard 225 + secret-scan 47 + crlf-shim 8 + guard 7 + setup_relay 13 + check_context_relay 3 + check_secret_guard_install 8); Linux LF zero regression. Closes Forgejo Aria #132 follow-up. Skills unchanged (34 user-facing + 7 internal).
+
 ## [1.35.0] - 2026-05-30
 
 ### Added — `emergency-hotfix-and-audit-file-scope` (#58): prod hotfix lane + audit file-scope filter
