@@ -20,7 +20,7 @@
 Phase 1.17 (handoff_multibranch) 产出 tracks_multibranch
           │
           ▼
-阶段 2 推荐: AI 检查 tracks_multibranch.collision_type
+阶段 2 推荐: AI 检查 tracks_multibranch.collision.kind
     ├── cross_owner → 强提示 + 触发 phase1_gate (pre-Phase B)
     ├── self_multi_container → soft hint (不阻塞)
     └── none → 正常推荐 Phase B
@@ -66,7 +66,7 @@ Phase 1.17 tracks_multibranch snapshot
 
 P3 TASK-024 将实现 **Design A 条件触发**:
 
-- **触发**: `tracks_multibranch.has_collision == true` (cross-owner) → 推荐 worktree 独立 checkout
+- **触发**: `tracks_multibranch.collision.kind == "cross_owner"` → 推荐 worktree 独立 checkout
 - **不触发**: no collision / self-multi-container → 正常单 worktree 工作流
 - **实施**: phase1_gate 在检测到 cross-owner collision 后, 询问用户 "是否创建独立 worktree (推荐) 或强制使用当前 worktree (高风险)?"
 
