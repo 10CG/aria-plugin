@@ -483,6 +483,50 @@ else
   fi
 fi
 
+# ──────────────────────────────────────────────────────────────────────────
+# #132 CRLF regression: Windows native jq builds emit CRLF. `readarray -t`
+# only strips the trailing \n, leaving \r on every field — tool_type becomes
+# "string\r", fails the `!= "string"` check, and fail-closes ALL tools on
+# Windows. The `tr -d '\r'` guard on the jq pipe (secret-guard.sh) must
+# neutralize this. We simulate Windows jq with a PATH shim that re-appends
+# \r\n to each line of real jq's output. Pre-fix: benign tools exit 2 (bug);
+# post-fix: exit 0. Secret commands must STILL block (fix must not weaken).
+# ──────────────────────────────────────────────────────────────────────────
+crlf_real_jq="$(command -v jq)"
+crlf_shim_dir="$(mktemp -d)"
+cat > "$crlf_shim_dir/jq" <<SHIM
+#!/usr/bin/env bash
+"$crlf_real_jq" "\$@" | awk '{ printf "%s\r\n", \$0 }'
+SHIM
+chmod +x "$crlf_shim_dir/jq"
+
+crlf_case() {
+  local name="$1" want="$2" input="$3" got exit_code
+  got="$(echo "$input" | PATH="$crlf_shim_dir:$PATH" "$HOOK" 2>/dev/null; echo "exit=$?")"
+  exit_code="${got##*exit=}"
+  if [[ "$exit_code" == "$want" ]]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    failures+=("FAIL [$name]: want exit=$want, got exit=$exit_code")
+  fi
+}
+
+# Guard sanity: the shim must actually inject CR (else the test is vacuous).
+if [[ "$("$crlf_shim_dir/jq" -rn '"x"' | od -An -tx1 | tr -d ' \n')" == *0d* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [#132 CRLF shim sanity: shim did not inject CR — test would be vacuous]")
+fi
+
+crlf_case "#132 CRLF: benign Bash allowed under Windows-jq CRLF (the bug)"      0 '{"tool_name":"Bash","tool_input":{"command":"ls /tmp"}}'
+crlf_case "#132 CRLF: benign Read allowed under Windows-jq CRLF"               0 '{"tool_name":"Read","tool_input":{"file_path":"README.md"}}'
+crlf_case "#132 CRLF: benign Edit allowed under Windows-jq CRLF"              0 '{"tool_name":"Edit","tool_input":{"file_path":"src/main.py"}}'
+crlf_case "#132 CRLF: secret cat id_rsa STILL blocked under CRLF (no weaken)"  2 '{"tool_name":"Bash","tool_input":{"command":"cat /home/u/.ssh/id_rsa"}}'
+crlf_case "#132 CRLF: Read id_rsa STILL blocked under CRLF (no weaken)"        2 '{"tool_name":"Read","tool_input":{"file_path":"/home/u/.ssh/id_rsa"}}'
+rm -rf "$crlf_shim_dir"
+
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
 echo

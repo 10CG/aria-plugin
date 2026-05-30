@@ -108,7 +108,14 @@ fi
 # Note: `readarray -t` per-line is used (not `IFS=$'\t' read` with @tsv)
 # because tab is whitespace IFS — consecutive tabs collapse, dropping empty
 # fields. Per-line preserves empty values (e.g. command="" when tool=Read).
-readarray -t _sg_fields < <(jq -r '(.tool_name | type), (.tool_name // ""), (.tool_input.command // ""), (.tool_input.file_path // "")' 2>/dev/null <<<"$input")
+#
+# `tr -d '\r'` strips carriage returns from jq output (#132): Windows native
+# jq builds emit CRLF, and `readarray -t` only strips the trailing `\n`, not
+# the `\r`. Without this, every field carries a trailing CR — tool_type
+# becomes "string\r" and fails the `!= "string"` check below, fail-closing
+# ALL tools on Windows. Stripping CR from the whole stream cleans all 4
+# fields at once; embedded CR is meaningless for secret-pattern matching.
+readarray -t _sg_fields < <(jq -r '(.tool_name | type), (.tool_name // ""), (.tool_input.command // ""), (.tool_input.file_path // "")' 2>/dev/null <<<"$input" | tr -d '\r')
 tool_type="${_sg_fields[0]:-}"
 tool="${_sg_fields[1]:-}"
 command="${_sg_fields[2]:-}"

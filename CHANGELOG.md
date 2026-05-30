@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.34.1] - 2026-05-30
+
+### Fixed — `secret-guard` CRLF fail-closed 阻断 Windows 全部工具 (#132, P0)
+
+**Why**: v1.33.0 新增的 `hooks/secret-guard.sh` (PreToolUse `*` matcher) 在 Windows 上 100% fail-closed，锁死整个 session。Windows native jq builds 输出 CRLF，而 `readarray -t _sg_fields < <(jq -r '...' )` 只 strip `\n` 不 strip `\r` → 4 个字段 (`tool_type`/`tool`/`command`/`file_path`) 全染尾部 CR，`tool_type` 变 `"string\r"` 通不过 `[[ "$tool_type" != "string" ]]` type 校验 → exit 2 阻断**所有**工具 (Bash/Read/Edit/Write，仅 Grep/Glob 幸免)，且 `/plugin update` + `/reload-plugins` 无法恢复。误导性报错 `tool_name is type=string (expected string)` 自相矛盾，正是 CR 污染症状。
+
+**Fix**: `secret-guard.sh:118` jq 管道尾部加 `| tr -d '\r'`，一处剥除全部 4 字段的 CR (embedded CR 对 secret-pattern 匹配无意义)。
+
+**Test**: `hooks/tests/secret-guard.test.sh` +6 case — 1 shim sanity (确认注入 CR 非空洞) + 3 benign 工具放行 + 2 secret 仍拦截 (确认修复不削弱拦截)。用 CRLF shim (awk 每行补 `\r\n`) 在 Linux 忠实模拟 Windows native jq；非空洞验证 nofix→exit2 (bug 复现) / fix→exit0。**225/225 PASS**。
+
+**同源**: 与 #61 (v1.21 GBK locale) / #131 (v1.30.3 None guard) 同属 aria-plugin Windows CRLF/编码边界 bug 家族。同类低severity 站点 (`aria-doctor/check_context_relay.sh`、`aria-context-monitor/setup_relay.sh` 的 `cmd=$(jq -r ...)` 单值模式 — `$()` 同样残留尾部 CR) 留 **L2 follow-up Spec** 系统性扫描 + cross-platform CRLF 回归框架。
+
+Closes Forgejo Aria #132。
+
 ## [1.34.0] - 2026-05-30
 
 ### Added — `ai-native-estimator` (#18): Token 轴 cycle 工作量估算 (v1 薄切片)
