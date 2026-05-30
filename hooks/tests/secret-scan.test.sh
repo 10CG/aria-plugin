@@ -186,6 +186,57 @@ else
   failures+=("FAIL [malformed JSON]: want exit 0, got $exit_code")
 fi
 
+# ──────────────────────────────────────────────────────────────────────────
+# #132 follow-up (shell-jq-crlf-hardening TASK-003): CRLF regression.
+# Windows native jq emits CRLF. The tool_type type-check at secret-scan.sh:115
+# is `[[ "$tool_type" != "string" ]] && exit 0` — under CRLF, tool_type becomes
+# "string\r", the gate trips, and the hook silently exits WITHOUT redacting
+# (silent secret leak, Spec T1). Uses the shared CRLF framework.
+# ──────────────────────────────────────────────────────────────────────────
+source "$(dirname "$0")/lib/crlf-shim.sh"
+crlf_shim="$(crlf_shim_create)"
+
+# Framework self-check (bidirectional) — guards against a vacuous shim.
+if crlf_selfcheck "$crlf_shim" 2>/dev/null; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failures+=("FAIL [crlf shim selfcheck]")
+fi
+
+# Bidirectional non-vacuous (Spec C1): pristine copy = tool_type CR-strip removed.
+crlf_secret='AKIAIOSFODNN7EXAMPLE'
+crlf_input="$(build_post "Bash" "config has $crlf_secret embedded")"
+crlf_pristine="$(crlf_make_pristine_copy "$HOOK" '/would fail the type gate below/d')"
+# (a) pristine (no fix) under CRLF shim → expect silent bypass (no REDACTED)
+pristine_err="$(printf '%s' "$crlf_input" | crlf_run_with_shim "$crlf_shim" bash "$crlf_pristine" 2>&1 >/dev/null)"
+echo "$pristine_err" | grep -q "REDACTED" && crlf_pristine_state="ok" || crlf_pristine_state="bug"
+# (b) fixed under CRLF shim → expect redaction restored
+fixed_err="$(printf '%s' "$crlf_input" | crlf_run_with_shim "$crlf_shim" bash "$HOOK" 2>&1 >/dev/null)"
+echo "$fixed_err" | grep -q "REDACTED" && crlf_fixed_state="ok" || crlf_fixed_state="bug"
+if crlf_assert_two_state "secret-scan CRLF silent-bypass" "$crlf_pristine_state" "$crlf_fixed_state" 2>/dev/null; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failures+=("FAIL [secret-scan CRLF bypass two-state]: pristine=$crlf_pristine_state fixed=$crlf_fixed_state (want bug->ok)")
+fi
+rm -f "$crlf_pristine"
+
+# content-fidelity (Spec C2): a legit \r in content must NOT be deleted by the
+# fix. Run WITHOUT shim to isolate the fix's effect on content (the fix touches
+# only tool_type/tool, never content). Input content has 2 embedded CR + a
+# secret on a CR-free span; redacted output must keep both CRs and drop secret.
+fidelity_content="$(printf 'alpha\rbeta has AKIAIOSFODNN7EXAMPLE token\rgamma')"
+fidelity_in_cr="$(printf '%s' "$fidelity_content" | od -An -tx1 | tr -d ' \n' | grep -o '0d' | wc -l | tr -d ' ')"
+fidelity_stdout="$(build_post "Bash" "$fidelity_content" | "$HOOK" 2>/dev/null)"
+fidelity_out_content="$(echo "$fidelity_stdout" | jq -r '.tool_response.output // ""' 2>/dev/null)"
+fidelity_out_cr="$(printf '%s' "$fidelity_out_content" | od -An -tx1 | tr -d ' \n' | grep -o '0d' | wc -l | tr -d ' ')"
+if [[ "$fidelity_out_content" != *"$crlf_secret"* && "$fidelity_in_cr" == "2" && "$fidelity_out_cr" == "2" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failures+=("FAIL [secret-scan content CR fidelity]: in_CR=$fidelity_in_cr out_CR=$fidelity_out_cr (want secret dropped + CR 2->2)")
+fi
+
+crlf_shim_destroy "$crlf_shim"
+
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
 echo

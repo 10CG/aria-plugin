@@ -113,9 +113,11 @@ fi
 
 # Validate JSON envelope
 tool_type="$(printf '%s' "$input" | jq -r '.tool_name | type' 2>/dev/null || echo "")"
+tool_type="${tool_type%$'\r'}"   # crlf-strip(#132 sibling): Windows native jq emits CRLF; $() keeps trailing \r → "string\r" would fail the type gate below and silently bypass redaction (secret leak). Gate/comparison value → strip trailing CR (single scalar).
 [[ "$tool_type" != "string" ]] && exit 0   # malformed input — pass through silently
 
 tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)"
+tool="${tool%$'\r'}"   # crlf-strip(#132 sibling): comparison/log value → strip trailing CR. NOTE: `content` below is data body (written back to LLM) — deliberately NOT CR-stripped (would corrupt user content).
 
 # Extract output content depending on tool — different tools shape result differently.
 # Bash: tool_response.output (or .stdout / .stderr); Read: tool_response.content (file body)
