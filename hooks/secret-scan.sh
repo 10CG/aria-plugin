@@ -122,7 +122,7 @@ tool="${tool%$'\r'}"   # crlf-strip(#132 sibling): comparison/log value → stri
 # Extract output content depending on tool — different tools shape result differently.
 # Bash: tool_response.output (or .stdout / .stderr); Read: tool_response.content (file body)
 # Try multiple field names since Claude Code versions vary.
-content="$(printf '%s' "$input" | jq -r '
+content="$(printf '%s' "$input" | jq -r '  # crlf-ok: data body written back to LLM (tmpfile→sed→reinject) — must NOT CR-strip (would corrupt user content, Spec C2)
   .tool_response.output //
   .tool_response.content //
   .tool_response.stdout //
