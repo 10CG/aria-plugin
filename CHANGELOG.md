@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.37.0] - 2026-05-31
+
+### concurrent-session-upm-safety (#133) — 并发多 session UPM/handoff 安全
+
+**Cycle**: concurrent-session-upm-safety (#133) — Phase A (合并双 Spec + (a)/(c) re-audit CONVERGED) → Phase B full cycle
+
+**主解药 (convention, standards)**:
+- 新建 `standards/conventions/concurrent-session-write-safety.md` — 并发安全写法约定 (Problem-1: 共享区 append-friendly / per-session 隔离 / followup sub-row / bare-pointer 单写) + AI 记录外部状态硬证据自律 (Problem-2: 禁 updated_at 软代理, 引 RETURNING/exit-code/显式 timestamp)
+- 因果定位 (audit C1): PR merge thrash 是 write-time git 冲突, advisory 检测拦不住, convention 结构改写才是 forcing function
+
+**辅助早发现 (advisory, advisory-over-hardlock)**:
+- `tracks_multibranch.collision` 持久化字段 (additive): 新建 `lib/collision.py` 单一真理源 `classify(tracks)->{kind,groups}` (cross_owner/self_multi_container/none), collector 持久化, renderer 改读 (消除 phantom-field 分叉)
+- 切口2: state-scanner 推荐规则 1.54 `concurrent_churn_detected` — collision.kind!=none 且 coordination.enabled==false → advisory (与 phase1_gate 按 enabled 严格互斥)
+- 切口1: phase-d-closer D.1 `fetch_gate.py` — 写 UPM 前 fail-soft fetch + behind-check (触及 UPM→强提示), credential 不泄漏 + null-guard
+
+**测试 (Rule #6 substitute)**: collision 16 tests (含真实-collector fixture) + fetch_gate 11 tests; convention dogfood AC-D1~D4 翻转对照。
+
 ## [1.36.0] - 2026-05-30
 
 ### Added / Fixed — `shell-jq-crlf-hardening` (#132 follow-up): systematic Windows-CRLF hardening of jq consumption
