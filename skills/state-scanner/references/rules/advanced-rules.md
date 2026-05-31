@@ -1,6 +1,6 @@
 # State Scanner — 进阶规则
 
-> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含 Inter-cycle surfacing (1.85-1.895) + 审计 (1.9-1.91) + 自定义检查 (1.95-1.99) + Multi-Terminal 协调 (1.51-1.53) 4 个 cluster。
+> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含 Inter-cycle surfacing (1.85-1.895) + 审计 (1.9-1.91) + 自定义检查 (1.95-1.99) + Multi-Terminal 协调 (1.51-1.54) 4 个 cluster。
 
 ---
 
@@ -491,6 +491,62 @@ recommendation:
     - "frontmatter 必填 5 字段, 标 `status: active`"
   non_blocking: false  # phase-d-closer 阶段强建议
 ```
+
+### 1.54 concurrent_churn_detected (切口2, #133 concurrent-session-upm-safety)
+
+```yaml
+id: concurrent_churn_detected
+priority: 1.54
+description: >
+  检测到跨 track collision 但 coordination 协调机制未启用 →
+  advisory 提示用户可启用 coordination 以获得更强的并发协调。
+  本规则是 #133 的"辅助·早发现"切口 (主解药是 standards
+  concurrent-session-write-safety convention, 见 Rationale)。
+
+conditions:
+  all:
+    - tracks_multibranch.collision.kind: "!= none"   # TASK-000 持久化字段 (cross_owner | self_multi_container)
+    - coordination_enabled: false                    # config 读: state_scanner.coordination.enabled == false (默认)
+
+  detection:
+    source: "tracks_multibranch.collision (TASK-000 #133 additive 字段) + config-loader"
+    field_check: "collision.kind != 'none' AND config coordination.enabled == false"
+    config_check:
+      source: "config-loader → state_scanner.coordination.enabled (config 键, 非 snapshot 字段)"
+      default: false
+      note: "enabled 是 .aria/config.json 配置键, scan.py 不采集到 snapshot; AI 在阶段 2 读 config 判定"
+
+  # ── disjointness (与 phase1_gate 互斥, #133 AC-2) ──────────────────────
+  # 两态在 coordination.enabled 上严格互斥, 绝不双触发:
+  #   enabled == false → 本规则 (切口2 advisory, 仅提示)
+  #   enabled == true  → cross_owner collision 由 phase1_gate 处理 (急切认领闸门),
+  #                      本规则不触发 (conditions.coordination_enabled: false 已排除)
+  disjointness:
+    this_rule_iff: "coordination.enabled == false"
+    phase1_gate_iff: "coordination.enabled == true (见 references/layer-l-integration.md)"
+    invariant: "两者在 enabled 上互斥; 同一 scan 不会同时触发切口2 + phase1_gate"
+
+recommendation:
+  workflow: null   # 仅 advisory 降级提示, 不推荐工作流, 不阻塞
+  info: >
+    🔀 检测到并发 collision ({collision_kind}) 但 coordination 未启用 —
+    多 session 可能撞同一共享区。建议遵循 concurrent-session-write-safety
+    convention (主解药); 可选: 启用 coordination 协调机制获得 claim/reconcile。
+  context:
+    collision_kind: "from tracks_multibranch.collision.kind"
+    collision_groups: "from tracks_multibranch.collision.groups (参与 collision 的 owner_container 成员)"
+  suggestion:
+    - "主解药: 遵循 standards/conventions/concurrent-session-write-safety.md (共享区 append-friendly / per-session 隔离 / followup sub-row)"
+    - "可选一键启用 coordination (.aria/config.json):"
+    - '  { "state_scanner": { "coordination": { "enabled": true } } }'
+    - "判定不依赖\"谁\" (collision helper 已按 owner+container 归类, 同 owner/container 全相同→none 不触发)"
+  non_blocking: true   # advisory 降级, 不阻断任何现有推荐, 不 auto-enable (advisory-over-hardlock)
+```
+
+**Rationale (placement 1.54)**: 紧随 1.51-1.53 multi-terminal cluster — 同属并发协调上下文。
+**不 auto-enable** (DEC-20260519-001 advisory-over-hardlock): 仅提示用户可启用, 绝不自动改 config。
+**与 convention 关系**: 本规则是 #133 的**辅助早发现**信号; **主解药**是 standards
+`concurrent-session-write-safety.md` 的写法约定 (检测拦不住 write-time thrash, convention 结构改写才是 forcing function — 本 Spec audit C1)。
 
 ---
 

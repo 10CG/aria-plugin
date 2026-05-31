@@ -14,6 +14,8 @@
 - **cross-owner collision**: `tracks_multibranch` snapshot 包含同一 `track-id`、不同 `owner` 的活跃 track → 触发闸门, 要求用户 reconcile 后再 claim
 - **Design A 条件触发**: 闸门仅在用户确认要进入 Phase B 时调用, **不在 scan.py 内自动执行**
 
+> **Disjointness 与切口2 (#133 concurrent_churn_detected, rule 1.54)**: phase1_gate 在 `coordination.enabled == true` 时处理 cross-owner collision;切口2 advisory (rule 1.54) 在 `coordination.enabled == false` 时 surface collision 提示。两者在 `enabled` 上**严格互斥**, 同一 scan **绝不双触发** (#133 AC-2)。
+
 调用时序:
 
 ```
