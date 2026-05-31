@@ -1,7 +1,8 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.36.0
-> **发布日期**: 2026-05-30  # minor: shell-jq-crlf-hardening (#132 follow-up) — 系统性加固全 plugin shell jq 输出消费点对 Windows CRLF 鲁棒性. secret-scan type/tool gate 剥 CR (content 数据正文不剥, Spec C2) + setup_relay/check_context_relay 门控/marker 剥 CR + check_secret_guard_install 显示串. 新建可复用 crlf-shim 测试框架 (双形态 + 双向 self-check + silent-bypass 双向断言) + jq-crlf-guard 回归 guard (allowlist + 自测 7/7) + standards/conventions/shell-jq-crlf-hygiene.md (CR 处理决策表). post_spec challenge 3-round CONVERGED (2 Critical caught pre-impl: 非空洞断言 + content 篡改). 311 assertions PASS. Skills 不变 (34+7).
+> **版本**: 1.37.0
+> **发布日期**: 2026-05-31  # minor: concurrent-session-upm-safety (#133) — 并发 session 写入安全: 主解药 convention (standards concurrent-session-write-safety.md, Problem-1+2) + tracks_multibranch.collision 持久化 (lib/collision.py 单一真理源) + 切口2 rule 1.54 concurrent_churn_detected (advisory) + 切口1 phase-d-closer fetch_gate.py (fail-soft). 27 tests (collision 16 + fetch_gate 11), advisory-over-hardlock 全程. Skills 不变 (34 user-facing + 7 internal).
+> **发布日期 (1.36.0)**: 2026-05-30  # minor: shell-jq-crlf-hardening (#132 follow-up) — 系统性加固全 plugin shell jq 输出消费点对 Windows CRLF 鲁棒性. secret-scan type/tool gate 剥 CR (content 数据正文不剥, Spec C2) + setup_relay/check_context_relay 门控/marker 剥 CR + check_secret_guard_install 显示串. 新建可复用 crlf-shim 测试框架 (双形态 + 双向 self-check + silent-bypass 双向断言) + jq-crlf-guard 回归 guard (allowlist + 自测 7/7) + standards/conventions/shell-jq-crlf-hygiene.md (CR 处理决策表). post_spec challenge 3-round CONVERGED (2 Critical caught pre-impl: 非空洞断言 + content 篡改). 311 assertions PASS. Skills 不变 (34+7).
 > **发布日期 (1.35.0)**: 2026-05-30  # minor: emergency-hotfix + audit file-scope (#58) — state-scanner emergency_hotfix 规则 (priority 1.85, hotfix/* 分支主触发) + phase-a 跳 A.1-A.3 + phase-b Prod-Validated commit trailer 机检 gate (跳单测前提) + audit-engine file-scope 二次过滤 (全 ops/docs ⊆ scope_skip_paths → challenge 降级 convergence, merge-base diff 自取) + pre_merge→convergence + git-commit.md §6.4 Prod-Validated trailer. post_spec 3-round CONVERGED (2 git data-source/ref Critical caught pre-impl). triage 关闭 #3 (已 v1.34.0 默认). Rule #6 doc-existence fixture 10/10.
 > **发布日期 (1.34.1)**: 2026-05-30  # patch: secret-guard CRLF fix (#132) — readarray -t 留 \r → jq 管道加 tr -d '\r'; 225/225 PASS.
 > **发布日期 (1.34.0)**: 2026-05-30  # minor: ai-native-estimator (#18) — 新增 ai-native-estimator (user-facing) Token 轴工作量估算 v1 + token-telemetry 新增 iter_transcript_usage() (additive). phase-d-closer D.4 收尾自动 capture cycle token 工作量 (cycle 粒度 watermark, 幂等=空区间). forecast/history/velocity 查询 (spec_level 聚类, N<3 uncalibrated bootstrap). work_metric=output+cache_creation; wall_clock 被动元数据(非工作量). 40 deterministic tests (21 estimator + 19 token-telemetry) = Rule #6. post_spec 3-round CONVERGED (2 Critical caught pre-impl: parse_transcript_usage 复用错配 + cycle_id 幂等). Skills 33→34 user-facing + 7 internal = 41 total.
@@ -11,7 +12,7 @@
 ## 版本号
 
 ```
-1.36.0
+1.37.0
 ```
 
 ## 说明
