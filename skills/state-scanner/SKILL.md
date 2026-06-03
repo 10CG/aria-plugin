@@ -143,7 +143,20 @@ P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。在 Phase 1 结束、Phase 
 
 ## 输出格式
 
-推荐输出含以下区块 (按顺序): 📍 当前状态 / 📊 变更分析 / 📄 需求状态 / 🏗️ 架构状态 / 📋 OpenSpec 状态 / 🛡️ 审计状态 / 🔧 自定义检查 / 🔄 同步状态 / 🎫 Open Issues / 🎯 推荐工作流。每区块只在数据可用时显示, 空状态优雅降级。
+推荐输出含以下 **10 个 canonical 区块 (按顺序)**。每区块只在数据可用时显示, 空状态优雅降级。下方骨架给出**每区块的关键字段**, 使「不读 reference 也能正确排版到字段层」成立 (#72: 仅列区块名会致字段层漂移)。完整字段措辞 / 各漂移变体仍以 `references/output-formats.md` 为准。
+
+1. **📍 当前状态** — 分支 / 模块 / Phase·Cycle / 变更文件数 / 关联 OpenSpec
+2. **📊 变更分析** — 变更类型 / 复杂度 Level / 架构影响 / 测试覆盖
+3. **📄 需求状态** — 配置状态 / PRD (名 + status) / User Stories (按 status 计数) / OpenSpec 覆盖率
+4. **🏗️ 架构状态** — System Architecture 存在? / 路径 / status / 最后更新 / 需求链路完整性
+5. **📋 OpenSpec 状态** — 活跃变更 (按 status 计数) / 已归档数 / 待归档数
+6. **🛡️ 审计状态** — 审计系统 enabled? + 模式 / 活跃检查点 / 上次审计 verdict (含收敛轮数)
+7. **🔧 自定义检查** — 逐 check: ✅OK / ⚠️STALE / ❌FAIL + 修复建议 (失败项)
+8. **🔄 同步状态** — 当前分支 ahead/behind + upstream / 多远程 parity。条件子项: 📝 README 版本一致性 / 📦 插件依赖 (standards 子模块) / 🔗 Forgejo 配置检查 — 仅相关时显示
+9. **🎫 Open Issues** — open_count / 按 repo 分组 / 关键 issue (number + 标题 + linked US) — opt-in, 仅 `issue_scan.enabled=true` 显示
+10. **🎯 推荐工作流** — 编号选项 [1]-[4] (推荐项标注) + 执行步骤 + 跳过项 + 理由
+
+> 另有条件块在特定场景插入 (见 output-formats.md): 🔬 Skill 变更 AB 状态 (检出 SKILL.md 变更时) / handoff awareness (Phase 1.15, handoff doc surfaced 或 drift)。
 
 **完整标准输出示例 + 各场景输出变体 (未配置、链路不完整、待归档、头脑风暴建议等)**: 见 [references/output-formats.md](./references/output-formats.md)。
 

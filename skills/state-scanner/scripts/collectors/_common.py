@@ -89,6 +89,112 @@ def resolve_forgejo_hosts(project_root: Path) -> tuple[str, ...]:
     return _LEGACY_FORGEJO_FALLBACK
 
 
+# ----- handoff multibranch scan cap canonical resolver ----------------------
+# Used by handoff_multibranch.py to bound how many remote branches are scanned.
+# See OpenSpec state-scanner-output-cap-hardening (#71) for design rationale.
+# Structure mirrors resolve_forgejo_hosts (env > config > default) but the value
+# domain is `int` not `tuple[str, ...]`, so the layer parsers handle int-domain
+# footguns explicitly (bad strings, bool-is-int, non-positive values).
+
+ARIA_HANDOFF_MAX_BRANCHES_ENV = "ARIA_HANDOFF_MAX_BRANCHES"
+_DEFAULT_MAX_BRANCHES: int = 20
+# Recommended upper bound. Per OQ3 (owner 2026-06-03): warn-only + honor the
+# user value — exceeding this logs a warning but the resolver still returns the
+# user-set value (do NOT silently clamp / override user intent). The bound
+# exists because each scanned branch costs up to 3 git subprocesses (5s timeout
+# each), so very large values can make scan.py slow.
+_MAX_BRANCHES_UPPER_BOUND: int = 500
+
+
+def _parse_env_max_branches() -> int | None:
+    """Parse `ARIA_HANDOFF_MAX_BRANCHES` env var (a single positive integer).
+
+    Returns None (caller falls through to config / default) when the env var is
+    unset, empty, all-whitespace, non-numeric, or ``<= 0``. Surrounding
+    whitespace is tolerated. ``int(...)`` is guarded against ValueError/TypeError.
+    """
+    raw = os.environ.get(ARIA_HANDOFF_MAX_BRANCHES_ENV, "")
+    if not raw.strip():
+        return None
+    try:
+        val = int(raw.strip())
+    except (ValueError, TypeError):
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def _read_config_max_branches(project_root: Path) -> int | None:
+    """Read `.aria/config.json` → `state_scanner.handoff_multibranch.max_branches`.
+
+    Fail-soft: missing file / parse error / key absent → None. Value must be a
+    genuine ``int`` and ``> 0``; ``bool`` is explicitly rejected (``bool`` is an
+    ``int`` subclass footgun — ``True`` would otherwise read as ``1``). Any other
+    type (float, str, ...) → None → fall through to next layer.
+    """
+    cfg_path = project_root / ".aria" / "config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        with cfg_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    val = ((raw.get("state_scanner") or {}).get("handoff_multibranch") or {}).get(
+        "max_branches"
+    )
+    if not isinstance(val, int) or isinstance(val, bool):
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def _honor_with_upper_bound_warning(val: int, source: str) -> int:
+    """Return ``val`` unchanged; log a warning if it exceeds the recommended bound.
+
+    Per OQ3 (owner decision 2026-06-03): warn-only — never clamp. The user value
+    is authoritative; we only surface a performance advisory.
+    """
+    if val > _MAX_BRANCHES_UPPER_BOUND:
+        log.warning(
+            "handoff max_branches=%d (from %s) exceeds recommended upper bound "
+            "(%d); honoring user value but scanning this many branches may be "
+            "slow (each branch costs up to 3 git subprocesses).",
+            val,
+            source,
+            _MAX_BRANCHES_UPPER_BOUND,
+        )
+    return val
+
+
+def resolve_max_branches_scanned(project_root: Path) -> int:
+    """Canonical 3-layer precedence resolver for the multibranch scan cap.
+
+    Precedence (highest first):
+      1. ARIA_HANDOFF_MAX_BRANCHES env (single positive int)
+      2. .aria/config.json → state_scanner.handoff_multibranch.max_branches
+      3. Default (20 — backward compatible with the pre-#71 hardcoded constant)
+
+    Each layer independently falls through on absent/invalid/non-positive input
+    (e.g. env="0" falls through to config, not straight to default). Values from
+    env or config that exceed the recommended upper bound are honored (warn-only,
+    per OQ3) — never clamped. Always returns a positive int.
+    """
+    env_val = _parse_env_max_branches()
+    if env_val is not None:
+        return _honor_with_upper_bound_warning(
+            env_val, f"env {ARIA_HANDOFF_MAX_BRANCHES_ENV}"
+        )
+    config_val = _read_config_max_branches(project_root)
+    if config_val is not None:
+        return _honor_with_upper_bound_warning(
+            config_val, "config state_scanner.handoff_multibranch.max_branches"
+        )
+    return _DEFAULT_MAX_BRANCHES
+
+
 @dataclass
 class CollectorResult:
     data: dict[str, Any] = field(default_factory=dict)

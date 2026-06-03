@@ -48,8 +48,10 @@ Design notes:
   fix for Forgejo aria-plugin #57 Finding 2) — no external dep required.
 - Performance: limited to ``refs/remotes/origin/`` (shallow ref list from
   TASK-003 fetch) — history is not walked.
-- If the remote branch count exceeds MAX_BRANCHES_SCANNED (20) only the first 20
-  branches (sorted lexicographically) are processed.  A soft_error notes the cap.
+- If the remote branch count exceeds the resolved scan cap (default 20, see
+  resolve_max_branches_scanned in _common.py; #71 v1.38.0) only the first N
+  branches (most-recent by committerdate) are processed.  A soft_error notes
+  the cap, quoting the resolved value.
 
 Spec: openspec/changes/multi-terminal-coordination/tasks.md §1.4
 Task: TASK-004 (backend-architect)
@@ -66,7 +68,7 @@ from pathlib import Path
 # misinterpreted as a flag. Adding `--` would require a refactor for `git show`'s
 # `<ref>:<path>` syntax (which does not accept `--` between ref and path).
 
-from ._common import CollectorResult, _run, log
+from ._common import CollectorResult, _run, log, resolve_max_branches_scanned
 from .handoff import parse_handoff_frontmatter
 
 # ---------------------------------------------------------------------------
@@ -94,7 +96,11 @@ except ImportError:
 # Maximum number of remote branches to scan per run.
 # Tasks.md §1.3 notes fetch is limited to refs/heads/* already; this is
 # an additional guard against excessively large repos.
-MAX_BRANCHES_SCANNED: int = 20
+# v1.38.0 (#71): the cap is now 3-layer configurable (env > config > default 20)
+# via `resolve_max_branches_scanned()` in _common.py — resolved per-run inside
+# collect_handoff_multibranch(), no longer a module-level constant. Large repos
+# (e.g. 440 remote branches) set state_scanner.handoff_multibranch.max_branches
+# or ARIA_HANDOFF_MAX_BRANCHES to lift the default.
 
 # File excluded from handoff doc detection (navigation pointer, not a doc).
 # Must match POINTER_FILENAME in handoff.py for consistency.
@@ -124,7 +130,7 @@ def _list_origin_branches(project_root: Path) -> tuple[list[str], str | None]:
     Excludes the synthetic ``origin/HEAD`` pointer.
     """
     # Sort by committerdate desc so most-recently-updated branches win the
-    # MAX_BRANCHES_SCANNED cap (Round 8 tech-lead Finding #4 fix — previously
+    # scan cap (Round 8 tech-lead Finding #4 fix — previously
     # lexicographic order let archive/* + bugfix/* steal scan budget from
     # master + feature/*; first dogfood run after v1.22.0 ship immediately
     # surfaced this in real use against this very Aria repo).
@@ -156,7 +162,7 @@ def _list_origin_branches(project_root: Path) -> tuple[list[str], str | None]:
         branches.append(bare)
 
     # Preserve `git for-each-ref --sort=-committerdate` ordering (most-recently-updated
-    # branches first) so MAX_BRANCHES_SCANNED cap keeps active branches over stale ones.
+    # branches first) so the scan cap keeps active branches over stale ones.
     # Round 8 tech-lead Finding #4 fix — previously `sorted(branches)` undid the git
     # sort and let archive/* + bugfix/* steal scan budget. Surfaced at zero-day dogfood.
     return branches, None
@@ -278,6 +284,10 @@ def collect_handoff_multibranch(
     r = CollectorResult()
     error_messages: list[str] = []
 
+    # Resolve the scan cap (env > config > default 20; #71 v1.38.0). Resolved
+    # once per run so the value is stable across the cap check + soft_error text.
+    max_branches = resolve_max_branches_scanned(project_root)
+
     # PyYAML probe removed in v1.30.2 — parse_handoff_frontmatter now uses a
     # stdlib parser (fix for Forgejo aria-plugin #57 Finding 2). Frontmatter
     # parsing no longer requires any external dep.
@@ -296,19 +306,19 @@ def collect_handoff_multibranch(
         }
         return r
 
-    # Performance cap: only scan first MAX_BRANCHES_SCANNED branches.
+    # Performance cap: only scan first `max_branches` branches (resolved above).
     # Branches are pre-sorted by committerdate desc (most-recent first) by
     # _list_origin_branches. Cap keeps active over stale.
-    if len(branches) > MAX_BRANCHES_SCANNED:
+    if len(branches) > max_branches:
         capped_msg = (
             f"Remote branch count ({len(branches)}) exceeds cap "
-            f"({MAX_BRANCHES_SCANNED}); scanning only the first "
-            f"{MAX_BRANCHES_SCANNED} branches (most-recent by committerdate)."
+            f"({max_branches}); scanning only the first "
+            f"{max_branches} branches (most-recent by committerdate)."
         )
         r.soft_error("handoff_multibranch_branch_cap", capped_msg)
         error_messages.append(capped_msg)
         log.warning("handoff_multibranch: %s", capped_msg)
-        branches = branches[:MAX_BRANCHES_SCANNED]
+        branches = branches[:max_branches]
 
     # ── Scan each branch ──────────────────────────────────────────────────────
     tracks: list[dict] = []
