@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.38.0] - 2026-06-03
+
+### state-scanner-output-cap-hardening (#71 + #72) — 输出字段骨架 + 分支扫描上限可配置
+
+**Cycle**: state-scanner-output-cap-hardening (#71+#72) — Phase A (Approved 2026-06-01 R2 unanimous) → Phase B full cycle (OQ3 owner warn-only / OQ4 reconcile 10 核心块)
+
+**TG-B (#71) — `MAX_BRANCHES_SCANNED` 三层可配置**:
+- `collectors/_common.py` 新增 `resolve_max_branches_scanned(project_root) -> int`，结构镜像 `resolve_forgejo_hosts` 的 env > config > default 优先级链，但显式处理 int 域 footgun：env `ARIA_HANDOFF_MAX_BRANCHES` (try/except 非数字) / config `state_scanner.handoff_multibranch.max_branches` (`isinstance int and not bool` 拒 bool 子类陷阱 + 拒 float/str) / 每层独立 `≤0 → 回退下一层` (env="0" 落到 config 非 default) / default 20 (向后兼容)。
+- **上界 warn-only** (OQ3 owner 决策 2026-06-03)：超推荐上界 500 仅 `log.warning` 并**返回用户原值**，绝不静默 clamp / 改写用户意图。
+- `collectors/handoff_multibranch.py` 移除硬编码 module 常量 `MAX_BRANCHES_SCANNED` (无外部引用)，改 per-run resolver；cap soft_error 文案 / docstring / 注释全同步动态值。
+- `.aria/config.template.json` 文档化 `state_scanner.handoff_multibranch.max_branches` (3 层优先级 + 上界 warn-only 说明)。大仓 (远程分支 > 20，实证第三方仓 440) 调高此值根除 `handoff_multibranch_branch_cap` 软警告 + multi-terminal 看板静默失效 (覆盖 20/440 < 5%)。
+
+**TG-A (#72) — 输出字段层骨架 + 防再漂移**:
+- `SKILL.md` 输出格式 L146 从「区块名清单」扩为 **10 条带 ` — 关键字段` 的编号骨架** + 条件子块注 (README同步/Forgejo配置/插件依赖/Skill-AB)。根因：v1.32.0 progressive-disclosure 把字段级骨架移到 `references/output-formats.md`，AI 不读 reference 就只能凭记忆补字段 → 字段层漂移。降级原则保留。
+- **OQ4 reconcile (TG-A.0 锁定)**：canonical = 10 核心块不 collapse；README/Forgejo/插件依赖/Skill-AB 为条件子块。10 块在 output-formats.md 全部已存在 → `references/output-formats.md` **不动** (符合 out-of-scope，它没坏)。
+- **自动 sync-check 测试** `tests/test_output_format_sync.py` (6 测)：断言 10 canonical header 在 SKILL.md 骨架与 output-formats.md **双向一致出现** + 块数=10 + 每块有字段分隔符 → 把「格式完整性」变成确定性断言，补上 v1.32.0 AB 漏测的根因 (progressive-disclosure 再漂移防护)。
+
+**测试 (Rule #6 deterministic/structural substitute)**: `tests/test_max_branches_resolver.py` 39 测 (35 resolver: env/config/default/int 域 fail-soft/边界/上界 warn-only/直接层解析器 + 4 cap-application monkeypatch: default/env override/config override 不触发/<cap 不触发) + `tests/test_output_format_sync.py` 6 测。全量 **676 测 green**，零回归 (一过性 `issue-cache-freshness` timing flake 已诊断排除，与改动无关)。Skills 不变 (34 user-facing + 7 internal = 41)。Closes Forgejo aria-plugin #71 + #72。
+
 ## [1.37.0] - 2026-05-31
 
 ### concurrent-session-upm-safety (#133) — 并发多 session UPM/handoff 安全
