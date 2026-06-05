@@ -107,6 +107,8 @@ AI 负责: 根据 `interrupt.status` 值:
 - `in_progress` / `suspended` → 展示 **[1]Resume [2]Abandon [3]Inspect**; Resume → workflow-runner(resume=true), Abandon → 提示删 `.aria/workflow-state.json` 后进阶段 2, Inspect → 展示 `interrupt.context` 后回选择
 - `failed` → 展示 **[1]Retry [2]Abandon [3]Inspect**
 
+**git 操作感知 (Aria #135, v1.39.0+, 与 interrupt 正交)**: snapshot 另有 `git.git_operation_in_progress` 字段 (collectors/git.py 采集), 检测暂停中的 git 层操作 (`operation` ∈ {none, rebase, merge, cherry_pick, revert, bisect} + `has_conflicts`)。这与 `interrupt.status` **正交、互不篡改** —— interrupt 只看 `.aria/workflow-state.json`, 检测不到 git 中间态 (rebase 暂停态 `detached_head` 仍为 False)。`operation != "none"` 时, 阶段 2 由 `git_operation_in_progress` 规则 (priority 0.5, 见 RECOMMENDATION_RULES.md) **降级/阻止含 checkout·分支操作的常规推荐**, 引导先 `git <op> --continue`/`--abort` (`has_conflicts=true` 措辞升级)。绝不代用户操作 git。
+
 ---
 
 ### 阶段 1: 状态采集 (scan.py 机械产出)

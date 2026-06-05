@@ -13,10 +13,19 @@
    - 值 != `"1.0"` → abort, 提示 "scan.py schema 版本 (X.Y) 与 SKILL.md 契约 (1.0) 不兼容, 请升级 aria-plugin"
 3. 通过 → 基于 snapshot 各字段按优先级匹配推荐规则
 
+### git 操作安全闸 (Aria #135, v1.39.0+, priority 0.5 先于一切常规规则)
+
+入口断言通过后、匹配常规规则前, **先查 `git.git_operation_in_progress.operation`**:
+- `== "none"` (或字段缺失, 向后兼容) → 正常进入推荐规则匹配。
+- `!= "none"` (rebase/merge/cherry_pick/revert/bisect 暂停态) → 触发 `git_operation_in_progress` 规则 (RECOMMENDATION_RULES.md priority 0.5): **降级/阻止含 checkout·新分支操作的常规推荐**, 展示 warning + 引导先 `git <op> --continue`/`--abort`; `has_conflicts=true` 时措辞升级 (先解决冲突)。
+
+> 该闸与阶段 0 `interrupt.status` **正交、互不篡改** —— interrupt 只看 `.aria/workflow-state.json`, 检测不到 git 中间态 (rebase 暂停态 `detached_head` 仍为 False, 故必须独立 collector 字段)。绝不代用户操作 git (只检测 + 警示)。
+
 ### 推荐规则类别
 
 详见 [../RECOMMENDATION_RULES.md](../RECOMMENDATION_RULES.md):
 
+- git 操作安全: git_operation_in_progress (priority 0.5, 暂停中 git 操作 → 阻断/降级常规推荐, Aria #135)
 - 基础工作流: commit_only → quick_fix → feature_with_spec → feature_new
 - 需求相关: requirements_issues, pending_stories, missing_prd, missing_openspec
 - 审计相关: audit_unconverged (存在未收敛审计报告)

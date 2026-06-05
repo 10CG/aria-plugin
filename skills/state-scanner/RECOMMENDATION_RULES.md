@@ -6,6 +6,7 @@
 
 | 规则 ID | 优先级 | 推荐工作流 | 触发条件 | 置信度 | 自动执行? |
 |---------|--------|-----------|----------|--------|----------|
+| `git_operation_in_progress` | 0.5 | (阻断提示) resolve-git-operation | `git.git_operation_in_progress.operation != "none"` | 90% | No — 须先 `git <op> --continue`/`--abort`,降级/阻止含 checkout·分支操作的常规推荐;`has_conflicts=true` 措辞升级 (Aria #135) |
 | `commit_only` | 1 | C.1 only | 已暂存 + 无未暂存 | 95% | Yes — 已暂存 + 无未暂存信号明确 |
 | `readme_outdated` | 1.3 | doc-update | README 版本/日期不一致 | 85% | No — 用户可能有意延后 |
 | `multi_remote_drift` | 1.35 | (降级提示) | `multi_remote.overall_parity=false` | 75% | No — 非阻塞，附加 push 建议 |
@@ -65,6 +66,13 @@ Inter-cycle surfacing (pending_followups / resume_in_progress_us / carry_forward
 ---
 
 ## 变更历史
+
+### v2.12.0 (2026-06-05)
+
+- **新增**: 规则 `git_operation_in_progress` (优先级 0.5, 最高) — `git.git_operation_in_progress.operation != "none"` (rebase/merge/cherry_pick/revert/bisect 暂停态) 时降级/阻止含 checkout·分支操作的常规推荐, 引导先 `git <op> --continue`/`--abort`; `has_conflicts=true` 措辞升级
+- **关联**: Spec `state-scanner-git-operation-awareness` / Forgejo Aria #135 — git.py `_detect_git_operation` collector 字段 (additive)
+- **依赖**: `git.git_operation_in_progress` 字段 (TG-A); 与 `interrupt.status` 正交, 不篡改既有中断恢复语义
+- **向后兼容**: 字段为 `none` 形态或缺失时规则不触发, clean 仓库行为与 v2.11.0 一致
 
 ### v2.11.0 (2026-05-09)
 

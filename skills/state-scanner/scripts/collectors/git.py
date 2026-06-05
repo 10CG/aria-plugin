@@ -191,6 +191,120 @@ def _collect_recent_commits(
     return commits
 
 
+def _resolve_git_dir(project_root: Path, timeout: int = 5) -> Path | None:
+    """Return the resolved git dir Path, or None on failure.
+
+    `git rev-parse --git-dir` returns a RELATIVE path (`.git`) in a normal
+    superproject checkout but an ABSOLUTE path for linked worktrees / submodules
+    (gitfile indirection, e.g. `/repo/.git/worktrees/<name>`). We MUST resolve
+    relative output against `project_root` rather than the process CWD, else
+    marker detection silently misfires when CWD != project_root.
+    """
+    rc, out, _ = _run(["git", "rev-parse", "--git-dir"], project_root, timeout=timeout)
+    if rc != 0:
+        return None
+    raw = out.strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    return p if p.is_absolute() else (project_root / p)
+
+
+def _rebase_detail(git_dir: Path) -> str | None:
+    """Best-effort rebase descriptor (head-name / onto). None on any failure."""
+    for sub in ("rebase-merge", "rebase-apply"):
+        d = git_dir / sub
+        if d.is_dir():
+            try:
+                head_name = None
+                onto = None
+                if (d / "head-name").exists():
+                    head_name = (d / "head-name").read_text(encoding="utf-8").strip()
+                if (d / "onto").exists():
+                    onto = (d / "onto").read_text(encoding="utf-8").strip()
+                parts = [p for p in (head_name, f"onto {onto}" if onto else None) if p]
+                return "; ".join(parts) if parts else None
+            except OSError:
+                return None
+    return None
+
+
+def _has_unmerged(
+    project_root: Path, r: CollectorResult | None = None, timeout: int = 5
+) -> bool:
+    """True if the index has unmerged (conflicted) paths.
+
+    rc != 0 falls back to False (safe direction: don't escalate wording) but
+    emits a soft_error — this only runs after an operation was confirmed, so a
+    git failure here is an anomaly worth surfacing rather than swallowing.
+    """
+    rc, out, _ = _run(
+        ["git", "diff", "--diff-filter=U", "--name-only"], project_root, timeout=timeout
+    )
+    if rc != 0:
+        if r is not None:
+            r.soft_error("unmerged_probe_failed", f"rc={rc}")
+        return False
+    return bool(out.strip())
+
+
+def _detect_git_operation(
+    project_root: Path, r: CollectorResult | None = None, timeout: int = 5
+) -> dict[str, Any]:
+    """Detect an in-progress git operation via `$GIT_DIR/` marker files.
+
+    Output shape:
+      {
+        "operation": "none" | "rebase" | "merge" | "cherry_pick" | "revert" | "bisect",
+        "has_conflicts": bool,   # only computed when operation != "none" (OQ4 conditional eval)
+        "detail": str | null     # best-effort rebase head-name/onto
+      }
+
+    Priority (multi-marker = anomalous mid-state): rebase > merge > cherry_pick
+    > revert > bisect. Fail-soft: git-dir resolution failure or a read error
+    yields operation "none" (+ soft_error when `r` is provided), never raising
+    and never blocking the rest of git collection.
+
+    Aria #135: the interrupt collector only reads `.aria/workflow-state.json`
+    and `detached_head` stays False during a paused rebase (branch name still
+    resolves), so a suspended git operation was reported as `interrupt:none`.
+    """
+    none_result = {"operation": "none", "has_conflicts": False, "detail": None}
+    git_dir = _resolve_git_dir(project_root, timeout=timeout)
+    if git_dir is None:
+        if r is not None:
+            r.soft_error("git_dir_unresolved", "git rev-parse --git-dir failed")
+        return dict(none_result)
+
+    try:
+        operation: str | None = None
+        detail: str | None = None
+        if (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir():
+            operation = "rebase"
+            detail = _rebase_detail(git_dir)
+        elif (git_dir / "MERGE_HEAD").exists():
+            operation = "merge"
+        elif (git_dir / "CHERRY_PICK_HEAD").exists():
+            operation = "cherry_pick"
+        elif (git_dir / "REVERT_HEAD").exists():
+            operation = "revert"
+        elif (git_dir / "BISECT_LOG").exists():
+            operation = "bisect"
+    except OSError as e:
+        if r is not None:
+            r.soft_error("git_operation_probe_failed", str(e))
+        return dict(none_result)
+
+    if operation is None:
+        return dict(none_result)
+
+    return {
+        "operation": operation,
+        "has_conflicts": _has_unmerged(project_root, r, timeout=timeout),
+        "detail": detail,
+    }
+
+
 def collect_git_state(project_root: Path) -> CollectorResult:
     """Collect git status, branch, upstream divergence, and recent commits.
 
@@ -213,7 +327,12 @@ def collect_git_state(project_root: Path) -> CollectorResult:
           "reason": str | null
         },
         "recent_commits": [{"sha": str, "subject": str}, ...],
-        "shallow": bool
+        "shallow": bool,
+        "git_operation_in_progress": {           # Aria #135, additive (v1.39.0+)
+          "operation": "none" | "rebase" | "merge" | "cherry_pick" | "revert" | "bisect",
+          "has_conflicts": bool,                 # only computed when operation != "none"
+          "detail": str | null                   # best-effort rebase head-name/onto
+        }
       }
     """
     r = CollectorResult()
@@ -228,6 +347,9 @@ def collect_git_state(project_root: Path) -> CollectorResult:
     branch = _current_branch(project_root)
     data["current_branch"] = branch
     data["detached_head"] = branch is None
+    # Aria #135: surface in-progress git operations (rebase/merge/...) that
+    # detached_head + workflow-state.json both miss. Additive, fail-soft.
+    data["git_operation_in_progress"] = _detect_git_operation(project_root, r)
 
     rc, out, err = _run(["git", "status", "--porcelain=v1", "-z"], project_root)
     if rc != 0:

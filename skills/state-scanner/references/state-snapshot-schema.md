@@ -101,9 +101,27 @@ upstream:
   reason: str|null              # enum: null | "no_upstream" | "shallow_clone" | "detached_head" | "rev_list_failed" | "parse_failed"
 recent_commits: list[{sha: str, subject: str}]  # up to 5
 shallow: bool
+git_operation_in_progress:        # Aria #135, additive (v1.39.0+)
+  operation: str                  # enum: "none" | "rebase" | "merge" | "cherry_pick" | "revert" | "bisect"
+  has_conflicts: bool             # only computed when operation != "none" (OQ4 conditional eval); else false
+  detail: str|null                # best-effort rebase head-name/onto
 ```
 
 Fail-soft: `is_git_repo=false` → all other fields absent except `is_git_repo`, and scan.py exits rc=20.
+
+### `git.git_operation_in_progress` (Aria #135, state-scanner-git-operation-awareness 2026-06-05)
+
+Detects a **paused git-layer operation** that both `detached_head` and the `interrupt` collector miss: in a suspended rebase `git branch --show-current` still returns the branch, so `detached_head` is `False` and `interrupt.status` (which only reads `.aria/workflow-state.json`) reports `none`. Collected by `collectors/git.py::_detect_git_operation` via `$GIT_DIR/` marker files (`rebase-merge`/`rebase-apply` → rebase, `MERGE_HEAD` → merge, `CHERRY_PICK_HEAD` → cherry_pick, `REVERT_HEAD` → revert, `BISECT_LOG` → bisect; priority rebase > merge > cherry_pick > revert > bisect).
+
+**git dir resolution**: `git rev-parse --git-dir` returns a relative path in a normal checkout but absolute for linked worktrees/submodules; the collector resolves relative output against `project_root` (not CWD).
+
+**Orthogonal to `interrupt.status`** — independent field, never mutates interrupt-recovery semantics. Stage 2 consumes it via the `git_operation_in_progress` recommendation rule (priority 0.5) to degrade/block checkout·branch recommendations.
+
+**Fail-soft**: git-dir resolution failure or read error → `{"operation":"none","has_conflicts":false,"detail":null}` + `git_dir_unresolved`/`git_operation_probe_failed` soft_error; never blocks the rest of git collection.
+
+**Versioning**: additive nested optional field under `git` → `snapshot_schema_version` stays `"1.0"` (per §Versioning additive rule; consumers built before this ship use `git.get("git_operation_in_progress", {...none...})` defensive access).
+
+**Backward-compat**: clean repos always carry the field in none form; older `scan.py` versions omit it and consumers must default to none.
 
 ### `git.status_clean` (TX.0, state-scanner-inter-cycle-surfacing 2026-05-08)
 
