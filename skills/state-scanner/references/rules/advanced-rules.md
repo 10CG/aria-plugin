@@ -1,6 +1,42 @@
 # State Scanner — 进阶规则
 
-> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含 Inter-cycle surfacing (1.85-1.895) + 审计 (1.9-1.91) + 自定义检查 (1.95-1.99) + Multi-Terminal 协调 (1.51-1.54) 4 个 cluster。
+> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含 Git 操作安全 (0.5) + Inter-cycle surfacing (1.85-1.895) + 审计 (1.9-1.91) + 自定义检查 (1.95-1.99) + Multi-Terminal 协调 (1.51-1.54) 5 个 cluster。
+
+---
+
+## Git 操作安全规则 (2026-06-05, state-scanner-git-operation-awareness / Aria #135)
+
+### 0.5 git_operation_in_progress
+
+```yaml
+id: git_operation_in_progress
+priority: 0.5   # 最高 — 安全闸, 先于一切常规工作流推荐
+description: 仓库处于暂停中的 git 操作 (rebase/merge/cherry_pick/revert/bisect), 阻断/降级常规推荐
+
+conditions:
+  all:
+    - git.git_operation_in_progress exists (key present)
+    - git.git_operation_in_progress.operation != "none"
+
+  detection:
+    snapshot_path: "git.git_operation_in_progress.operation"
+    field_check: "operation in {rebase, merge, cherry_pick, revert, bisect}"
+    escalation: "git.git_operation_in_progress.has_conflicts == true → 措辞升级"
+
+recommendation:
+  workflow: null  # 不强推工作流, 触发阻断/降级提示
+  info: "⚠️ 检测到暂停中的 git {operation} 操作 — 请先完成或放弃再继续"
+  display:
+    - "operation 类型 + detail (rebase head-name/onto 若有)"
+    - "has_conflicts=true 时: 提示先解决冲突 (git diff --diff-filter=U)"
+  suggestion:
+    - "完成: git {operation} --continue"
+    - "放弃: git {operation} --abort"
+    - "降级/阻止本轮含 checkout·新分支操作的常规推荐, 避免破坏中间态"
+  blocking: true   # 阻断常规推荐 (与 interrupt.status 正交, 不篡改既有中断恢复语义)
+```
+
+**Rationale (placement 0.5)**: 高于 `commit_only` (1)。暂停中的 git 操作是安全前置 —— 阶段 0 的 `interrupt.status` 只感知 `.aria/workflow-state.json`, 检测不到 git 层中间态 (Aria #135: rebase 暂停态 `detached_head` 仍为 False)。若不先浮出, 阶段 2 可能给出 checkout/分支推荐破坏 rebase·merge 中间态。该规则与 `interrupt.status` **正交**: 独立 collector 字段 `git.git_operation_in_progress`, 不改写中断恢复状态。
 
 ---
 

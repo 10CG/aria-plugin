@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
      Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
 
+## [1.39.0] - 2026-06-05
+
+### state-scanner-git-operation-awareness (#135) — interrupt collector 检测 git rebase/merge-in-progress
+
+**Cycle**: state-scanner-git-operation-awareness (#135) — triage `confirmed`/`major`/`next-cycle` → Phase A (post_spec 2-round CONVERGED) → Phase B full cycle (TG-A/B/C + 21 测 + dogfood + code-review)
+
+**问题**: `/state-scanner` 的 interrupt collector (`collectors/interrupt.py`) 只读 `.aria/workflow-state.json`，**检测不到 git 层 in-progress 操作** (rebase/merge/cherry-pick/revert/bisect)。dogfood 实证 (#133 ship 遗留的暂停 rebase)：仓库实际处于暂停 rebase (`.git/rebase-merge/` 存在)，但 snapshot 报 `interrupt.status=none` 且 `detached_head=False` (rebase 暂停态 `git branch --show-current` 仍返回 master) → 阶段 2 可能给出 checkout/分支推荐破坏中间态。
+
+**TG-A — `git.py` 采集 `git_operation_in_progress`**:
+- 新增 `_detect_git_operation` (+`_resolve_git_dir`/`_rebase_detail`/`_has_unmerged`)。经 `git rev-parse --git-dir` 取 git dir (superproject 返回相对 `.git` → 显式 `is_absolute()` 后 join project_root，不依赖 CWD；worktree/submodule gitfile 间接返回绝对路径)，检测 `$GIT_DIR/` 标记：`rebase-merge`/`rebase-apply`→rebase, `MERGE_HEAD`→merge, `CHERRY_PICK_HEAD`→cherry_pick, `REVERT_HEAD`→revert, `BISECT_LOG`→bisect；优先级 rebase>merge>cherry_pick>revert>bisect。
+- additive 字段 `git.git_operation_in_progress {operation, has_conflicts, detail}`。`has_conflicts` **条件求值** (仅 `operation != none` 才跑 `git diff --diff-filter=U`，省 clean 仓库常态开销)。fail-soft 双 soft_error kind (`git_dir_unresolved` / `git_operation_probe_failed` / `unmerged_probe_failed`)，不阻断其余 git 采集。
+
+**TG-B — 阶段 2 消费 (与 `interrupt.status` 正交，不篡改)**:
+- `RECOMMENDATION_RULES.md` 新增 `git_operation_in_progress` 规则 (**priority 0.5 最高**) + `references/rules/advanced-rules.md` 详细 YAML block：`operation != none` → 降级/阻止含 checkout·分支操作的常规推荐，引导先 `git <op> --continue`/`--abort`，`has_conflicts=true` 措辞升级。
+- `SKILL.md` 阶段 0 + `references/recommendation-stages.md` prose 描述 git 操作安全闸。
+
+**TG-C — schema + 6 文档同步 (Rule #3)**:
+- `references/state-snapshot-schema.md` 记录新字段 + 明确 `snapshot_schema_version` 保持 **"1.0" 不 bump** (nested optional additive)。
+- `references/phase-1-collectors.md` git 行注新子字段；`references/interrupt-recovery.md` 决策树补 git 层并行感知分支 + "两路信号正交、互不篡改" 边界。
+
+**测试 + 质量**:
+- **21 新测** (16 `test_git_operation_detection.py`: 6 单标记 + 2 多标记优先级 + worktree git-dir + 真冲突/合成无冲突 + fail-soft + wiring AC-1/AC-3; 5 `test_git_operation_rule.py`: 规则结构性存在 + 字段引用 + has_conflicts 升级 + 正交)。**712 全绿零回归** (唯一 `test_normalize_snapshot` 失败为 time-ago 跨分钟 timing flake，本 cycle 未触碰，隔离复跑 PASS)。
+- **dogfood**: 真 rebase 中间态跑 `scan.py` → `operation=rebase` + `detail="refs/heads/master; onto a9665fb"`，复算 triage case-1 (由报 none 变为报 rebase)。
+- Rule #6: deterministic/structural skill substitute = collector 单测 + 规则结构性测试 + dogfood (per `feedback_deterministic_structural_skill_rule6_substitute`)；description 未改 → 无需 /skill-creator AB。
+- **post_spec 2-round CONVERGED** (R1 REVISE/PWW 5-agent → Rev1 关全部 4 OQ + 锁 TG-B 三落点 + 写实 AC-2/AC-3/AC-5 → R2 全票 PASS 5/5，全部 R1 findings 撤回)。Phase B.2 code-review PASS (0 Critical/0 Important，Minor #1 `_has_unmerged` rc!=0 soft_error 已补)。
+
+**向后兼容**: ✅ 纯 additive；clean 仓库 `operation:"none"` 行为与 v1.38.0 完全一致。Closes Forgejo Aria #135。
+
 ## [1.38.0] - 2026-06-03
 
 ### state-scanner-output-cap-hardening (#71 + #72) — 输出字段骨架 + 分支扫描上限可配置

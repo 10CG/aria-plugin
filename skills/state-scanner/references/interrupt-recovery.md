@@ -13,7 +13,7 @@
 
 ```
 .aria/workflow-state.json 存在？
-├── 否 → 正常进入阶段 1
+├── 否 → 正常进入阶段 1  (但仍受下方 git 操作并行感知约束)
 ├── 解析失败 (corrupt) → 记录警告，视为不存在，进入阶段 1
 └── 是 → 检查 status 字段
     ├── "completed" / "archived" → 忽略，进入阶段 1
@@ -29,6 +29,10 @@
             ├── Abandon → 删除 state file，进入阶段 1
             └── Inspect → 显示详情，再次提供选择
 ```
+
+> **⚠️ git 层操作并行感知 (Aria #135, v1.39.0+, 与上方决策树正交)**: 上方决策树**只**消费 `.aria/workflow-state.json` (Aria workflow 中断)，**检测不到 git 层中间态** (rebase/merge/cherry_pick/revert/bisect 暂停)。`#135` 实证: workflow-state.json 缺失 → 走 "否 → 正常进入阶段 1" 分支，但仓库实际处于暂停 rebase (`detached_head` 仍为 False，分支名仍可解析)，常规推荐可能 checkout 破坏中间态。
+>
+> 因此 scan.py 另由 `collectors/git.py::_detect_git_operation` 采集 **正交独立**字段 `git.git_operation_in_progress` (不写入、不篡改本决策树消费的 `interrupt.status`)。阶段 2 入口在匹配常规规则前先查该字段 (`git_operation_in_progress` 规则 priority 0.5)，非 `none` 时降级/阻止 checkout·分支类推荐，引导先 `git <op> --continue`/`--abort`。两路信号 (workflow-state 中断 vs git 中间态) **互不篡改、各自独立判定**。详见 [state-snapshot-schema.md](./state-snapshot-schema.md) §`git.git_operation_in_progress` + RECOMMENDATION_RULES.md。
 
 ---
 
