@@ -5,9 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-<!-- v1.29.0 placeholder: reserved for aria-submodule-gate-block-flip ship (D+14 hard date 2026-06-07).
-     When block-flip ships, replace this comment block with the real `## [1.29.0] - 2026-06-07` entry.
-     Per OpenSpec aria-forgejo-hosts-parameterization Rev1 fix M-changelog. -->
+<!-- NOTE: block-flip (warn→block) was DEFERRED at D+14 (2026-06-07) — Trigger C (0 gate
+     executions) + tripwire 5/5 dispatch failure → gate ecosystem had no live operational
+     evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
+     v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
+
+## [1.40.0] - 2026-06-07
+
+### aria-submodule-gate-operationalize TG-1 (R-fix-1) — gate telemetry in git-direct ship
+
+**Trigger**: block-flip D+14 defer — submodule pointer regression gate recorded 0 executions over the 14-day window (10 PRs merged, but git-direct gitlink bumps bypass the phase-c-integrator flow that runs the gate). This ships TG-1 (R-fix-1) so git-direct ship accumulates gate telemetry. TG-2 (R-fix-2 tripwire runner failure) remains infra-gated.
+
+- **`submodule_gate.sh`**: new `submodule-gate-executions.jsonl` — every gate invocation appends one record (incl. PASS / forward-bump / no-change), so `total_gate_executions` is a DIRECT count rather than inferred from warns+blocks+overrides+PR-merge推算. `log_execution` at Summary derives overall verdict (PASS/ALLOWED/BLOCK/ERROR). Additive; existing 4 telemetry files + 13-scenario replay test unchanged.
+- **`hooks/submodule-gate-telemetry.sh`** (new PostToolUse Bash hook, OQ1=(a′)): on a `git commit` whose HEAD touches a submodule gitlink (awk-anchored on raw mode columns `:160000`/`160000` — not a substring grep, so paths/SHAs merely containing "160000" can't false-trigger), runs the gate in forced WARN mode (`timeout 15` wrapper) → records the execution. PostToolUse → structurally cannot block (zero lockout risk); three no-op guards (non-commit / no `.gitmodules` / non-gitlink commit) prevent telemetry noise. CRLF-safe (`jq | tr -d '\r'`).
+- **`hooks.json`**: registered PostToolUse Bash entry (timeout 20).
+- **Constraint honored**: does NOT reroute git-direct ship through phase-c-integrator (agent-team over-engineering guard).
+- **Tests**: 7 new (`hooks/tests/submodule-gate-telemetry.test.sh`: gate PASS execution recorded + hook trigger + 4 no-op cases incl. path-containing-160000) = Rule #6 deterministic substitute. Zero regression: gate replay 13/13, secret-guard 225, secret-scan 47, crlf-shim 8, jq-crlf-guard 7.
+- **Audit**: post_spec 2-round CONVERGED (R1 qa REVISE [AC path-specific→drift] → Rev1 AC path-agnostic → R2 unanimous PASS 3/3). Phase B.2 code-review PASS (0 Critical/0 Important; Minor #1 anchoring + #2 timeout fixed).
+- Spec `aria-submodule-gate-operationalize` stays in `openspec/changes/` until TG-2 ships. Skills unchanged (41; this adds a hook, not a skill).
 
 ## [1.39.0] - 2026-06-05
 
