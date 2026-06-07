@@ -49,6 +49,12 @@ fi
 WARNS_FILE="$METRICS_DIR/submodule-gate-warns.jsonl"
 BLOCKS_FILE="$METRICS_DIR/submodule-gate-blocks.jsonl"
 OVERRIDES_FILE="$METRICS_DIR/submodule-gate-overrides.jsonl"
+# R-fix-1 (aria-submodule-gate-operationalize): per-invocation execution counter.
+# Every completed gate run appends one line here REGARDLESS of verdict (incl. PASS /
+# forward-bump / no-change), so total_gate_executions is a DIRECT count rather than
+# inferred from warns+blocks+overrides+PR-merge推算. Drives block-flip Trigger B/C
+# minimum-observation guard (>=3).
+EXECUTIONS_FILE="$METRICS_DIR/submodule-gate-executions.jsonl"
 
 FETCH_RETRIES=(1 2 4)
 
@@ -76,6 +82,15 @@ log_telemetry() {
     # JSONL append-only (kernel atomic write for <PIPE_BUF=4096 bytes)
     printf '{"timestamp":"%s","pr_id":"%s","submodule":"%s","master_sha":"%s","feature_sha":"%s","verdict":"%s","mode_or_reason":"%s","human_reviewed_as_fp":null}\n' \
         "$ts" "$pr" "$sub" "$master" "$feature" "$verdict" "$extra" >> "$file"
+}
+
+log_execution() {
+    # R-fix-1: one record per gate invocation (counts toward total_gate_executions).
+    # $1 = overall_verdict (PASS|ALLOWED|BLOCK|ERROR), $2 = affected_count
+    local overall="$1" affected="$2"
+    local pr="${ARIA_PR_NUMBER:-unknown}"
+    printf '{"timestamp":"%s","pr_id":"%s","mode":"%s","verdict":"%s","affected_count":%s,"exit_code":%s}\n' \
+        "$(iso_now)" "$pr" "$MODE" "$overall" "$affected" "$exit_code" >> "$EXECUTIONS_FILE" 2>/dev/null || true
 }
 
 check_override_trailer() {
@@ -271,9 +286,18 @@ done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>/d
 if [[ "$exit_code" == 0 ]]; then
     if [[ "$affected_count" == 0 ]]; then
         echo "✓ submodule_gate: all submodules unchanged/forward/first-time (mode=$MODE)"
+        _overall_verdict="PASS"
     else
         echo "✓ submodule_gate: $affected_count submodule(s) flagged but allowed (mode=$MODE)"
+        _overall_verdict="ALLOWED"
     fi
+elif [[ "$exit_code" == 1 ]]; then
+    _overall_verdict="BLOCK"
+else
+    _overall_verdict="ERROR"
 fi
+
+# R-fix-1: record this invocation (every completed run, incl. PASS).
+log_execution "$_overall_verdict" "$affected_count"
 
 exit $exit_code
