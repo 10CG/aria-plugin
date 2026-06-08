@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.41.0] - 2026-06-08
+
+### aria-submodule-gate-operationalize TG-2 (R-fix-2) — tripwire host-cron migration
+
+**Completes the Spec** (TG-1 shipped v1.40.0). The post-merge tripwire workflow failed 5/5 dispatches (runs #7–#11): the Forgejo Actions runner cannot clone the `ssh://forgejo@...` submodules (no forgejo credentials; forgejo behind Cloudflare Access); `actions/checkout@v4 submodules:true` fails ~6s. Per-run logs unreachable via API (404) + web (CF) → root cause tentative-confirmed via evidence chain (Spec task 2.0 degraded path). **OQ2=(c): migrate to host-cron.**
+
+- **`scripts/submodule-tripwire-audit.sh`** (new standalone): faithfully ports the workflow's inline audit — HEAD~1-vs-HEAD per-submodule gitlink ancestry (`ls-tree` SHAs + `merge-base --is-ancestor`; first-time/removed/no-change skip; `cat-file -e` guard avoids false MISS on incomplete fetch). Writes `submodule-gate-misses.jsonl` heartbeat (`tripwire_run`) + miss (`tripwire_miss`, additive superset — no strict-schema consumer). Optional dry-run / Forgejo issue-filing. `set -u` empty-array guard (portable to old Bash on uncontrolled host). Runs via host cron where forgejo IS reachable (§Install), sidestepping the runner→forgejo wall.
+- **`.forgejo/workflows/submodule-gate-tripwire.yml`** (Aria main repo): marked DEPRECATED-for-execution with migration banner → host-cron script. v1.29.0 `schedule:` cron NOT added (block-flip deferred; host-cron supersedes).
+- **Dogfood**: ran on the real Aria repo → exit 0 clean + wrote the FIRST successful tripwire telemetry record (vs the Actions runner's 5/5 failures).
+- **Tests**: 10 new (`test_submodule_tripwire_audit.sh`: forward-clean / backward-MISS / divergent / dry-run / no-.gitmodules / no-change / multi-submodule) = Rule #6 substitute. Zero regression: gate replay 13/13.
+- **Code-review**: Phase B.2 PASS — I-2 (empty-array guard) + M-2 (real newlines in issue body) + M-4 (cat-file -e false-MISS guard) + M-3 (multi-submodule test) applied; I-1 (misses.jsonl additive superset, no consumer) confirmed.
+
+**TG-1 + TG-2 complete → Spec `aria-submodule-gate-operationalize` archived.** block-flip mechanism-level unblocked (gate records executions [TG-1] + tripwire runnable [TG-2]); restart needs ≥3 real executions accumulated + tripwire green (owner). Skills unchanged (41; adds a standalone script, not a skill).
+
 ## [1.40.0] - 2026-06-07
 
 ### aria-submodule-gate-operationalize TG-1 (R-fix-1) — gate telemetry in git-direct ship
