@@ -353,6 +353,8 @@ def collect_handoff(project_root: Path) -> CollectorResult:
             "latest_source": None,
             "misplaced_files": misplaced,
             "canonical_dir": CANONICAL_DIR,
+            # additive (#137, v1.43.0+): no resolved latest doc → not applicable
+            "latest_frontmatter_missing": False,
         }
         return r
 
@@ -373,6 +375,8 @@ def collect_handoff(project_root: Path) -> CollectorResult:
             "latest_source": None,
             "misplaced_files": misplaced,
             "canonical_dir": CANONICAL_DIR,
+            # additive (#137, v1.43.0+): no resolved latest doc → not applicable
+            "latest_frontmatter_missing": False,
         }
         return r
 
@@ -400,6 +404,26 @@ def collect_handoff(project_root: Path) -> CollectorResult:
                 f"'{mtime_latest.name}'",
             )
 
+    # #137 (handoff-frontmatter-enforcement, v1.43.0+): frontmatter content
+    # enforcement on the RESOLVED latest doc — applies to both latest_source
+    # paths (pointer AND mtime fallback; the mtime path is exactly the ad-hoc
+    # handoff scenario from the SilkNode 2026-05-31 incident). Missing
+    # frontmatter silently degrades the multi-track board to owner=unknown,
+    # so surface it. read_text failure → silent skip (fail-soft, never blocks
+    # collect_handoff return).
+    latest_frontmatter_missing = False
+    try:
+        latest_content = latest.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        latest_content = None
+    if latest_content is not None and parse_handoff_frontmatter(latest_content) is None:
+        latest_frontmatter_missing = True
+        r.soft_error(
+            "handoff_frontmatter_missing",
+            f"{latest.name}: latest handoff lacks \u00a72.3.1 frontmatter "
+            "\u2014 multi-track board will show owner=unknown",
+        )
+
     mtime = mtimes[latest]
     age_hours = (time.time() - mtime) / 3600
     last_mod_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(
@@ -413,6 +437,9 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         "last_modified_iso": last_mod_iso,
         "age_hours": round(age_hours, 2),
         "latest_source": latest_source,  # "pointer" | "mtime" (H5 transparency)
+        # additive (#137, v1.43.0+): True when resolved latest doc lacks
+        # \u00a72.3.1 frontmatter (legacy \u2192 board shows owner=unknown)
+        "latest_frontmatter_missing": latest_frontmatter_missing,
         "misplaced_files": misplaced,
         "canonical_dir": CANONICAL_DIR,
     }

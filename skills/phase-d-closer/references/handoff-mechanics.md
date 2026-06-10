@@ -80,6 +80,16 @@ slug 规则 (优先级):
 | `{next_session_entry}` | "/aria:state-scanner" (Aria projects); 其他项目按 `.aria/config.json::next_session_command` |
 | `{start_date}` | 上次 handoff 的 last_modified_iso (from snapshot.handoff) |
 
+## 写后 frontmatter 自校验 (#137 v1.43.0+, latest.md 维护的前置)
+
+handoff doc 写出后、进入下方 latest.md 维护**之前**, 机械验证 §2.3.1 frontmatter 5 字段齐全:
+
+```bash
+head -8 <handoff-doc> | grep -cE '^(track-id|owner-container|phase|status|updated-at):'   # 须 ==5
+```
+
+不足 → 按模板派生规则 (`aria/templates/session-handoff.md` 头部 instructions) 补齐后重验; warn-then-fix, 非硬 abort (advisory-over-hardlock per DEC-20260519-001)。缺 frontmatter 的 handoff 会被 state-scanner Phase 1.15 以 `handoff_frontmatter_missing` soft warning 点名 (多 track 看板将显示 owner=unknown)。
+
 ## latest.md 维护 (mechanical, 2 个独立子步骤)
 
 > **v1.30.2 重要变更** (Forgejo aria-plugin #67): 拆分为 2 个 mechanical 子步骤 + 加 multi-track 显式判定。原 single-track linear succession 模型在 multi-terminal coordination 场景下歧义, follower cycle 容易把"pointer 不动"误读为"latest.md 不动", **连 History prepend 也忘了做** (实证: nexus PR #107 漏 History entry, 后开 PR #109 补救)。
