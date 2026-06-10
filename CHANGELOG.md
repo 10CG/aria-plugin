@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.43.0] - 2026-06-10
+
+### handoff-frontmatter-enforcement (#137) — frontmatter content enforcement 两层
+
+Fixes Aria [#137](https://forgejo.10cg.pub/10CG/Aria/issues/137) (triage `partial-repro`, [comment-12236](https://forgejo.10cg.pub/10CG/Aria/issues/137#issuecomment-12236)): multi-terminal frontmatter **注入机制已存在** (模板 v1.22.x+ 5 字段 + 派生规则), 但三层零 enforcement — ad-hoc handoff 静默落 legacy, 多 track 看板 owner=unknown 且无人知道 (SilkNode 2026-05-31 实地)。修复 = **enforcement 而非注入**:
+
+- **E1 D.3 写后自校验** (`phase-d-closer` execution-steps.md 子步 2b + handoff-mechanics.md 前置节): `head -8 <doc> | grep -cE '^(track-id|owner-container|phase|status|updated-at):'` 须 ==5, 不足按模板派生规则补齐重验 (warn-then-fix 非硬 abort, advisory-over-hardlock per DEC-20260519-001); 不得带缺字段 handoff 进 latest.md pointer 更新。
+- **E2 scanner soft warning** (`collectors/handoff.py`): Phase 1.15 对 **resolved latest doc** (`latest_path`, pointer **与 mtime fallback 双路径** — mtime 正是 ad-hoc 事故主场景) 缺 §2.3.1 frontmatter 时发 `handoff_frontmatter_missing` soft warning + additive 字段 `handoff.latest_frontmatter_missing: bool` (exists=False / stat-failed 恒 False; read_text OSError 完全静默 fail-soft; 不 bump `snapshot_schema_version`)。仅 latest 目标 — 历史 legacy 不刷屏。
+- **standards**: session-handoff.md 新 **§2.3.7 content enforcement** 独立小节 (与既有 location enforcement 5 层明确区分)。
+- **Tests**: 8 新测 (731→739) — pointer/mtime 对称用例对 (防 pointer-only 误实施漏网) + 历史 legacy 静默 + exists=False/stat-failed/OSError 三边界; 既有 3 测随 additive 字段/happy-path 语义同步更新; 真树 dogfood 零误报。Level 2 Spec, post_spec R1/R2→落地→R3 PASS 收敛。Skills 不变 (41)。
+
 ## [1.42.0] - 2026-06-10
 
 ### archive-completeness-gate (#134) — 禁止归档"仅 Phase A 收敛、实施未做"的 spec

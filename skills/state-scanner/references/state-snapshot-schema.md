@@ -619,6 +619,7 @@ latest_filename: str | null     # basename of latest_path
 last_modified_iso: str | null   # UTC ISO 8601 (timezone-aware) of mtime
 age_hours: float | null         # (time.time() - mtime) / 3600, rounded 2dp
 latest_source: str | null       # "pointer" | "mtime" | null (H5 fix transparency)
+latest_frontmatter_missing: bool  # additive (#137, v1.43.0+); True = resolved latest doc 缺 §2.3.1 frontmatter (legacy → 看板 owner=unknown); exists=False / stat-failed (latest_path=None) 时恒 False (不适用); 消费侧 .get("latest_frontmatter_missing", False)
 misplaced_files: list[str]      # relative paths under .aria/handoff/*.md
 canonical_dir: str              # always "docs/handoff/" (literal constant)
 ```

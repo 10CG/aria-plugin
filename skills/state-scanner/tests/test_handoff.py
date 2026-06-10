@@ -136,6 +136,7 @@ class TestSchemaAdditive(unittest.TestCase):
                 "latest_source",  # H5 fix — added
                 "misplaced_files",
                 "canonical_dir",
+                "latest_frontmatter_missing",  # #137 v1.43.0 — additive
             }
             self.assertEqual(set(r.data.keys()), expected_keys)
             self.assertEqual(r.data["canonical_dir"], "docs/handoff/")
@@ -184,7 +185,7 @@ class TestLatestPointerPriority(unittest.TestCase):
 
             self.assertEqual(r.data["latest_filename"], "2026-05-15-real-latest.md")
             self.assertEqual(r.data["latest_source"], "pointer")
-            self.assertEqual(r.errors, [])
+            self.assertEqual([e for e in r.errors if e["error"] != "handoff_frontmatter_missing"], [])  # #137 告警与本测无关
 
     def test_no_pointer_falls_back_to_mtime(self):
         with tmp_project() as root:
@@ -355,11 +356,137 @@ class TestEdgeCases(unittest.TestCase):
     def test_no_errors_on_happy_path(self):
         with tmp_project() as root:
             (root / "docs" / "handoff").mkdir(parents=True)
-            (root / "docs" / "handoff" / "foo.md").write_text("# foo\n", encoding="utf-8")
+            (root / "docs" / "handoff" / "foo.md").write_text(
+                "---\ntrack-id: t\nowner-container: o/c\nphase: D\n"
+                "status: done\nupdated-at: 2026-06-10T00:00:00Z\n---\n# foo\n",
+                encoding="utf-8",
+            )  # #137: happy path = frontmatter-complete handoff
 
             r = collect_handoff(root)
 
             self.assertEqual(r.errors, [])
+
+
+class TestHandoffFrontmatterEnforcement(unittest.TestCase):
+    """#137 (v1.43.0+): latest_frontmatter_missing additive field + soft warning.
+
+    Warning anchors to the RESOLVED latest doc — both latest_source paths
+    (pointer AND mtime fallback; mtime = SilkNode ad-hoc incident scenario).
+    Historical legacy docs that are NOT latest must stay silent.
+    """
+
+    _FM = (
+        "---\n"
+        "track-id: test-track\n"
+        "owner-container: tester/devbox\n"
+        "phase: D\n"
+        "status: done\n"
+        "updated-at: 2026-06-10T00:00:00Z\n"
+        "---\n"
+    )
+
+    @staticmethod
+    def _warnings(r):
+        return [e for e in r.errors if e["error"] == "handoff_frontmatter_missing"]
+
+    def _pointer(self, handoff: Path, target: str) -> None:
+        write_file(
+            handoff / "latest.md",
+            f"# Latest\n\n**Latest**: [{target}](./{target})\n",
+        )
+
+    def test_pointer_legacy_latest_warns(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            write_file(handoff / "2026-06-01-legacy.md", "# no frontmatter\n")
+            self._pointer(handoff, "2026-06-01-legacy.md")
+            r = collect_handoff(root)
+            self.assertTrue(r.data["latest_frontmatter_missing"])
+            self.assertEqual(len(self._warnings(r)), 1)
+
+    def test_pointer_full_frontmatter_silent(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            write_file(handoff / "2026-06-01-good.md", self._FM + "# doc\n")
+            self._pointer(handoff, "2026-06-01-good.md")
+            r = collect_handoff(root)
+            self.assertFalse(r.data["latest_frontmatter_missing"])
+            self.assertEqual(self._warnings(r), [])
+
+    def test_mtime_only_legacy_warns(self):
+        """无 latest.md pointer + 无 frontmatter → warning (SilkNode 主场景)."""
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            write_file(handoff / "2026-06-01-adhoc.md", "# ad-hoc, no fm\n")
+            r = collect_handoff(root)
+            self.assertEqual(r.data["latest_source"], "mtime")
+            self.assertTrue(r.data["latest_frontmatter_missing"])
+            self.assertEqual(len(self._warnings(r)), 1)
+
+    def test_mtime_only_full_frontmatter_silent(self):
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            write_file(handoff / "2026-06-01-good.md", self._FM + "# doc\n")
+            r = collect_handoff(root)
+            self.assertEqual(r.data["latest_source"], "mtime")
+            self.assertFalse(r.data["latest_frontmatter_missing"])
+            self.assertEqual(self._warnings(r), [])
+
+    def test_historical_legacy_not_latest_stays_silent(self):
+        """仅 latest 目标被检查 — 历史 legacy doc 不刷屏."""
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            old_doc = write_file(handoff / "2026-05-01-old-legacy.md", "# old\n")
+            _touch(old_doc, -3600)
+            write_file(handoff / "2026-06-01-good.md", self._FM + "# doc\n")
+            self._pointer(handoff, "2026-06-01-good.md")
+            r = collect_handoff(root)
+            self.assertFalse(r.data["latest_frontmatter_missing"])
+            self.assertEqual(self._warnings(r), [])
+
+    def test_exists_false_field_false_no_warning(self):
+        with tmp_project() as root:
+            (root / "docs" / "handoff").mkdir(parents=True)
+            r = collect_handoff(root)
+            self.assertFalse(r.data["exists"])
+            self.assertFalse(r.data["latest_frontmatter_missing"])
+            self.assertEqual(self._warnings(r), [])
+
+    def test_stat_failed_field_false_no_warning(self):
+        """stat-failed early-exit (exists=True, latest_path=None) → False (R3 残留 #1)."""
+        from unittest import mock
+
+        import collectors.handoff as handoff_module
+
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            ghost = handoff / "2026-06-01-ghost.md"  # 不落盘 → stat 自然抛 FileNotFoundError
+            with mock.patch.object(
+                handoff_module, "_scan_md_files", side_effect=[[ghost], []]
+            ):
+                r = collect_handoff(root)
+            self.assertTrue(
+                any(e["error"] == "handoff_stat_failed" for e in r.errors)
+            )
+            self.assertTrue(r.data["exists"])
+            self.assertIsNone(r.data["latest_path"])
+            self.assertFalse(r.data["latest_frontmatter_missing"])
+            self.assertEqual(self._warnings(r), [])
+
+    def test_read_text_oserror_silent_skip(self):
+        """read_text OSError → 完全静默 (无 warning, 字段 False, 不 crash)."""
+        from unittest import mock
+
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            write_file(handoff / "2026-06-01-doc.md", "# doc no fm\n")
+            with mock.patch.object(
+                Path, "read_text", side_effect=OSError("simulated read failure")
+            ):
+                r = collect_handoff(root)
+            self.assertFalse(r.data["latest_frontmatter_missing"])
+            self.assertEqual(self._warnings(r), [])
 
 
 if __name__ == "__main__":
