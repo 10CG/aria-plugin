@@ -86,7 +86,7 @@ D.3 - Session handoff (新增 2026-05-14 by H0 spec):
     2b. 写后 frontmatter 自校验 (#137 v1.43.0+, warn-then-fix 非硬 abort):
         head -8 <handoff> | grep -cE '^(track-id|owner-container|phase|status|updated-at):'
         须 ==5; 不足 → 按模板派生规则补齐后重验。不得带缺字段 handoff 进子步 3。
-        (口径注: 勿在 frontmatter 内插注释行, 会把字段推出 head -8 窗口致误报)
+        (口径注: 勿在 frontmatter 内插注释行, 可能把字段推出 head -8 窗口致误报)
     3. 更新 docs/handoff/latest.md pointer (mechanical, 子步骤 1+2 详见 handoff-mechanics.md)
     4. (optional) 提示 user commit handoff doc
   output:

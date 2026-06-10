@@ -27,6 +27,9 @@ Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
   | None (no canonical files / stat failed). H5 fix: pointer is the
   human-maintained semantic "latest"; mtime only wins when pointer is
   absent/unparseable/stale.
+- latest_frontmatter_missing: bool — additive (#137, v1.43.0+); True when the
+  resolved latest doc lacks §2.3.1 frontmatter (legacy → board owner=unknown);
+  False when exists=False or stat failed (not applicable)
 - misplaced_files: list[str] — relative paths under .aria/handoff/*.md
 - canonical_dir: str — always "docs/handoff/" (for AI display)
 
@@ -41,6 +44,8 @@ Soft errors (emitted to `r.errors[]`, snapshot exit code 10):
 - `handoff_canonical_scan_failed` — iterdir/permission failure on docs/handoff/
 - `handoff_forbidden_scan_failed` — iterdir/permission failure on .aria/handoff/
 - `handoff_stat_failed` — stat() failure on a candidate file (rare; race conditions)
+- `handoff_pointer_target_missing` — stale latest.md pointer (H5, pre-existing)
+- `handoff_frontmatter_missing` — resolved latest doc lacks frontmatter (#137, v1.43.0+)
 """
 
 from __future__ import annotations
@@ -438,7 +443,7 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         "age_hours": round(age_hours, 2),
         "latest_source": latest_source,  # "pointer" | "mtime" (H5 transparency)
         # additive (#137, v1.43.0+): True when resolved latest doc lacks
-        # \u00a72.3.1 frontmatter (legacy \u2192 board shows owner=unknown)
+        # §2.3.1 frontmatter (legacy → board shows owner=unknown)
         "latest_frontmatter_missing": latest_frontmatter_missing,
         "misplaced_files": misplaced,
         "canonical_dir": CANONICAL_DIR,
