@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.42.0] - 2026-06-10
+
+### archive-completeness-gate (#134) — 禁止归档"仅 Phase A 收敛、实施未做"的 spec
+
+Fixes Aria [#134](https://forgejo.10cg.pub/10CG/Aria/issues/134) (triage `partial-repro`, [comment-11974](https://forgejo.10cg.pub/10CG/Aria/issues/134#issuecomment-11974)): 归档闸门四漏洞 — (a) Level 2 无 tasks.md 即无 gate; (b) checkbox 全勾 ≠ 实施完成; (c) `skip_verification`/`--force` 无痕绕过; (d) state-scanner 无 converged-but-unimplemented 区分, 活体案例 block-flip (`Status=DEFERRED`→`unknown`) 端到端静默逃逸。设计 SOT: `docs/decisions/DEC-20260609-001-archive-completeness-gate.md` (brainstorm 4 决策 + post_brainstorm 19-agent/3 轮 + post_spec 25-agent/4 轮 + verification 2 轮 PASS)。
+
+- **`state-scanner/scripts/lib/`** (new package, 契约 A 单一可执行 complete SOT):
+  - `spec_complete.py`: `is_spec_complete(spec_dir) -> {complete, reason}` 纯函数 + thin CLI (JSON + exit 0/1/2)。`complete := (tasks.md 存在 AND 全[x] AND 无 carry-forward 注释) OR (normalized Status == 'done')`; tasks.md absent → 仅 Status 决定 (堵 gap-a vacuous truth); **archive-ready={done} only** — `implemented` (=awaiting verify) 不放行, 防 gap-b 等价重开。三入口同 verdict: scan.py import + openspec-archive Step1 / phase-d-closer D.2 经 Bash 调同一脚本。
+  - `carry_forward.py`: `_CARRY_FORWARD_RE` + `_extract_carry_forward_annotations` 从 `collectors/openspec.py` 物理上移 (regex 单一来源, 消除 spec_complete↔openspec 循环引用; openspec.py 双上下文 re-export 向后兼容)。
+- **`collectors/openspec.py`** (契约 B 消费侧 + D3 surface):
+  - archive 循环读 proposal.md frontmatter `archive_type` → `archive_items[].archive_type: str|null` (additive; stdlib-only fail-soft, soft_error key=`archive_type_unreadable`)。
+  - 新增 `design_deferred[]` surface 字段: 谓词 `¬complete ∩ (unknown ∪ (approved ∧ staleness≥30d) ∪ {reviewed,active,implemented})`; staleness = frontmatter `updated-at` 优先 / mtime 回落, N=30 hardcode。fresh-approved (<30d) = 合法在飞态不卷入; `{in_progress,ready,pending}` 由 priority_items 别处 surface。complement-invariant 4 合法桶无第三态 (verification r1 抓出 fresh-approved 黑洞 → r2 数学封闭 11 态 + 真树绿跑)。
+  - `pending_archive` 保持 `st=='done'` + 注释锚定 `_normalize_status` 唯一 SOT。
+- **`openspec-archive/SKILL.md`** (D1 写入侧 gate): Step1 = already-archived 前置 abort → Bash 调 `spec_complete.py` 完成 gate (不再 AI 解释 prose) → 默认 BLOCK; `--archive-design-only` + `reason` (≥10 非空白) 逃生舱; Step2 三路径 (正常更新 Status / design-only 仅 frontmatter 追加 `archive_type: implementation-deferred` + `archived_reason` / dry_run 不写); dry_run 三路输出 (示例 3a-3d); `--force` DEPRECATED; `skip_verification` 收口 (仅跳 checkbox 校验不绕 Status gate; 旧用法 WARN+abort 不静默降级)。
+- **`phase-d-closer`** (堵 gap-a Level 2 旁路): D.2 `skip_evaluation` 三路 (无活跃→skip / `spec_complete.py` exit≠0→skip 不归档 / complete→进归档), SKILL.md + references/execution-steps.md 同步, 删旧裸 `has uncompleted tasks` 判定。
+- **standards** (D4 惯例显式废弃): phase-d-closure.md Step10 五处 (完成判定移入 Execution 第 1 步 + §2 checklist 改 L2/L3 分支条件句 + `--no-validate` DEPRECATED) + README.md D.2 加 "(requires implementation verified, not Approved-only)" + project.md 生命周期图改图 (archive 前置条件 + Approved→[design-only]→archive 支线 + 废弃直接 Approved→archive)。新规: **归档 = 功能完成; 设计定稿是 in_progress milestone 非归档理由**。
+- **Schema**: `state-snapshot-schema.md` 两 additive 字段 (`archive_type` + `design_deferred`) 注释 + backward-compat 子表; **不** bump `snapshot_schema_version`。`operations.md` 漂移修正 (values 枚举按 `_normalize_status` 真实 codomain; condition `status == done`)。
+- **Tests**: 32 新测 (697→729) — spec_complete 真值表 19 + design_deferred/round-trip/invariant 13; 真树 dogfood: block-flip 落 `design_deferred` ✅, 3 个 fresh-approved spec 不卷入 ✅, 100 历史 archive 零误报 ✅。Rule #6 deterministic substitute。Skills 不变 (41)。
+
 ## [1.41.0] - 2026-06-08
 
 ### aria-submodule-gate-operationalize TG-2 (R-fix-2) — tripwire host-cron migration

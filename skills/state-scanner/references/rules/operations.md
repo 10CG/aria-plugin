@@ -78,15 +78,17 @@ openspec_detection:
   status_parsing:
     path: "openspec/changes/{id}/proposal.md"
     field: "Status"
-    values: [Draft, Reviewed, Approved, In Progress, Complete]
+    # normalized by _normalize_status() — 唯一 SOT = scripts/collectors/_status.py
+    # (raw `Draft`→pending, raw `Complete`/`Done`→done; 故 codomain 无 draft/complete)
+    values: [pending, in_progress, approved, implemented, reviewed, active, ready, done, archived, deprecated, unknown]
 
   # 活跃 Spec 定义
   active_specs:
     filter: status in [Reviewed, Approved, In Progress]
 
-  # 待归档检测
+  # 待归档检测 (archive-ready 集 = {done} ONLY; `implemented` 刻意排除 — #134 A2.5, DEC-20260609-001 §3 D2)
   pending_archive:
-    condition: status == Complete AND path starts with "openspec/changes/"
+    condition: status == done AND path starts with "openspec/changes/"  # normalized by _normalize_status() (collectors/_status.py 唯一 SOT; 对齐 collectors/openspec.py `st == 'done'`)
     recommendation: "使用 /openspec-archive 归档"
 
   # 归档目录解析

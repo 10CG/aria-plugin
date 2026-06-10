@@ -57,6 +57,15 @@ The four new nested fields shipped under `state-scanner-inter-cycle-surfacing` a
 
 `upm.handoff_doc`'s explicit `null` (vs key-absent) is the only field that distinguishes "scanner ran, found nothing" from "scanner version too old to scan". Other three additive fields collapse both cases to empty/false on the consumer side.
 
+### Backward-compat contract for archive-completeness-gate fields (#134, v1.42.0)
+
+Two additive nested fields under `openspec` — schema version stays `"1.0"` (no bump). Consumers MUST use defensive access:
+
+| Field | Defensive access | Absent semantic |
+|---|---|---|
+| `openspec.archive.items[].archive_type` | `item.get("archive_type")` | pre-v1.42.0 scan.py — caller treats as normal archive (same as explicit `null`) |
+| `openspec.design_deferred` | `openspec.get("design_deferred", [])` | pre-v1.42.0 scan.py — empty list |
+
 ## Exit code consumer contract (R1-I2)
 
 | Exit code | Semantic | SKILL.md action |
@@ -302,8 +311,16 @@ changes:
   items: list[{id: str, path: str, status: str, raw_status: str|null}]
 archive:
   total: int
-  items: list[{path: str, date: str|null, feature: str}]
-pending_archive: list[{id: str, reason: str}]  # Status=done 仍在 changes/
+  items: list[{path: str, date: str|null, feature: str,
+               archive_type: str|null}]        # additive (#134, v1.42.0+); null=normal archive or proposal.md unreadable
+pending_archive: list[{id: str, reason: str}]  # Status=done 仍在 changes/ (archive-ready 集 = {done} ONLY, `implemented` 刻意排除 — DEC-20260609-001 §3 D2)
+design_deferred:                               # additive (#134, v1.42.0+) — gate↔surface 互补 surface (DEC-20260609-001 §3 D3)
+  list[{
+    id: str,                                   # change 目录名
+    status: str,                               # normalized status (_normalize_status SOT)
+    staleness_days: int,                       # proposal.md age, frontmatter updated-at 优先, 回落 mtime
+    reason: str                                # is_spec_complete() 的 incomplete 诊断
+  }]
 carry_forward_inventory:                       # Phase 1.6.1 (v1.23.0+)
   total: int                                   # sum across all active changes
   active_change_count: int                     # disambiguates 0-active vs N-active-but-clean
@@ -312,6 +329,13 @@ carry_forward_inventory:                       # Phase 1.6.1 (v1.23.0+)
       count: int
       samples: list[str]                       # first 3, each truncated to 80 chars + "..."
 ```
+
+**design_deferred surface** (#134 `aria-archive-completeness-gate`, v1.42.0+, additive):
+
+- **谓词** (collectors/openspec.py A2.2): `is_spec_complete(spec)==False ∩ ( normalized==unknown ∪ (normalized==approved ∧ staleness_days>=30) ∪ normalized∈{reviewed, active, implemented} )`
+- **排除**: `{in_progress, ready, pending}` (由 `requirements.stories.priority_items` 别处 surface); fresh-approved (staleness<30d) 合法在飞, changes[].items 原样可见, 不卷入
+- **complete 判定唯一 SOT**: `scripts/lib/spec_complete.py::is_spec_complete` (契约 A); staleness 阈值 N=30 为 hardcode 常量 (非 config)
+- **archive_type 消费** (契约 B): 仅识别 `implementation-deferred`; 缺 frontmatter / 缺字段 = 正常归档 → null 无诊断; proposal.md 缺失 / OSError / 未知值 → null + `soft_error(archive_type_unreadable)` fail-soft
 
 **Carry-forward inventory** (Spec `state-scanner-inline-carry-forward-surfacing`, v1.23.0):
 
@@ -673,3 +697,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 | 2026-05-09 | sub-PR (b) — TX-G2/G3/G4 collectors shipped (aria-plugin#38). "Planned" qualifiers replaced with "shipped" + Implementation history blockquotes. KM-08 prerequisite NOTE blockquotes removed (gates satisfied). Error-path absence semantics clarified for `followups` + `handoff_doc` (both ABSENT in error-paths, schema previously documented only the no-UPM-file case). `errors[]` enum produced by G3 documented (`unsupported_path_format` + `handoff_path_escapes_project`) |
 | 2026-05-14 | H0 (`aria-ten-step-session-handoff-stage`) T1 — added `handoff` top-level field (Phase 1.15). Additive, schema stays `"1.0"`. Surfaces latest `docs/handoff/*.md` for AI to read pre-recommendation + detects misplaced `.aria/handoff/*.md` for Layer 2 drift detection (5-layer enforcement). |
 | 2026-05-16 | H5 fix (`fix/h5-handoff-pointer-divergence`) — `latest_path` now prefers `docs/handoff/latest.md` pointer target over raw mtime (mtime fallback only). New additive `latest_source` field (`"pointer"`/`"mtime"`/`null`). New `soft_error("handoff_pointer_target_missing")` for stale pointer. Schema stays `"1.0"` (additive). Fixes mtime-vs-pointer divergence found at H0 closeout. |
+| 2026-06-10 | #134 `aria-archive-completeness-gate` (v1.42.0) — two additive nested fields under `openspec`: `archive.items[].archive_type` (str\|null, 契约 B 消费侧) + `design_deferred[]` (id/status/staleness_days/reason, gate↔surface 互补 per DEC-20260609-001 §3 D3). Backward-compat contract subsection added. Schema stays `"1.0"` (additive, no bump). |
