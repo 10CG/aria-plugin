@@ -53,7 +53,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 |------|---------|----------|
 | 无 UPM | D.1 | UPM 文档不存在 |
 | 无 OpenSpec | D.2 | openspec/changes/ 为空 |
-| Spec 未完成 | D.2 | tasks.md 有未完成项 |
+| Spec 未完成 | D.2 | `spec_complete.py` verdict complete=false (单一 SOT, Level 2 无 tasks.md 走 Status 归一化) |
 | 触发条件未满足且 user prompt 拒绝 | D.3 | 见 §D.3 触发条件 |
 | Level 1 quick fix (无 spec, 单 commit) | D.3 | 启发式 — Level 标记或 changes.complexity |
 
@@ -69,16 +69,17 @@ skip_evaluation:
       skip_if: not exists
       reason: "模块无 UPM 配置"
 
-  D.2:
+  D.2:  # 三路 (#134 v1.42.0+): 无活跃→skip / incomplete→skip 不归档 / complete→进归档
     - check: active OpenSpec
       command: "ls openspec/changes/"
       skip_if: empty
       reason: "无活跃 OpenSpec"
 
-    - check: tasks completion
-      file: "openspec/changes/{spec_id}/tasks.md"
-      skip_if: has uncompleted tasks
-      reason: "Spec 任务未全部完成"
+    - check: spec completeness  # Bash 调单一可执行 SOT, 与 openspec-archive Step 1 gate 同一脚本同一 verdict
+      command: 'python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/lib/spec_complete.py" "openspec/changes/{spec_id}"'
+      skip_if: "exit code != 0 (complete=false; exit 2 视同 incomplete)"
+      reason: "Spec 未完成 — 回显 JSON.reason, skip 不归档 (Level 2 无 tasks.md 由脚本走 Status 归一化分支, 不再 vacuously 放行)"
+      on_complete: "exit 0 → 进 openspec-archive 归档"
 ```
 
 ---

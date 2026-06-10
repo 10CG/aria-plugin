@@ -198,6 +198,8 @@
   已归档: 5 个
   待归档: ⚠️ 1 个
     - completed-feature (Status=Complete)
+  设计未实施: ⚠️ 1 个 (design_deferred, #134 v1.42.0+)
+    - deferred-feature (status=unknown, staleness 14d) — 设计定稿但实施未做, 勿误判完成
   建议操作:
     - 使用 /openspec-archive 归档已完成的 Spec
 ```

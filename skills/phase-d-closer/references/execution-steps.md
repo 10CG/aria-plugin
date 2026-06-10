@@ -61,12 +61,13 @@ D.post - post_closure 审计检查点 (新增):
 
 D.2 - Spec 归档:
   skill: openspec-archive
-  skip_if:
+  skip_if:  # 三路 (#134 v1.42.0+): 无活跃→skip / incomplete→skip 不归档 / complete→进归档
     - no_openspec: true               # 无活跃 Spec
-    - spec_not_complete: true         # Spec 未完成
+    - spec_not_complete: true         # 完成判定 = Bash 调单一可执行 SOT (与 openspec-archive Step 1 gate 同脚本同 verdict):
+                                      #   python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/lib/spec_complete.py" "openspec/changes/{spec_id}"
+                                      #   exit != 0 → skip 不归档 (Level 2 无 tasks.md 由脚本走 Status 归一化分支, 不 vacuously 放行)
   action:
-    - 验证所有任务完成
-    - 移动 Spec 到 archive/
+    - 完成 gate 通过后移动 Spec 到 archive/ (gate 细节见 openspec-archive SKILL.md Step 1)
     - 更新 Spec 状态
   output:
     spec_archived: true
