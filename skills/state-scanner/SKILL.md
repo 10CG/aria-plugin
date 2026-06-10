@@ -151,7 +151,7 @@ P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。在 Phase 1 结束、Phase 
 2. **📊 变更分析** — 变更类型 / 复杂度 Level / 架构影响 / 测试覆盖
 3. **📄 需求状态** — 配置状态 / PRD (名 + status) / User Stories (按 status 计数) / OpenSpec 覆盖率
 4. **🏗️ 架构状态** — System Architecture 存在? / 路径 / status / 最后更新 / 需求链路完整性
-5. **📋 OpenSpec 状态** — 活跃变更 (按 status 计数) / 已归档数 / 待归档数
+5. **📋 OpenSpec 状态** — 活跃变更 (按 status 计数) / 已归档数 / 待归档数 / 设计未实施 (`design_deferred[]` 非空时: ⚠️ N 个 — id + status + staleness_days, #134 v1.42.0+)
 6. **🛡️ 审计状态** — 审计系统 enabled? + 模式 / 活跃检查点 / 上次审计 verdict (含收敛轮数)
 7. **🔧 自定义检查** — 逐 check: ✅OK / ⚠️STALE / ❌FAIL + 修复建议 (失败项)
 8. **🔄 同步状态** — 当前分支 ahead/behind + upstream / 多远程 parity。条件子项: 📝 README 版本一致性 / 📦 插件依赖 (standards 子模块) / 🔗 Forgejo 配置检查 — 仅相关时显示

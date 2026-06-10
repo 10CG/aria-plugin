@@ -84,7 +84,7 @@ openspec_detection:
 
   # 活跃 Spec 定义
   active_specs:
-    filter: status in [Reviewed, Approved, In Progress]
+    filter: status in [reviewed, approved, in_progress]   # normalized by _normalize_status()
 
   # 待归档检测 (archive-ready 集 = {done} ONLY; `implemented` 刻意排除 — #134 A2.5, DEC-20260609-001 §3 D2)
   pending_archive:

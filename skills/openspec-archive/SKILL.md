@@ -93,7 +93,7 @@ options:
 Step 1 - 完成 gate (验证完成状态, #134 v1.42.0+):
   # ── 前置 (最前): already-archived 检查 ──
   already_archived_precheck:
-    检查: ls openspec/archive/ | grep -- '-{change_name}$'  # 已存在对应条目?
+    检查: ls openspec/archive/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}-{change_name}$'  # 日期前缀锚定防后缀误匹配  # 已存在对应条目?
     若已存在: 立即 abort (BLOCKED-already-archived)
     约束: 不进入完成度判定、不写任何标记 (标记写入属 Step 2, abort 路径零残留)
 

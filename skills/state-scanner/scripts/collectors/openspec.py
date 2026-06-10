@@ -74,7 +74,8 @@ _KNOWN_ARCHIVE_TYPES = frozenset({"implementation-deferred"})
 
 # stdlib-only frontmatter field extraction (C5: 不引 PyYAML — 消费侧只需逐行
 # 字段 regex)。frontmatter 区块 = 文件起始 `---` 行至下一 `---` 行之间。
-_FRONTMATTER_RE = re.compile(r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", re.DOTALL)
+# \r?\n: CRLF checkout (Windows core.autocrlf) 下标记不可静默丢失 (#132 同类教训)
+_FRONTMATTER_RE = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t\r]*(?:\n|$)", re.DOTALL)
 _ARCHIVE_TYPE_FIELD_RE = re.compile(r"^archive_type[ \t]*[：:][ \t]*(.+?)[ \t]*$", re.MULTILINE)
 _UPDATED_AT_FIELD_RE = re.compile(r"^updated-at[ \t]*[：:][ \t]*(.+?)[ \t]*$", re.MULTILINE)
 

@@ -87,6 +87,25 @@ class TestArchiveTypeRoundTrip(unittest.TestCase):
                 any(e["error"] == "archive_type_unreadable" for e in r.errors)
             )
 
+    def test_crlf_marker_still_readable(self) -> None:
+        """CRLF checkout (Windows autocrlf) 下标记不得静默丢失 (#132 同类教训)."""
+        with tmp_project() as root:
+            (root / "openspec" / "changes").mkdir(parents=True)
+            path = root / "openspec" / "archive" / "2026-06-01-crlf-spec" / "proposal.md"
+            path.parent.mkdir(parents=True)
+            content = (
+                "---\r\narchive_type: implementation-deferred\r\n---\r\n"
+                "# archived\r\n\r\n> **Status**: Complete\r\n"
+            )
+            path.write_bytes(content.encode("utf-8"))
+            r = collect_openspec(root)
+            self.assertEqual(
+                r.data["archive"]["items"][0]["archive_type"], "implementation-deferred"
+            )
+            self.assertFalse(
+                any(e["error"] == "archive_type_unreadable" for e in r.errors)
+            )
+
     def test_normal_archive_without_frontmatter_is_silent_null(self) -> None:
         with tmp_project() as root:
             (root / "openspec" / "changes").mkdir(parents=True)
@@ -142,6 +161,19 @@ class TestDesignDeferredPredicate(unittest.TestCase):
             write_file(spec / "tasks.md", "- [ ] T1\n")
             r = collect_openspec(root)
             self.assertIn("stale-approved", self._deferred_ids(r))
+
+    def test_stale_approved_via_mtime_fallback_lands(self) -> None:
+        """(iii') 无 frontmatter updated-at → 回落 mtime; 老 mtime 同样判 stale."""
+        import os
+        import time as _time
+
+        with tmp_project() as root:
+            spec = root / "openspec" / "changes" / "mtime-stale"
+            p = write_file(spec / "proposal.md", _proposal("**Approved**"))  # 无 frontmatter
+            old = _time.time() - (_DESIGN_DEFERRED_STALENESS_DAYS + 5) * 86400
+            os.utime(p, (old, old))
+            r = collect_openspec(root)
+            self.assertIn("mtime-stale", self._deferred_ids(r))
 
     def test_implemented_incomplete_lands_not_pending_archive(self) -> None:
         """(iv) implemented∩¬complete → 落 design_deferred, 不落 pending_archive."""
