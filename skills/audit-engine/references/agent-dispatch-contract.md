@@ -32,6 +32,21 @@ agents: [{your_role}]               # 单元素数组, 如 [tech-lead] 或 [qa-e
 (frontmatter 之后是 Markdown 正文, 含 ## 审计结论 / ## Verdict / ## 轮次记录 等章节)
 ```
 
+### Drift Guard 字段 (#17)
+
+上述 8-field 模板在 dispatch 时**无条件追加**以下三字段 (默认 `false`, 与 oscillation 字段 pattern 同构, 非条件注入; #126 供给侧约束同构):
+
+```
+drift_terminated: false             # 单 agent 默认 false, 由 audit-engine 聚合时覆盖
+drift_check_skipped: false          # 单 agent 默认 false, 由 audit-engine 聚合时覆盖
+is_refocus: false                   # refocus 轮 dispatch 时由 audit-engine 注入 true
+```
+
+- **聚合层覆盖**: 单 agent 无法预知 `drift_terminated` / `drift_check_skipped` 终局值 — template 恒声明默认 `false`, 由 audit-engine **聚合时覆盖** (与 `oscillation` 字段同构)。
+- **dispatch 已知字段注入实值**: 仅 dispatch 时已知字段 (`is_refocus`、上一轮 `drift_check_skipped`) 注入实值, 其余保持默认。
+- **refocus 轮 frontmatter**: `rounds` 填底层逻辑 round **整数** N (refocus 轮消耗 max_rounds 配额, 非冻结重号) + `is_refocus: true` (audit-engine 在 refocus 轮 dispatch 时注入); `rounds` 整数 + `is_refocus` 组合**唯一标识一轮**, 展示标签 `R{N}-refocus` 由该组合派生。
+- **drift-checker scope 排除**: drift-checker 为 audit-engine 内部调用, 输出 `drift_metrics` (schema 见 [report-format.md](./report-format.md)) 而非 audit report, **不适用本 8-field 契约**。
+
 ## 责任分工
 
 - **完整模板**: 见 [report-format.md](./report-format.md)。

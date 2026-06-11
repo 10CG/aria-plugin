@@ -61,6 +61,9 @@ conclusions_stable = (current_set == previous_set)
 | Round N = ∅ ∧ Round N-1 = ∅ ∧ N >= 2 | 视为收敛 (双轮稳定性确认) |
 | 单元素差异 | 不收敛 (严格集合相等) |
 | severity 升级 (minor→major) | 不收敛 (severity 参与比较) |
+| Round 1 drift check (#17) | **跳过** (`drift_ratio` 不计算, `consecutive_refocus_count` 不变) — 无前序稳定基线 |
+| max_rounds < 3 (#17) | max_rounds<3 时 DRIFT_TERMINATED 不可达 (consecutive_refocus>=2 需至少 3 轮), drift guard 降级为 max_rounds 兜底 |
+| 首次 REFOCUS 撞 max_rounds (#17) | round == max_rounds 时无剩余配额, refocus 不可发放 → MAX_ROUNDS_EXHAUSTED (max_rounds 仍是总轮数硬上界) |
 
 **首轮 0-finding 必须 stability confirmation** (v1.17.5+ 引入, 修复 latent bug):
 
@@ -92,7 +95,7 @@ unanimous_pass = all(agent.vote == PASS for agent in convergence_agents)
 
 ```
 objections_resolved = all(
-  obj.status == "resolved"
+  obj.status != "new"   # resolved 或 overruled 均视为已处理 (与 challenge-mode-schema.md 对齐; #17 顺带统一, 原 =="resolved" 会误判 overruled 阻塞收敛)
   for obj in challenge_output.objections
 )
 ```
@@ -113,10 +116,15 @@ objections_resolved = all(
 ### 检测条件
 
 ```
-if round_number >= 3:
-  keys_N   = comparison_keys(round_N)
-  keys_N_1 = comparison_keys(round_N_minus_1)
-  keys_N_2 = comparison_keys(round_N_minus_2)
+# 振荡豁免 (#17): keys_N / keys_N_1 / keys_N_2 均取 normal-round 逻辑序列 —
+# is_refocus == true 轮从振荡比较序列剔除后重新索引 (refocus 轮不进入 N/N-2 序列,
+# 与 stability 基线替换保持同一索引语义, 见 "Refocus 轮语义" 节)
+normal_rounds = [r for r in all_rounds if not r.is_refocus]   # 剔除后重新索引
+
+if len(normal_rounds) >= 3:
+  keys_N   = comparison_keys(normal_rounds[-1])
+  keys_N_1 = comparison_keys(normal_rounds[-2])
+  keys_N_2 = comparison_keys(normal_rounds[-3])
 
   oscillation = (keys_N == keys_N_2) AND (keys_N != keys_N_1)
 ```
@@ -141,34 +149,122 @@ if oscillation:
 
 ---
 
+## Refocus 轮语义 (#17, v1.44.0)
+
+drift_ratio `>= refocus_threshold` 触发**强制 refocus 轮** (REFOCUS_ROUND, prompt 回锚 anchor):
+
+- **消耗 max_rounds 配额** (防活锁, token 护栏始终有效 — issue 原案 "round 计数不前进" 有活锁风险, 已否决);
+- **非冻结重号**: 底层逻辑 round 为整数 N + `is_refocus: true` 字段, 展示标签 `R{N}-refocus` (`per_round[].is_refocus`); `rounds` 整数 + `is_refocus` 组合唯一标识一轮;
+- refocus 轮输出**替换 round_N 作下轮 stability 比较基线** (下一 normal 轮的 `conclusions_stable` 比较对象 = refocus 轮输出);
+- refocus 轮**不进入** oscillation N/N-2 比较序列 (见 "检测条件" 振荡豁免注释)。
+
+### consecutive_refocus_count
+
+| 事件 | 行为 |
+|------|------|
+| refocus 触发 | `consecutive_refocus_count += 1` |
+| normal round (未触发 refocus) | **归零** |
+| `consecutive_refocus_count >= 2` | **终止** → DRIFT_TERMINATED (`drift_terminated: true → verdict=FAIL`, 见 report-storage.md §Verdict) |
+| drift_check_skipped 轮 (fail-open) | **不增加** (见 audit-engine/SKILL.md 错误处理表) |
+
+### Trajectory 示例 (逐轮标注 stability / oscillation 比较对象)
+
+**示例 1: normal → refocus → normal**
+
+| 轮 | is_refocus | drift / 计数 | stability 比较对象 | oscillation 比较对象 |
+|----|-----------|--------------|--------------------|----------------------|
+| R1 | false | drift check 跳过 (Round 1) | — (Round 1 无法判定) | — |
+| R2 | false | drift_ratio >= refocus_threshold → REFOCUS_ROUND, count=1 | R1 | — (normal 序列长度 < 3) |
+| R3-refocus | true | 回锚轮, 消耗配额 | R2 | **剔除** (不作 keys_N) |
+| R4 | false | 未触发 → count **归零** | **R3-refocus 输出** (基线替换) | normal 序列 = [R1, R2, R4] → keys_N=R4, keys_N_1=R2, keys_N_2=R1 |
+
+**示例 2: normal → refocus → refocus (DRIFT_TERMINATED 路径)**
+
+| 轮 | is_refocus | drift / 计数 | stability 比较对象 | oscillation 比较对象 |
+|----|-----------|--------------|--------------------|----------------------|
+| R1 | false | drift check 跳过 (Round 1) | — | — |
+| R2 | false | drift_ratio >= refocus_threshold → 第一次 refocus 触发, count=1 | R1 | — (normal 序列长度 < 3) |
+| R3-refocus | true | 输出仍 drift_ratio >= refocus_threshold → **第二次连续 refocus 触发**, count=2 → **DRIFT_TERMINATED** | R2 | **当轮不作 keys_N** (is_refocus 剔除, normal 序列仍 = [R1, R2] 长度 < 3) — 防 DRIFT_TERMINATED 误判为 OSCILLATION; 且优先级链 DRIFT_TERMINATED 先于 OSCILLATION 双保险 |
+
+---
+
 ## 完整判定流程
 
-```
-function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds):
+**四终局优先级链 return 顺序显式** (与 DEC-20260611-001 §4.4 逐字): `CONVERGED → DRIFT_TERMINATED (含边界轮 round==max_rounds 时优先于 MAX_ROUNDS_EXHAUSTED) → OSCILLATION → MAX_ROUNDS_EXHAUSTED`; "(优先)" 限定仅 vs MAX_ROUNDS_EXHAUSTED 语境; converged=false + drift_terminated=true **不触发** max_rounds 三路径降级 (直接以 FAIL 结束, 见 report-storage.md §Verdict converged×verdict 表)。REFOCUS_ROUND 为**独立返回状态** (非终局, 触发强制 refocus 轮并消耗 max_rounds 配额)。
 
-  # Round 1: 无法判定
+```
+function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds, anchor):
+
+  # Round 1: 无法判定; drift 检查同步跳过 (无前序稳定基线, 见边界情况表)
   if round_N.number == 1:
     return CONTINUE
 
-  # 四元组比较
+  # Drift Check 节点 (#17, Round-1 guard 之后嵌入)
+  # fail-open: drift-checker 失败/超时 → drift_ratio=null 按 < warn 档处理
+  #            (drift_action=NONE + drift_check_skipped: true)
+  # mode 与 consecutive_refocus_count 为引擎级状态 (非函数入参), 此处直接引用
+  drift_action = check_drift(round_N, anchor)
+  # drift_action ∈ {NONE, WARN, REFOCUS, TERMINATE}
+  # TERMINATE = consecutive_refocus_count >= 2 (见 consecutive_refocus_count 章节)
+
+  # 四元组比较 (refocus 轮输出已替换 round_N 作 stability 基线, 见 "Refocus 轮语义" 节)
   keys_N = extract_keys(round_N)
   keys_N_1 = extract_keys(round_N_minus_1)
   conclusions_stable = (keys_N == keys_N_1)
 
+  # normal-round 逻辑序列 (振荡豁免, 见 "检测条件" 节): is_refocus==true 轮剔除后重新索引。
+  # 引擎级状态; oscillation 比较**不得复用**上方 stability 的 keys_N/keys_N_1
+  # (post-refocus 轮上两种取法发散 — stability 基线含 refocus 替换, oscillation 序列不含)。
+  normal_rounds = [r for r in all_rounds if not r.is_refocus]
+
   # 全票 PASS
   unanimous = check_unanimous(round_N)
 
-  # 收敛判定
+  # warn 档独立分支 — 仅 convergence 模式 (模式限定词, 防双模式误阻塞):
+  #   challenge 模式收敛判据为 objections_resolved, 与 unanimous_pass 无关,
+  #   warn 档降格为仅标注 drift_warning (见 challenge-mode-schema.md), 不进本分支。
+  # 实现点限汇总层覆盖, 不注入 agent prompt (R10: 防 agent 知晓 drift 产生迎合性副作用)。
+  # 每轮独立重新评估: drift_ratio 回落则收敛正常恢复, 持续触发由 max_rounds 降级兜底。
+  if mode == "convergence" AND drift_action == WARN:
+    unanimous = false     # 强制 unanimous_pass=false → 该轮不允许全票 PASS 收敛
+                          # → 后续落入 return CONTINUE
+
+  # ===== 四终局优先级链 (return 顺序显式, 与 DEC §4.4 逐字):
+  #       CONVERGED → DRIFT_TERMINATED → OSCILLATION → MAX_ROUNDS_EXHAUSTED =====
+
+  # 终局 1: CONVERGED
+  # challenge 模式: 此处 unanimous 替换为 objections_resolved
+  # (= all(obj.status != "new")), 见 challenge-mode-schema.md §收敛判定 —
+  # 与 WARN 分支的 mode 限定词同构, 本伪代码默认展示 convergence 形态
   if conclusions_stable AND unanimous:
     return CONVERGED
 
-  # 振荡检测
-  if round_N.number >= 3 AND round_N_minus_2 is not None:
-    keys_N_2 = extract_keys(round_N_minus_2)
-    if keys_N == keys_N_2 AND keys_N != keys_N_1:
+  # 终局 2: DRIFT_TERMINATED (consecutive_refocus_count >= 2)
+  #   含边界轮: 第二次连续 refocus 恰逢 round == max_rounds 时,
+  #   DRIFT_TERMINATED 优先于 MAX_ROUNDS_EXHAUSTED ("(优先)" 限定仅此语境)
+  #   → drift_terminated: true → verdict=FAIL override (report-storage.md §Verdict);
+  #     converged=false + drift_terminated=true 不触发 max_rounds 三路径降级
+  if drift_action == TERMINATE:
+    return DRIFT_TERMINATED
+
+  # 独立返回状态 (非终局): 强制 refocus 轮, 消耗 max_rounds 配额。
+  # 边界守卫 (DEC §4.4 留白的实施层补全, 勘误注: DEC 仅规定第二次连续 refocus 撞边界
+  # 时 DRIFT_TERMINATED 优先; 首次 REFOCUS 恰逢 round == max_rounds 时无剩余配额,
+  # refocus 不可发放 — max_rounds 仍是总轮数硬上界, 约束 C8 token 护栏):
+  if drift_action == REFOCUS:
+    if round_N.number >= max_rounds:
+      return MAX_ROUNDS_EXHAUSTED   # 无剩余配额, refocus 不可发放
+    return REFOCUS_ROUND
+
+  # 终局 3: OSCILLATION (keys_* 全部按 normal_rounds 重取, 不复用 stability 变量)
+  if len(normal_rounds) >= 3:
+    keys_osc_N   = comparison_keys(normal_rounds[-1])
+    keys_osc_N_1 = comparison_keys(normal_rounds[-2])
+    keys_osc_N_2 = comparison_keys(normal_rounds[-3])
+    if keys_osc_N == keys_osc_N_2 AND keys_osc_N != keys_osc_N_1:
       return OSCILLATION
 
-  # max_rounds 检查
+  # 终局 4: MAX_ROUNDS_EXHAUSTED
   if round_N.number >= max_rounds:
     return MAX_ROUNDS_EXHAUSTED
 
@@ -185,7 +281,14 @@ function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds
 | 中等变更 (convergence, 3 agents) | 2-3 轮 | ~12K |
 | 复杂变更 (challenge, 4 agents) | 3-4 轮 | ~30K |
 | 最坏 (5 轮 x 4 agents) | 5 轮 | ~50K/检查点 |
+| drift-checker 增量 (#17, challenge 默认开) | 每轮 (Round 2 起) | **~+1-2K/轮** (refocus 轮消耗 max_rounds 配额 + 增量入表 → 总成本仍有硬上界) |
+
+**超时口径: 单次 spawn 超时 vs 整轮 wall-clock 区分** (#17):
+
+- **单次 agent spawn 超时 = 120s** (继承 agent-team-audit, 见 audit-engine/SKILL.md 错误处理表);
+- **整轮 wall-clock = 300s/轮** (见 audit-engine/SKILL.md §并发控制); challenge 模式整轮 = 4×串行 spawn + drift-checker 独立配额 (30-60s, 不占 300s/轮);
+- **勘误**: DEC-20260611-001 §4.2 "单次 agent spawn 超时 (300s)" 为**误标** — 超时数字以 audit-engine/SKILL.md 真实值为准 (spawn 120s / 每轮 300s), 本勘误仅在此处处理。
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)

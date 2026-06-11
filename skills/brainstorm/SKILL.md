@@ -144,13 +144,15 @@ description: |
   调用 audit-engine:
     checkpoint: "post_brainstorm"
     mode: 来自 config (audit.mode) 或 adaptive
-    context: 本次头脑风暴生成的决策记录路径
+    context: 本次头脑风暴生成的决策记录文件路径  # 如 .aria/brainstorm-{id}.md 或 docs/decisions/DEC-*.md
 
   if verdict == FAIL:
     → 阻塞输出文件写入，呈现审计报告，等待用户决策
   else (PASS / PASS_WITH_WARNINGS):
     → 继续写入输出文件
 ```
+
+> **context 类型契约 (#17 Drift Guard)**: post_brainstorm audit 的 `context` 必须传**决策记录文件路径** (非 Forgejo issue URL) — audit-engine Step 0 anchor 提取器据此识别"已确认决策"段 → `in_scope`、"DEFERRED" 条目 → `out_of_scope_hints`、核心议题 → `primary_goal` (与 audit-engine SKILL.md Step 0 post_brainstorm 调用契约对齐); context 为 issue URL 时降级 issue_title anchor。
 
 ---
 
@@ -285,5 +287,5 @@ User Story 模板:
 
 ---
 
-**最后更新**: 2026-02-06
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)
 **Skill版本**: 2.0.0 (基于 Superpowers 最佳实践重构)

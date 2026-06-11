@@ -167,6 +167,26 @@ audit.max_rounds:
   type: integer
   range: [1, 20]
   default: 5
+  # drift guard 完整功能需 max_rounds >= 3 (DRIFT_TERMINATED 需 consecutive_refocus >= 2,
+  # 至少 3 轮; max_rounds < 3 时 drift guard 降级为 max_rounds 兜底)
+
+# audit.drift_guard.* — 多轮审计 Drift Guard 阈值与模式开关 (#17, v1.44.0)
+audit.drift_guard.warn_threshold:
+  type: number
+  range: [0, 1]
+  default: 0.2
+  # 域外 → warn + default
+
+audit.drift_guard.refocus_threshold:
+  type: number
+  range: [0, 1]
+  default: 0.5
+  # 约束 >= warn_threshold, 违反 → warn + 单向 clamp (refocus_threshold 抬升到 warn_threshold)
+
+audit.drift_guard.convergence_mode:
+  type: boolean
+  default: false
+  # challenge 默认开 + convergence 可选 (本字段) + post_closure 由模式选择阶段屏蔽
 
 audit.checkpoints.*:
   type: string
@@ -306,4 +326,4 @@ experiments.agent_team_audit_points 数组元素映射:
 
 ---
 
-**最后更新**: 2026-04-09 (v2.9.0: 新增 state_scanner.sync_check.* 和 state_scanner.issue_scan.*)
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)
