@@ -326,4 +326,4 @@ experiments.agent_team_audit_points 数组元素映射:
 
 ---
 
-**最后更新**: 2026-04-09 (v2.9.0: 新增 state_scanner.sync_check.* 和 state_scanner.issue_scan.*)
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)

@@ -95,7 +95,7 @@ unanimous_pass = all(agent.vote == PASS for agent in convergence_agents)
 
 ```
 objections_resolved = all(
-  obj.status == "resolved"
+  obj.status != "new"   # resolved 或 overruled 均视为已处理 (与 challenge-mode-schema.md 对齐; #17 顺带统一, 原 =="resolved" 会误判 overruled 阻塞收敛)
   for obj in challenge_output.objections
 )
 ```
@@ -233,6 +233,9 @@ function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds
   #       CONVERGED → DRIFT_TERMINATED → OSCILLATION → MAX_ROUNDS_EXHAUSTED =====
 
   # 终局 1: CONVERGED
+  # challenge 模式: 此处 unanimous 替换为 objections_resolved
+  # (= all(obj.status != "new")), 见 challenge-mode-schema.md §收敛判定 —
+  # 与 WARN 分支的 mode 限定词同构, 本伪代码默认展示 convergence 形态
   if conclusions_stable AND unanimous:
     return CONVERGED
 
@@ -288,4 +291,4 @@ function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)

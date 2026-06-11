@@ -19,6 +19,7 @@ overridden_by_user: false
 degraded: false
 drift_terminated: false
 drift_check_skipped: false
+drift_warning: false          # challenge 模式 warn 档标注 (仅标注不阻塞, 见 challenge-mode-schema.md); convergence 模式恒 false (warn 经 unanimous_pass=false 表达)
 is_refocus: false
 verdict: PASS | PASS_WITH_WARNINGS | FAIL
 timestamp: {ISO 8601}
@@ -174,9 +175,9 @@ drift_metrics:
     out_of_scope_hints: [{...}]
     source_sha: {freeze 时 git SHA}
   anchor_engagement: normal | none   # none = 末轮 on_topic 计数 == 0 时标注
-                                     # (annotation only, 不改收敛/verdict 行为)
+                                     # (annotation only, 不改收敛/verdict 行为; 末轮 drift_ratio=null [skipped] 时不触发 none)
   consecutive_refocus_count: {N}     # 字段定义见 report-storage.md (refocus +1 / normal 归零 / >=2 终止)
-  converged_on_anchor: true | false | null
+  converged_on_anchor: true | false | null   # 末轮 drift_ratio=null (skipped) 按 fail-open <warn 语义视为满足 "< warn_threshold" 条件
   # —— per_round 表 (每轮一条; Round 1 [跳过计算] 与 drift_check_skipped 轮 → drift_ratio: null, 非 0) ——
   per_round:
     - round: {N}                     # 底层逻辑 round 整数
@@ -297,4 +298,4 @@ FAIL -- 发现 1 个 Critical 问题 (JWT 签名验证缺失), 阻塞合并。
 
 ---
 
-**最后更新**: 2026-03-27
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)

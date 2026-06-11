@@ -230,11 +230,14 @@ challenge 模式: objections 全部 status == resolved (无 unresolved)
 ### 振荡检测
 
 ```
-if N >= 3:
-  keys_N   = comparison_keys(round_N)
-  keys_N_2 = comparison_keys(round_N_minus_2)
+# #17 振荡豁免: keys 全部取 normal_rounds 重索引序列 (is_refocus 轮剔除),
+# 本节为简化概述 — 权威可执行版见 references/convergence-algorithm.md 终局 3
+if len(normal_rounds) >= 3:
+  keys_N   = comparison_keys(normal_rounds[-1])
+  keys_N_1 = comparison_keys(normal_rounds[-2])
+  keys_N_2 = comparison_keys(normal_rounds[-3])
 
-  if keys_N == keys_N_2 and keys_N != keys_N_minus_1:
+  if keys_N == keys_N_2 and keys_N != keys_N_1:
     → 标记 oscillation: true
     → 取最后轮结论为最终结果
     → 不要求人工介入
@@ -412,4 +415,4 @@ else:                                   # 任一业务文件 ∉ skip_paths
 
 ---
 
-**最后更新**: 2026-04-23 (Issue #26: checkpoint 完整性 gate + Issue #27: change_id 锚点校验)
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)

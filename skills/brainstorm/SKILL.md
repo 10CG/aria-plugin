@@ -287,5 +287,5 @@ User Story 模板:
 
 ---
 
-**最后更新**: 2026-02-06
+**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)
 **Skill版本**: 2.0.0 (基于 Superpowers 最佳实践重构)
