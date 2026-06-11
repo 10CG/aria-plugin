@@ -91,8 +91,12 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # string with 2+ segments. Dropped in favor of a project_root-prefix-only
 # rewrite (see Rule 2 in references/json-diff-normalizer.md). Conservative
 # design: zero-false-positive at the cost of leaving non-project absolute
-# paths (e.g., `/tmp/*`, `/usr/bin/git`) untouched. At v3.0 snapshot shape,
-# scan.py does not emit such paths in any field.
+# paths (e.g., `/tmp/*`, `/usr/bin/git`) untouched. As of #139 (v1.45.0)
+# scan.py DOES emit non-project_root absolute paths — `handoff_worktrees.
+# others[].path` and `.global_latest_elsewhere.path` point at OTHER worktrees;
+# these are deliberately left untouched by Rule 2 (see json-diff-normalizer.md).
+# The stability fixture is single-worktree, so `others=[]` /
+# `global_latest_elsewhere=null` and these fields never reach the rewrite path.
 
 
 # --- Core transforms -----------------------------------------------------

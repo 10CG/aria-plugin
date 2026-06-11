@@ -44,6 +44,8 @@
 > **置信度评分方法**: 基于信号清晰度、风险等级、可逆性三维评估。详见 [references/confidence-scoring.md](./references/confidence-scoring.md)。
 > **自动执行策略**: 仅当置信度 >90% 且项目启用 `auto_proceed` 时，推荐可自动执行而无需用户确认。
 
+> **Cross-ref — cross-worktree advisory (非优先级表规则, #139)**: 跨 worktree handoff 发现的 advisory **不进上方优先级数值表**, 它是 [references/recommendation-stages.md](./references/recommendation-stages.md) §handoff awareness 集成的新增分支 (触发时序在所有表内规则之前, 与既有 handoff awareness 分支同位, 无 priority 数值)。触发条件: `handoff_worktrees.global_latest_elsewhere != null && handoff_worktrees.global_latest_elsewhere.status == "active"` → 警示 + 编号选项 `[1] EnterWorktree / [2] 留在当前 worktree / [3] 先看该 handoff` (advisory-over-hardlock, 用户选 [1] 才切)。数据来自 Phase 1.15b `handoff_worktrees` collector。
+
 ---
 
 

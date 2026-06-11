@@ -72,4 +72,6 @@ P3 TASK-024 将实现 **Design A 条件触发**:
 - **不触发**: no collision / self-multi-container → 正常单 worktree 工作流
 - **实施**: phase1_gate 在检测到 cross-owner collision 后, 询问用户 "是否创建独立 worktree (推荐) 或强制使用当前 worktree (高风险)?"
 
+> **与 #139 正交互补**: TASK-024/025 (cross_owner **创建** worktree) 与 #139 cross-worktree-handoff-discovery (single-owner **进入**已存在 worktree, Phase 1.15b `handoff_worktrees` collector) 正交互补 — 前者在 owner 冲突时建议新建隔离 worktree, 后者在单 owner 多 worktree 并行时发现散落在他树的最新 handoff 并 advisory 引导 EnterWorktree。
+
 > **状态**: TASK-024/025 是 P3 scope, 本文档仅记录设计意图供 P3 实施参考。

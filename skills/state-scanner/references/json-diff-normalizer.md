@@ -67,6 +67,17 @@ snapshot shape there are no machine-specific absolute paths that escape the
 `project_root` prefix (collectors emit project-relative paths everywhere
 else).
 
+**Note (v1.45.0, #139)**: `handoff_worktrees.others[].path` (and
+`handoff_worktrees.global_latest_elsewhere.path`) are the **first** snapshot
+fields holding non-`project_root` absolute paths — they point at *other* git
+worktrees, which by definition live outside the current `project_root` prefix.
+They are therefore deliberately left as-is by Rule 2's conservative留白 (no
+sentinel rewrite). This does not perturb stability testing: the stability
+fixture is a single-worktree tree, so `others=[]` and `global_latest_elsewhere`
+is `null` — the fields are absent in the normalized form and never reach the
+path-rewrite path. `normalize_snapshot.py` requires **zero code change** for
+this addition.
+
 ### Rule 3 — Timestamp whitelist
 
 Timestamps are always non-deterministic. The following keys are replaced with
@@ -80,6 +91,17 @@ the sentinel `<timestamp>` wherever they appear:
 
 Rule: when a key matches a whitelist entry **exactly** (leaf key, not a
 substring), replace the value. Nested matches traverse full dict depth.
+
+**Note (v1.45.0, #139) — `age_hours` is a key-level DROP**: the `age_hours`
+leaf key is dropped (not sentinel-replaced) by `normalize_snapshot.py` because
+it is derived from `now()` at scan time and varies at sub-second precision
+between consecutive runs. The drop is keyed on the **leaf-key name anywhere in
+the snapshot**, so it already absorbs `handoff_worktrees.global_latest_elsewhere
+.age_hours` with no code change — the drop's semantics are **key-level**, not
+"`handoff.age_hours` 专属" (the in-code comment predates #139 and names only
+the first consumer; the rule itself is generic by key name). The stability
+fixture is single-worktree, so `global_latest_elsewhere` is `null` and this
+field is a no-op there.
 
 ### Rule 4 — Ephemeral path fields
 

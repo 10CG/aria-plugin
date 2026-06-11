@@ -26,6 +26,10 @@ Coverage (schema v1.0):
 - Phase 1.14: Forgejo CLAUDE.local.md config detection
 - Phase 1.15: Session-handoff doc surfacing (docs/handoff/ canonical + .aria/
               handoff/ misplaced detection; additive top-level `handoff` field)
+- Phase 1.15b: Cross-worktree handoff discovery (#139; enumerates git worktrees,
+              arbitrates the global-latest handoff, flags when it lives in a
+              worktree other than the current one; additive top-level
+              `handoff_worktrees` field)
 - Phase 1.16: Coordination fetch (git fetch with 30s TTL cache; prerequisite for
               Phase 1.17; additive top-level `coordination_fetch` field)
 - Phase 1.17: Cross-branch handoff track rebuild (scans all origin/* branches for
@@ -61,6 +65,7 @@ from collectors import (
     collect_git_state,
     collect_handoff,
     collect_handoff_multibranch,
+    collect_handoff_worktrees,
     collect_interrupt_state,
     collect_issue_scan,
     collect_multi_remote,
@@ -103,6 +108,11 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_13_issue = collect_issue_scan(project_root)
     phase1_14_forgejo = collect_forgejo_config(project_root)
     phase1_15_handoff = collect_handoff(project_root)
+    # Phase 1.15b: cross-worktree handoff discovery (#139). Consumes 1.15 data for
+    # the current tree's latest (no re-scan; R2 N-6/m-6) → registered right after.
+    phase1_15b_worktrees = collect_handoff_worktrees(
+        project_root, phase1_15_handoff.data
+    )
     # Phase 1.16: coordination fetch (TASK-003) — must run before multibranch scan.
     # collect_coordination_fetch is idempotent with a 30s TTL cache; running it here
     # ensures all remote refs are available even if the caller did not pre-fetch.
@@ -133,6 +143,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         ("issue_scan", phase1_13_issue),
         ("forgejo_config", phase1_14_forgejo),
         ("handoff", phase1_15_handoff),
+        ("handoff_worktrees", phase1_15b_worktrees),
         ("coordination_fetch", phase1_16_coord_fetch),
         ("handoff_multibranch", phase1_17_handoff_mb),
     ]:
@@ -157,6 +168,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         "sync_status": phase1_12_sync.data,
         "forgejo_config": phase1_14_forgejo.data,
         "handoff": phase1_15_handoff.data,
+        "handoff_worktrees": phase1_15b_worktrees.data,
         "coordination_fetch": phase1_16_coord_fetch.data,
         "tracks_multibranch": phase1_17_handoff_mb.data,
         "errors": errors,
