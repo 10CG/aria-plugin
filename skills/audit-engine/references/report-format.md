@@ -177,7 +177,7 @@ drift_metrics:
                                      # (annotation only, 不改收敛/verdict 行为)
   consecutive_refocus_count: {N}     # 字段定义见 report-storage.md (refocus +1 / normal 归零 / >=2 终止)
   converged_on_anchor: true | false | null
-  # —— per_round 表 (每轮一条) ——
+  # —— per_round 表 (每轮一条; Round 1 [跳过计算] 与 drift_check_skipped 轮 → drift_ratio: null, 非 0) ——
   per_round:
     - round: {N}                     # 底层逻辑 round 整数
       is_refocus: false

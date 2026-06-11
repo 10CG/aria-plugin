@@ -63,6 +63,7 @@ conclusions_stable = (current_set == previous_set)
 | severity 升级 (minor→major) | 不收敛 (severity 参与比较) |
 | Round 1 drift check (#17) | **跳过** (`drift_ratio` 不计算, `consecutive_refocus_count` 不变) — 无前序稳定基线 |
 | max_rounds < 3 (#17) | max_rounds<3 时 DRIFT_TERMINATED 不可达 (consecutive_refocus>=2 需至少 3 轮), drift guard 降级为 max_rounds 兜底 |
+| 首次 REFOCUS 撞 max_rounds (#17) | round == max_rounds 时无剩余配额, refocus 不可发放 → MAX_ROUNDS_EXHAUSTED (max_rounds 仍是总轮数硬上界) |
 
 **首轮 0-finding 必须 stability confirmation** (v1.17.5+ 引入, 修复 latent bug):
 
@@ -201,6 +202,7 @@ function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds
   # Drift Check 节点 (#17, Round-1 guard 之后嵌入)
   # fail-open: drift-checker 失败/超时 → drift_ratio=null 按 < warn 档处理
   #            (drift_action=NONE + drift_check_skipped: true)
+  # mode 与 consecutive_refocus_count 为引擎级状态 (非函数入参), 此处直接引用
   drift_action = check_drift(round_N, anchor)
   # drift_action ∈ {NONE, WARN, REFOCUS, TERMINATE}
   # TERMINATE = consecutive_refocus_count >= 2 (见 consecutive_refocus_count 章节)
@@ -209,6 +211,11 @@ function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds
   keys_N = extract_keys(round_N)
   keys_N_1 = extract_keys(round_N_minus_1)
   conclusions_stable = (keys_N == keys_N_1)
+
+  # normal-round 逻辑序列 (振荡豁免, 见 "检测条件" 节): is_refocus==true 轮剔除后重新索引。
+  # 引擎级状态; oscillation 比较**不得复用**上方 stability 的 keys_N/keys_N_1
+  # (post-refocus 轮上两种取法发散 — stability 基线含 refocus 替换, oscillation 序列不含)。
+  normal_rounds = [r for r in all_rounds if not r.is_refocus]
 
   # 全票 PASS
   unanimous = check_unanimous(round_N)
@@ -237,14 +244,21 @@ function check_convergence(round_N, round_N_minus_1, round_N_minus_2, max_rounds
   if drift_action == TERMINATE:
     return DRIFT_TERMINATED
 
-  # 独立返回状态 (非终局): 强制 refocus 轮, 消耗 max_rounds 配额
+  # 独立返回状态 (非终局): 强制 refocus 轮, 消耗 max_rounds 配额。
+  # 边界守卫 (DEC §4.4 留白的实施层补全, 勘误注: DEC 仅规定第二次连续 refocus 撞边界
+  # 时 DRIFT_TERMINATED 优先; 首次 REFOCUS 恰逢 round == max_rounds 时无剩余配额,
+  # refocus 不可发放 — max_rounds 仍是总轮数硬上界, 约束 C8 token 护栏):
   if drift_action == REFOCUS:
+    if round_N.number >= max_rounds:
+      return MAX_ROUNDS_EXHAUSTED   # 无剩余配额, refocus 不可发放
     return REFOCUS_ROUND
 
-  # 终局 3: OSCILLATION (keys_* 均取 normal-round 逻辑序列, 见 "检测条件" 振荡豁免)
+  # 终局 3: OSCILLATION (keys_* 全部按 normal_rounds 重取, 不复用 stability 变量)
   if len(normal_rounds) >= 3:
-    keys_N_2 = comparison_keys(normal_rounds[-3])
-    if keys_N == keys_N_2 AND keys_N != keys_N_1:
+    keys_osc_N   = comparison_keys(normal_rounds[-1])
+    keys_osc_N_1 = comparison_keys(normal_rounds[-2])
+    keys_osc_N_2 = comparison_keys(normal_rounds[-3])
+    if keys_osc_N == keys_osc_N_2 AND keys_osc_N != keys_osc_N_1:
       return OSCILLATION
 
   # 终局 4: MAX_ROUNDS_EXHAUSTED

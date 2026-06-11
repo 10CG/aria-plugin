@@ -93,7 +93,7 @@ agent-team-audit (单轮执行引擎)
 }
 ```
 
-- anchor **写入报告头** (frontmatter `drift_metrics` anchor 快照, 见 [references/report-format.md](./references/report-format.md)), **审计周期内不可变** — **mid-audit re-anchor 不支持** (换锚 = 另起一次审计, cross-ref DEC-20260611-001 §9 Out-of-Scope)。
+- anchor **写入报告 body 的 `drift_metrics` 章节** (anchor 快照, 见 [references/report-format.md](./references/report-format.md); frontmatter 仅含三个 boolean 标记字段, 保持扁平防 #125/#126 parser), **审计周期内不可变** — **mid-audit re-anchor 不支持** (换锚 = 另起一次审计, cross-ref DEC-20260611-001 §9 Out-of-Scope)。
 - 每轮收敛判定前由独立 drift-checker 持 anchor 对当轮结论分类, 详见 [references/challenge-mode-schema.md](./references/challenge-mode-schema.md) drift-checker 节。
 
 **per-checkpoint anchor 来源 fallback 链** (带 checkpoint 归属标签, 非单线性):
