@@ -44,6 +44,8 @@
 
 ## Verdict 计算
 
+> 本节为 verdict 计算规则的 **SOT** — report-format.md 仅 cross-ref 至此, 双文件不重复声明 (防漂移)。
+
 ```
 verdict = PASS               if 0 Critical + 0 Major
 verdict = PASS_WITH_WARNINGS  if 0 Critical + >=1 Major
@@ -54,6 +56,13 @@ verdict = FAIL               if >=1 Critical
 - `converged`: 收敛状态 (true/false)
 - `verdict`: 质量判定 (PASS/PASS_WITH_WARNINGS/FAIL)
 
+### drift_terminated override 规则 (#17 Drift Guard)
+
+**`drift_terminated: true → verdict=FAIL`** — drift 终止 (连续 2 次 refocus 未回锚, DRIFT_TERMINATED 终局) **覆盖**上表 severity 计算结果: 即使 Critical=0 也判 FAIL, 复用既有 FAIL verdict 通道正常结束 (advisory-over-hardlock, 不发明新硬中止路径)。
+
+- **frontmatter `verdict` 恒为裸枚举** (`FAIL`), drift override rationale **仅**出现在 body `## Verdict` 节 (#125/#126 dashboard parser 防护)。rationale 锚点示例: `FAIL (drift override) — 连续 2 次 refocus 未回锚, Critical=0`。
+- **owner remediation 路径** (区别于普通 FAIL 的"修 finding"路径): **重跑审计 / 收窄 context / 显式 override**。drift-FAIL 表示"讨论漂离原始目的", 而非"被审计对象有 Critical 缺陷", 修 finding 通常不是正确处置。
+
 ### 组合含义 (converged × verdict)
 
 | converged | verdict | 含义 |
@@ -61,7 +70,8 @@ verdict = FAIL               if >=1 Critical
 | true | PASS | 正常通过 |
 | true | PASS_WITH_WARNINGS | 收敛但有 Major 问题 |
 | true | FAIL | 收敛但有 Critical 问题, 阻塞流程 |
-| false | * | 未收敛, 触发降级策略 |
+| false (`drift_terminated: true`) | FAIL | DRIFT_TERMINATED 终局, drift override; **不触发 max_rounds 三路径降级**, 直接以 FAIL 结束走 owner remediation 路径 |
+| false (`drift_terminated: false`) | * | 未收敛, 触发降级策略 (本行**排除** `drift_terminated: true` 情形) |
 
 ## 报告 Frontmatter
 
@@ -74,11 +84,23 @@ converged: true | false
 oscillation: false
 overridden_by_user: false
 degraded: false
+drift_terminated: false
+drift_check_skipped: false
+is_refocus: false
 verdict: PASS | PASS_WITH_WARNINGS | FAIL
 timestamp: {ISO 8601}
 context: {被审计内容路径}
 agents: [{agent_list}]
 ---
 ```
+
+### Drift Guard 字段定义 (#17)
+
+- `drift_terminated`: 默认 `false`; DRIFT_TERMINATED 终局时由 audit-engine **聚合层**置 `true` (→ verdict=FAIL override, 见 §Verdict 计算)。
+- `drift_check_skipped`: 默认 `false`; drift-checker spawn 失败/超时 fail-open 时置 `true` (该轮 `drift_ratio=null` 按 <warn 档处理, `consecutive_refocus_count` 不增加)。
+- `is_refocus`: 默认 `false`; refocus 轮 dispatch 时注入 `true`。`rounds` 整数 N + `is_refocus` 组合唯一标识一轮 (展示标签 `R{N}-refocus`, 底层 round 计数不冻结)。
+- `consecutive_refocus_count` (本节为字段定义 SOT; 字段本体落报告 body `drift_metrics` 章节, 非 frontmatter): refocus 触发 +1, normal round 后归零, `drift_check_skipped` 轮不增加; >= 2 → DRIFT_TERMINATED。
+
+drift_metrics 见 [report-format.md (SOT)](./report-format.md#drift_metrics-章节骨架-17-drift-guard)。
 
 详细报告格式见 [report-format.md](./report-format.md)。

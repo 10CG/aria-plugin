@@ -92,6 +92,12 @@
     "mode": "adaptive",
     "max_rounds": 5,
 
+    "drift_guard": {
+      "warn_threshold": 0.2,
+      "refocus_threshold": 0.5,
+      "convergence_mode": false
+    },
+
     "scope_skip_paths": ["deploy/", "docs/", ".forgejo/workflows/", ".github/workflows/", "*.md"],
 
     "convergence_criteria": {
