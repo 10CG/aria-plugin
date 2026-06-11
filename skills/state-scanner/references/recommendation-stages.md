@@ -58,6 +58,12 @@ AI 在阶段 2 推荐生成 **之前** MUST 检查 `snapshot.handoff`:
 3. 若 `handoff.exists == false`:
    - 不阻塞推荐, 但提示首次 session 用户 phase-d-closer D.3 会引导写 handoff
 
+4. 若 `handoff_worktrees.global_latest_elsewhere != null` (#139 cross-worktree, Phase 1.15b):
+   - **触发条件**: 全局最新 handoff 在**其他** worktree 且其 `status == "active"` — 单人多 worktree 并行时, 上 session 把 handoff 写在 feature worktree (分支未合 main), 新 session 在主 worktree 启动会读不到它 (2026-06-04 SilkNode 事故)。
+   - **advisory 输出** (advisory-over-hardlock, 非自动切): 警示该 handoff 的 `path` + `branch` + 编号选项 `[1] EnterWorktree 切过去续 track / [2] 留在当前 worktree / [3] 先看该 handoff`; 用户选 [1] 才执行。非 Claude Code 环境 (无 EnterWorktree 工具) → 降级打印 `cd <path>` 指引。
+   - **`status` 为 `done`/`abandoned`/`legacy`**: `global_latest_elsewhere` 仍如实指向该 doc (仲裁诚实, 仅阶段 2 advisory 不触发 — 非字段级排除), **不触发** advisory (防误引导已收尾/身份不明 track), 仅在 §跨 worktree 交接 列表展示。
+   - 与上方 1-3 (当前 worktree 的 `handoff.*`) 正交: 1-3 看当前树, 本分支看其他树。与 `RECOMMENDATION_RULES.md` 优先级数值表无关 (本 mandatory 集成步骤的分支, 触发时序在所有表内规则之前)。
+
 **避免 4 次 dogfood 痛点重演**: 跳过 handoff 读取直接出推荐是历史已 4 起的 bug (SilkNode 2026-05-09 + Aria self 2026-05-13 ×3), H0 spec 的根本目的就是机械化此步骤。
 
 ### 完整性兜底 (inter-cycle resume — sanity check, post-G2/G3/G4 ship)

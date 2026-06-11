@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.45.0] - 2026-06-11
+
+### cross-worktree-handoff-discovery (#139) — 跨 worktree 交接断链修复 (Phase 1.15b)
+
+Fixes Forgejo [#139](https://forgejo.10cg.pub/10CG/Aria/issues/139) (triage `confirmed` 4/4, [comment-12467](https://forgejo.10cg.pub/10CG/Aria/issues/139#issuecomment-12467)): 单人多 worktree 并行时, 上 session 把 handoff 写在 feature worktree (分支未合 main), 新 session 默认在主 worktree 启动 → `scan.py` 按 cwd 采集**读不到**他树最新 handoff, 新 session 被引导进错误状态 (2026-06-04 SilkNode cut2-batch1 实地事故)。设计 SOT: Aria 主仓 `docs/decisions/DEC-20260611-002-cross-worktree-handoff-discovery.md` (brainstorm 3 决策 [纯机械发现 / 两级语义+epoch 仲裁 / advisory 引导] + post_spec R1 FAIL 5M+7m → R2 PWW N-1..N-9 → R3 PASS)。
+
+- **新 collector `handoff_worktrees.py`** (Phase 1.15b, 紧随 1.15): `git worktree list --porcelain` 枚举, 复用 `handoff.py` 抽出的 `_resolve_latest` helper (单份 H5 pointer→mtime 逻辑, `collect_handoff` 逐字段零回归) 解析各树最新 handoff, epoch 域按 frontmatter `updated-at` 仲裁全局最新 (`Z`/offset 兼容无 py3.11 floor; tie → current-tree-wins / other-vs-other path 字典序)。全局最新落他树时输出 additive 顶层字段 `handoff_worktrees.global_latest_elsewhere`。纯机械发现**零 frontmatter schema 变更** (DEC Q1: 事故根因是"发现不了"非"声明不够"; 加字段会破 #137 E1 head-8 窗口)。
+- **阶段 2 advisory 引导**: `global_latest_elsewhere != null && status=="active"` → 提示 `EnterWorktree` 切过去续 track (编号选项 [1]切/[2]留/[3]先看, advisory-over-hardlock 非自动切; 非 Claude Code 环境降级 `cd` 指引)。`done`/`abandoned`/`legacy` 仅列表展示不触发 (仲裁字段诚实, Phase 2 gate on status)。
+- **配置** `state_scanner.worktree_scan.{enabled (默认 true), max_worktrees (默认 8)}` + env `ARIA_WORKTREE_MAX_SCANNED` (新 resolver `resolve_max_worktrees_scanned`, 三层镜像 #71)。软错 `worktree_enumeration_failed` / `worktree_unreachable` (含 prunable) / `worktree_scan_cap` (warn-only) / 树内失败带 worktree path 前缀; 他树**不发** #137 `handoff_frontmatter_missing` (防 errors[] 污染 E2)。`enabled` vs `enumerated` 机读可分 (config-disabled 无 enumeration 软错; R2 N-1)。
+- **附带覆盖**: Step 1.17 `handoff_multibranch` 仅扫 `refs/remotes/origin/*`, worktree 分支未 push 时多 track 看板失明 — 本 collector 在本机维度覆盖此盲区 (triage 增量情报)。
+- **测试** (Rule #6 substitute, deterministic collector): 20 collector + 27 resolver = **47 新测** (739→786 全绿, `collect_handoff` 零回归); dogfood = Aria 真树 no-op (`others=[]`) + sandbox e2e 跨树发现 (triage case-4 事故场景修复)。8 文档同位更新 (SKILL collector 计数 14→15 + state-snapshot-schema + recommendation-stages + output-formats + phase-1-collectors + RECOMMENDATION_RULES + layer-l-integration 互引 + json-diff-normalizer Rule 2 留白)。**不含 standards 变更** (零 schema 改动红利)。Skills 不变 (41)。
+
 ## [1.44.0] - 2026-06-11
 
 ### audit-drift-guard (#17) — audit-engine 多轮审计原始目的锚定 (Drift Guard)

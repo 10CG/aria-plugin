@@ -32,6 +32,7 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 | `issue_status` | Phase 1.13 | **optional** (only when `issue_scan.enabled=true`) | additive keys OK (T3.4+) |
 | `forgejo_config` | Phase 1.14 | required | additive keys OK (T3.5+) |
 | `handoff` | Phase 1.15 | required | additive keys OK (H0 spec, 2026-05-14) |
+| `handoff_worktrees` | Phase 1.15b | required | additive keys OK (#139, v1.45.0) |
 | `errors` | aggregated fail-soft | required | informational |
 
 **Emission rule for optional keys**: Phase 1.13 `issue_status` is the only optional top-level key. Its absence signals `issue_scan.enabled=false`, which is semantically distinct from `issue_status: null`. Consumers checking for the feature should use `"issue_status" in snapshot`, not `snapshot.get("issue_status")`.
@@ -673,6 +674,38 @@ the same scale. `datetime.now()` is local-time by default and would skew
 - `latest.md` pointer targets a file absent from canonical dir →
   `soft_error("handoff_pointer_target_missing")` + mtime fallback
   (`latest_source="mtime"`)
+
+## `handoff_worktrees` (Phase 1.15b, #139 cross-worktree discovery)
+
+```yaml
+enabled: bool                   # config state_scanner.worktree_scan.enabled (default true)
+enumerated: bool                # git worktree list attempted AND succeeded
+                                #   (False when disabled OR enumeration failed)
+worktree_count: int             # reachable non-bare/non-prunable worktrees incl. current
+others: list[dict]              # one per OTHER worktree with a resolved latest handoff;
+                                #   SORTED BY path lexicographically (same key as tie-break)
+global_latest_elsewhere: dict | null  # non-null ONLY when the global latest lives in a
+                                #   tree OTHER than the current one
+```
+
+**`others[]` entry** `{path, branch, doc, updated_at, status, track_id, cmp_key_source}`:
+- `path`: str — worktree absolute path (git-reported; NOT under project_root — see json-diff-normalizer.md Rule 2 note)
+- `branch`: str — short branch name, or `"(detached)"`
+- `doc`: str — handoff path relative to that worktree (e.g. `docs/handoff/2026-06-11-x.md`)
+- `updated_at`: str — frontmatter `updated-at` (mtime ISO for legacy / malformed)
+- `status`: str — frontmatter `status` (`active`/`done`/`abandoned`), or `"legacy"` (no frontmatter)
+- `track_id`: str — frontmatter `track-id`, or filename for legacy docs
+- `cmp_key_source`: str — arbitration key source: `"frontmatter"` (used updated-at) | `"mtime"` (degraded). Named to avoid colliding with `handoff.latest_source`'s "mtime". The tree-internal resolution source (pointer|mtime) is deliberately NOT recorded (R2 N-7).
+
+**`global_latest_elsewhere`** `{path, branch, doc, status, age_hours}` — `status` carried verbatim (Phase 2 gates on `status == "active"`; the field stays arbitration-honest). `age_hours` basis = the arbitration key.
+
+**Arbitration**: compare key = frontmatter `updated-at` → epoch (`Z` and `+HH:MM` both supported, no Python 3.11 floor), degrading to the doc's mtime epoch when absent/malformed. Tie → current tree wins (no false advisory); other-vs-other tie → lexicographically smallest `path` (deterministic, **the `others[]` sort key**; R2 N-2). Consumes Phase 1.15 for the current tree (no re-scan); other trees reuse `handoff.py::_resolve_latest` (single H5 implementation — R2 N-6/m-6).
+
+**`enabled` vs `enumerated` (R2 N-1)**: both config-disabled and enumeration-failure yield `enumerated=false`. Distinguish: disabled → `enabled=false` + NO `worktree_enumeration_failed`; failure → `enabled=true` + that soft error.
+
+**Soft errors** (`errors[]` + exit 10): `worktree_enumeration_failed` / `worktree_unreachable` (incl. prunable) / `worktree_scan_cap` (warn-only) / per-tree `handoff_canonical_scan_failed` + `handoff_pointer_target_missing` + `handoff_stat_failed` (message prefixed with the worktree path). The current-tree-only `handoff_frontmatter_missing` (#137) is NOT emitted for other trees (R2 m-7).
+
+**Single-worktree no-op**: one worktree → `enumerated=true, worktree_count=1, others=[], global_latest_elsewhere=null` (zero behavioural change).
 
 ## `errors` (aggregated fail-soft)
 

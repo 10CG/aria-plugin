@@ -195,6 +195,112 @@ def resolve_max_branches_scanned(project_root: Path) -> int:
     return _DEFAULT_MAX_BRANCHES
 
 
+# ----- worktree scan cap canonical resolver ---------------------------------
+# Used by handoff_worktrees.py to bound how many worktrees are scanned for
+# cross-worktree handoff discovery. See OpenSpec cross-worktree-handoff-discovery
+# (#139) for design rationale. Structure mirrors resolve_max_branches_scanned
+# (env > config > default), but this is a PARALLEL resolver — NOT a reuse of the
+# branch one, which hardwires ARIA_HANDOFF_MAX_BRANCHES / handoff_multibranch.
+# max_branches / default 20 (all branch-specific). Local worktree counts are far
+# smaller than remote branch counts, so the default is lower (8 vs 20).
+
+ARIA_WORKTREE_MAX_SCANNED_ENV = "ARIA_WORKTREE_MAX_SCANNED"
+_DEFAULT_MAX_WORKTREES: int = 8
+# Recommended upper bound (warn-only per OQ3 mirror — honor user value, never
+# clamp). Worktree enumeration is cheaper than branch scan (one git call total,
+# plus one dir scan per worktree) so the bound is generous.
+_MAX_WORKTREES_UPPER_BOUND: int = 64
+
+
+def _parse_env_max_worktrees() -> int | None:
+    """Parse `ARIA_WORKTREE_MAX_SCANNED` env var (a single positive integer).
+
+    Returns None (caller falls through to config / default) when the env var is
+    unset, empty, all-whitespace, non-numeric, or ``<= 0``. Surrounding
+    whitespace is tolerated. ``int(...)`` is guarded against ValueError/TypeError.
+    """
+    raw = os.environ.get(ARIA_WORKTREE_MAX_SCANNED_ENV, "")
+    if not raw.strip():
+        return None
+    try:
+        val = int(raw.strip())
+    except (ValueError, TypeError):
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def _read_config_max_worktrees(project_root: Path) -> int | None:
+    """Read `.aria/config.json` → `state_scanner.worktree_scan.max_worktrees`.
+
+    Fail-soft: missing file / parse error / key absent → None. Value must be a
+    genuine ``int`` and ``> 0``; ``bool`` is explicitly rejected (``bool`` is an
+    ``int`` subclass footgun — ``True`` would otherwise read as ``1``). Any other
+    type (float, str, ...) → None → fall through to next layer.
+    """
+    cfg_path = project_root / ".aria" / "config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        with cfg_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    val = ((raw.get("state_scanner") or {}).get("worktree_scan") or {}).get(
+        "max_worktrees"
+    )
+    if not isinstance(val, int) or isinstance(val, bool):
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def _honor_worktrees_upper_bound_warning(val: int, source: str) -> int:
+    """Return ``val`` unchanged; log a warning if it exceeds the recommended bound.
+
+    Warn-only — never clamp (mirrors the branch resolver's OQ3 decision). The
+    user value is authoritative; we only surface a performance advisory.
+    """
+    if val > _MAX_WORKTREES_UPPER_BOUND:
+        log.warning(
+            "worktree max_worktrees=%d (from %s) exceeds recommended upper bound "
+            "(%d); honoring user value but scanning this many worktrees may be slow.",
+            val,
+            source,
+            _MAX_WORKTREES_UPPER_BOUND,
+        )
+    return val
+
+
+def resolve_max_worktrees_scanned(project_root: Path) -> int:
+    """Canonical 3-layer precedence resolver for the worktree scan cap.
+
+    Precedence (highest first):
+      1. ARIA_WORKTREE_MAX_SCANNED env (single positive int)
+      2. .aria/config.json → state_scanner.worktree_scan.max_worktrees
+      3. Default (8 — local worktree counts are small)
+
+    Parallel to ``resolve_max_branches_scanned`` but with worktree-specific
+    env/config keys and a lower default. Each layer independently falls through
+    on absent/invalid/non-positive input. Values that exceed the recommended
+    upper bound are honored (warn-only) — never clamped. Always returns a
+    positive int.
+    """
+    env_val = _parse_env_max_worktrees()
+    if env_val is not None:
+        return _honor_worktrees_upper_bound_warning(
+            env_val, f"env {ARIA_WORKTREE_MAX_SCANNED_ENV}"
+        )
+    config_val = _read_config_max_worktrees(project_root)
+    if config_val is not None:
+        return _honor_worktrees_upper_bound_warning(
+            config_val, "config state_scanner.worktree_scan.max_worktrees"
+        )
+    return _DEFAULT_MAX_WORKTREES
+
+
 @dataclass
 class CollectorResult:
     data: dict[str, Any] = field(default_factory=dict)

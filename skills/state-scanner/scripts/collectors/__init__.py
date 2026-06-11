@@ -21,6 +21,7 @@ from .forgejo_config import collect_forgejo_config
 from .git import collect_git_state
 from .handoff import collect_handoff
 from .handoff_multibranch import collect_handoff_multibranch
+from .handoff_worktrees import collect_handoff_worktrees
 from .interrupt import collect_interrupt_state
 from .issue_scan import collect_issue_scan
 from .multi_remote import collect_multi_remote
@@ -43,6 +44,7 @@ __all__ = [
     "collect_git_state",
     "collect_handoff",
     "collect_handoff_multibranch",
+    "collect_handoff_worktrees",
     "collect_interrupt_state",
     "collect_issue_scan",
     "collect_multi_remote",

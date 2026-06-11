@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -326,6 +327,92 @@ def _scan_md_files(directory: Path) -> list[Path]:
     return out
 
 
+@dataclass
+class _LatestResolution:
+    """Result of resolving the latest handoff doc in one canonical dir.
+
+    Pure resolution output — ``_resolve_latest`` does NOT emit soft errors
+    itself; it returns ``signals`` for the caller to emit. This lets the SAME
+    helper serve both ``collect_handoff`` (current-tree framing — raw message)
+    and the cross-worktree collector (#139 ``handoff_worktrees.py``, which
+    prefixes messages with the worktree path). See OpenSpec
+    ``cross-worktree-handoff-discovery`` §What Changes #1 (R2 N-3).
+    """
+
+    latest: Optional[Path]            # resolved latest doc; None if stat failed
+    latest_source: Optional[str]      # "pointer" | "mtime" | None
+    last_modified_iso: Optional[str]
+    age_hours: Optional[float]
+    mtime_epoch: Optional[float]      # raw st_mtime of latest (#139 arbitration key)
+    stat_failed: bool
+    # (soft_error_kind, message) pairs for the caller to emit as it sees fit.
+    signals: list = field(default_factory=list)
+
+
+def _resolve_latest(
+    canonical: Path, canonical_files: list[Path]
+) -> _LatestResolution:
+    """Resolve the latest handoff doc via H5 pointer→mtime, purely.
+
+    Given a NON-empty list of candidate ``.md`` files (caller guarantees
+    non-empty — empty dir is handled before this point), return the resolved
+    latest doc (``latest.md`` pointer target if it names a present file, else
+    newest by mtime) plus mtime-derived iso/age, and any soft-error signals
+    encountered along the way (stat failure, stale pointer).
+
+    The caller decides whether/how to emit ``signals``: ``collect_handoff`` emits
+    them verbatim (current-tree), while the cross-worktree collector prefixes the
+    message with its worktree path (R2 N-3). This is also the mechanism that keeps
+    ``collect_handoff`` behaviour byte-for-byte identical post-refactor.
+
+    Does NOT read frontmatter (#137 enforcement is current-tree-only) and does
+    NOT scan directories (the caller passes ``canonical_files``).
+    """
+    signals: list = []
+    # Cache stat() results once (B-M1 fix — migrated with the helper to preserve
+    # collect_handoff behaviour; was calling stat() twice per file otherwise).
+    try:
+        mtimes = {p: p.stat().st_mtime for p in canonical_files}
+    except OSError as e:
+        signals.append(("handoff_stat_failed", str(e)))
+        return _LatestResolution(None, None, None, None, None, True, signals)
+
+    # H5 fix: prefer the latest.md pointer target (human-maintained semantic
+    # "Latest") over raw mtime. mtime-max only wins when the pointer is
+    # absent / unparseable / targets a missing file.
+    mtime_latest = max(canonical_files, key=lambda p: mtimes[p])
+    latest = mtime_latest
+    latest_source = "mtime"
+
+    pointer_target = _parse_latest_pointer(canonical)
+    if pointer_target and pointer_target != POINTER_FILENAME:
+        by_name = {p.name: p for p in canonical_files}
+        resolved = by_name.get(pointer_target)
+        if resolved is not None:
+            latest = resolved
+            latest_source = "pointer"
+        # pointer target not among canonical files (stale pointer) → keep
+        # mtime fallback; signal for L3/AI awareness (caller emits).
+        else:
+            signals.append(
+                (
+                    "handoff_pointer_target_missing",
+                    f"latest.md points to '{pointer_target}' but it is absent "
+                    f"in {CANONICAL_DIR}; fell back to mtime latest "
+                    f"'{mtime_latest.name}'",
+                )
+            )
+
+    mtime = mtimes[latest]
+    age_hours = round((time.time() - mtime) / 3600, 2)
+    last_mod_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(
+        timespec="seconds"
+    )
+    return _LatestResolution(
+        latest, latest_source, last_mod_iso, age_hours, mtime, False, signals
+    )
+
+
 def collect_handoff(project_root: Path) -> CollectorResult:
     r = CollectorResult()
 
@@ -363,14 +450,15 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         }
         return r
 
-    # Cache stat() results once (B-M1 fix — was calling stat() twice per file
-    # due to max(key=...) discarding the StatResult, plus a second stat() on
-    # the winning path. Gratuitous TOCTOU window even though both were in
-    # the same try/except block).
-    try:
-        mtimes = {p: p.stat().st_mtime for p in canonical_files}
-    except OSError as e:
-        r.soft_error("handoff_stat_failed", str(e))
+    # Resolve the latest doc via the shared H5 pointer→mtime helper (#139:
+    # _resolve_latest is also consumed by the cross-worktree collector).
+    resolution = _resolve_latest(canonical, canonical_files)
+    # Emit signals verbatim (current-tree framing). The cross-worktree collector
+    # (#139) prefixes these with its worktree path instead (R2 N-3).
+    for kind, msg in resolution.signals:
+        r.soft_error(kind, msg)
+
+    if resolution.stat_failed or resolution.latest is None:
         r.data = {
             "exists": True,
             "latest_path": None,
@@ -385,29 +473,7 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         }
         return r
 
-    # H5 fix: prefer the latest.md pointer target (human-maintained semantic
-    # "Latest") over raw mtime. mtime-max only wins when the pointer is
-    # absent / unparseable / targets a missing file.
-    mtime_latest = max(canonical_files, key=lambda p: mtimes[p])
-    latest = mtime_latest
-    latest_source = "mtime"
-
-    pointer_target = _parse_latest_pointer(canonical)
-    if pointer_target and pointer_target != POINTER_FILENAME:
-        by_name = {p.name: p for p in canonical_files}
-        resolved = by_name.get(pointer_target)
-        if resolved is not None:
-            latest = resolved
-            latest_source = "pointer"
-        # pointer target not among canonical files (stale pointer) → keep
-        # mtime fallback; surface as soft signal for L3/AI awareness.
-        else:
-            r.soft_error(
-                "handoff_pointer_target_missing",
-                f"latest.md points to '{pointer_target}' but it is absent "
-                f"in {CANONICAL_DIR}; fell back to mtime latest "
-                f"'{mtime_latest.name}'",
-            )
+    latest = resolution.latest
 
     # #137 (handoff-frontmatter-enforcement, v1.43.0+): frontmatter content
     # enforcement on the RESOLVED latest doc — applies to both latest_source
@@ -429,19 +495,13 @@ def collect_handoff(project_root: Path) -> CollectorResult:
             "\u2014 multi-track board will show owner=unknown",
         )
 
-    mtime = mtimes[latest]
-    age_hours = (time.time() - mtime) / 3600
-    last_mod_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(
-        timespec="seconds"
-    )
-
     r.data = {
         "exists": True,
         "latest_path": str(latest.relative_to(project_root)),
         "latest_filename": latest.name,
-        "last_modified_iso": last_mod_iso,
-        "age_hours": round(age_hours, 2),
-        "latest_source": latest_source,  # "pointer" | "mtime" (H5 transparency)
+        "last_modified_iso": resolution.last_modified_iso,
+        "age_hours": resolution.age_hours,
+        "latest_source": resolution.latest_source,  # "pointer" | "mtime" (H5)
         # additive (#137, v1.43.0+): True when resolved latest doc lacks
         # §2.3.1 frontmatter (legacy → board shows owner=unknown)
         "latest_frontmatter_missing": latest_frontmatter_missing,

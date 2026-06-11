@@ -113,7 +113,7 @@ AI 负责: 根据 `interrupt.status` 值:
 
 ### 阶段 1: 状态采集 (scan.py 机械产出)
 
-scan.py 按顺序执行 14 个 collector 子阶段, 每个产出 snapshot 一个固定顶层字段 (`git` / `upm` / `changes` / `requirements` / `openspec` / `architecture` / `readme` / `standards` / `audit` / `custom_checks` / `sync_status` / `issue_status` (opt-in) / `forgejo_config` / `handoff` / `coordination_fetch` (Step 1.16, multi-terminal) / `tracks_multibranch` (Step 1.17, multi-terminal) + `errors[]` 聚合)。
+scan.py 按顺序执行 15 个 collector 子阶段, 每个产出 snapshot 一个固定顶层字段 (`git` / `upm` / `changes` / `requirements` / `openspec` / `architecture` / `readme` / `standards` / `audit` / `custom_checks` / `sync_status` / `issue_status` (opt-in) / `forgejo_config` / `handoff` / `handoff_worktrees` (Step 1.15b, #139 cross-worktree discovery) / `coordination_fetch` (Step 1.16, multi-terminal) / `tracks_multibranch` (Step 1.17, multi-terminal) + `errors[]` 聚合)。
 
 **Opt-in 子阶段**: 1.11 custom_checks (需 `.aria/state-checks.yaml`) / 1.13 issue_scan (config flag) / 1.12 sync_check (可关闭)。
 
@@ -158,7 +158,7 @@ P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。在 Phase 1 结束、Phase 
 9. **🎫 Open Issues** — open_count / 按 repo 分组 / 关键 issue (number + 标题 + linked US) — opt-in, 仅 `issue_scan.enabled=true` 显示
 10. **🎯 推荐工作流** — 编号选项 [1]-[4] (推荐项标注) + 执行步骤 + 跳过项 + 理由
 
-> 另有条件块在特定场景插入 (见 output-formats.md): 🔬 Skill 变更 AB 状态 (检出 SKILL.md 变更时) / handoff awareness (Phase 1.15, handoff doc surfaced 或 drift)。
+> 另有条件块在特定场景插入 (见 output-formats.md): 🔬 Skill 变更 AB 状态 (检出 SKILL.md 变更时) / handoff awareness (Phase 1.15, handoff doc surfaced 或 drift) / 🌲 跨 worktree 交接 (Phase 1.15b, #139, `handoff_worktrees.global_latest_elsewhere` 为 active 时)。
 
 **完整标准输出示例 + 各场景输出变体 (未配置、链路不完整、待归档、头脑风暴建议等)**: 见 [references/output-formats.md](./references/output-formats.md)。
 

@@ -411,6 +411,54 @@ stale handoff (age > 30 天 / 720h):
 
 ---
 
+## 跨 worktree 交接 (Phase 1.15b, #139)
+
+**条件区块** — 仅 `snapshot.handoff_worktrees.global_latest_elsewhere != null` 时显示 (单 worktree / 当前树即全局最新时整段不输出)。
+
+全局最新 handoff 落在他树且 `status == "active"` (阶段 2 advisory 触发, 带编号选项):
+
+```
+🌲 跨 worktree 交接
+───────────────────────────────────────────────────────────────
+  ⚠️ 检测到更新的 handoff 位于其他 worktree (非当前树)
+  他树: ../silknode-cut2 (分支 feat/cut2-batch1)
+  handoff: docs/handoff/2026-06-04-cut2-batch1-closeout.md (active, ~3h ago)
+
+  当前树未续上该 track — 续棒前请确认是否切换:
+  ➤ [1] EnterWorktree 切过去续 track (推荐)
+    [2] 留在当前 worktree
+    [3] 先看该 handoff (打印路径, 不切换)
+  提示: advisory 非自动切换, 选 [1] 才执行 (advisory-over-hardlock)
+```
+
+非 Claude Code 环境 (无 `EnterWorktree` 工具) 降级打印 `cd` 指引:
+
+```
+🌲 跨 worktree 交接
+───────────────────────────────────────────────────────────────
+  ⚠️ 检测到更新的 handoff 位于其他 worktree (非当前树)
+  他树: ../silknode-cut2 (分支 feat/cut2-batch1)
+  handoff: docs/handoff/2026-06-04-cut2-batch1-closeout.md (active, ~3h ago)
+
+  当前环境无 EnterWorktree 工具, 手动切换:
+    cd ../silknode-cut2
+  续棒前请确认是否切换 (advisory, 非强制)
+```
+
+全局最新 doc 在他树但 `status` 为 `done`/`abandoned`/`legacy` (仅列表展示, 阶段 2 **不触发** advisory):
+
+```
+🌲 跨 worktree 交接
+───────────────────────────────────────────────────────────────
+  ℹ️ 全局最新 handoff 位于其他 worktree: ../silknode-cut2 (分支 feat/cut2-batch1)
+  handoff: docs/handoff/2026-06-04-cut2-batch1-closeout.md (done, ~3h ago)
+  提示: 该 track 已收尾/身份不明 (status=done), 仅供参考, 不触发切换建议
+```
+
+> **字段对齐** (`handoff_worktrees.global_latest_elsewhere`): `path` / `branch` / `doc` / `status` / `age_hours`。`status == "active"` 才触发 `[1]/[2]/[3]` 编号选项; 其余 status 仅展示。`others[]` (各他树明细: `path` / `branch` / `doc` / `updated_at` / `status` / `track_id` / `cmp_key_source`) 不在此区块逐条渲染, 仅供机读/调试。
+
+---
+
 ## 自定义检查未配置时
 
 此区块不输出 (`.aria/state-checks.yaml` 不存在时静默跳过)。
@@ -684,4 +732,5 @@ stale handoff (age > 30 天 / 720h):
 
 ---
 
-**最后更新**: 2026-05-14 (H0 spec — added handoff doc surfaced + drift detected variants)
+**最后更新**: 2026-06-11 (#139 — added cross-worktree handoff (Phase 1.15b) conditional block: active advisory + cd 降级 + non-active 列表展示)
+> 前次 2026-05-14 (H0 spec — added handoff doc surfaced + drift detected variants)
