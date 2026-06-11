@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.44.0] - 2026-06-11
+
+### audit-drift-guard (#17) — audit-engine 多轮审计原始目的锚定 (Drift Guard)
+
+Fixes aria-plugin [#17](https://forgejo.10cg.pub/10CG/aria-plugin/issues/17) (triage `confirmed`, [comment-12282](https://forgejo.10cg.pub/10CG/aria-plugin/issues/17#issuecomment-12282)): challenge 多轮审计的收敛判定只测四元组集合稳定性, **不测"是否还在讨论最初那个问题"** — 集合稳定 ≠ 命中原始目的, 对抗式讨论可从 anchor 漂走且被"全员合并"放大。设计 SOT: Aria 主仓 `docs/decisions/DEC-20260611-001-audit-drift-guard.md` (brainstorm 4 决策 + post_brainstorm 19-agent/3 轮 23 修订 + post_spec R3 PASS)。
+
+- **Step 0 Anchor 固化** (audit-engine SKILL.md): Round 1 前一次性 `{checkpoint, primary_goal, in_scope[], out_of_scope_hints[], source_sha}`, 审计周期内不可变; 5 级 per-checkpoint fallback 链 (proposal Why/Goal → change_id 解析 → brainstorm_decisions [post_brainstorm 调用契约三点, brainstorm/SKILL.md caller 侧同步] → issue/PR 标题 degraded → 全缺 fail-soft 不阻塞)。
+- **Step 5 Drift Check** (challenge-mode-schema): 独立轻量 drift-checker (内部调用非审计 agent, 30-60s 独立超时不占轮预算, **fail-open** 瞬断按 <warn 处理) 逐条分类 on-topic/adjacent/off-topic → `drift_ratio = off_topic / all`; per-mode 分母显式 (challenge = decisions ∪ objections, obj- 低置信分类); 联合判空除零; partial anchor (`anchor_scope_empty`) 降维不跳过。
+- **三档处置** (可配 `audit.drift_guard {warn_threshold: 0.2, refocus_threshold: 0.5, convergence_mode: false}`): `<warn` 正常 / `[warn,refocus)` Warning + 强制 `unanimous_pass=false` 延迟一轮 (仅 convergence; challenge 仅标注) / `>=refocus` → **REFOCUS_ROUND** (消耗 max_rounds 配额防活锁, `is_refocus` 标签, 输出替换 stability 基线, 剔出 oscillation keys_N_2 序列) + `consecutive_refocus_count>=2` → **DRIFT_TERMINATED** 独立终局态 → verdict=FAIL (drift override, 走既有 FAIL owner 决策流程, **不发明硬中止**)。四终局优先级: CONVERGED → DRIFT_TERMINATED → OSCILLATION → MAX_ROUNDS_EXHAUSTED。
+- **报告 schema** (additive, 防 #125/#126): frontmatter `drift_terminated/drift_check_skipped/is_refocus` 无条件默认 false (oscillation 同构) + `drift_metrics` 章节 (per_round 三类计数 + converged_on_anchor); verdict 恒裸枚举, 计算规则单 SOT (report-storage §Verdict); 旧报告缺字段 = drift_ratio 0 不告警。
+- **scope**: challenge 默认开 / convergence opt-in / post_closure 屏蔽。dispatch 契约 Drift Guard 字段小节 + drift-checker 8-field 排除。
+- 纯 prose + schema (9 文件, 无 Python); AC-1~7 grep 模式串机械验收全过; Rule #6 doc-existence substitute; dogfood = 本 Spec post_implementation audit 须产出非空 drift_metrics。Skills 不变 (41)。
+
 ## [1.43.0] - 2026-06-10
 
 ### handoff-frontmatter-enforcement (#137) — frontmatter content enforcement 两层
