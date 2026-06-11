@@ -127,6 +127,9 @@ Round N (一个完整周期):
   Step 4: 挑战组再审 (输入: 修正 proposal) → 更新 objections status
      - status: new → resolved | overruled
 
+  Step 5: Drift Check (详见 challenge-mode-schema.md)
+     - drift-checker 按 anchor 对 decisions ∪ objections 分类 → drift_ratio → 三档处置 (#17)
+
   收敛判定:
      - 提案结论四元组集合无变化 (vs Round N-1)
      - AND objections 全部 status=resolved (无 unresolved)

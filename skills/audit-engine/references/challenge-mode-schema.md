@@ -36,6 +36,14 @@ Round N:
   updated_challenge_output
           |
           v
+  Step 5: Drift Check (收敛判定前; drift-checker 独立调用,
+          输入: anchor + revised_discussion_output.decisions
+                        ∪ updated_challenge_output.objections)
+          |
+          v
+  drift_metrics (drift_ratio → 三档处置)
+          |
+          v
   收敛判定
 ```
 
@@ -174,6 +182,41 @@ overruled → 挑战组在再审中撤回了质疑 (原决策正确)
   - 可能追加新的 objection (status: new)
 ```
 
+### Step 5: Drift Check (#17, v1.44.0)
+
+收敛判定**前**执行 (对应 DEC-20260611-001 §3 D2):
+
+```yaml
+输入:
+  - anchor (Step 0 固化快照, 见 audit-engine/SKILL.md "Step 0: Anchor 固化" 节)
+  - revised_discussion_output.decisions ∪ updated_challenge_output.objections
+
+执行:
+  - audit-engine 内部轻量调用 drift-checker (非 agent-team-audit 编排的审计 agent)
+  - 持 anchor 对结论清单逐条分类 on-topic / adjacent / off-topic
+  - 计算 drift_ratio → 按三档处置决策树决定后续动作
+
+输出: drift_metrics (写入审计报告 drift_metrics 区块, 非独立 audit report,
+      不适用 8-field 契约, 见 agent-dispatch-contract.md scope 排除)
+```
+
+**三档处置决策树** (区间边界与 DEC-20260611-001 §4.3 逐字):
+
+```
+drift_ratio
+├── < warn_threshold (默认 0.2)
+│     → 正常进入收敛判定
+├── [warn, refocus) 档
+│     → Warning — 报告标注; 双模式语义不同
+│       (challenge 模式见下方 drift-checker 节 "warn 档 challenge 模式语义";
+│        convergence 模式见 convergence-algorithm.md warn 档分支)
+└── >= refocus_threshold (默认 0.5, 含等号)
+      → 强制 refocus 轮 (REFOCUS_ROUND); 连续 2 次 → DRIFT_TERMINATED
+```
+
+公式、分类规则、除零特判、partial anchor、时间契约见下方 **drift-checker 节**;
+REFOCUS_ROUND / DRIFT_TERMINATED 终局语义见 [convergence-algorithm.md](./convergence-algorithm.md)。
+
 ---
 
 ## Agent 分组配置
@@ -206,6 +249,60 @@ objections_resolved:
   updated_challenge_output.objections 中
   所有 status != "new" (即全部 resolved 或 overruled)
 ```
+
+---
+
+## drift-checker 节 (#17, 对应 DEC-20260611-001 §3 D2)
+
+drift-checker 是 **audit-engine 内部轻量调用** — 与讨论组/挑战组/judge 三方分离的第四方独立视角 (消除自评偏置), **非** agent-team-audit 编排的审计 agent。每轮收敛判定前拿 anchor + 本轮结论清单逐条分类 on-topic / adjacent / off-topic, 输出结构化 `drift_metrics` 而非 audit report, **不适用 8-field 契约** (scope 排除见 agent-dispatch-contract.md)。
+
+### drift_ratio 公式 (本体)
+
+```
+drift_ratio = off_topic / all
+```
+
+- **adjacent 不计入分子** — 公式与阈值语义不改 (DEC-20260611-001 §9 守界句: adjacent 不计入 drift_ratio 分子的公式不改, 仅加三类计数 `{on_topic, adjacent, off_topic}` 可观测性 annotation; 阈值默认值即 issue 原案)。
+- **分母 per-mode 显式定义**:
+
+| 模式 | 分母 (all) |
+|------|-----------|
+| convergence | 当轮 conclusion_records (实施映射真实 token: `round_N.conclusions`, 见 convergence-algorithm.md "集合比较逻辑" 节 `current_set = { key(r) for r in round_N.conclusions }`) |
+| challenge | `revised_discussion_output.decisions ∪ updated_challenge_output.objections` (只看 decisions 会使挑战组 objections 发散 — drift 最常见路径 — 完全不可见, guard 半盲) |
+
+### objection 分类规则
+
+challenge objection **无结构化 scope** → 分类**仅基于 `point` 文本 + `anchor.in_scope` / `anchor.out_of_scope_hints` 关键词比对**, **置信度低于 decision 路径**。两类来源经 `off_topic_ids` namespace 前缀**字面区分**:
+
+- `d-` = decision (来自 `revised_discussion_output.decisions`)
+- `obj-` = objection (来自 `updated_challenge_output.objections`)
+
+报告消费侧可据前缀区分两类来源 (及其置信度差异)。
+
+### 空结论集除零特判
+
+精确条件 per-mode (DEC D2):
+
+- **convergence 模式**: `conclusion_records = ∅`
+- **challenge 模式**: `decisions = ∅ AND objections = ∅` (**联合判空**, 即 `|decisions ∪ objections| = 0`; 防实现者以 `decisions = ∅` 单边触发致 objections 被误排除)
+
+满足时 → `drift_ratio = 0` (vacuously zero), **跳过 LLM 调用**, 与 0-finding 双轮稳定性既有路径及 backward-compat 缺字段语义 (drift_ratio=0) 对齐。
+
+### partial anchor 分类规则 (DEC §4.1 / R5)
+
+anchor 结构完整但 `in_scope = [] AND out_of_scope_hints = []` 时:
+
+- drift-checker 降为 **primary_goal 语义相似度单维分类**: 语义相关 → on-topic, 否则 adjacent;
+- 报告标注 `anchor_scope_empty: true` + `drift_classification_confidence: low`;
+- **不触发 fail-soft skip** (区别于全缺 anchor 的 `drift_anchor_missing` 路径 — 该路径才跳过 drift 计算)。
+
+### warn 档 challenge 模式语义
+
+challenge 模式收敛判据为 `objections_resolved`, 与 unanimous_pass **无关** → warn 档 (`[warn, refocus)`) **降格为仅标注不阻塞**: 报告追加 `drift_warning` 字段, **不覆盖 `objections_resolved`**; refocus 档 (`>= refocus_threshold`) 仍按 REFOCUS_ROUND 执行。(convergence 模式 warn 档 = 汇总层强制 `unanimous_pass=false`, 见 convergence-algorithm.md。)
+
+### 时间契约
+
+drift-checker **独立 30-60s 超时**, **不占 300s/轮 wall-clock** (并发控制条目见 audit-engine/SKILL.md §并发控制 [line ~261], 本文件不另造第二张并发表)。spawn 失败/超时 → fail-open: `drift_ratio=null` 按 `< warn` 档处理 + `drift_check_skipped: true`, 见 audit-engine/SKILL.md 错误处理表 (含与 `round_state.incomplete` 正交声明)。
 
 ---
 
