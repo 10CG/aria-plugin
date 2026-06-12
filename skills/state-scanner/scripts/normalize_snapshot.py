@@ -76,6 +76,14 @@ DROP_KEYS = frozenset(
         # Unique to coordination_fetch.{cached, age_seconds, refs_fetched};
         # no collision risk. (refs_fetched is empty `[]` on cache-hit but populated
         # on fresh fetch — same ephemeral metadata category.)
+        #
+        # NOTE (v1.46.0, #141): coordination_fetch.coordination_ref_present is
+        # deliberately NOT dropped — unlike the three above it is semantically
+        # stable (persisted in the cache payload, so cache-hit and fresh-fetch
+        # return the same value for a given remote). Dropping it would hide real
+        # changes; keeping it is safe for test_two_consecutive_runs_diff_zero.
+        # (When the value is None it is removed anyway by the separate null-drop
+        # rule below, not by DROP_KEYS — still stable since None↔None across runs.)
         "cached",
         "age_seconds",
         "refs_fetched",

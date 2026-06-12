@@ -33,6 +33,7 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 | `forgejo_config` | Phase 1.14 | required | additive keys OK (T3.5+) |
 | `handoff` | Phase 1.15 | required | additive keys OK (H0 spec, 2026-05-14) |
 | `handoff_worktrees` | Phase 1.15b | required | additive keys OK (#139, v1.45.0) |
+| `coordination_fetch` | Phase 1.16 | required | additive keys OK (`coordination_ref_present` #141, v1.46.0) |
 | `errors` | aggregated fail-soft | required | informational |
 
 **Emission rule for optional keys**: Phase 1.13 `issue_status` is the only optional top-level key. Its absence signals `issue_scan.enabled=false`, which is semantically distinct from `issue_status: null`. Consumers checking for the feature should use `"issue_status" in snapshot`, not `snapshot.get("issue_status")`.
@@ -707,6 +708,40 @@ global_latest_elsewhere: dict | null  # non-null ONLY when the global latest liv
 
 **Single-worktree no-op**: one worktree → `enumerated=true, worktree_count=1, others=[], global_latest_elsewhere=null` (zero behavioural change).
 
+## `coordination_fetch` (Phase 1.16, multi-terminal-coordination)
+
+```yaml
+success: bool                   # Reflects FETCH 1 (branch heads, load-bearing);
+                                #   True when it ran successfully OR cache was fresh
+cached: bool                    # True on TTL cache-hit (no fetch ran); also True when
+                                #   Fetch 1 failed but stale cache is served (TASK-007)
+last_fetch_at: str              # ISO 8601 UTC of the last successful Fetch 1
+age_seconds: int                # Seconds since last_fetch_at (0 if just fetched)
+refs_fetched: list[str]         # Refspecs ACTUALLY fetched (Fetch 1 always present on
+                                #   success; coordination ref only when Fetch 2 succeeded).
+                                #   Empty on failure / cache-hit.
+error_kind: str | null          # Fetch 1 failure class: network|auth_403|non_ff|git_missing|other
+error_msg: str | null           # Human-readable detail; null on success
+degraded: bool                  # TASK-007: True when Fetch 1 failed but stale cache served
+degradation_reason: str | null  # "fetch_failed_using_stale_cache" when degraded, else null
+coordination_ref_present: bool | null   # v1.46.0 (#141) — FETCH 2 outcome (see below)
+```
+
+**Two-fetch split (v1.46.0, Forgejo Aria #141 / aria-plugin #75)**: the collector runs TWO independent `git fetch` calls instead of one atomic fetch. Fetch 1 (`+refs/heads/*:refs/remotes/<remote>/*`) is load-bearing and runs first; Fetch 2 (`refs/aria/coordination`) runs only if Fetch 1 succeeds. Previously both were bundled into one atomic fetch, which failed rc=128 on any remote that never published the coordination ref (most non-multi-terminal projects), dropping the branch heads with it. `success`/`degraded` now anchor to Fetch 1.
+
+**`coordination_ref_present`** (additive, v1.46.0):
+- `true`  — Fetch 2 fetched `refs/aria/coordination`.
+- `false` — benign absent: the ref is not published (NORMAL; no soft_error, no degraded).
+- `null`  — unknown: Fetch 1 failed → Fetch 2 short-circuited, OR Fetch 2 failed non-benign.
+
+Persisted in the cache payload so cache-hit / stale-serve paths return a **stable** value (else it would appear only on fetch-runs and vanish on cache-hits → normalize_snapshot two-consecutive-runs drift). Legacy caches (pre-v1.46.0, no key) read back `null`. **Deliberately NOT in `normalize_snapshot` DROP_KEYS** — unlike the ephemeral `cached`/`age_seconds`/`refs_fetched`, it is semantically stable.
+
+**benign-absent gate** (Fetch 2): triple-AND — `rc == 128` AND `"couldn't find remote ref"` in stderr AND `"refs/aria/coordination"` in stderr — evaluated BEFORE `_classify_error`. Narrow by design: a genuine network/auth/timeout failure is NOT benign and surfaces via `soft_error("coordination_ref_fetch_failed", ...)` while keeping `success=True` (Fetch 1 already refreshed the branch view). **Known limitation** (not reachable in Aria's Forgejo deployment; tracked follow-ups): git cannot distinguish a truly-absent ref from one hidden by server-side ACL / `uploadpack.hideRefs` (both emit "couldn't find remote ref"), so an auth-masked coordination ref reads as benign-absent here; and the substring assumes English git output (effective C locale). `ls-remote --exit-code` + `LC_ALL=C` hardening are follow-ups.
+
+**Semantic change** (non-shape; carried by plugin MINOR v1.46.0, NOT a `snapshot_schema_version` bump): on remotes without the coordination ref, `success` flips from the old always-`False` (atomic fetch failed) to `True` (Fetch 1 succeeds), and the spurious `coordination_fetch_failed` soft_error disappears (exit 10 → 0). This is the #141 fix. `render_track_board` reads only `degraded`/`cached`/`error_msg` (not `success`) → no downstream consumer regression.
+
+**Soft errors**: `coordination_fetch_failed` (Fetch 1 real failure) / `coordination_fetch_degraded` (Fetch 1 failed + stale cache served) / `coordination_ref_fetch_failed` (Fetch 2 non-benign failure, v1.46.0). A benign-absent coordination ref emits NONE.
+
 ## `errors` (aggregated fail-soft)
 
 ```yaml
@@ -732,3 +767,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 | 2026-05-14 | H0 (`aria-ten-step-session-handoff-stage`) T1 — added `handoff` top-level field (Phase 1.15). Additive, schema stays `"1.0"`. Surfaces latest `docs/handoff/*.md` for AI to read pre-recommendation + detects misplaced `.aria/handoff/*.md` for Layer 2 drift detection (5-layer enforcement). |
 | 2026-05-16 | H5 fix (`fix/h5-handoff-pointer-divergence`) — `latest_path` now prefers `docs/handoff/latest.md` pointer target over raw mtime (mtime fallback only). New additive `latest_source` field (`"pointer"`/`"mtime"`/`null`). New `soft_error("handoff_pointer_target_missing")` for stale pointer. Schema stays `"1.0"` (additive). Fixes mtime-vs-pointer divergence found at H0 closeout. |
 | 2026-06-10 | #134 `aria-archive-completeness-gate` (v1.42.0) — two additive nested fields under `openspec`: `archive.items[].archive_type` (str\|null, 契约 B 消费侧) + `design_deferred[]` (id/status/staleness_days/reason, gate↔surface 互补 per DEC-20260609-001 §3 D3). Backward-compat contract subsection added. Schema stays `"1.0"` (additive, no bump). |
+| 2026-06-12 | #141 `state-scanner-coordination-fetch-resilience` (v1.46.0) — **NEW `coordination_fetch` section** (Phase 1.16, previously undocumented in this SOT). Two-fetch split fixes atomic rc=128 on remotes without `refs/aria/coordination`. Additive `coordination_ref_present` (bool\|null). `success`/`degraded` re-anchored to Fetch 1 (semantic change, non-shape; carried by plugin MINOR, not a schema_version bump). Schema stays `"1.0"`. |
