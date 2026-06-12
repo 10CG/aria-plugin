@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.46.0] - 2026-06-12
+
+### state-scanner-coordination-fetch-resilience (#141 软错误① + aria-plugin #75) — coordination_fetch 拆两条 fetch
+
+Fixes Forgejo Aria [#141](https://forgejo.10cg.pub/10CG/Aria/issues/141) 软错误① + aria-plugin [#75](https://forgejo.10cg.pub/10CG/aria-plugin/issues/75) (同一 bug 两处跟踪; triage `partial-repro`/`major`/`next-cycle`, [comment-12658](https://forgejo.10cg.pub/10CG/Aria/issues/141#issuecomment-12658))。`collectors/coordination_fetch.py` 把 `+refs/heads/*` 与 `refs/aria/coordination` 合成单条原子 `git fetch`。远端从未发布 coordination ref 的项目 (即多数**未用多终端协调**的项目, 如 SilkNode) → 整条 fetch **每次 rc=128 失败** + `+refs/heads/*` 分支头连带不刷新 + 每次扫描发 spurious `coordination_fetch_failed` soft_error (exit 10)。
+
+- **拆两条独立 fetch**: Fetch 1 (`+refs/heads/*:refs/remotes/<remote>/*`, 分支头, 载重, 先跑) + Fetch 2 (`refs/aria/coordination`, 仅 Fetch 1 成功后)。Fetch 1 失败 → **短路**不跑 Fetch 2 (远端不可达时协调状态不可知)。
+- **benign 三重 AND 闸**: coordination ref 缺失 (`rc==128 AND "couldn't find remote ref" AND "refs/aria/coordination"`, 求值**先于** `_classify_error`) = 良性"未发布" → 不发 soft_error, `success` 保持 True。真 network/auth/timeout 失败 (rc=124/127 或异措辞 rc=128) 仍 surface。
+- **新增 additive `coordination_ref_present`** (True/False/None): 写入 cache payload, cache-hit/stale-serve 读回保稳定, **不进** normalize DROP_KEYS (None 由 null-drop 处理仍稳定)。`success`/`degraded` 重锚定 Fetch 1。legacy cache (无 key) 读回 None 兼容。
+- **测试** (Rule #6 deterministic substitute): 新建 `tests/test_coordination_fetch.py` **12 测试** (benign 闸 4 + 7 场景 a-g + legacy cache); 全套件 **803 全绿** (除 1 已知预存 timing flake `test_two_consecutive_runs_diff_zero` — live-repo age 字段, 与本变更无关)。dogfood: no-coord sandbox (真 git remote) → success+present=False+无 error (旧代码此处 fail); Aria 自身 (有 coord ref) → present=True 零回归。
+- **docs**: `references/state-snapshot-schema.md` **新建** coordination_fetch SOT section (此前 undocumented) + `phase-1-collectors.md` L41 重写 + 模块 docstring + DROP_KEYS 裁定注释。
+- **流程**: post_spec **CONVERGED** (R1 4/5 REVISE 8 major → Rev1 → R2 5/5 PASS unanimous)。code-review: aria:code-reviewer **PASS** + silent-failure-hunter findings → 已知限制文档化 (git absent-vs-hidden ref 歧义 / English-locale 假设, Aria 部署不可达) + **3 follow-up** (F3 `ls-remote --exit-code` 硬化 / F4 `LC_ALL=C` / F5 track_board 黄条)。`lib/coordination_ref.py::fetch_coordination_ref` 同有 benign 缺口但属 distinct Layer L 路径 → out-of-scope follow-up。schema_version 保持 `1.0` (additive)。Skills 不变 (41)。
+
 ## [1.45.0] - 2026-06-11
 
 ### cross-worktree-handoff-discovery (#139) — 跨 worktree 交接断链修复 (Phase 1.15b)
