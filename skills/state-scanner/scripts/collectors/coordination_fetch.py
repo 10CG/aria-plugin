@@ -1,13 +1,22 @@
 """Phase 1 (multi-terminal-coordination) — coordination fetch collector.
 
-Runs `git fetch <remote> --no-tags +refs/heads/*:refs/remotes/<remote>/* refs/aria/coordination`
-and caches the fetch timestamp in `.aria/cache/coordination-fetch.json`
+Runs TWO independent fetches (v1.46.0, Forgejo Aria #141 / aria-plugin #75):
+
+  1. Fetch 1 (load-bearing): `git fetch <remote> --no-tags +refs/heads/*:refs/remotes/<remote>/*`
+  2. Fetch 2 (coordination):  `git fetch <remote> --no-tags refs/aria/coordination`
+
+Splitting them fixes a confirmed bug: bundling both into ONE atomic fetch made the
+whole fetch fail rc=128 on any remote that never published `refs/aria/coordination`
+(most non-multi-terminal projects), dropping the branch heads with it.  Now a
+benign-absent coordination ref (Fetch 2) no longer breaks the branch-head refresh
+(Fetch 1).  The fetch timestamp is cached in `.aria/cache/coordination-fetch.json`
 with a 30-second TTL so rapid successive scans skip redundant network I/O.
 
 Return schema (top-level key: `coordination_fetch`):
 
     {
-        "success": bool,              # True when fetch ran or cache was fresh
+        "success": bool,              # Reflects Fetch 1 (branch heads); True when it
+                                      # ran successfully or the cache was fresh
         "cached": bool,               # True when TTL not expired — no fetch ran;
                                       # also True when fetch fails but stale cache
                                       # is returned (degraded mode, TASK-007)
@@ -23,6 +32,13 @@ Return schema (top-level key: `coordination_fetch`):
                                       # "⚠ 离线: 看板可能陈旧, 重复劳动风险升高"
         "degradation_reason": str | None,  # TASK-007: "fetch_failed_using_stale_cache"
                                            # when degraded=True, else None
+        "coordination_ref_present": bool | None,  # v1.46.0 (#141): Fetch 2 outcome.
+                                           # True  = coordination ref fetched
+                                           # False = benign absent (not published)
+                                           # None  = unknown (Fetch 1 failed → Fetch 2
+                                           #         short-circuited, OR Fetch 2 failed
+                                           #         non-benign).  Persisted in cache so
+                                           #         cache-hit / stale-serve stay stable.
     }
 
 Design notes:
@@ -35,16 +51,24 @@ Design notes:
 - A corrupt or non-JSON cache file is treated as absent → normal fetch.
 - Rule #7 compliance: subprocess uses `capture_output=True`; stdout/stderr are
   never printed. Error details are coerced to short, non-secret strings.
-- Degradation semantics (TASK-007):
-    * fetch fail + stale cache present  → success=False, cached=True,
-                                          degraded=True,
-                                          degradation_reason="fetch_failed_using_stale_cache"
-    * fetch fail + no cache at all      → success=False, cached=False,
-                                          degraded=False, degradation_reason=None
-    * cache fresh (TTL not expired)     → success=True,  cached=True,
-                                          degraded=False, degradation_reason=None
-    * fetch success                     → success=True,  cached=False,
-                                          degraded=False, degradation_reason=None
+- Two-fetch semantics (v1.46.0, #141) — success/degraded anchor to Fetch 1:
+    * Fetch 1 fail + stale cache        → success=False, cached=True, degraded=True,
+                                          degradation_reason="fetch_failed_using_stale_cache",
+                                          coordination_ref_present=<stale cache value>
+                                          (Fetch 2 short-circuited — remote unusable)
+    * Fetch 1 fail + no cache at all     → success=False, cached=False, degraded=False,
+                                          coordination_ref_present=None
+    * cache fresh (TTL not expired)      → success=True,  cached=True, degraded=False,
+                                          coordination_ref_present=<cache value>
+    * Fetch 1 ok + Fetch 2 ok            → success=True,  coordination_ref_present=True
+    * Fetch 1 ok + Fetch 2 benign-absent → success=True,  coordination_ref_present=False,
+                                          NO soft_error (coordination simply not published)
+    * Fetch 1 ok + Fetch 2 non-benign    → success=True,  coordination_ref_present=None,
+                                          soft_error("coordination_ref_fetch_failed", ...)
+- benign-absent gate (Fetch 2): `_is_benign_coordination_absent` — rc==128 AND
+  "couldn't find remote ref" AND "refs/aria/coordination" in stderr (all three),
+  evaluated BEFORE `_classify_error`.  A missing coordination ref is NORMAL, not a
+  fetch failure — the root cause of #141.
 
 Example (for TASK-008 test authoring):
     # fetch fail + stale cache → degraded
@@ -72,18 +96,56 @@ FETCH_CACHE_TTL: int = 30  # seconds — skip fetch if last fetch was < TTL ago
 COORDINATION_REF: str = "refs/aria/coordination"
 
 
-def _build_fetch_refspecs(remote: str) -> list[str]:
-    """Build the refspec list for ``git fetch <remote> --no-tags ...``.
+def _branch_heads_refspec(remote: str) -> str:
+    """Refspec for the load-bearing branch-head fetch (Fetch 1).
 
-    Wildcards in refspecs require the explicit ``src:dst`` form per
-    git-fetch(1); the previous ``refs/heads/*`` (single-src form, treated as
-    src==dst by git) is **invalid** and produces ``fatal: invalid refspec
-    refs/heads/*`` with rc=128.  Concrete (non-wildcard) refs like
-    ``refs/aria/coordination`` remain valid in single-src form.
+    Wildcards in refspecs require the explicit ``src:dst`` form per git-fetch(1);
+    the single-src ``refs/heads/*`` form is **invalid** (``fatal: invalid refspec``,
+    rc=128).  Fix for Forgejo aria-plugin #57 Finding 1 (2026-05-28).
 
-    Fix for Forgejo aria-plugin #57 Finding 1 (2026-05-28).
+    Split out from coordination ref (Forgejo Aria #141 / aria-plugin #75,
+    v1.46.0): bundling ``refs/aria/coordination`` into the same atomic fetch made
+    the whole fetch fail rc=128 on remotes that never published the coordination
+    ref (most non-multi-terminal projects), dropping the branch heads with it.
     """
-    return [f"+refs/heads/*:refs/remotes/{remote}/*", COORDINATION_REF]
+    return f"+refs/heads/*:refs/remotes/{remote}/*"
+
+
+def _is_benign_coordination_absent(rc: int, stderr: str) -> bool:
+    """True when a Fetch 2 failure is the benign "coordination ref not published" case.
+
+    Triple-AND gate (post_spec R1 OQ4, Forgejo Aria #141): a missing
+    ``refs/aria/coordination`` on the remote is a NORMAL condition (the project
+    simply does not use multi-terminal coordination), NOT a fetch failure.  All
+    three must hold, evaluated BEFORE ``_classify_error`` (which would otherwise
+    map rc=128 to "other"):
+
+      1. ``rc == 128``                            — git's "ref not found" exit
+      2. ``couldn't find remote ref`` in stderr   — git client-side wording,
+         emitted at ref-advertisement time, server-agnostic (Forgejo/GitHub/SSH)
+      3. ``refs/aria/coordination`` in stderr     — it is OUR ref that is absent,
+         not some other concrete ref
+
+    Narrow by design — a genuine network/auth/timeout failure (rc=124/127, or
+    rc=128 with different wording) is NOT benign and must surface via soft_error.
+
+    Known limitations (code-review #141, tracked as follow-ups F3/F4):
+    - git cannot distinguish "ref absent" from "ref hidden by server-side ACL /
+      uploadpack.hideRefs" — both emit "couldn't find remote ref".  An auth-masked
+      coordination ref would read here as benign-absent.  NOT reachable in Aria's
+      Forgejo deployment (repo-level read ACL governs refs/aria/* too, so a masked
+      ref implies Fetch 1 already failed); `git ls-remote --exit-code` disambiguation
+      is a follow-up.
+    - the substring assumes English git output; callers run under an effective C
+      locale.  `LC_ALL=C` hardening of `_run` is a follow-up.
+    """
+    if rc != 128:
+        return False
+    stderr_lower = stderr.lower()
+    return (
+        "couldn't find remote ref" in stderr_lower
+        and COORDINATION_REF.lower() in stderr_lower
+    )
 
 # Cache file location relative to project_root
 _CACHE_RELATIVE: str = ".aria/cache/coordination-fetch.json"
@@ -91,6 +153,10 @@ _CACHE_RELATIVE: str = ".aria/cache/coordination-fetch.json"
 # Cache file schema key names (kept compact for readability)
 _CACHE_KEY_LAST_FETCH_AT: str = "last_fetch_at"
 _CACHE_KEY_REFS: str = "refs"
+# v1.46.0 (#141): persisted so the cache-hit / stale-serve paths return a STABLE
+# coordination_ref_present (else it would appear only on fetch-runs and disappear
+# on cache-hits → normalize_snapshot two-consecutive-runs drift).
+_CACHE_KEY_COORD_PRESENT: str = "coordination_ref_present"
 
 # git exit code sentinels (from _run convention: rc=127 → command not found)
 _RC_COMMAND_NOT_FOUND: int = 127
@@ -121,17 +187,25 @@ def _read_cache(cache_file: Path) -> dict | None:
         return None
 
 
-def _write_cache(cache_file: Path, last_fetch_at_iso: str, refs: list[str]) -> None:
-    """Write fetch timestamp + refs to cache file.
+def _write_cache(
+    cache_file: Path,
+    last_fetch_at_iso: str,
+    refs: list[str],
+    coordination_ref_present: bool | None,
+) -> None:
+    """Write fetch timestamp + refs + coordination-ref presence to cache file.
 
-    Creates `.aria/cache/` silently if absent.  Errors are swallowed — a
-    write failure means the next call will re-run fetch, which is safe.
+    Creates `.aria/cache/` silently if absent.  Errors are swallowed (OSError
+    fail-soft) — a write failure means the next call will re-run fetch, which is
+    safe.  ``coordination_ref_present`` is persisted (v1.46.0, #141) so cache-hit
+    and stale-serve paths return a stable value.
     """
     try:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             _CACHE_KEY_LAST_FETCH_AT: last_fetch_at_iso,
             _CACHE_KEY_REFS: refs,
+            _CACHE_KEY_COORD_PRESENT: coordination_ref_present,
         }
         cache_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except OSError as exc:
@@ -238,100 +312,147 @@ def collect_coordination_fetch(
                         "error_msg": None,
                         "degraded": False,
                         "degradation_reason": None,
+                        # Read back from cache so consecutive scans stay stable
+                        # (None for legacy caches written before v1.46.0).
+                        "coordination_ref_present": cache.get(_CACHE_KEY_COORD_PRESENT),
                     }
                     return r
 
-    # ── Run git fetch ─────────────────────────────────────────────────────────
-    fetch_refspecs = _build_fetch_refspecs(remote)
-    cmd = ["git", "fetch", remote, "--no-tags", *fetch_refspecs]
-    log.debug("coordination_fetch: running %s (cwd=%s)", " ".join(cmd), project_root)
+    # ── Fetch 1: branch heads (load-bearing, runs first) ──────────────────────
+    # Split from the coordination ref (#141 / aria-plugin #75): a single atomic
+    # fetch bundling both failed rc=128 whenever refs/aria/coordination was absent
+    # on the remote (most non-multi-terminal projects), dropping the branch heads
+    # with it.  Fetch 1 must succeed independently to keep the branch view fresh.
+    branch_refspec = _branch_heads_refspec(remote)
+    cmd1 = ["git", "fetch", remote, "--no-tags", branch_refspec]
+    log.debug("coordination_fetch: Fetch 1 (branch heads) %s (cwd=%s)", " ".join(cmd1), project_root)
 
-    rc, _stdout, stderr = _run(cmd, cwd=project_root, timeout=30)
+    rc1, _stdout1, stderr1 = _run(cmd1, cwd=project_root, timeout=30)
 
     fetch_at_iso = _iso_now_utc()
 
-    if rc == 0:
-        # Success: update cache and return success payload
-        _write_cache(cache_file, fetch_at_iso, fetch_refspecs)
-        r.data = {
-            "success": True,
-            "cached": False,
-            "last_fetch_at": fetch_at_iso,
-            "age_seconds": 0,
-            "refs_fetched": list(fetch_refspecs),
-            "error_kind": None,
-            "error_msg": None,
-            "degraded": False,
-            "degradation_reason": None,
-        }
+    if rc1 != 0:
+        # Fetch 1 failed → genuine failure.  Short-circuit: do NOT run Fetch 2 —
+        # when the remote is unreachable the coordination ref state is unknowable.
+        # Apply TASK-007 degraded semantics (anchored to the load-bearing fetch).
+        # rc=124 = timeout (from _run); classify alongside other errors.
+        error_kind, error_msg = (
+            ("network", "git fetch timed out after 30s (rc=124)")
+            if rc1 == 124
+            else _classify_error(rc1, stderr1)
+        )
+        log.warning(
+            "coordination_fetch: Fetch 1 (branch heads) failed — kind=%s msg=%s",
+            error_kind,
+            error_msg,
+        )
+        r.soft_error("coordination_fetch_failed", f"{error_kind}: {error_msg}")
+
+        # Offline degradation: serve stale cache if available (incl. its last-known
+        # coordination_ref_present); else pure failure with coordination unknown.
+        # _write_cache is NOT called here — never overwrite a valid stale entry.
+        stale_last_fetch_iso: str = ""
+        stale_age: int = 0
+        has_usable_stale_cache: bool = False
+        stale_coord_present: bool | None = None
+
+        if cache is not None:
+            cached_iso = cache.get(_CACHE_KEY_LAST_FETCH_AT, "")
+            if cached_iso:
+                stale_ts = _parse_iso_utc(cached_iso)
+                if stale_ts is not None:
+                    stale_last_fetch_iso = cached_iso
+                    stale_age = int(now_ts - stale_ts)
+                    has_usable_stale_cache = True
+                    stale_coord_present = cache.get(_CACHE_KEY_COORD_PRESENT)
+
+        if has_usable_stale_cache:
+            log.warning(
+                "coordination_fetch: serving stale cache (age=%ds) in degraded mode",
+                stale_age,
+            )
+            r.soft_error(
+                "coordination_fetch_degraded",
+                f"fetch failed ({error_kind}); serving stale cache aged {stale_age}s",
+            )
+            r.data = {
+                "success": False,
+                "cached": True,
+                "last_fetch_at": stale_last_fetch_iso,
+                "age_seconds": stale_age,
+                "refs_fetched": [],
+                "error_kind": error_kind,
+                "error_msg": error_msg,
+                "degraded": True,
+                "degradation_reason": "fetch_failed_using_stale_cache",
+                "coordination_ref_present": stale_coord_present,
+            }
+        else:
+            # No cache at all — pure failure, no data to serve.
+            r.data = {
+                "success": False,
+                "cached": False,
+                "last_fetch_at": stale_last_fetch_iso,
+                "age_seconds": stale_age,
+                "refs_fetched": [],
+                "error_kind": error_kind,
+                "error_msg": error_msg,
+                "degraded": False,
+                "degradation_reason": None,
+                "coordination_ref_present": None,
+            }
         return r
 
-    # ── Fetch failed ──────────────────────────────────────────────────────────
-    # rc=124 = timeout (from _run); classify alongside other errors.
-    error_kind, error_msg = (
-        ("network", f"git fetch timed out after 30s (rc=124)")
-        if rc == 124
-        else _classify_error(rc, stderr)
-    )
+    # ── Fetch 2: coordination ref (only after Fetch 1 succeeds) ───────────────
+    cmd2 = ["git", "fetch", remote, "--no-tags", COORDINATION_REF]
+    log.debug("coordination_fetch: Fetch 2 (coordination ref) %s", " ".join(cmd2))
 
-    log.warning("coordination_fetch: fetch failed — kind=%s msg=%s", error_kind, error_msg)
-    r.soft_error("coordination_fetch_failed", f"{error_kind}: {error_msg}")
+    rc2, _stdout2, stderr2 = _run(cmd2, cwd=project_root, timeout=30)
 
-    # ── TASK-007: Offline degradation ─────────────────────────────────────────
-    # If a stale cache entry exists (even though its TTL has expired), serve the
-    # cached data and set degraded=True so the board renderer can display the
-    # offline red-bar: "⚠ 离线: 看板可能陈旧, 重复劳动风险升高"
-    #
-    # Stale cache is only used when the JSON parsed successfully; a corrupt cache
-    # is treated as absent (per _read_cache contract) → degraded=False path.
-    #
-    # Note: _write_cache is NOT called here — we must not overwrite a valid
-    # stale entry with a failed-fetch timestamp.
-    stale_last_fetch_iso: str = ""
-    stale_age: int = 0
-    has_usable_stale_cache: bool = False
+    refs_fetched: list[str] = [branch_refspec]
+    coordination_ref_present: bool | None
 
-    if cache is not None:
-        cached_iso = cache.get(_CACHE_KEY_LAST_FETCH_AT, "")
-        if cached_iso:
-            stale_ts = _parse_iso_utc(cached_iso)
-            if stale_ts is not None:
-                stale_last_fetch_iso = cached_iso
-                stale_age = int(now_ts - stale_ts)
-                has_usable_stale_cache = True
-
-    if has_usable_stale_cache:
-        # Degraded mode: fetch failed but stale cache is available.
-        log.warning(
-            "coordination_fetch: serving stale cache (age=%ds) in degraded mode",
-            stale_age,
-        )
-        r.soft_error(
-            "coordination_fetch_degraded",
-            f"fetch failed ({error_kind}); serving stale cache aged {stale_age}s",
-        )
-        r.data = {
-            "success": False,
-            "cached": True,
-            "last_fetch_at": stale_last_fetch_iso,
-            "age_seconds": stale_age,
-            "refs_fetched": [],
-            "error_kind": error_kind,
-            "error_msg": error_msg,
-            "degraded": True,
-            "degradation_reason": "fetch_failed_using_stale_cache",
-        }
+    if rc2 == 0:
+        coordination_ref_present = True
+        refs_fetched.append(COORDINATION_REF)
+    elif _is_benign_coordination_absent(rc2, stderr2):
+        # Benign: coordination data simply not published — NORMAL, not an error.
+        # No soft_error, no degraded, no kind=other.  (Evaluated BEFORE
+        # _classify_error, which would otherwise map rc=128 to "other".)
+        coordination_ref_present = False
+        # info (not debug): "absent" is benign but, due to the git absent-vs-hidden
+        # ambiguity (see _is_benign_coordination_absent), keep it traceable in logs.
+        log.info("coordination_fetch: coordination ref absent (benign — not published)")
     else:
-        # No cache at all — pure failure, no data to serve.
-        r.data = {
-            "success": False,
-            "cached": False,
-            "last_fetch_at": stale_last_fetch_iso,
-            "age_seconds": stale_age,
-            "refs_fetched": [],
-            "error_kind": error_kind,
-            "error_msg": error_msg,
-            "degraded": False,
-            "degradation_reason": None,
-        }
+        # Genuine Fetch 2 failure (rc=124 timeout / rc=127 git-missing / network,
+        # or rc=128 with other wording).  Fetch 1 already refreshed the branch
+        # view, so success stays True; surface the coordination failure separately.
+        coordination_ref_present = None
+        f2_kind, f2_msg = (
+            ("network", "git fetch timed out after 30s (rc=124)")
+            if rc2 == 124
+            else _classify_error(rc2, stderr2)
+        )
+        log.warning(
+            "coordination_fetch: Fetch 2 (coordination ref) failed (non-benign) — kind=%s msg=%s",
+            f2_kind,
+            f2_msg,
+        )
+        r.soft_error("coordination_ref_fetch_failed", f"{f2_kind}: {f2_msg}")
+
+    # Fetch 1 succeeded → branch view refreshed.  Persist cache (incl.
+    # coordination_ref_present for stable cache-hit reads) and return success.
+    _write_cache(cache_file, fetch_at_iso, refs_fetched, coordination_ref_present)
+    r.data = {
+        "success": True,
+        "cached": False,
+        "last_fetch_at": fetch_at_iso,
+        "age_seconds": 0,
+        "refs_fetched": refs_fetched,
+        "error_kind": None,
+        "error_msg": None,
+        "degraded": False,
+        "degradation_reason": None,
+        "coordination_ref_present": coordination_ref_present,
+    }
     return r
