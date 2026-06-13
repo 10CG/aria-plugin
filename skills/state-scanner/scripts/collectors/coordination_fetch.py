@@ -129,15 +129,16 @@ def _is_benign_coordination_absent(rc: int, stderr: str) -> bool:
     Narrow by design — a genuine network/auth/timeout failure (rc=124/127, or
     rc=128 with different wording) is NOT benign and must surface via soft_error.
 
-    Known limitations (code-review #141, tracked as follow-ups F3/F4):
+    Known limitations (code-review #141):
     - git cannot distinguish "ref absent" from "ref hidden by server-side ACL /
       uploadpack.hideRefs" — both emit "couldn't find remote ref".  An auth-masked
       coordination ref would read here as benign-absent.  NOT reachable in Aria's
       Forgejo deployment (repo-level read ACL governs refs/aria/* too, so a masked
-      ref implies Fetch 1 already failed); `git ls-remote --exit-code` disambiguation
-      is a follow-up.
-    - the substring assumes English git output; callers run under an effective C
-      locale.  `LC_ALL=C` hardening of `_run` is a follow-up.
+      ref implies Fetch 1 already failed).  git-protocol-unsolvable (`ls-remote
+      --exit-code` returns rc=2 for BOTH absent and hidden) → documented limitation,
+      not fixed (Aria #142 wont-fix).
+    - the English substring is RELIABLE: `_run` forces `LC_ALL=C` (#143, v1.46.1) so
+      git emits English diagnostics regardless of host locale.
     """
     if rc != 128:
         return False

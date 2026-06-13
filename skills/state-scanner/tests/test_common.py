@@ -7,9 +7,13 @@ UnicodeDecodeError to the caller.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from collectors._common import _run
 
@@ -85,6 +89,69 @@ class TestRunUtf8Encoding(unittest.TestCase):
         )
         self.assertEqual(rc, 127)
         self.assertIn("command not found", stderr)
+
+
+class TestRunLocaleHardening(unittest.TestCase):
+    """#143 (v1.46.1) — _run forces LC_ALL=C so git emits English diagnostics,
+    making collectors' English stderr-substring matching locale-robust."""
+
+    def test_run_injects_lc_all_c_env(self):
+        """_run must pass env with LC_ALL=C, preserving os.environ + the 6 kwargs.
+
+        Falsifiable regardless of host locale (mock intercepts before dispatch) —
+        closes the 'C-locale CI makes 803-green circular' gap (post_spec qa-major).
+        """
+        captured: dict = {}
+
+        class _FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def _fake_run(*_args, **kwargs):
+            captured.update(kwargs)
+            return _FakeCompleted()
+
+        with mock.patch("collectors._common.subprocess.run", side_effect=_fake_run):
+            _run(["git", "status"], Path("."))
+
+        env = captured.get("env")
+        self.assertIsNotNone(env, "_run must pass an env= kwarg")
+        assert env is not None  # type-narrow (static checkers don't model assertIsNotNone)
+        self.assertEqual(env.get("LC_ALL"), "C", "LC_ALL must be forced to C")
+        # os.environ preserved (superset) — PATH/HOME etc. not clobbered
+        for k in os.environ:
+            self.assertIn(k, env, f"os.environ key {k!r} must be preserved")
+        # the 6 pre-existing kwargs preserved (no regression on #61/#131 contracts)
+        self.assertIs(captured.get("capture_output"), True)
+        self.assertIs(captured.get("text"), True)
+        self.assertEqual(captured.get("encoding"), "utf-8")
+        self.assertEqual(captured.get("errors"), "replace")
+        self.assertIs(captured.get("check"), False)
+        self.assertIn("timeout", captured)
+
+    def test_lc_all_c_does_not_mangle_cjk_git_log(self):
+        """Real git on the ACTUAL git.py:181 path (`git log --oneline`): a CJK +
+        emoji commit subject survives LC_ALL=C byte-for-byte (locale governs git's
+        own diagnostics, NOT commit-message passthrough). Isolated tmpdir fixture.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            subj = "测试 中文 commit 主题 🚀 → end"
+            for setup in (
+                ["git", "init", "-q"],
+                ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "--allow-empty", "-q", "-m", subj],
+            ):
+                subprocess.run(setup, cwd=repo, check=True, capture_output=True)
+            rc, stdout, _ = _run(
+                ["git", "log", "--oneline", "--no-decorate", "-1"], repo
+            )
+        self.assertEqual(rc, 0)
+        # Full subject (CJK + emoji + arrow + ascii) must survive LC_ALL=C
+        # byte-for-byte — matches the proposal's "CJK + em-dash" byte-identity claim.
+        self.assertIn(subj, stdout, "full CJK+emoji+arrow subject must survive LC_ALL=C")
 
 
 if __name__ == "__main__":
