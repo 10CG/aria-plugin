@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.46.1] - 2026-06-13
+
+### state-scanner-git-stderr-locale-hardening (#143 fixed + #142 wont-fix) — _run 强制 LC_ALL=C
+
+Fixes Forgejo Aria [#143](https://forgejo.10cg.pub/10CG/Aria/issues/143) (F4) + closes [#142](https://forgejo.10cg.pub/10CG/Aria/issues/142) (F3, wont-fix); 均源自 #141 code-review silent-failure-hunter。
+
+- **#143 fix**: `collectors/_common.py::_run` 继承进程 locale → 多个 collector (coordination_fetch benign 闸 + `_classify_error` / multi_remote / issue_scan) 匹配**英文** git/网络 stderr 文本, 非英文 git locale 下失灵 (benign 闸 false-negative spurious soft_error + 错误误分类)。`_run` 注入 `env={**os.environ, "LC_ALL": "C"}` 强制 git 英文诊断, 全 git-collector 受益。与 #61 `encoding="utf-8"` **正交** (LC_ALL 管 git 诊断文本; encoding 管字节解码 — commit/ref/path 字节直通在 LC_ALL=C 下 md5 一致, 实测)。`LANG=C` 冗余 (LC_ALL 折叠所有 LC_*) 故省。
+- **#142 wont-fix**: ls-remote `--exit-code` 实测对 absent 与 ACL-hidden ref **同 rc=2** → git 协议层**无法区分** absent-vs-hidden (#142 标题目标不可达)。ls-remote decline (LC_ALL=C 落地后 benign 文本匹配已可靠, ls-remote 仅剩边际 race-catch 不值 +1 网络往返)。auth-masked silent 隐患保持 **documented-limitation** (#141 已 log.info + docstring/schema 注记缓解; Aria repo 级 ACL 下不可达)。
+- **测试**: env 断言测试 (`mock.patch` `subprocess.run` 捕获 env kwarg, **host-locale-agnostic** 可证伪 — 闭合 "C-locale CI 下 803 绿循环论证" gap) + CJK 直通真测 (实际 `git log --oneline` 路径, 含 CJK+emoji+箭头全 subject 断言)。全套件 **805 绿** via canonical runner (modulo 已知 timing flake `test_two_consecutive_runs_diff_zero`, 非本变更); **138 git-解析 collector 测试全过 under LC_ALL=C** (零回归)。
+- **流程**: post_spec **CONVERGED** (R1 2/4 REVISE 3 major [#142 收口语义 / 803 循环论证 / CJK 命令 --format=%s→--oneline] → Rev1 → R2 4/4 PASS unanimous)。code-review **PASS** (M-1 CJK 全 subject 断言已加固)。docs: `_run` + coordination_fetch benign 闸 docstring + schema 注记 (英文假设 → 已由 LC_ALL=C 强制保证)。schema_version 保持 `1.0`。Skills 不变 (41)。
+
 ## [1.46.0] - 2026-06-12
 
 ### state-scanner-coordination-fetch-resilience (#141 软错误① + aria-plugin #75) — coordination_fetch 拆两条 fetch
