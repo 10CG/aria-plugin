@@ -217,6 +217,7 @@ def _run(
     cwd: Path,
     input: str | None = None,
     extra_env: dict | None = None,
+    timeout: int = 30,
 ) -> tuple[int, str, str]:
     """Run a git command and return (returncode, stdout, stderr).
 
@@ -229,6 +230,11 @@ def _run(
         Optional dict of extra environment variables merged on top of the
         current process environment.  Used by write_claim to pass
         ``GIT_INDEX_FILE`` without touching the global environment.
+    timeout:
+        Wall-clock ceiling (seconds) so a stalled network op (fetch/push to a
+        remote in phase1_gate) can never hang indefinitely.  Default 30s is
+        generous for the tiny coordination ref + instant local index ops, so it
+        never false-fails a legitimate op.  On expiry → rc=124 (F2, v1.46.4).
     """
     import os as _os_run
 
@@ -238,8 +244,11 @@ def _run(
     # LAST so it can never be overridden by extra_env (which only carries the orthogonal
     # GIT_INDEX_FILE). Parallel to collectors/_common._run — lib/ deliberately does NOT
     # import it (lib sits below collectors; reverse-import = cycle). NOT yet full parity:
-    # the collector _run additionally has timeout / TimeoutExpired→124 / None-guard,
-    # which this _run still lacks (F2-class follow-up, out of #143 scope).
+    # F2 (v1.46.4): now also has timeout / TimeoutExpired→124 / None-guard, matching
+    # collectors/_common._run on those too. The ONLY remaining intentional divergence is
+    # the FileNotFoundError rc: this _run returns -1 (collector returns 127), kept as -1
+    # because lib callers check `rc < 0` for the not-found path — aligning to 127 would
+    # break them (F1 code-review). Full consolidation of the two _run impls is deferred.
     env = {**_os_run.environ, **(extra_env or {}), "LC_ALL": "C"}
 
     try:
@@ -252,8 +261,17 @@ def _run(
             errors="replace",   # #61: never raise UnicodeDecodeError to the caller
             input=input,
             env=env,
+            timeout=timeout,    # F2: never hang indefinitely on a stalled network op
         )
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
+        # None-guard (#131 parity): capture_output guarantees str, but belt-and-suspenders
+        # against any future subprocess thread race that surfaces None.
+        return result.returncode, (result.stdout or "").strip(), (result.stderr or "").strip()
+    except subprocess.TimeoutExpired:
+        # F2: stalled op → rc=124 (matches collector). stderr says "timed out" so
+        # fetch_coordination_ref's network classifier ("timed out" in err_lower) picks it
+        # up; other callers treat the non-zero rc as a generic failure (none depend on a
+        # specific timeout rc).
+        return 124, "", f"git command timed out after {timeout}s"
     except FileNotFoundError:
         # Either git is not on PATH, or cwd does not exist.
         return -1, "", "file_not_found"

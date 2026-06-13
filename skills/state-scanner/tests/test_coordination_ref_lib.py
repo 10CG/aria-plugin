@@ -128,5 +128,45 @@ class TestRunUtf8CrashSafe(unittest.TestCase):
         self.assertIn("�", stdout, "invalid bytes must be replaced, not crash")
 
 
+class TestRunTimeout(unittest.TestCase):
+    """F2 (v1.46.4) — lib `_run` has a timeout ceiling so a stalled op never hangs."""
+
+    def test_default_timeout_passed_to_subprocess(self):
+        captured: dict = {}
+
+        class _FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def _fake(*_args, **kwargs):
+            captured.update(kwargs)
+            return _FakeCompleted()
+
+        with mock.patch("lib.coordination_ref.subprocess.run", side_effect=_fake):
+            _run(["git", "status"], cwd=Path("."))
+        self.assertEqual(captured.get("timeout"), 30, "default 30s timeout must be passed")
+
+    def test_timeout_expired_returns_124(self):
+        import subprocess
+
+        def _raise(*_a, **_k):
+            raise subprocess.TimeoutExpired(cmd="git", timeout=30)
+
+        with mock.patch("lib.coordination_ref.subprocess.run", side_effect=_raise):
+            rc, out, err = _run(["git", "fetch", "origin"], cwd=Path("."))
+        self.assertEqual(rc, 124, "TimeoutExpired must map to rc=124, not propagate/hang")
+        self.assertEqual(out, "")
+        self.assertIn("timed out", err.lower(), "stderr must say 'timed out' for network classification")
+
+    def test_fetch_coordination_ref_timeout_classifies_network(self):
+        """A timed-out fetch (rc=124 + 'timed out') → error_kind='network' (not benign/fetch_failed)."""
+        with mock.patch.object(cr, "_run", return_value=(124, "", "git command timed out after 30s")):
+            with mock.patch.object(cr, "_resolve_ref", return_value=""):
+                r = fetch_coordination_ref(Path("/tmp"), remote="origin")
+        self.assertFalse(r.success)
+        self.assertEqual(r.error_kind, "network")
+
+
 if __name__ == "__main__":
     unittest.main()
