@@ -33,6 +33,9 @@ Status precedence (overrides freshness):
 Offline/cache indicators:
     coordination_fetch.degraded == True → red-bar line at top of output
     coordination_fetch.cached == True + not degraded → "(缓存于 Xs 前)" hint line
+    errors[] has "coordination_ref_fetch_failed" + not degraded → yellow advisory
+      "⚠ 协调 ref 未取到 ..." (F5 #144: Fetch 2 failed non-benign while branch view
+      fresh — half-silent failure the all-green board would otherwise hide)
 
 Collision detection (TASK-017 upgrade — reconcile-based):
     Primary path (P2): reconcile_all() from lib/reconcile.py drives detection.
@@ -524,6 +527,23 @@ def render_track_board(
     # ── Cache hint (only when cached but not degraded) ────────────────────────
     elif cached:
         lines.append(f"(缓存于 {age_seconds}s 前)")
+
+    # ── Coordination-ref fetch-failure yellow-bar (F5, Aria #144) ─────────────
+    # Fetch 1 (branch heads) succeeded but Fetch 2 (coordination ref) failed
+    # non-benign (network/timeout) → branch view is FRESH but the coordination
+    # data may be stale. coordination_fetch emits a `coordination_ref_fetch_failed`
+    # soft_error (snapshot errors[] + exit 10), but the board would otherwise
+    # render all-green (success=True, degraded=False) — a half-silent failure.
+    # Surface a non-blocking yellow advisory. The errors[] entry is the authoritative
+    # marker (this kind fires ONLY for the Fetch-2-non-benign path). Skipped when
+    # degraded (the red offline bar already signals staleness — red takes precedence).
+    if not degraded and any(
+        e.get("error") == "coordination_ref_fetch_failed"
+        for e in (snapshot.get("errors") or [])
+    ):
+        lines.append(
+            "⚠ 协调 ref 未取到 (网络/超时), 队友协调数据可能陈旧 (分支视图仍新鲜)"
+        )
 
     # ── Board header ──────────────────────────────────────────────────────────
     fetch_ts = last_fetch_at[:16] + "Z" if last_fetch_at else "未知"
