@@ -232,9 +232,15 @@ def _run(
     """
     import os as _os_run
 
-    env = None
-    if extra_env:
-        env = {**_os_run.environ, **extra_env}
+    # #143 (locale hardening, v1.46.3): always force C locale so git emits ENGLISH
+    # diagnostics — the auth/network/benign-absent stderr-substring matching in
+    # fetch_coordination_ref (and elsewhere) is then locale-robust. LC_ALL=C is pinned
+    # LAST so it can never be overridden by extra_env (which only carries the orthogonal
+    # GIT_INDEX_FILE). Parallel to collectors/_common._run — lib/ deliberately does NOT
+    # import it (lib sits below collectors; reverse-import = cycle). NOT yet full parity:
+    # the collector _run additionally has timeout / TimeoutExpired→124 / None-guard,
+    # which this _run still lacks (F2-class follow-up, out of #143 scope).
+    env = {**_os_run.environ, **(extra_env or {}), "LC_ALL": "C"}
 
     try:
         result = subprocess.run(
@@ -242,6 +248,8 @@ def _run(
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",   # #61: git output is UTF-8 by spec
+            errors="replace",   # #61: never raise UnicodeDecodeError to the caller
             input=input,
             env=env,
         )
@@ -1121,6 +1129,33 @@ def fetch_coordination_ref(
         )
 
     err_lower = err.lower()
+
+    # Benign-absent (F1, v1.46.3): a missing coordination ref is NORMAL — the project
+    # simply has not published coordination data — NOT a fetch failure. Triple-AND gate
+    # mirrors collectors.coordination_fetch._is_benign_coordination_absent (COPIED, not
+    # imported, to avoid a lib→collectors layering inversion). The _run above forces
+    # LC_ALL=C so the English "couldn't find remote ref" wording is guaranteed.
+    if (
+        rc == 128
+        and "couldn't find remote ref" in err_lower
+        and REF_NAME.lower() in err_lower
+    ):
+        logger.info(
+            "coordination_ref.fetch_coordination_ref: coordination ref absent "
+            "(benign — not published, remote=%s)",
+            remote,
+        )
+        # success=True: "nothing to fetch" is not a failure → health_check_fetch will
+        # NOT mark partial_fetch. ref_updated=False is dual-meaning here ("no ref to
+        # update" vs "ref unchanged"); no current caller branches on ref_updated when
+        # success=True (health_check only checks success), so this is safe — documented
+        # for any future caller needing the absent-vs-synced distinction.
+        return FetchResult(
+            success=True,
+            error_kind=None,
+            error_msg=None,
+            ref_updated=False,
+        )
 
     if (
         "401" in err
