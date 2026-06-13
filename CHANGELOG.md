@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.46.4] - 2026-06-13
+
+### coordination-ref lib `_run` timeout ceiling (F2-minimal) — never hang on stalled git op
+
+F2 收口 (minimal slice; #141 follow-up, 无独立 issue)。**Level 1**。
+
+- **问题**: `lib/coordination_ref.py::_run` 无 timeout → phase1_gate 里 coordination git op (fetch/push to remote) 网络卡住会**无限挂起** (collector `_run` 有 timeout, lib 的没有 — F1 时标为 F2-class)。
+- **修复**: 加 `timeout: int = 30` (对 tiny coordination ref + 亚秒级本地 plumbing op 极宽松, 不误失败合法 op) + `except subprocess.TimeoutExpired → (124, "", "git command timed out after 30s")` (stderr 含 "timed out" → `fetch_coordination_ref` 分类为 network) + #131 None-guard `(result.stdout or "").strip()`。
+- **故意跳过 rc 对齐**: FileNotFoundError 保 `-1` (非 collector 的 `127`) —— lib callers (`_ref_exists_local` 等) 判 `rc < 0` 检 not-found, 对齐到 127 会破坏 (F1 code-review 已 flag)。这是两 `_run` 唯一刻意分歧。
+- **deferred** (低价值 + 风险 refactor, opt-in phase1_gate 默认关): 两 `_run` impl 的 full consolidation (dedup) + coordination_fetch 分支头载重耦合解耦 → backlog。
+- **测试**: `TestRunTimeout` (3): default-timeout 传参 (mock kwargs) + TimeoutExpired→124 (不传播/不挂起) + fetch timeout→network 分类 (与 benign-absent gate `rc==128` 隔离)。**88 coordination 测试全过** + 全套件 821 绿。code-review **PASS** (全 11 个 lib `_run` callers 核验优雅处理 rc=124 + rc-对齐跳过正确)。Skills 不变 (41)。
+
 ## [1.46.3] - 2026-06-13
 
 ### coordination-ref-lib-run-parity (F1) — lib `_run` #61+#143 parity + benign-absent
