@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.46.2] - 2026-06-13
+
+### track-board-coordination-stale-bar (#144, F5) — coordination-ref fetch-failure yellow advisory
+
+Fixes Forgejo Aria [#144](https://forgejo.10cg.pub/10CG/Aria/issues/144) (F5, 源自 #141 code-review silent-failure-hunter #5)。**Level 1** (render-only, 无 OpenSpec)。
+
+- **half-silent failure**: Fetch 1 (分支头) ok + Fetch 2 (coordination ref) **非 benign 失败** 时, `coordination_fetch` 返回 `success=True` / `degraded=False` + emit `coordination_ref_fetch_failed` soft_error (进 snapshot `errors[]` + exit 10)。但 `render_track_board` 原只读 `degraded`/`cached` → 多终端协调看板**全绿无提示**, 用户无视觉感知协调数据已陈旧。
+- **fix**: `render_track_board` 加非阻塞**黄条** `⚠ 协调 ref 未取到 (网络/超时), 队友协调数据可能陈旧 (分支视图仍新鲜)`, gate 在 `errors[]` 的 `coordination_ref_fetch_failed` —— **唯一无误报判别器** (该 error kind 仅 Fetch-2-非 benign 路径 emit; code-review 验证: 备选 `coordination_ref_present is None` 单独会误报 Fetch-1-fail-no-cache 路径)。`degraded` 时红条 (`⚠ 离线`) 优先, 黄条 yield。
+- **测试**: `test_p1_layer_h.py` TestCaseF (6): 触发 / 与 track 行共存 / degraded 红条优先 / clean 无黄条 / 无关 error 不触发 / errors[] 缺 key fail-soft。全套件 **810 绿** via canonical runner (modulo 已知 timing flake `test_two_consecutive_runs_diff_zero`, render-side 不碰 normalize)。code-review **PASS** (errors[] 耦合决策经验证优于备选; M-1 fail-soft 断言加固)。
+- docs: `track_board.py` 模块 docstring offline/cache 指示符表补黄条。无 schema/collector 改动。Skills 不变 (41)。
+
 ## [1.46.1] - 2026-06-13
 
 ### state-scanner-git-stderr-locale-hardening (#143 fixed + #142 wont-fix) — _run 强制 LC_ALL=C

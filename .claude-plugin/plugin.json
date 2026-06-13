@@ -1,7 +1,7 @@
 {
   "name": "aria",
   "description": "Aria AI-DDD 方法论完整插件 - 34个 Skills + 11个 Agents + Hooks系统 (含默认 secret-guard)",
-  "version": "1.46.1",
+  "version": "1.46.2",
   "author": {
     "name": "10CG"
   },
