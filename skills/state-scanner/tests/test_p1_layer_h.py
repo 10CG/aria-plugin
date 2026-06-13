@@ -539,6 +539,102 @@ class TestCaseD_OfflineRedBarInjection(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Case F — coordination-ref fetch-failure yellow advisory (F5, Aria #144)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCaseF_CoordinationRefStaleYellowBar(unittest.TestCase):
+    """(F5 #144) Fetch 1 ok + Fetch 2 non-benign fail → success=True, degraded=False,
+    coordination_ref_present=None + a `coordination_ref_fetch_failed` soft_error in
+    snapshot errors[]. The board must surface a non-blocking yellow advisory (the
+    all-green board would otherwise hide this half-silent failure). Red bar takes
+    precedence when degraded.
+    """
+
+    _YELLOW = "协调 ref 未取到"
+
+    def _make_coord_failed_snapshot(self, *, degraded: bool = False) -> dict:
+        return {
+            "coordination_fetch": {
+                "success": not degraded,           # Fetch 1 ok unless degraded
+                "cached": False,
+                "degraded": degraded,
+                "degradation_reason": "fetch_failed_using_stale_cache" if degraded else None,
+                "last_fetch_at": "2026-05-20T12:00:00Z",
+                "age_seconds": 0,
+                "refs_fetched": ["+refs/heads/*:refs/remotes/origin/*"],
+                "error_kind": "network" if degraded else None,
+                "error_msg": None,
+                "coordination_ref_present": None,   # Fetch 2 outcome unknown
+            },
+            "errors": [
+                {
+                    "collector": "coordination_fetch",
+                    "error": "coordination_ref_fetch_failed",
+                    "detail": "network: git fetch timed out after 30s (rc=124)",
+                }
+            ],
+            "tracks_multibranch": {
+                "exists": True,
+                "branches_scanned": 1,
+                "legacy_count": 0,
+                "errors": [],
+                "tracks": [
+                    {
+                        "track_id": "cf-track",
+                        "owner_container": "devbox-A/sess-003",
+                        "phase": "B.2",
+                        "status": "active",
+                        "updated_at": "2026-05-20T11:58:00Z",
+                        "branch": "feature/cf",
+                        "filename": "2026-05-20-cf.md",
+                        "legacy": False,
+                    }
+                ],
+            },
+        }
+
+    def test_yellow_bar_shown_on_coordination_ref_fetch_failed(self):
+        """Fetch 2 non-benign fail (not degraded) → yellow advisory present."""
+        output = render_track_board(self._make_coord_failed_snapshot(), now=_FIXED_NOW)
+        self.assertIn(self._YELLOW, output, f"Expected yellow advisory, got: {output!r}")
+        self.assertNotIn("⚠ 离线", output, "Must NOT show the offline red bar (not degraded)")
+
+    def test_yellow_bar_coexists_with_track_rows(self):
+        """Advisory must not suppress the track table."""
+        output = render_track_board(self._make_coord_failed_snapshot(), now=_FIXED_NOW)
+        self.assertIn("cf-track", output)
+
+    def test_red_bar_takes_precedence_when_degraded(self):
+        """When degraded, show the red offline bar — NOT the yellow advisory."""
+        output = render_track_board(self._make_coord_failed_snapshot(degraded=True), now=_FIXED_NOW)
+        self.assertIn("⚠ 离线", output)
+        self.assertNotIn(self._YELLOW, output, "Yellow advisory must yield to red bar when degraded")
+
+    def test_no_yellow_bar_when_no_coordination_error(self):
+        """Clean snapshot (no coordination_ref_fetch_failed) → no yellow advisory."""
+        snapshot = self._make_coord_failed_snapshot()
+        snapshot["errors"] = []  # no error → benign / success
+        output = render_track_board(snapshot, now=_FIXED_NOW)
+        self.assertNotIn(self._YELLOW, output)
+
+    def test_no_yellow_bar_for_unrelated_error(self):
+        """An unrelated soft_error must NOT trigger the coordination advisory."""
+        snapshot = self._make_coord_failed_snapshot()
+        snapshot["errors"] = [{"collector": "git", "error": "git_log_failed", "detail": "x"}]
+        output = render_track_board(snapshot, now=_FIXED_NOW)
+        self.assertNotIn(self._YELLOW, output)
+
+    def test_no_yellow_bar_for_error_entry_missing_key(self):
+        """fail-soft (code-review M-1): an errors[] entry without an `error` key must
+        not crash nor trigger the advisory — pins the `.get("error")` graceful path
+        against a future regression to `e["error"]`."""
+        snapshot = self._make_coord_failed_snapshot()
+        snapshot["errors"] = [{"collector": "x", "detail": "no-error-key"}]
+        output = render_track_board(snapshot, now=_FIXED_NOW)
+        self.assertNotIn(self._YELLOW, output)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Case E — N=20+ remote branches performance baseline
 # ─────────────────────────────────────────────────────────────────────────────
 
