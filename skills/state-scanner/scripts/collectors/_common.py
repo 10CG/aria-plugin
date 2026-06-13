@@ -325,6 +325,15 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
     characters or emoji per aria-standards git-commit.md 双语规范). Matches the
     defensive pattern already used at openspec.py:38, readme.py:30, upm.py:335.
 
+    Locale forcing (#143 fix, v1.46.1): `env={**os.environ, "LC_ALL": "C"}` forces
+    git to emit ENGLISH diagnostics so collectors' English stderr-substring matching
+    (coordination_fetch benign gate / _classify_error / multi_remote / issue_scan)
+    is reliable on any host locale. Orthogonal to the #61 UTF-8 fix above: LC_ALL=C
+    governs git's OWN diagnostic text; encoding="utf-8" governs byte→str decoding of
+    passthrough (commit msgs / refs / paths — UTF-8 byte-identical under LC_ALL=C,
+    verified via `git log --oneline` md5). LANG=C is redundant once LC_ALL=C is set
+    (LC_ALL collapses all LC_*), so it is omitted.
+
     Defensive None guard (#131 fix, 2026-05-28): ``(p.stdout or "")`` /
     ``(p.stderr or "")`` belt-and-suspenders for any future Python subprocess
     thread race that surfaces None outputs despite ``capture_output=True``.
@@ -342,6 +351,15 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
             errors="replace",     # #61 fix: never raise on partial/invalid bytes
             timeout=timeout,
             check=False,
+            # #143 (locale hardening, v1.46.1): force C locale so git emits ENGLISH
+            # diagnostics, making collectors' English stderr-substring matching
+            # (coordination_fetch benign gate / _classify_error / multi_remote /
+            # issue_scan) reliable on any host locale. Orthogonal to #61's UTF-8
+            # decoding: LC_ALL governs git's OWN diagnostic text; encoding="utf-8"
+            # governs byte→str decoding of passthrough (commit msgs / refs / paths,
+            # which stay UTF-8 byte-identical under LC_ALL=C — verified). LANG=C is
+            # redundant once LC_ALL=C is set (LC_ALL collapses all LC_*), so omitted.
+            env={**os.environ, "LC_ALL": "C"},
         )
         # #131 fix: enforce str return contract — defensive against any future
         # subprocess thread race that surfaces None outputs despite capture_output.
