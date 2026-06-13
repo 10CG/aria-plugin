@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.46.3] - 2026-06-13
+
+### coordination-ref-lib-run-parity (F1) — lib `_run` #61+#143 parity + benign-absent
+
+收口 F1 (#141 code-review silent-failure-hunter M2 派生的 out-of-scope follow-up; 未开 issue)。**Level 2**。
+
+- **根因**: `lib/coordination_ref.py` 有**自己的 `_run`** (独立于 `collectors/_common._run`)。#61 (UTF-8 crash-safe) + #143 (LC_ALL=C locale) 两次 `_run` 加固只改了 collector 那个 → 本地 _run ① 非英文 git locale 下 auth/network 英文 stderr 匹配失灵; ② C-locale + 非 ASCII 协调内容 (claim YAML owner/notes, 经 `git show refs/aria/coordination:<path>` 读) → `text=True` 严格解码 **UnicodeDecodeError 崩溃** (try 只 catch FileNotFoundError/OSError; #61 当初要防的崩溃在此仍在)。`fetch_coordination_ref` 错误分类无 benign-absent → coordination ref 不存在误判 `fetch_failed`。
+- **TG-A**: 本地 `_run` 加 `encoding="utf-8", errors="replace"` (#61) + `env={**os.environ, **(extra_env or {}), "LC_ALL": "C"}` (#143; LC_ALL=C 末位非覆盖, extra_env=GIT_INDEX_FILE 正交仍生效)。**只加 #61/#143**; collector _run 额外有的 timeout / TimeoutExpired→124 / None-guard 留 **F2-class** (不声称完全 parity)。不 import collectors (layering: lib 低于 collectors)。
+- **TG-B**: `fetch_coordination_ref` auth/network/else 分类**之前**加 benign-absent 三重 AND 闸 (`rc==128 AND "couldn't find remote ref" in err_lower AND REF_NAME.lower() in err_lower`, 镜像 collector `_is_benign_coordination_absent`, 用 lib 自己的 REF_NAME 复制非 import) → absent ref = `success=True, ref_updated=False` → `health_check_fetch` 不再误标 `partial_fetch`。`ref_updated=False` 双义 docstring 注明 (无 caller 在 success=True 时 branch)。
+- **可达性低** (调用链 phase1_gate **opt-in 默认关** → health_check_fetch → fetch_coordination_ref; health_check 在 acquire_claim 写完 ref 后跑 → benign-absent 罕见) 但是**真实潜在崩溃/locale 隐患**, 消除两个分叉 `_run` 的加固缺口。
+- **TG-C 测试** (强制 lib-直测, 非 mock wholesale 绕过): `test_coordination_ref_lib.py` 7 测试 — env 断言 (patch `lib.coordination_ref.subprocess.run` 捕 env, **host-locale-agnostic** 可证伪) + extra_env 共存 (GIT_INDEX_FILE + LC_ALL 仍 C) + benign/converse-非benign/wrong-ref/auth 分类 (真打 fetch_coordination_ref 仅 mock 内部 _run) + crash-safe (真 subprocess 喂坏字节)。**97 coordination 测试全过 under LC_ALL=C** + 全套件 818 绿 (modulo 已知 timing flake)。
+- **流程**: post_spec **CONVERGED** (R1 2/3 REVISE 3 major 全为"测试落点太松允许 mock 绕过真 code path" → Rev1 强制 TG-C lib-直测 → R2 3/3 PASS)。code-review **PASS** (env merge / benign 闸 / health_check trace / layering 全经源码+实地 git 复现验证)。Skills 不变 (41)。
+
 ## [1.46.2] - 2026-06-13
 
 ### track-board-coordination-stale-bar (#144, F5) — coordination-ref fetch-failure yellow advisory
