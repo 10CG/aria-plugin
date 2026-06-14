@@ -581,12 +581,55 @@ scenario_10() {
     fi
 }
 
+# ─── Scenario 11: WARN skips per-submodule fetch (R-fix-1 follow-up 2026-06-14) ──
+# The telemetry hook runs the gate (WARN mode) under a tight outer timeout. A repo
+# with slow/unreachable submodule origins (forgejo behind Cloudflare Access) hung the
+# per-submodule fetch past that timeout → gate killed before log_execution → 0
+# executions recorded (block-flip D+14 root cause persisted under R-fix-1). The fix:
+# WARN mode SKIPS the per-submodule fetch and evaluates via local refs. This scenario
+# breaks the submodule origin (unreachable) and asserts WARN still completes (exit 0),
+# computes the correct verdict from local refs, AND records the execution.
+scenario_11() {
+    echo "─── T-replay-11: WARN skips per-sub fetch → completes + records exec (unreachable sub origin) ───"
+    new_fixture
+    local bare="$FIXTURE_ROOT/bare-sub"
+    local parent="$FIXTURE_ROOT/parent"
+    local shas sha1 sha5
+    shas=$(create_bare_submodule_repo "$bare" 5)
+    sha1=$(echo "$shas" | head -1)
+    sha5=$(echo "$shas" | tail -1)
+
+    # Forward bump: master at sha1, feature at sha5 (both SHAs already in local sub DB)
+    create_parent_repo_with_submodule "$parent" "$bare" "$sha1"
+    create_feature_branch "$parent" "submod" "$sha5"
+
+    # Break the submodule origin → a per-submodule fetch would fail/hang. WARN must
+    # SKIP it (the fix) and still evaluate via local refs.
+    git -C "$parent/submod" remote set-url origin /nonexistent-aria-gate-test 2>/dev/null
+
+    local mdir="$parent/m"
+    local result rc
+    result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=warn ARIA_METRICS_DIR="$mdir")
+    rc=$(echo "$result" | head -1)
+
+    local exec_file="$mdir/submodule-gate-executions.jsonl"
+    if assert_exit_code "$rc" "0" "T-replay-11 warn completes"; then
+        if assert_contains "$result" "forward bump" "T-replay-11 verdict via local refs"; then
+            if [[ -f "$exec_file" ]] && grep -q '"mode":"warn"' "$exec_file"; then
+                report_pass "WARN skips broken-origin fetch → completes + records execution"
+            else
+                report_fail "T-replay-11: execution not recorded at $exec_file"
+            fi
+        fi
+    fi
+}
+
 # ─── Main ──────────────────────────────────────────────────────────────
 
 if [[ $# -gt 0 ]]; then
     SCENARIOS=("$@")
 else
-    SCENARIOS=(1 2 3 4 5 6 7 8 9 10)
+    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11)
 fi
 
 echo "════════════════════════════════════════════════════════════"
@@ -608,6 +651,7 @@ for n in "${SCENARIOS[@]}"; do
         8) scenario_8 ;;
         9) scenario_9 ;;
         10) scenario_10 ;;
+        11) scenario_11 ;;
         *) echo "  ! SKIP: unknown scenario $n"; SKIPPED=$((SKIPPED+1)) ;;
     esac
     echo

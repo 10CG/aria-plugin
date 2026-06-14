@@ -157,13 +157,36 @@ check_override() {
     return 1
 }
 
+# ─── Bounded fetch (R-fix-1 follow-up: block-flip restart telemetry, 2026-06-14) ──
+# forgejo behind Cloudflare Access can hang ssh indefinitely. An unbounded fetch
+# (esp. the best-effort per-submodule one in Step 3) hung past the telemetry hook's
+# outer timeout → the gate was killed before reaching log_execution → 0 executions
+# recorded despite real gitlink bumps (block-flip D+14 root cause PERSISTED under
+# R-fix-1, reproduced 2026-06-14: exit 124). `timeout` bounds each fetch so the gate
+# completes and records a REAL execution; falls back to bare git when `timeout` is
+# absent (Windows Git Bash).
+_HAVE_TIMEOUT=0; command -v timeout >/dev/null 2>&1 && _HAVE_TIMEOUT=1
+bounded_fetch() {  # $1 = seconds; $2.. = git args
+    local secs="$1"; shift
+    if [[ "$_HAVE_TIMEOUT" == 1 ]]; then
+        timeout "$secs" git "$@"
+    else
+        git "$@"
+    fi
+}
+# Superproject fetch is authoritative (failure → BLOCK); generous bound = anti-hang
+# only, won't FP a slow-but-working fetch in the merge-flow path.
+SUPERFETCH_TIMEOUT="${ARIA_SUBMODULE_GATE_SUPERFETCH_TIMEOUT:-60}"
+# Per-submodule fetch bound (block/merge-flow path only — see WARN skip in Step 3).
+SUBFETCH_TIMEOUT="${ARIA_SUBMODULE_GATE_SUBFETCH_TIMEOUT:-30}"
+
 # ─── Step 1: fail-loud fetch with bounded retries ──────────────────────
 
 BEFORE_REMOTE=$(git rev-parse origin/master 2>/dev/null || echo "FIRST_RUN")
 
 FETCH_OK=0
 for delay in "${FETCH_RETRIES[@]}"; do
-    if git fetch origin 2>&1; then
+    if bounded_fetch "$SUPERFETCH_TIMEOUT" fetch origin 2>&1; then
         FETCH_OK=1
         break
     fi
@@ -210,8 +233,17 @@ while IFS= read -r SUB; do
         continue
     }
 
-    # Per-submodule fetch (best-effort; ancestry check below catches stale)
-    git -C "$SUB" fetch origin >/dev/null 2>&1 || true
+    # Per-submodule fetch (best-effort; ancestry check below catches stale).
+    # SKIPPED in WARN/telemetry mode: the telemetry hook runs under a tight outer
+    # timeout and a repo with N slow-forgejo submodules (Aria has 3, all forgejo
+    # origins) blows the budget at N×fetch, killing the gate before log_execution
+    # (R-fix-1 follow-up; 2026-06-14 dogfood: bounded 3×5s+super ≈ 23s, near-miss).
+    # WARN is advisory-only → local refs suffice (Step 1 already refreshed superproject
+    # origin/master gitlinks; the just-bumped FEATURE/MASTER commits are local). In
+    # block/merge-flow mode keep the authoritative bounded fetch.
+    if [[ "$MODE" != "warn" ]]; then
+        bounded_fetch "$SUBFETCH_TIMEOUT" -C "$SUB" fetch origin >/dev/null 2>&1 || true
+    fi
 
     FEATURE_PTR=$(git ls-tree HEAD "$SUB" 2>/dev/null | awk '{print $3}')
     MASTER_PTR=$(git ls-tree origin/master "$SUB" 2>/dev/null | awk '{print $3}')
