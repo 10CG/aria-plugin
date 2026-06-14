@@ -64,11 +64,13 @@ fi
 [[ -f "$gate" ]] || exit 0
 
 # Run in WARN mode (telemetry only; never block). Gate records the execution.
-# `timeout 15` leaves buffer under the 20s hook timeout (gate fetches origin per
-# submodule; slow/blocked network → clean give-up, execution simply not recorded,
-# best-effort per §What). Falls back to bare invocation if `timeout` is absent.
+# `timeout 25` leaves buffer under the 30s hooks.json hook timeout. The gate now
+# bounds its OWN per-submodule fetch (R-fix-1 follow-up 2026-06-14: forgejo/CF-Access
+# could hang the fetch past the old 15s wrap → gate killed before log_execution → 0
+# executions; block-flip restart blocker). With both bounds the gate completes and
+# records a real execution. Falls back to bare invocation if `timeout` is absent.
 if command -v timeout >/dev/null 2>&1; then
-    ARIA_SUBMODULE_GATE_MODE=warn timeout 15 bash "$gate" >/dev/null 2>&1 || true
+    ARIA_SUBMODULE_GATE_MODE=warn timeout 25 bash "$gate" >/dev/null 2>&1 || true
 else
     ARIA_SUBMODULE_GATE_MODE=warn bash "$gate" >/dev/null 2>&1 || true
 fi

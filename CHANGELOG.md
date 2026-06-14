@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.46.5] - 2026-06-14
+
+### submodule-gate telemetry — gate completes + records execution under the hook timeout (R-fix-1 follow-up)
+
+block-flip 重启诊断 (owner Path A)。**Level 1** telemetry bug 修复 (R-fix-1 follow-up, 无独立 issue)。
+
+- **根因**: R-fix-1 (v1.40.0) 加的 `submodule-gate-telemetry.sh` PostToolUse hook 以 WARN 模式跑 `submodule_gate.sh` 记录执行, 但 gate 的 `log_execution` 在 per-submodule `git fetch origin` **之后**。Aria 有 3 个 submodule, aria/aria-orchestrator 的 origin 是 forgejo (Cloudflare Access 后, ssh 慢/hang)。fetch hang 超过 hook 的 `timeout 15` → gate 被杀于 log_execution 前 → **0 executions 记录** (block-flip D+14 Trigger C 根因持续)。2026-06-14 复现 exit 124。
+- **修复**:
+  - `submodule_gate.sh`: WARN/telemetry 模式 **跳过** per-submodule fetch (O(N)→O(1); 用本地 refs, WARN 仅 advisory); superproject + (block 模式的) per-sub fetch 用 `bounded_fetch` (timeout 包裹防无限 hang, Windows 无 timeout 时 fall back bare git)。block/merge-flow 路径 fetch 行为不变 (authoritative)。
+  - `submodule-gate-telemetry.sh`: gate-wrap `timeout 15` → `25`。
+  - `hooks.json`: telemetry hook `timeout 20` → `30`。
+- **验证**: WARN 完成 9s + 记录真实 PASS 执行; block 32s 不变 + 记录; gate 14 PASS (新增 scenario_11: WARN origin 不可达仍完成+记录) / hook 7 PASS / state-scanner 821 OK。
+- **意义**: telemetry 修复后 future ships 的 gitlink bump 真实累积 executions → 满足 block-flip Trigger B 的 ≥3 minimum-observation guard (tripwire 已绿 2 clean host-cron runs) → 后续真数据 flip。见 `.aria/decisions/2026-06-07-v1.40.0-block-flip.md` + `openspec/changes/aria-submodule-gate-block-flip/proposal.md`。
+
 ## [1.46.4] - 2026-06-13
 
 ### coordination-ref lib `_run` timeout ceiling (F2-minimal) — never hang on stalled git op
