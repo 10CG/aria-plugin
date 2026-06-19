@@ -136,6 +136,19 @@ tdd.strictness:
   valid_values: [advisory, strict, superpowers]
   default: "advisory"
 
+phase_b_developer.framework_build_check.enabled:
+  type: boolean
+  default: false                  # Aria #95: B.2.5 框架 build 验证开关
+
+phase_b_developer.framework_build_check.command:
+  type: string | null
+  default: null                   # build 命令 (如 "npm run build"); null=no-op
+
+phase_b_developer.framework_build_check.mode:
+  type: string
+  valid_values: [advisory, blocking]
+  default: "advisory"             # advisory=警告不阻塞 / blocking=失败阻塞进 Phase C
+
 benchmarks.require_before_merge:
   type: boolean
   default: true
@@ -192,8 +205,12 @@ audit.checkpoints.*:
   type: string
   valid_values: [off, convergence, challenge]
   valid_keys: [post_brainstorm, post_spec, post_planning, post_implementation,
-               mid_implementation, pre_merge, post_closure]
+               mid_implementation, mid_post_spec, pre_merge, post_closure]
   default: "off"
+
+# mid_post_spec (Aria #79): Phase B 实施期 spec 漂移条件触发的快速校验。
+# trigger=spec_drift_detected; 恒 max_rounds=1; scope 限漂移点; advisory。
+# 见 audit.mid_post_spec block + agent-team-audit/audit-points.md。
 
 # Phase C.2.4 — Pre-Merge Precondition Gate (v1.3.0+, Forgejo Issue #60)
 phase_c_integrator.pre_merge_gate.enabled:

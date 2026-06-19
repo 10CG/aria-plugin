@@ -87,6 +87,12 @@ A.1.1 - 收集需求信息:
   - 提取功能描述 (What)
   - 提取交付物列表 (Deliverables)
   - 提取约束条件 (Constraints)
+  - 框架约定 (Framework Constraints, Aria #95, 可选): framework 项目 (Next.js /
+    Astro / SvelteKit / Vue / Remix 等) 在 proposal 加一段已知 framework
+    convention / anti-pattern (route handler export 限制 / private-folder
+    routing / use client·server / metadata 白名单), 供 post_spec/post_impl
+    审计 agent 直接对照 (见 agent-team-audit/references/audit-points.md
+    「横切检查原则 · 框架约定」)。无 framework 项目跳过。
 
 A.1.2 - Level 判断:
   - 关键词匹配 (Level 1/3 触发词)
@@ -427,6 +433,6 @@ A.1 Spec 创建:
 
 ---
 
-**最后更新**: 2026-02-05
-**Skill版本**: 2.1.0 (新增 brainstorm 集成)
+**最后更新**: 2026-06-19 (Aria #95: A.1.1 加可选 Framework Constraints 提取)
+**Skill版本**: 2.2.0 (Framework Constraints 提取)
 **架构**: 双层任务架构 (v2.0.0)

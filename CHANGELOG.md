@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.47.0] - 2026-06-19
+
+### Issue-sweep release train — 4 cycles / 6 issues (#69 #54 #95 #79 #32)
+
+一次性执行 "纯 AI 可独立完成 + 现在值得做" 的 open issue 批 (M6/M7 等待期填空)。4 个 cycle 各走完整十步循环 (Rule #1 OpenSpec + Phase A + 独立 agent-team 对抗 review), 共享 release 分支增量实现, 一次 Phase D 打包发版。Rule #6 = deterministic structural + dogfood-by-construction (无自动化多-agent 审计 AB harness)。
+
+- **Cycle A — secret-guard 扩 exfil 覆盖 (#69)**: Aether v1.28.0 14 天 dogfood 报 5 个 FN; **实测 triage 确认 v1.46.5 仍全漏 + 6 额外探针**。RED-first: 16 BLOCK 探针 + 4 FP guard → 加 regex (base64 reader / 非标准 ssh key 名 `\.ssh/id_[A-Za-z0-9_]+` / `.docker/config.json` / Vault HTTP `-H X-Vault-Token:` + `hvs.{24,}` / kubectl `-- sh -c` 包裹 / scp·rsync·cp·tar|ssh·wget exfil-to-destination)。254/254 测试零回归。agent-team 2-lens (code-reviewer + 对抗 hunter) 修真 FP (scp `/private/` macOS / X-Vault-Token 文档提及 / hvs. 短 id / tar `.sshconfig`) + bypass (dd `bs=` 位置 / cp key-as-EOL-dest)。
+
+- **Cycle B — audit runtime-reality 检查项 (#54 + #95)**: agent-team-audit/audit-points.md 加 **数据可用性** (#54: 断言引用历史 git/外部/环境数据时机械核实存在, **verdict-load-bearing** 缺失→REVISE/FAIL 非观察性) + **框架约定** (#95: package.json 探测 framework 验证 route export/routing/directive 约束) 检查项 (post_spec + post_implementation) + 横切检查原则节。phase-b-developer 加可选 B.2.5 framework build 验证 (config-gated, advisory, **tri-state** `not_configured`≠pass)。spec-drafter Framework Constraints 提取。config-loader `phase_b_developer.framework_build_check` (3-way parity, 默认 no-op)。
+
+- **Cycle C — mid_post_spec 条件触发检查点 (#79)**: Phase B SMOKE/集成测试暴露 spec 漂移 → 暂停 → single-round (max_rounds=1) scope-limited mini-audit → append-only spec amendment (含 neutralize 要求防 amended-and-ignored) → resume。新检查点贯穿 config (checkpoints+teams+trigger, 默认 off) + audit-engine (列表+single-round 约束+proposal-class anchor) + audit-points (新节+material-vs-incidental trigger 判别) + phase-b-developer (B.drift flow)。agent-team review 补齐 4 处 engine-internal 契约 (pre-merge 完整性 gate **排除** mid_post_spec — 事件条件触发可合法不产报告; max_rounds clamp; anchor 分类; blocking 表)。
+
+- **Cycle D — tdd-enforcer 安全代码 commit 分离 (#32)**: `security_commit_separation` (= issue 的 `level_3_strict`, 改名避开 "Level 3: Superpowers" strictness 歧义), strict/superpowers 下强制安全代码 (auth/credential/secret/acl/check) RED commit 与 GREEN commit 分离 (Aether #42: bundled commit 致 test-first 不可验)。schema (默认 enabled=false) + SKILL 检测节 (2 档升级路径 strict block+[skip-tdd] / superpowers no-bypass) + 参考 **commit-msg hook** (项目 opt-in, 不接入 Aria hooks.json) + strict.json 示例。agent-team review 修参考 hook 真 bug (pre-commit 读错 commit→commit-msg / `test_*.py` 前缀 + top-level `tests/` 锚 / 安全 grep word-boundary 防 authority/oauth/healthcheck 误命中 / advisory 行 self-negating 删除)。
+
+Skills 不变 (34 user-facing + 7 internal = 41). 4 OpenSpec 归档。
+
 ## [1.46.5] - 2026-06-14
 
 ### submodule-gate telemetry — gate completes + records execution under the hook timeout (R-fix-1 follow-up)

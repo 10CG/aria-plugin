@@ -171,7 +171,7 @@ case "$tool" in
     # secret file paths a future-Claude might Read without realizing.
     # Note: lowercased file_path for the match.
     lower_path="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
-    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key'; then
+    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key'; then
       # R3-C-9 fix: SECRET_GUARD_ACK_PATH cannot be unset across processes
       # (env var lives in the parent shell, hook subprocess can't unset it).
       # Previously hook just emitted "consumed" NOTE which was dead code.
@@ -394,7 +394,11 @@ declare -a risky_patterns=(
   # parallels the file_path regex (id_rsa / id_ed25519 / id_ecdsa / .pem /
   # .key / .p12 / .pfx / .jks / .gpg / .age / .tfstate / .aws/credentials /
   # .aws/config / .kube/config / kubeconfig) to maintain Bash↔Read parity.
-  '(cat|head|tail|less|more|strings|hexdump|od|xxd)[[:space:]]+[^|]*(id_rsa|id_ed25519|id_ecdsa|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig)(\b|/|$|[[:space:]])'
+  # #69: + base64 reader; non-standard ssh key names under .ssh/ (id_[A-Za-z0-9_]+);
+  #      .docker/config.json (base64 registry auth). Standard id_rsa/ed25519/ecdsa
+  #      still match anywhere (backward-compat); non-standard names anchored to .ssh/
+  #      to keep FP low (`cat id_number.txt` must not block).
+  '(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)[[:space:]]+[^|]*(id_rsa|id_ed25519|id_ecdsa|\.ssh/id_[A-Za-z0-9_]+|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig|/\.docker/config\.json)(\b|/|$|[[:space:]])'
 
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
@@ -551,6 +555,25 @@ declare -a risky_patterns=(
   # R3-I-6: compgen -e / set -o posix; set (env-dump cousins)
   '^[[:space:]]*compgen[[:space:]]+-e([[:space:]]+\||[[:space:]]*$)'
   'set[[:space:]]+-o[[:space:]]+posix.*set[[:space:]]*\|[[:space:]]*grep'
+
+  # ── #69 (Aether v1.28.0 14-day dogfood — 5 confirmed FN + corpus) ──────────
+  # FN3: HashiCorp Vault HTTP API form (header + token literal). CLI forms
+  # (`vault read|kv get|agent`) covered at ~line 359; this adds the curl/HTTP path.
+  '(-H|--header)[[:space:]]*["'"'"']?[[:space:]]*X-Vault-Token:'           # vault HTTP auth header (require -H/--header so doc/grep mention of the name doesn't FP)
+  'hvs\.[A-Za-z0-9]{24,}'                                                  # vault service token literal (≥24 → skip hvs.<benign-id>; real tokens ~95 chars)
+  # FN4: kubectl exec indirect shell wrap — `-- sh -c '...env|cat...'` bypasses
+  # the literal-reader-after-`--` patterns at ~line 444.
+  'kubectl[[:space:]]+exec[^|]*--[^|]*(sh|bash)[[:space:]]+-c[^|]*(env|printenv|cat)'
+  # base64/dd of key files (base64 added to reader set ~line 397; dd mirrors line 410)
+  'dd[[:space:]]+[^|]*if=[^|]*(\.ssh/id_[A-Za-z0-9_]+|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key|\.p12|\.pfx)'  # if= any arg position (dd bs=4k if=key)
+  # FN5 + exfil-to-destination class (R3-C-8 threat-model extension, see ~line 536):
+  # remote-copy (download OR upload) / local-copy / archive-pipe of key files &
+  # the .ssh dir to a destination. `\bcp` avoids matching the `cp` inside `scp`.
+  'scp[[:space:]]+[^|]*(\.ssh/id_[A-Za-z0-9_]+|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)'              # scp host:secret . | scp secret host: (/private/ dropped — redundant w/ .pem + macOS FP)
+  'rsync[[:space:]]+[^|]*(\.ssh/id_[A-Za-z0-9_]+|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)'
+  '\bcp[[:space:]]+[^|]*(\.ssh/id_[A-Za-z0-9_]+|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)([[:space:]]|$)'  # cp key dest (also matches key as final EOL arg)
+  'tar[[:space:]]+[^|]*\.ssh([^a-zA-Z]|$)[^|]*\|[[:space:]]*(ssh|nc|curl|wget)'                      # tar ~/.ssh | ssh evil (.ssh boundary so .sshconfig doesn't FP)
+  'wget[[:space:]]+[^|]*--post-file=[^|]*'                                                           # wget --post-file=.env
 )
 
 for pat in "${risky_patterns[@]}"; do

@@ -53,6 +53,14 @@
     "strictness": "advisory"
   },
 
+  "phase_b_developer": {
+    "framework_build_check": {
+      "enabled": false,
+      "command": null,
+      "mode": "advisory"
+    }
+  },
+
   "benchmarks": {
     "require_before_merge": true,
     "skill_change_block_mode": "warn"
@@ -85,11 +93,19 @@
       "unit": "percent_tasks_completed"
     },
 
+    "mid_post_spec": {
+      "trigger": "spec_drift_detected",
+      "source": "test_or_smoke_verdict_invalidated_assumptions_or_ai_recognized",
+      "max_rounds": 1,
+      "scope": "drift_point_only"
+    },
+
     "checkpoints": {
       "post_brainstorm": "off",
       "post_spec": "off",
       "post_planning": "off",
       "mid_implementation": "off",
+      "mid_post_spec": "off",
       "post_implementation": "off",
       "pre_merge": "off",
       "post_closure": "off"
@@ -162,6 +178,20 @@
         ],
         "challenge": [
           "tech-lead"
+        ]
+      },
+
+      "mid_post_spec": {
+        "convergence": [
+          "tech-lead",
+          "backend-architect"
+        ],
+        "discussion": [
+          "tech-lead"
+        ],
+        "challenge": [
+          "tech-lead",
+          "qa-engineer"
         ]
       },
 

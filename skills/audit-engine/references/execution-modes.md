@@ -48,6 +48,8 @@ Checkpoint Report Completeness Gate (pre_merge 专属):
       - value == "on"(字符串)或 value 为非 "off" 的模式字符串
       - key != "pre_merge"(排除自身)
       - key != "post_closure"(事后审计, 不做前置依赖)
+      - key != "mid_post_spec"(Aria #79: 事件条件触发, 启用但无漂移时合法
+        不产出报告 → 不做前置依赖, 否则启用即会误阻 pre_merge)
 
   Step 4: 检查报告文件存在性
     对每个纳入校验的 checkpoint_name:

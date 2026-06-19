@@ -19,6 +19,17 @@
     "**/dist/**",
     "**/.git/**"
   ],
+  "security_commit_separation": {
+    "enabled": true,
+    "path_patterns": [
+      "**/check*.go", "**/auth*.go", "**/acl*.go", "**/secret*.go", "**/credential*.go",
+      "**/auth*.py", "**/secret*.py", "**/credential*.py",
+      "**/auth*.ts", "**/secret*.ts", "**/credential*.ts"
+    ],
+    "commit_msg_keywords": ["security", "auth", "credential", "secret", "token"],
+    "trigger_on_spec_level_3": true,
+    "bypass_token": "[skip-tdd]"
+  },
   "test_patterns": {
     "python": ["test_*.py", "*_test.py"],
     "javascript": ["*.test.js", "*.spec.js"],
