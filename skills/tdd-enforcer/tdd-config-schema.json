@@ -153,6 +153,43 @@
         }
       }
     },
+    "security_commit_separation": {
+      "type": "object",
+      "description": "Force RED/GREEN commit separation for security-sensitive code (Aria #32; = issue's 'level_3_strict', renamed to avoid collision with the 'Level 3: Superpowers' strictness tier). Active only in strict/superpowers strictness.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable security-code RED/GREEN commit separation",
+          "default": false
+        },
+        "path_patterns": {
+          "type": "array",
+          "description": "File path globs that trigger security detection",
+          "items": {"type": "string"},
+          "default": [
+            "**/check*.go", "**/auth*.go", "**/acl*.go", "**/secret*.go", "**/credential*.go",
+            "**/auth*.py", "**/secret*.py", "**/credential*.py",
+            "**/auth*.ts", "**/secret*.ts", "**/credential*.ts"
+          ]
+        },
+        "commit_msg_keywords": {
+          "type": "array",
+          "description": "Commit-message keywords that trigger security detection",
+          "items": {"type": "string"},
+          "default": ["security", "auth", "credential", "secret", "token"]
+        },
+        "trigger_on_spec_level_3": {
+          "type": "boolean",
+          "description": "Also trigger when the Spec has level:3 frontmatter",
+          "default": true
+        },
+        "bypass_token": {
+          "type": "string",
+          "description": "Commit-message token to bypass (strict only; ignored in superpowers). Requires PR-description justification.",
+          "default": "[skip-tdd]"
+        }
+      }
+    },
     "language_settings": {
       "type": "object",
       "description": "Language-specific settings",

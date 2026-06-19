@@ -41,8 +41,9 @@ user-invocable: true
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `tdd.strictness` | `"advisory"` | 严格度: `advisory` / `strict` / `superpowers` |
+| `security_commit_separation.enabled` | `false` | 安全代码 RED/GREEN commit 强制分离 (Aria #32; `.claude/tdd-config.json` 细粒度字段, strict/superpowers 下生效) |
 
-**优先级**: `.aria/config.json` > `.claude/tdd-config.json` > Skill 默认值。`.claude/tdd-config.json` 中的细粒度字段 (`skip_patterns`, `test_patterns`) 继续在原位生效。
+**优先级**: `.aria/config.json` > `.claude/tdd-config.json` > Skill 默认值。`.claude/tdd-config.json` 中的细粒度字段 (`skip_patterns`, `test_patterns`, `security_commit_separation`) 继续在原位生效。
 
 ---
 
@@ -130,6 +131,76 @@ user-invocable: true
 额外功能:
   - 状态持久化
   - 阶段转换验证
+```
+
+---
+
+## 安全代码 RED/GREEN commit 强制分离 (Aria #32)
+
+> **命名**: 本特性即 #32 提议的 `level_3_strict`, 但为避开上面 strictness 第三档
+> **"Level 3: Superpowers"** 的命名歧义, config key 用 `security_commit_separation`。
+> 「安全代码」= credential / auth / acl / secret handling 等最需可证 test-first 的类别。
+
+**问题**: strict/superpowers 检查"测试存在 + RED 状态", 但不强制 **commit 粒度**
+RED/GREEN 分离。把 RED test + GREEN impl 打包进单 commit (Aether #42 `f105646`:
++349 test +108 impl 同 commit) → 测试质量好但审计员**无法从 git history 验证 test-first**。
+
+**激活条件**: `strictness ∈ {strict, superpowers}` **且** `security_commit_separation.enabled=true`。
+
+```yaml
+检测触发 (ANY 满足 → 安全代码 commit 分离激活):
+  - 路径匹配 security_commit_separation.path_patterns
+    (默认 check*/auth*/acl*/secret*/credential* × go/py/ts — 前缀式 glob,
+     有意宽松; 项目可收窄。schema path_patterns 为权威, 下方 hook 正则为示意)
+  - commit message 含 commit_msg_keywords (security/auth/credential/secret/token)
+  - Spec frontmatter level:3 (trigger_on_spec_level_3=true)
+  注: #32 原列第 4 触发"安全相关 skill (doctor/acl/vault/variables)"未单列 config
+      字段 — 由 path/keyword 在实践中覆盖 (这些 skill 的代码即落在 auth*/acl*/secret* 路径)。
+
+commit 分离规则 (检测激活后, 含 test+prod 的单 commit 违规):
+  RED commit:      message: test(<scope>): [RED] ...
+                   变更仅: *_test.* / test|tests|fixtures 目录
+                   (prod code 不变 — 证明测试先失败)
+  GREEN commit:    message: feat(<scope>): [GREEN] ...
+                   变更含: prod code + 通过的测试 (在该 commit 即过, 非仅 HEAD)
+  REFACTOR commit: (可选) refactor(<scope>): [REFACTOR] ... 测试仍过, 无新测试场景
+
+升级路径 (按 strictness; 本特性仅 enabled=true 且 strict/superpowers 才激活,
+故无 advisory 行 —— advisory strictness 下整特性不生效):
+  strict:      block; 用 bypass_token (默认 [skip-tdd]) 显式绕过,
+               需 PR description 写 justification (记录可审计)
+  superpowers: 不可绕过; bypass_token 失效, 强制拆 RED/GREEN
+
+workflow 摩擦提示: 启用后, 安全文件的 stage-and-commit-once 工作流 (Claude Code
+常见) 须改两次 commit; GREEN commit 的测试须在该 commit 即通过。blast radius 受
+enabled=false + strict/superpowers + 安全路径匹配 三重门控, 仍 opt-in。
+```
+
+**可选 commit-msg hook 参考实现** (项目侧 opt-in 部署; **不**接入 Aria 自身
+`hooks.json` —— Aria 是方法论项目无安全代码。本 hook 实现 **strict 档语义**,
+正则为示意, schema `path_patterns` 为权威):
+
+```bash
+#!/bin/bash
+# .git/hooks/commit-msg (项目侧安装) — 安全代码 RED/GREEN 分离守卫
+# $1 = 提交信息文件路径 (commit-msg hook 在 message 已写入后、commit 完成前运行,
+#       故能读到本次 message — pre-commit 读不到, 会误取上一条 commit)
+if grep -q '\[skip-tdd\]' "$1"; then exit 0; fi   # strict bypass (superpowers 下删除此行)
+staged=$(git diff --cached --name-only)
+# test 文件: 前缀式 test_*.{py,js,ts} + 后缀式 *_test.* + *.{test,spec}.* + 测试目录
+test_re='(^|/)test_[^/]*\.(py|js|ts)$|_test\.(go|py|ts|js)$|\.(test|spec)\.(js|ts)$|(^|/)(test|tests|fixtures|__tests__)/'
+test_files=$(echo "$staged" | grep -E "$test_re")
+impl_files=$(echo "$staged" | grep -vE "$test_re"'|\.(md|ya?ml|json)$')
+# 安全 impl 文件: 关键字须为路径段的完整前导词 (auth.go ✓ / authority.go ✗ / oauth.go ✗ / healthcheck.go ✗)
+sec_re='(^|/)(check|auth|acl|secret|credential)([_.-][a-z0-9_-]*)?\.(go|py|ts)$'
+if [[ -n "$test_files" && -n "$impl_files" ]]; then
+  if echo "$impl_files" | grep -qE "$sec_re"; then
+    echo 'ERROR: 安全代码变更 — 请拆成独立 RED (test) 与 GREEN (impl) commit。'
+    echo '匹配文件:'; echo "$impl_files" | grep -E "$sec_re"
+    echo '绕过 (strict): commit message 加 [skip-tdd] + PR 说明理由 (superpowers 下删除上方 bypass 行)。'
+    exit 1
+  fi
+fi
 ```
 
 ---
@@ -362,5 +433,5 @@ tdd-enforcer 通过 PreToolUse Hook 在 Write/Edit 操作前进行检查。
 
 **设计原则**: 文档驱动，AI 读取理解并执行检查规则。
 
-**最后更新**: 2026-02-06
-**Skill版本**: 2.0.0 (文档驱动重构)
+**最后更新**: 2026-06-19 (Aria #32: 安全代码 RED/GREEN commit 强制分离 security_commit_separation)
+**Skill版本**: 2.1.0 (安全代码 commit 分离)
