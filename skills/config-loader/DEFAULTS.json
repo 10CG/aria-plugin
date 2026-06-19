@@ -77,6 +77,14 @@
     "strictness": "advisory"
   },
 
+  "phase_b_developer": {
+    "framework_build_check": {
+      "enabled": false,
+      "command": null,
+      "mode": "advisory"
+    }
+  },
+
   "benchmarks": {
     "require_before_merge": true,
     "skill_change_block_mode": "warn"

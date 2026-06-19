@@ -42,6 +42,9 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `audit.checkpoints.post_implementation` | `"off"` | post_implementation 检查点模式 |
 | `experiments.agent_team_audit` | `false` | 旧配置 (向后兼容，自动映射到 audit.*) |
 | `experiments.agent_team_audit_points` | `["pre_merge"]` | 旧配置 (向后兼容) |
+| `phase_b_developer.framework_build_check.enabled` | `false` | B.2.5 框架 build 验证开关 (Aria #95) |
+| `phase_b_developer.framework_build_check.command` | `null` | build 命令 (如 `"npm run build"`); null=no-op |
+| `phase_b_developer.framework_build_check.mode` | `"advisory"` | `advisory`=警告不阻塞 / `blocking`=失败阻塞进 Phase C |
 
 当 `audit.enabled=true` 且 `audit.checkpoints.post_implementation != "off"` 时，B.3 完成后触发 audit-engine (post_implementation 检查点)。
 旧配置 `experiments.agent_team_audit=true` 且 `"post_implementation" in agent_team_audit_points` 自动映射到新配置。
@@ -105,6 +108,27 @@ B.2 - 测试验证:
     test_passed: true
     coverage: 87.5
     tests_run: 15
+
+B.2.5 - 框架 build 验证 (Aria #95, 可选 / advisory):
+  config: phase_b_developer.framework_build_check
+  enabled_if: framework_build_check.enabled == true AND command != null
+  skip_if:
+    - 无 build 命令配置 (no-op, 如 Aria 自身等无 build 项目)
+      → 输出 framework_build_passed: not_configured (tri-state: skip ≠ pass,
+        避免下游把"未跑"误读为"已验证"; 镜像 #141 coordination_ref_present 三态)
+  action:
+    - test-verifier 通过后、进入 Phase C 前, 跑配置的 framework build 命令
+      (e.g. `npm run build` / `next build` / `astro build`)
+    - 目的: framework convention bug (route handler export 限制 / routing /
+      client-server 误用 / metadata 白名单) tsc/lint/单测**不抓**, 仅 build 期暴露
+  on_fail:
+    - mode=advisory (默认): 警告 + 记录, 不阻塞 (让 owner 决定)
+    - mode=blocking: 阻塞进入 Phase C
+  rationale: 本地 build 1-3min << CI fail + redeploy ~14min/iteration
+             (实战 SilkNode US-096 Next.js route named export 2 次 hotfix)
+  output:
+    framework_build_passed: true | false | not_configured   # tri-state (skip ≠ pass)
+    build_command: "npm run build"
 
 B.3 - 架构同步:
   skill: arch-update
@@ -966,5 +990,5 @@ phase_b_config:
 
 ---
 
-**最后更新**: 2026-03-27
-**Skill版本**: 1.4.0
+**最后更新**: 2026-06-19 (Aria #95: B.2.5 可选 framework build 验证步骤 + config framework_build_check)
+**Skill版本**: 1.5.0

@@ -136,6 +136,19 @@ tdd.strictness:
   valid_values: [advisory, strict, superpowers]
   default: "advisory"
 
+phase_b_developer.framework_build_check.enabled:
+  type: boolean
+  default: false                  # Aria #95: B.2.5 框架 build 验证开关
+
+phase_b_developer.framework_build_check.command:
+  type: string | null
+  default: null                   # build 命令 (如 "npm run build"); null=no-op
+
+phase_b_developer.framework_build_check.mode:
+  type: string
+  valid_values: [advisory, blocking]
+  default: "advisory"             # advisory=警告不阻塞 / blocking=失败阻塞进 Phase C
+
 benchmarks.require_before_merge:
   type: boolean
   default: true
