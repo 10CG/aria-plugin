@@ -175,6 +175,41 @@ B.mid - 审计引擎 (条件触发):
     mid_audit_report: ".aria/audit-reports/mid_implementation-{timestamp}.md"
 ```
 
+### Mid-Post-Spec spec 漂移检查点 (Aria #79, 条件触发)
+
+```yaml
+B.drift - 审计引擎 spec 漂移校验 (条件触发):
+  checkpoint: mid_post_spec
+  trigger: B.2 任务执行期, SMOKE / 集成测试暴露 spec 陈述与运行实际不符
+  condition: audit.enabled == true
+             AND audit.checkpoints.mid_post_spec != "off"
+             AND spec_drift_detected
+  drift 信号 (任一):
+    - 机械: 测试/SMOKE 报告含 verdict_invalidated_assumptions 字段且非空
+    - 概念: AI 识别运行实际 (test 行为 / 集成结果) 与 spec 原陈述矛盾
+  注意: 与 mid_implementation 正交 (后者按进度阈值, 本者按漂移事件);
+        可在一次 Phase B 内多次触发 (每个独立漂移点一次)
+
+  步骤:
+    1. 检测到 drift 信号 → 暂停当前 Phase B 任务执行
+    2. 调用 audit-engine:
+       - checkpoint: "mid_post_spec"
+       - mode: 来自 adaptive_rules (L1 off / L2 convergence / L3 challenge)
+       - max_rounds: 1 (恒单轮, 快速校验)
+       - scope: 仅漂移涉及的 spec 陈述 (非全量)
+    3. audit 产出 append-only spec amendment 建议 (类 DEC Amendment: 日期 +
+       原陈述 + 修正 + 触发证据)
+    4. 采纳 amendment (append 到 proposal.md, 不改原文; **同时**在原失效断言处加
+       inline 指向标记防 amended-and-ignored, 见 audit-points.md neutralize 要求)
+       → resume Phase B (后续实施基于修正后假设, 避免带 stale 假设继续)
+
+  on_drift: 暂停 → mini-audit → amendment → resume (blocking=false, advisory)
+  on_skip: 继续任务执行循环 (未检测到漂移 / checkpoint off)
+  output:
+    mid_post_spec_triggered: false        # true 如触发
+    spec_amendments: []                   # append-only amendment block 列表 (如触发)
+```
+
 ### Post-Implementation 审计 (audit-engine)
 
 ```yaml

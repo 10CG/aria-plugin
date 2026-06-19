@@ -87,6 +87,48 @@ timeout:
     - 与现有 Spec 的关系
 ```
 
+## mid_post_spec (B.2 实施期 spec 漂移条件触发, Aria #79)
+
+```yaml
+trigger: Phase B 实施期 SMOKE / 集成测试暴露 spec 陈述与运行实际不符
+         (机械信号: 测试/SMOKE 报告 verdict_invalidated_assumptions 字段非空;
+          概念信号: AI 识别运行实际与 spec 陈述矛盾)
+  触发判别 (material vs incidental, 防过触发/漏触发):
+    - 触发当: 漂移使一个**已写入 spec 的 path/行为/数据断言失效**
+      (e.g. spec 假设 path A, SMOKE 证明走 path B)
+    - 不触发当: 新发现的实现细节调整, **不影响任何 spec 断言**
+      (routine 实现发现, 非 spec 事实错误)
+  锚定: 与机械信号同一对象 = 失效的 *assumption* (两半信号对称)
+caller: phase-b-developer (条件触发, 非每次实施都跑)
+agents:
+  - Tech Lead              # 漂移点技术校验 (1-2 agent, scope 限漂移)
+  - (backend-architect)    # 漂移涉及架构/数据模型时加入
+  - (qa-engineer)          # challenge 模式: 运行实际 vs spec 断言的矛盾核验
+blocking: false           # advisory — 输出 amendment 建议, 不硬阻断实施
+max_rounds: 1             # 恒单轮 (镜像 post_closure); 快速校验非全量收敛
+scope: drift_point_only   # 仅漂移涉及的 spec 陈述, 不全量重审
+timeout:
+  single_agent: 120s
+  overall: 180s
+  on_timeout: skipped
+
+检查重点:
+  Tech Lead:
+    - 漂移确认            # 运行实际 vs spec 原陈述, 确认是否真漂移
+    - 影响半径           # 该漂移波及哪些 spec 断言 / 下游 task
+    - amendment 建议      # append-only spec amendment block (类 DEC Amendment
+                         # 模式: 标注日期 + 原陈述 + 修正 + 触发证据), 不改原文
+
+输出: append-only spec amendment 建议 → 采纳后 resume Phase B
+      (避免带 stale 假设继续实施; 实战 TH v0.3.2 SMOKE-A 翻 path A 隔 4 天才发现)
+  amendment neutralize 要求 (防 amended-and-ignored, 同 handoff neutralize 模式
+  memory feedback_handoff_closure_neutralize_nextstep): amendment block append 到
+  proposal.md 末尾 (不改原文), **同时**在原失效断言处加 inline 标记
+  (~~strike~~ / "⚠ 见 §Amendment YYYY-MM-DD") 指向 amendment — 否则后续 reader/
+  resumed Phase B 读到原文 stale 断言会漏掉底部 amendment (state-scanner surfacing
+  字段本 Spec defer, 故 in-doc neutralize 是唯一可见性保障)。
+```
+
 ---
 
 ## 横切检查原则 (适用多个检查点)

@@ -125,11 +125,19 @@
       "unit": "percent_tasks_completed"
     },
 
+    "mid_post_spec": {
+      "trigger": "spec_drift_detected",
+      "source": "test_or_smoke_verdict_invalidated_assumptions_or_ai_recognized",
+      "max_rounds": 1,
+      "scope": "drift_point_only"
+    },
+
     "checkpoints": {
       "post_brainstorm": "off",
       "post_spec": "off",
       "post_planning": "off",
       "mid_implementation": "off",
+      "mid_post_spec": "off",
       "post_implementation": "off",
       "pre_merge": "off",
       "post_closure": "off"
@@ -155,6 +163,11 @@
         "convergence": ["tech-lead", "code-reviewer"],
         "discussion": ["code-reviewer"],
         "challenge": ["tech-lead"]
+      },
+      "mid_post_spec": {
+        "convergence": ["tech-lead", "backend-architect"],
+        "discussion": ["tech-lead"],
+        "challenge": ["tech-lead", "qa-engineer"]
       },
       "post_implementation": {
         "convergence": ["code-reviewer", "backend-architect", "qa-engineer", "ai-engineer", "api-documenter", "mobile-developer"],

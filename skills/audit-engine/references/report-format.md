@@ -95,6 +95,7 @@ Verdict 计算规则 (含 severity → verdict 映射 + drift_terminated overrid
 | post_spec | 继续 | 继续 (附警告) | 继续 (仅记录) |
 | post_planning | 继续 | 继续 (附警告) | 继续 (仅记录) |
 | mid_implementation | 继续 | 继续 (附警告) | **阻塞** |
+| mid_post_spec | 继续 | 继续 (附警告) | 继续 (仅记录 amendment 建议, advisory #79) |
 | post_implementation | 继续 | 继续 (附警告) | **阻塞** |
 | pre_merge | 继续 | 继续 (附警告) | **阻塞** |
 | post_closure | 继续 | 继续 | 继续 (仅记录, 代码已合并) |

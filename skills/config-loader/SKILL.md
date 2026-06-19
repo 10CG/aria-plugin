@@ -205,8 +205,12 @@ audit.checkpoints.*:
   type: string
   valid_values: [off, convergence, challenge]
   valid_keys: [post_brainstorm, post_spec, post_planning, post_implementation,
-               mid_implementation, pre_merge, post_closure]
+               mid_implementation, mid_post_spec, pre_merge, post_closure]
   default: "off"
+
+# mid_post_spec (Aria #79): Phase B 实施期 spec 漂移条件触发的快速校验。
+# trigger=spec_drift_detected; 恒 max_rounds=1; scope 限漂移点; advisory。
+# 见 audit.mid_post_spec block + agent-team-audit/audit-points.md。
 
 # Phase C.2.4 — Pre-Merge Precondition Gate (v1.3.0+, Forgejo Issue #60)
 phase_c_integrator.pre_merge_gate.enabled:
