@@ -44,7 +44,7 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `experiments.agent_team_audit_points` | `["pre_merge"]` | 旧配置 (向后兼容) |
 | `upm.milestone_driven` | `false` | 启用 C.2.6 里程碑子进度追加 (opt-in) |
 | `phase_c_integrator.pre_merge_gate.enabled` | `true` | 启用 C.2.4 pre-merge precondition gate (v1.3.0+) |
-| `phase_c_integrator.submodule_gate.mode` | `"warn"` v1.28.0 / `"block"` v1.29.0+ | C.2.4.5 submodule pointer regression gate 模式 (Spec aria-submodule-pointer-regression-gate) |
+| `phase_c_integrator.submodule_gate.mode` | `"block"` (v1.49.0+ default) / `"warn"` (legacy) / `"off"` (bypass) | C.2.4.5 submodule pointer regression gate 模式 (Spec aria-submodule-pointer-regression-gate) |
 | `phase_c_integrator.pre_merge_gate.ci_backends` | `null` (auto-detect) / `[]` (explicit disable) / `[{name: "..."}]` (explicit list) | **v1.31.0+** CI backend 选择 (替代旧 `primitive_preference`). 见 §C.2.4.X CI Backends |
 | `phase_c_integrator.pre_merge_gate.no_ci_fallback` | `"skip_with_warning"` | 无可用 CI backend 时降级 (`skip_with_warning` / `abort`). **v1.31.0+** 替代旧 `no_aether_fallback` (alias 仍读, 发 deprecation warning, v2.0 移除) |
 | `phase_c_integrator.pre_merge_gate.wait_timeout_seconds` | `1800` | wait+retry max 等待时长 (默认 30 min) |
@@ -181,7 +181,7 @@ C.2.4.5 - Submodule Pointer Regression Gate (v1.28.0+):
   触发条件:
     - C.2.4 verdict=green (CI gate 已通过)
     - 即将调用 branch-manager merge action
-    - 配置 phase_c_integrator.submodule_gate.mode: "warn" (v1.28.0 default) | "block" (v1.29.0 default)
+    - 配置 phase_c_integrator.submodule_gate.mode: "block" (v1.49.0+ default) | "warn" (legacy opt-out) | "off" (emergency bypass)
   primitive 调用:
     - git fetch origin (bare, 更新所有 ref) — 强制, 失败 abort
     - git -C <submodule> fetch origin — 每 submodule
@@ -189,7 +189,7 @@ C.2.4.5 - Submodule Pointer Regression Gate (v1.28.0+):
     - 双向 ancestry 区分 regression (case c) vs divergence (case d)
   三态结果:
     pass:   所有 submodule pointer 是 forward bump 或 no-change 或 first-time
-    block:  至少一个 submodule pointer 是 regression 或 divergence (v1.29.0+); v1.28.0 warn-only
+    block:  至少一个 submodule pointer 是 regression 或 divergence (v1.49.0+ default; v1.28.0 was warn-only)
     bypass: per-PR commit trailer `Submodule-Rollback: ...` 或 PR label `submodule-rollback-approved` 允许 + audit log
   output:
     gate_verdict: "pass" | "block" | "warn" | "bypass"
@@ -368,15 +368,15 @@ Stub backend (e.g. `GitHubActionsBackend` in v1.31.0) `probe()` returns True 但
 > 源于 2026-05-23 PR #123 silent submodule pointer regression incident (`6fea5d7` 静默回滚 4 commits, 被 post-merge audit catch + fast-forward fix `a8e0096`)。
 > Closes Forgejo Aria [#124](https://forgejo.10cg.pub/10CG/Aria/issues/124)。
 
-**Two-phase rollout**:
-- **v1.28.0**: `mode=warn` 默认 — 检测 + 日志 `WOULD-BLOCK`, 不阻止 merge
-- **v1.29.0**: `mode=block` 默认 — 检测到 regression/divergence + 无 override → 拒绝 merge
-- Flip date: v1.28.0 ship + 14 calendar days, OR FP rate <2% over 20+ WOULD-BLOCK events (whichever first), with minimum-observation guard ≥3 gate executions
+**Two-phase rollout** (✅ flipped to block default in v1.49.0, 2026-06-21):
+- **v1.28.0** (history): `mode=warn` 默认 — 检测 + 日志 `WOULD-BLOCK`, 不阻止 merge
+- **v1.49.0+** (current): `mode=block` 默认 — 检测到 regression/divergence + 无 override → 拒绝 merge
+- Flip 依据: hard-date Trigger B + minimum-observation guard ≥3 gate executions (实测 5, all warn-PASS) + tripwire green (4 clean host-cron) + FP 0%; owner risk-accept sign-off 2026-06-21。决策记录见 `.aria/decisions/2026-06-21-v1.49.0-block-flip.md` (主仓)。
 
 **触发条件**:
 - §C.2.4 verdict=green (CI gate 已通过)
 - 即将调用 branch-manager merge action
-- 配置 `phase_c_integrator.submodule_gate.mode`: `"warn"` (v1.28.0) | `"block"` (v1.29.0+) | `"off"` (skip 完全)
+- 配置 `phase_c_integrator.submodule_gate.mode`: `"block"` (v1.49.0+ default) | `"warn"` (legacy opt-out) | `"off"` (skip 完全)
 
 **执行流程** (Bash gate, 见 `scripts/submodule_gate.sh`):
 
@@ -447,7 +447,7 @@ while IFS= read -r SUB; do
     fi
 
     # Mode dispatch
-    MODE="${ARIA_SUBMODULE_GATE_MODE:-warn}"
+    MODE="${ARIA_SUBMODULE_GATE_MODE:-block}"
     if [[ "$MODE" == "warn" ]]; then
         echo "WOULD-BLOCK: submodule=$SUB master=$MASTER_PTR feature=$FEATURE_PTR reason=$VERDICT"
         log_warn "$SUB" "$VERDICT" "$MASTER_PTR" "$FEATURE_PTR"
@@ -483,8 +483,8 @@ exit $exit_code
 
 **Verdict 三态** (output):
 - `pass` — all submodules: forward / no-change / first-time
-- `warn` (v1.28.0) — WOULD-BLOCK logged, merge proceeds
-- `block` (v1.29.0+) — merge refused, exit 1
+- `warn` (legacy opt-out) — WOULD-BLOCK logged, merge proceeds
+- `block` (v1.49.0+ default) — merge refused, exit 1
 - `bypass` — override applied, audit logged, merge proceeds
 
 **Output schema** (JSON):
@@ -512,7 +512,7 @@ exit $exit_code
 **配置参数**:
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `mode` | `"warn"` (v1.28.0) / `"block"` (v1.29.0+) | `"warn"` 仅日志 / `"block"` 拒绝 merge / `"off"` 跳过 gate |
+| `mode` | `"block"` (v1.49.0+ default) / `"warn"` (legacy) / `"off"` | `"warn"` 仅日志 / `"block"` 拒绝 merge / `"off"` 跳过 gate |
 | `fetch_retries` | `[1, 2, 4]` | 指数退避秒数 |
 | `metrics_dir` | `"metrics/"` (relative to aria-plugin root, NOT main repo) | 4 JSONL append-only 文件位置 |
 | `forgejo_api_timeout_s` | `5` | PR label fetch timeout |
@@ -543,7 +543,7 @@ exit $exit_code
   1. Regression escapes (B+) within 12 months OR 100 merges (whichever first)
   2. (B+) fetch-failure incident manifests
   3. Non-PR-flow regression (direct master push bypassing PR)
-- v1.28.0 ships workflow as `on: workflow_dispatch` only; v1.29.0 commit switches to `on: schedule` cron
+- v1.28.0 ships workflow as `on: workflow_dispatch` only; tripwire periodic execution migrated to **host-cron** (`0 4 * * 0`, v1.41.0 R-fix-2 — Actions runner 无 forgejo 凭据 + CF Access 墙; standalone `scripts/submodule-tripwire-audit.sh`). v1.49.0 block-flip 依赖 host-cron tripwire (4 clean runs) 作独立兜底, 非 workflow cron
 
 **Helper 实现**: `${ARIA_PLUGIN_ROOT:-aria}/skills/phase-c-integrator/scripts/submodule_gate.sh` (Bash, stdlib + git only)
 

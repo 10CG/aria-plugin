@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.49.0] - 2026-06-21
+
+### submodule pointer regression gate: warn → block flip (#124 Two-phase rollout 执行单元)
+
+Flips C.2.4.5 submodule pointer regression gate default `mode` from `warn` to **`block`**, per parent Spec `aria-submodule-pointer-regression-gate` (v1.28.0) Two-phase rollout 承诺。
+
+**Flip 依据 (Trigger B + owner risk-accept)**: hard-date Trigger B + minimum-observation guard ≥3 gate executions (实测 **5**, all mode=warn / verdict=PASS) + tripwire green (**4 clean host-cron runs**, independent backstop) + FP rate **0%** (0 WOULD-BLOCK events)。owner risk-accept sign-off 2026-06-21 (executions 聚集 2 ship 事件 + index.lock 重试虚增, 字面阈值满足但严格独立观察=2 — owner 接受)。决策记录 `.aria/decisions/2026-06-21-v1.49.0-block-flip.md` (主仓)。
+
+**§A 3 处 default flip**:
+- `scripts/submodule_gate.sh:33`: `MODE="${ARIA_SUBMODULE_GATE_MODE:-warn}"` → `:-block}` (runtime SOT)
+- `phase-c-integrator/SKILL.md:450`: inline doc-Bash 同步
+- SKILL.md config 表 / Two-phase rollout / verdict 三态 / mode 参数表 全部 warn-default → block-default 现在时 (保留 v1.28.0 历史叙述行)
+
+**新测试 T-flip-12**: unset `ARIA_SUBMODULE_GATE_MODE` → 默认 block (regression exit 1)。锁定 flip。15 PASS / 0 FAIL (was 14)。
+
+**Backward-compat**: `mode="warn"` legacy opt-out / `mode="off"` emergency bypass / env-var override 优先级 > config — 全部保留。
+
+**§B 作废**: 原 `.forgejo/workflows` schedule cron 追加已被 host-cron 迁移取代 (v1.41.0 R-fix-2); tripwire 经 host-cron `0 4 * * 0` 运行。
+
+Skills 数不变 (34+7=41)。Spec `aria-submodule-gate-block-flip` 归档。
+
 ## [1.48.0] - 2026-06-21
 
 ### agent-team-audit 项目级 audit agent 增补 (#145)

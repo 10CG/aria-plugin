@@ -624,12 +624,40 @@ scenario_11() {
     fi
 }
 
+# ─── Scenario 12: Default mode is BLOCK (v1.49.0 flip) ──────────────────
+
+scenario_12() {
+    echo "─── T-flip-12: unset MODE → defaults to BLOCK (v1.49.0 warn→block flip) ───"
+    new_fixture
+    local bare="$FIXTURE_ROOT/bare-sub"
+    local parent="$FIXTURE_ROOT/parent"
+    local shas sha1 sha5
+    shas=$(create_bare_submodule_repo "$bare" 5)
+    sha1=$(echo "$shas" | head -1)
+    sha5=$(echo "$shas" | tail -1)
+
+    # Pure regression: master at sha5, feature reverts to ancestor sha1
+    create_parent_repo_with_submodule "$parent" "$bare" "$sha5"
+    create_feature_branch "$parent" "submod" "$sha1"
+
+    # Run gate with ARIA_SUBMODULE_GATE_MODE explicitly UNSET → exercises the default.
+    # Pre-v1.49.0 default was warn (exit 0 / WOULD-BLOCK); v1.49.0+ default is block (exit 1 / REGRESSION).
+    local result rc
+    result=$(run_gate "$parent" env -u ARIA_SUBMODULE_GATE_MODE)
+    rc=$(echo "$result" | head -1)
+
+    if assert_exit_code "$rc" "1" "T-flip-12 default=block"; then
+        assert_contains "$result" "REGRESSION" "T-flip-12 default=block" && \
+        report_pass "unset MODE defaults to block: regression exits 1 (v1.49.0 flip locked)"
+    fi
+}
+
 # ─── Main ──────────────────────────────────────────────────────────────
 
 if [[ $# -gt 0 ]]; then
     SCENARIOS=("$@")
 else
-    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11)
+    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12)
 fi
 
 echo "════════════════════════════════════════════════════════════"
@@ -652,6 +680,7 @@ for n in "${SCENARIOS[@]}"; do
         9) scenario_9 ;;
         10) scenario_10 ;;
         11) scenario_11 ;;
+        12) scenario_12 ;;
         *) echo "  ! SKIP: unknown scenario $n"; SKIPPED=$((SKIPPED+1)) ;;
     esac
     echo
