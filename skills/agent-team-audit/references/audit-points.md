@@ -4,10 +4,10 @@
 
 ```yaml
 trigger: branch-finisher 完成，准备合并到 master/main
-agents:
-  - Tech Lead
-  - Code Reviewer
-  - Knowledge Manager
+agents:                              # 固定基线; 动态增补见 SKILL.md step 3b +
+  - Tech Lead                        #   agent-selection-matrix.md 白名单 (#145):
+  - Code Reviewer                    #   .aria/agents/ 中 capabilities 命中
+  - Knowledge Manager                #   security-audit/performance-optimization 的项目 agent
 blocking: true  # 任一 Agent 报告 Critical 即 FAIL
 timeout:
   single_agent: 120s
@@ -33,9 +33,9 @@ timeout:
 
 ```yaml
 trigger: 所有任务标记完成，准备进入 Phase C
-agents:
-  - QA Engineer
-  - Code Reviewer
+agents:                              # 固定基线; 动态增补见 SKILL.md step 3b +
+  - QA Engineer                      #   agent-selection-matrix.md 白名单 (#145):
+  - Code Reviewer                    #   security-audit/performance-optimization 命中的项目 agent
 blocking: true  # 任一 Agent 报告 Critical 即 FAIL
 timeout:
   single_agent: 120s
@@ -61,8 +61,8 @@ timeout:
 
 ```yaml
 trigger: OpenSpec 创建完成
-agents:
-  - Tech Lead
+agents:                              # 固定基线; 增补白名单为空 (#145) → 通常纯基线
+  - Tech Lead                        #   (post_spec 白名单空, 见 agent-selection-matrix.md)
   - Knowledge Manager
 blocking: false  # 非阻塞 (建议性)
 timeout:
@@ -100,7 +100,8 @@ trigger: Phase B 实施期 SMOKE / 集成测试暴露 spec 陈述与运行实际
       (routine 实现发现, 非 spec 事实错误)
   锚定: 与机械信号同一对象 = 失效的 *assumption* (两半信号对称)
 caller: phase-b-developer (条件触发, 非每次实施都跑)
-agents:
+agents:                    # 不在 step 3b 项目级增补范围 (#145): scope=drift_point_only,
+                           # 设计为 1-2 基线 agent 快速校验, 不做 capabilities 增补
   - Tech Lead              # 漂移点技术校验 (1-2 agent, scope 限漂移)
   - (backend-architect)    # 漂移涉及架构/数据模型时加入
   - (qa-engineer)          # challenge 模式: 运行实际 vs spec 断言的矛盾核验
@@ -151,4 +152,4 @@ timeout:
 - 以项目内现有同类文件 (相同目录/角色) 作 baseline 对比
 - 配合 phase-b-developer 的本地 build 验证步骤 (config `framework_build_check`) 形成双层防护
 
-**最后更新**: 2026-06-19 (audit-rubric-runtime-reality-checks: +数据可用性 #54 / +框架约定 #95 检查项 + 横切原则节)
+**最后更新**: 2026-06-21 (agent-team-audit-project-agent-augmentation #145: 各 `agents:` 字段加项目级增补注记 [step 3b 白名单]; mid_post_spec 标注不在增补范围)

@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.48.0] - 2026-06-21
+
+### agent-team-audit 项目级 audit agent 增补 (#145)
+
+**问题**: `agent-team-audit` 选择 step 3 写死静态 matrix (3 触发点 → 固定 4 内置 agent 子集), 从不消费 `.aria/agents/` 项目专属 audit agent。`agent-gap-analyzer → agent-creator → .aria/agents/` 生成链已建成 (含 capabilities tags), 但 audit 消费方永不选入项目 agent。reporter 实证: 项目 security-auditor (shell-safety/ssh-egress) 抓到 tech-lead/code-reviewer 视角抓不到的 Critical, 当前 audit 架构用不上。
+
+**修复**: step 3 拆 **3a 固定基线 + 3b 项目级 capabilities 增补**:
+- `.aria/agents/` 中 capabilities 命中检查点"增补白名单"的项目 agent 加入审计批次 (复用 agent-router `.aria/agents/` 发现范式, 不另造; 冷路径直读 frontmatter, `.aria/cache/project-agents.json` 仅可选加速)。
+- matrix 新增"增补 capabilities 白名单"列 (pre_merge/post_implementation: `security-audit`, `performance-optimization`; post_spec 空), 锚定 `capabilities-taxonomy.yaml`。
+- **判据 = 专有标签阈值 (非 baseline 减法)**: code-reviewer 已带 `security-audit` → 减法会盖住项目 security-auditor, 故用显式白名单, 命中即加入 (基线通用维度 + 项目专家纵深互补非冗余)。
+- **augment-only** (非 override): 基线永远跑, 项目 agent 纯加法。
+- 增补 agent 受 `max_parallel_agents` 节流但不丢弃 (分批串行)。
+- 降级零回归: `.aria/agents/` 空 / 无命中 / 字段缺失skip / 空list合法 → 纯基线 (逐字节相同)。
+
+**文档同步**: SKILL.md (step 3a/3b + 触发点表 Agents 列 + 输出格式分母=基线+增补) + agent-selection-matrix.md (白名单列 + step 3b 算法 + 并发调度) + audit-points.md (各 `agents:` 字段注记; mid_post_spec 标注不在增补范围)。
+
+**边界**: 与 M7 agent-lifecycle **正交** (M7=项目 agent 物化到 `.claude/agents/` 原生加载侧; 本=audit 消费侧)。OOS: agent-creator 写 `.claude/agents/` (让给 M7) / override 语义 / 扩 taxonomy 细粒度标签 / 改 agent-router / experiment 转正。`agent-team-audit` = experimental (默认关), 能力随 experiment 转正才可用。
+
+**Rule #6** (prose/process skill): structural fixture (5 文件: 4 fixture agent [security-auditor 命中 / doc-helper 通用不命中 / malformed 缺失skip / empty-caps 空list合法] + 1 算法 trace) + AC-5 dogfood (Aria 无 `.aria/agents/` → 纯基线零回归确认)。post_spec R1 REVISE → Rev1 7 项全落地 → R2 CONVERGED (unanimous PASS 2/2); code-review Phase 1 PASS + Phase 2 I-1/I-2/M-1/M-2 全收。
+
+**Skill 版本**: agent-team-audit 1.0.0 → 1.1.0。Skills 数不变 (34+7=41)。
+
 ## [1.47.0] - 2026-06-19
 
 ### Issue-sweep release train — 4 cycles / 6 issues (#69 #54 #95 #79 #32)

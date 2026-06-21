@@ -13,8 +13,8 @@ allowed-tools: Read, Glob, Grep, Bash
 
 # Agent Team 审计 (Agent Team Audit)
 
-> **版本**: 1.0.0 | **状态**: 实验性 (Experimental)
-> **创建**: 2026-03-18
+> **版本**: 1.1.0 | **状态**: 实验性 (Experimental)
+> **创建**: 2026-03-18 | **更新**: 2026-06-21 (#145 项目级 agent 增补: step 3 拆 3a 基线/3b capabilities 增补)
 
 ---
 
@@ -45,11 +45,13 @@ allowed-tools: Read, Glob, Grep, Bash
 
 详细定义见 [references/audit-points.md](./references/audit-points.md)。
 
-| 触发点 | 位置 | Agents | 阻塞性 |
+| 触发点 | 位置 | Agents (固定基线 + 项目级增补) | 阻塞性 |
 |--------|------|--------|--------|
-| `pre_merge` | C.2 合并前 | Tech Lead + Code Reviewer + Knowledge Manager | Critical 阻塞 |
-| `post_implementation` | B.2 完成后 | QA Engineer + Code Reviewer | Critical 阻塞 |
-| `post_spec` | A.1 完成后 | Tech Lead + Knowledge Manager | 非阻塞 (建议性) |
+| `pre_merge` | C.2 合并前 | Tech Lead + Code Reviewer + Knowledge Manager (+ 项目级增补, 见 step 3b) | Critical 阻塞 |
+| `post_implementation` | B.2 完成后 | QA Engineer + Code Reviewer (+ 项目级增补, 见 step 3b) | Critical 阻塞 |
+| `post_spec` | A.1 完成后 | Tech Lead + Knowledge Manager (白名单空, 通常纯基线) | 非阻塞 (建议性) |
+
+> **项目级增补 (#145)**: 除固定基线外, `.aria/agents/` 中 capabilities 命中该检查点"增补白名单"的项目专属 agent 会被加入审计批次 (step 3b)。详见 [agent-selection-matrix.md](./references/agent-selection-matrix.md)。`.aria/agents/` 空 / 无命中 → 纯基线 (零回归)。
 
 ---
 
@@ -123,7 +125,9 @@ hard_cap: 3               # 不可超过
 
 ## 输出格式
 
-### PASS
+> **"Agents 参与: N/N" 分母语义 (#145)**: 分母 = **当次实际批次总数 = 固定基线 + 项目级增补之和** (非固定基线数)。无项目级增补时分母 = 基线数 (下方纯基线示例 3/3 不变)。增补 agent 在列表中标注来源 `(项目级)`。
+
+### PASS (无项目级增补 — 纯基线)
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -139,6 +143,21 @@ Agents 参与: 3/3
   ✅ Knowledge Manager — 0 issues
 
 总耗时: 45s
+```
+
+### PASS (含项目级增补 — #145 示例)
+
+```
+🎯 触发点: pre_merge
+📊 Verdict: ✅ PASS
+
+Agents 参与: 4/4   ← 分母 = 3 基线 + 1 增补
+  ✅ Tech Lead — 0 issues
+  ✅ Code Reviewer — 0 issues
+  ✅ Knowledge Manager — 0 issues
+  ✅ shell-safety-auditor (项目级) — 0 issues   ← capabilities 含 security-audit, 命中白名单
+
+总耗时: 58s
 ```
 
 ### PASS_WITH_WARNINGS
@@ -190,9 +209,19 @@ Agents 参与: 3/3
    - 不在 → 静默返回
    - 在 → 继续
 
-3. 按触发点选择 Agent 组合 (见 agent-selection-matrix.md)
+3a. 按触发点选择固定基线 Agent 组合 (见 agent-selection-matrix.md)
 
-4. 并发启动 Agents (受 max_parallel_agents 限制)
+3b. 项目级 agent 增补 (#145, 见 agent-selection-matrix.md §step 3b 算法)
+   - 读 .aria/agents/*.md frontmatter 的 capabilities (冷路径直读,
+     .aria/cache/project-agents.json 仅可选加速; 不依赖 agent-router 先跑)
+   - 取本检查点"增补 capabilities 白名单"
+   - 项目 agent capabilities ∩ 白名单 ≠ ∅ → 加入本批
+   - frontmatter 缺/非list/parse-fail → skip 该 agent (不阻断基线);
+     空 list → 合法 (无命中)
+   - .aria/agents/ 空 / 无命中 → 空集 → 纯基线 (零回归)
+
+4. 并发启动 Agents (基线 + 增补, 受 max_parallel_agents 节流但不丢弃,
+   增补 agent 排入后续 batch 串行跑)
    - 每个 Agent 独立审查, 输出 issues 列表
 
 5. 收集结果, 执行去重算法
@@ -214,4 +243,4 @@ Agents 参与: 3/3
 
 ---
 
-**最后更新**: 2026-03-18
+**最后更新**: 2026-06-21 (agent-team-audit-project-agent-augmentation #145: step 3 拆 3a 固定基线 / 3b 项目级 capabilities 增补 + 触发点表/输出格式分母同步)
