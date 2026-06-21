@@ -30,7 +30,7 @@ set -uo pipefail  # NOTE: no -e — we manage exit codes per-submodule deliberat
 
 # ─── Config ────────────────────────────────────────────────────────────
 
-MODE="${ARIA_SUBMODULE_GATE_MODE:-warn}"
+MODE="${ARIA_SUBMODULE_GATE_MODE:-block}"
 
 # Locate aria-plugin metrics dir (relative to current repo root)
 # When invoked from main Aria, plugin root = "aria/" submodule mount → "aria/metrics/"
