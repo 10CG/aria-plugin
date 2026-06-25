@@ -728,6 +728,8 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/aria-token-telemetry/scripts/token_t
 
 `used_percentage` (relay 路径) `>85%` → 建议 merge 完成后即暂停 + 写 handoff。advisory, 不自动中断。详见 phase-b-developer 同名章节。
 
+**会话收尾触发** (session-closer TASK-007): merge 完成后调 [closeout_trigger](../session-closer/scripts/closeout_trigger.py)(`--telemetry-json .aria/cache/context-window.json`)—— 占用 ≥ 阈值 + 有未交接成果时 advise `/session-closer`(advisory, 不自动执行)。
+
 ---
 
 ## 跳过规则

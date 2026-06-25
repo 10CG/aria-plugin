@@ -1,6 +1,7 @@
 # D.3 Session Handoff — Mechanics
 
 > **关联**: H0 spec (2026-05-14), Forgejo aria-plugin #67 multi-track restructure (v1.30.2). L4 convention SOT: [standards/conventions/session-handoff.md](../../../../standards/conventions/session-handoff.md)。
+> **共享 SOT (session-closer-synthesis, 2026-06-25)**: 本文档是 **handoff-write 机制的单一 SOT**, 由 **phase-d-closer D.3 (周期收尾)** 与 **session-closer step4 (会话收尾)** **共同引用, 不复制** (slug 规则 / 9 段模板 variable 字典 / latest.md 2 子步骤 / Rule #9 L1+L5 / Forbidden patterns 对两者通用)。下文「触发条件 4 级 fallback」是 D.3 专属; session-closer 由 owner 直接调用触发, write 机制共用。
 
 ## 目的
 

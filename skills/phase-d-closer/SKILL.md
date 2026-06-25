@@ -1,9 +1,12 @@
 ---
 name: phase-d-closer
 description: |
-  十步循环 Phase D - 收尾阶段执行器，编排 D.1-D.3 步骤。
+  十步循环 Phase D - 周期收尾阶段执行器，编排 D.1-D.3 步骤 (更新 cycle 进度 + 归档 Spec + 周期 handoff)。
 
-  使用场景："执行收尾阶段"、"Phase D"、"更新进度并归档 Spec"、"写 session handoff"
+  使用场景："Phase D"、"周期收尾"、"收尾阶段"、"更新进度并归档 Spec"、"更新 cycle 进度"
+
+  不适用 (用 session-closer): "对话收尾" / "会话收尾" / "写交接" / "session closeout"
+  —— 那是会话维度收尾, 非开发周期收尾。
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Read, Write, Glob, Grep, Bash, Task
