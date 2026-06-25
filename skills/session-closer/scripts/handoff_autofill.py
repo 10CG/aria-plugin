@@ -101,14 +101,23 @@ def carry_forward_from_inventory(inventory):
     """openspec.carry_forward_inventory 是 dict {total, active_change_count, by_change}。
     从 by_change 提取为可遍历 list (R1 M-1: 直接当 list 遍历会取 dict keys 产垃圾)。
 
-    by_change: {change_id: [items]} 或 {change_id: scalar}。返回 [{change, item}]。
+    by_change 真形态 (collectors/openspec.py:248): {change_id: {"count": N, "samples": [...]}}。
+    兼容形态: {change_id: [items]} / {change_id: scalar} / [loose items]。返回 [{change, item}]。
     """
     inv = inventory or {}
     by_change = inv.get("by_change") or {}
     out = []
     if isinstance(by_change, dict):
         for cid, items in by_change.items():
-            if isinstance(items, (list, tuple)):
+            if isinstance(items, dict) and ("samples" in items or "count" in items):
+                # 真 collector 形态: {count, samples} — 从 samples 展开 (I-2 code-review)
+                samples = items.get("samples") or []
+                if samples:
+                    for s in samples:
+                        out.append({"change": cid, "item": _normalize_followup(s)})
+                elif items.get("count"):
+                    out.append({"change": cid, "item": f"{items['count']} 项 carry-forward (无 sample)"})
+            elif isinstance(items, (list, tuple)):
                 for it in items:
                     out.append({"change": cid, "item": _normalize_followup(it)})
             else:
@@ -216,12 +225,23 @@ def assemble_from_snapshot(snapshot, *, changes_dir=None, subagent_pending=None)
     carry_forward = carry_forward_from_inventory(openspec.get("carry_forward_inventory"))
     unchecked = grep_unchecked_tasks(changes_dir) if changes_dir else []
 
+    # M-1 (code-review): 探测 PRD 存在性 (snapshot.project_root/docs/requirements/prd*.md)
+    prd_exists = None
+    root = snapshot.get("project_root")
+    if root:
+        req_dir = os.path.join(root, "docs", "requirements")
+        try:
+            prd_exists = any(n.startswith("prd") and n.endswith(".md")
+                             for n in os.listdir(req_dir))
+        except OSError:
+            prd_exists = False
+
     return {
         "sync": fill_sync_section(multi_remote),
         "unfinished": assemble_unfinished(
             followups=followups, carry_forward=carry_forward,
             unchecked_tasks=unchecked, subagent_pending=subagent_pending),
-        "four_dim": four_dim_status(snapshot),
+        "four_dim": four_dim_status(snapshot, prd_exists=prd_exists),
     }
 
 

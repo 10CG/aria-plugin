@@ -113,6 +113,22 @@ class TestCarryForwardInventory(unittest.TestCase):
         self.assertEqual(len(out), 2)
         self.assertEqual(out[0], {"change": "spec-x", "item": "carry A"})
 
+    def test_real_collector_count_samples_shape(self):
+        # I-2 (code-review): 真 collector by_change 形态 {cid: {count, samples}}
+        inv = {"total": 2, "active_change_count": 1,
+               "by_change": {"spec-x": {"count": 2, "samples": ["carry A text", "carry B text"]}}}
+        out = carry_forward_from_inventory(inv)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out[0], {"change": "spec-x", "item": "carry A text"})
+        # 不得产 "count=...; samples=[...]" 垃圾
+        self.assertFalse(any("count=" in o["item"] for o in out))
+
+    def test_count_no_samples_fallback(self):
+        inv = {"by_change": {"spec-z": {"count": 3, "samples": []}}}
+        out = carry_forward_from_inventory(inv)
+        self.assertEqual(len(out), 1)
+        self.assertIn("3 项", out[0]["item"])
+
     def test_dict_by_change_scalar_value(self):
         inv = {"by_change": {"spec-y": "single carry"}}
         out = carry_forward_from_inventory(inv)

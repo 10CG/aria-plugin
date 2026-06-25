@@ -89,6 +89,24 @@ class TestSourceFieldNoMixing(unittest.TestCase):
         self.assertEqual(v["occupancy"], 90)
 
 
+class TestRelayCacheSchemaContract(unittest.TestCase):
+    """I-1 (code-review): 契约锁定 — relay cache 原始 schema (无 source) 不可当 telemetry 输出喂。
+
+    closeout_trigger 期望 token_telemetry.py 输出 (含 source); 误喂 relay cache (无 source)
+    → 落 unavailable → 恒不 nudge。本测试断言该误用被安全降级 (静默, 非崩溃)。
+    """
+
+    def test_relay_cache_without_source_falls_unavailable(self):
+        # relay cache 原始形态 (无 source 字段, 仅 used_percentage)
+        relay_cache_raw = {"used_percentage": 90, "captured_at": "2026-06-25"}
+        occ, src = occupancy_from_telemetry(relay_cache_raw)
+        self.assertIsNone(occ)        # 无 source → 不读 used_percentage
+        self.assertIsNone(src)
+        v = evaluate_closeout_trigger(relay_cache_raw, {"uncommitted": True})
+        self.assertFalse(v["should_nudge"])   # 恒不 nudge (证明须喂 token_telemetry 输出)
+        self.assertEqual(v["reason"], "occupancy_unavailable")
+
+
 class TestThresholdBoundary(unittest.TestCase):
     def test_exactly_threshold_nudges(self):
         v = evaluate_closeout_trigger(relay(DEFAULT_THRESHOLD), {"uncommitted": True})
