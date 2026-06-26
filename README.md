@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.49.0 | **Released**: 2026-06-21
+> **Version**: 1.50.0 | **Released**: 2026-06-21
 >
-> AI-DDD methodology plugin for Claude Code — 34 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
+> AI-DDD methodology plugin for Claude Code — 35 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (34 user-facing + 7 internal = 41 total)
+### Skills (35 user-facing + 7 internal = 42 total)
 
 > Internal skills (7, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1), aria-token-telemetry (v1.33.0 +1).
 

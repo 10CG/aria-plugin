@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.50.0] - 2026-06-26
+
+### Added: session-closer skill (会话维度收尾仪式, 正交于十步循环 Phase D)
+
+新 user-facing **leaf skill** `session-closer` —— 把"对话收尾"做成与开发周期收尾 (phase-d-closer) 正交平级的会话仪式:
+
+- **AI 对话内省优先** (一等公民): step1 未完成线程/待办 + step2 待固化经验 (结构标记 `[候选 memory]`/`[未写下经验]`)。
+- **机械 autofill 兜底** (backstop): handoff_autofill 交叉核验补漏 (snapshot 有但 AI 没提 → flag) + consistency_check 四维 advisory + closeout_trigger context 压力 nudge。3 脚本 + 49 单测 + 真 snapshot 集成测试。
+- **共享 handoff-write SOT**: 复用既有 `phase-d-closer/references/handoff-mechanics.md` (引用不复制, 无第二份 ref)。
+- **trigger 消歧根治**: phase-d-closer description 中度 rebind (删「写 session handoff」+裸「收尾」, rebind cycle-explicit + 负向消歧); session-closer 强绑会话词; standards §1.3 周期vs会话收尾消歧节 + 矩阵 (第三方 load-bearing)。
+- **leaf 终结**: 写完 handoff 即止, 检出未归档 cycle 仅 advisory 提议, 不调 phase-a/b/c/d (advisory-over-hardlock)。
+- phase-b/c context-monitor step 接 closeout_trigger (喂 token_telemetry 输出)。
+
+Source: session-closer-synthesis Spec (DEC-20260625-001, supersedes 搁浅的 session-closeout-internalization, 复用 ~70-80% 实现)。post_spec R1 REVISE×3 [既有 ref 复用 + collector 字段漂移修正] → Rev1 → R2 PASS×3 unanimous; code-review I-1/I-2 真形态假绿修复; Rule #6 capability AB +13.3pp owner sign-off。
+
+**Skills: 34 → 35 user-facing + 7 internal = 42 total**。standards 1.1.0→1.2.0。
+
 ## [1.49.0] - 2026-06-21
 
 ### submodule pointer regression gate: warn → block flip (#124 Two-phase rollout 执行单元)

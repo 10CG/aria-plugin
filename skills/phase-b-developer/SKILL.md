@@ -288,6 +288,18 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/aria-token-telemetry/scripts/token_t
 **决策阈值** (advisory): `<70%` 继续 / `70-85%` 找 commit boundary / `>85%` 建议在当前任务收尾后暂停 + commit。
 本 skill **只提供数据, 不自动中断** — 暂停决策由 AI 判断。relay 未装时引导 `setup_relay.sh`。
 
+**会话收尾触发** (session-closer TASK-007): 读完 occupancy 后调 [session-closer 的 closeout_trigger](../session-closer/scripts/closeout_trigger.py) —— 占用 ≥ 阈值(默认 85%)**且**有未交接成果(未提交变更 / `upm.followups` / 新 memory 未入 §8)时 **advise** 现在 `/session-closer` 写交接(advisory, **不自动执行**)。
+
+**契约 (I-1)**: `closeout_trigger` 消费 **`token_telemetry.py` 的输出 schema** (含 `source` 字段), **不是** relay cache 原始文件 (无 `source` → 落 unavailable → 恒不 nudge)。须先跑 token_telemetry 再喂其输出:
+
+```bash
+TEL=$(mktemp)
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/aria-token-telemetry/scripts/token_telemetry.py" --project-root . > "$TEL"
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/session-closer/scripts/closeout_trigger.py" \
+  --project-root . --telemetry-json "$TEL"; rm -f "$TEL"
+```
+`should_nudge=true` → 向 owner surface nudge; 否则静默继续。
+
 ---
 
 ## 跳过规则
