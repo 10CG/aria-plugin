@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.50.1] - 2026-06-26
+
+### Changed: session-closer 触发消歧矩阵内联自包含 (第三方无需 standards 子模块)
+
+session-closer SKILL.md「我应该用这个 Skill 吗？」加**触发消歧速查表** (易混词 对话收尾/写交接/收尾阶段 → 期望命中 skill) inline, 让第三方项目 (不 vendor aria-standards) 也有自包含的路由消歧依据。standards §1.3 保留为完整方法论 SOT (周期 vs 会话单元论证 + 5 层 enforcement); SKILL.md 速查为操作快查, 非完整复制 (避免大块 drift)。纯 doc 自包含改进, 无逻辑/测试变更。Skill 1.0.0→1.0.1。
+
 ## [1.50.0] - 2026-06-26
 
 ### Added: session-closer skill (会话维度收尾仪式, 正交于十步循环 Phase D)
