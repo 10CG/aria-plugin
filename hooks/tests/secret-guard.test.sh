@@ -83,6 +83,15 @@ bash_case "ssh find env"                2 "ssh root@host 'find / -name .env.prod
 bash_case "docker compose exec env"     2 'docker compose exec web_blue env'
 bash_case "docker compose exec env+pipe" 2 'docker compose exec web_blue env | cat'
 bash_case "docker exec env (no compose)" 2 'docker exec web_blue env'
+
+# 2026-07-01 incident: shell rc / login-env files (export SECRET=... lines);
+# `grep` was the missing reader + .bashrc/.profile were absent from file list.
+bash_case "grep TOKEN ~/.bashrc"        2 'grep FORGEJO_TOKEN ~/.bashrc'
+bash_case "cat ~/.bashrc"               2 'cat ~/.bashrc'
+bash_case "head ~/.profile"             2 'head ~/.profile'
+bash_case "grep SECRET ~/.zshrc"        2 'grep SECRET ~/.zshrc'
+bash_case "cat /etc/environment"        2 'cat /etc/environment'
+bash_case "ssh cat ~/.bashrc"           2 "ssh root@host 'cat ~/.bashrc'"
 bash_case "docker compose exec printenv" 2 'docker compose exec web_blue printenv'
 bash_case "docker inspect Config.Env"   2 "docker inspect web_blue --format '{{.Config.Env}}'"
 bash_case "bare printenv"               2 'printenv'

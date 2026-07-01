@@ -400,6 +400,16 @@ declare -a risky_patterns=(
   #      to keep FP low (`cat id_number.txt` must not block).
   '(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)[[:space:]]+[^|]*(id_rsa|id_ed25519|id_ecdsa|\.ssh/id_[A-Za-z0-9_]+|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig|/\.docker/config\.json)(\b|/|$|[[:space:]])'
 
+  # 2026-07-01 incident: shell rc / login-env files commonly hold
+  # `export SECRET=...` lines (e.g. FORGEJO_TOKEN in ~/.bashrc). A plain
+  # `grep FORGEJO_TOKEN ~/.bashrc` (or cat/head) leaked the value straight to
+  # tool output — double gap: `grep` was absent from every reader alternation
+  # above, AND .bashrc/.profile/etc were not in the file list. Mirror the .env
+  # treatment: block reads of these files by any common reader (ack-overridable
+  # for legit non-secret reads via SECRET_GUARD_ACK_PATH). `grep` added here.
+  '(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)[[:space:]]+[^|]*(\.bashrc|\.bash_profile|\.bash_login|\.zshrc|\.zprofile|\.profile|\.bash_aliases|/etc/environment|/etc/profile)(\b|/|$|[[:space:]])'
+  'ssh[^|]*(cat|grep|head|tail|less|more|strings|awk)[^|]*(\.bashrc|\.bash_profile|\.zshrc|\.profile|/etc/environment|/etc/profile)'
+
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
   '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/(var/)?run/secrets/'
