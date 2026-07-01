@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.50.2] - 2026-07-01
+
+### Fixed: secret-guard 拦截 shell rc / login-env 文件读 (grep 缺口) — token 泄露事件根治
+
+2026-07-01 Aether 凭据轮换中,AI 为诊断执行 `grep FORGEJO_TOKEN ~/.bashrc`,把刚轮换出的新 token 明文打进 tool output → 当场泄露、被迫二次轮换。双重缺口:(1) `grep` 不在任何 reader alternation 里(只有 cat/head/tail/...);(2) `.bashrc`/`.profile`/`.zshrc`/`/etc/environment` 等 login-env 文件不在 secret-bearing 文件列表(常存 `export SECRET=` 行)。
+
+- **PreToolUse `secret-guard.sh`**: 新增 pattern,`(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)` 读 `.bashrc`/`.bash_profile`/`.zshrc`/`.zprofile`/`.profile`/`.bash_aliases`/`/etc/environment`//`/etc/profile` → BLOCK(`SECRET_GUARD_ACK_PATH` 可覆盖)+ ssh-wrapped 变体。`grep` 首次进 reader 集(此前完全缺失)。
+- **回归**: 254 → **260 PASS**(6 新用例);benign 非-rc 读不误伤(`about-bashrc.md` 无点不匹配)。
+- **已知待办**: PostToolUse `secret-scan.sh` 的 output redaction 在当前 Claude Code 版本**不生效**(实测 `sk-ant-fake` 假密钥原样透出;CC 不认 PostToolUse stdout content-mutation)→ 分层防御第二层塌,PreToolUse 是唯一可靠防线。跟踪 [aria-plugin #91](https://forgejo.10cg.pub/10CG/aria-plugin/issues/91)。
+
 ## [1.50.1] - 2026-06-26
 
 ### Changed: session-closer 触发消歧矩阵内联自包含 (第三方无需 standards 子模块)
