@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.51.0] - 2026-07-03
+
+### Changed: secret-scan 诚实降级 — PostToolUse redaction 撤宣称, 转 warn-only 检测器 (aria-plugin #91 A)
+
+`secret-scan.sh` (PostToolUse) 长期宣称"redact secret-shaped output before reaching LLM"。经 claude-code-guide 查官方 hooks-guide 坐实: PostToolUse **架构性无法** 改写已产生的 tool_response (line 891 "PostToolUse hooks can't undo actions since the tool has already executed"; 无 `updatedToolOutput`; `suppressOutput` 不影响 model 所见)。redaction 是空操作, 且多处文档/运行时输出的"REDACT"宣称会致 operator **过度信任**。
+
+- **`secret-scan.sh`**: 保留完整检测机器 (patterns + PEM 预扫 + 计数); 删死的 redact-reemit emit 路径; 命中改发 `hookSpecificOutput.additionalContext` (告知 Claude 按已泄露处理、勿复述) + `systemMessage` (提醒 operator 轮换) —— 二者为 CC 官方支持渠道; **不改写 tool_response**。运行时串 REDACTED→DETECTED, log tag `SCAN-REDACT`→`SCAN-DETECT`; 内部计数 sentinel 中性化 (`<secret-scan-counted:tag>`); scope-based 清全文 redact-design 残迹 (intensional, 排除 L124 input-parsing)。
+- **cross-repo 文档诚实化**: `aria/README.md` + `README.zh.md` (L33/L153/L154) + `standards/conventions/secret-hygiene.md` (§5.1 表格 + §5.2 exit semantics 撤"tool_response 已被改写"字面假声明 + 44→49 cases) + `shell-jq-crlf-hygiene.md` L14 —— 全撤"REDACT/output 兜底"宣称, 明确 secret-scan = detect+warn, **唯一可靠层 = PreToolUse `secret-guard`**。
+- **测试**: `secret-scan.test.sh` 47→**49 PASS** (断言 redacted-output→warning-emitted; content-fidelity 测试重构非空转 [结构性缺席 tool_response + CR 检测]; 新增 exit-0-on-match + jq-missing)。secret-guard.sh (part①) 零改动, 260 回归绿。
+- **防御反馈闭环** (检测→记录→反哺 PreToolUse) 拆独立 cycle [aria-plugin #92]。
+- Rule #6: hook (非 Skill) 用 deterministic 回归 substitute。post_spec **R4 3/3 PASS CONVERGED** (轨迹 R1→R2→R3→R4 = 3→2→1→0 REVISE)。DEC-20260703-001。
+
 ## [1.50.2] - 2026-07-01
 
 ### Fixed: secret-guard 拦截 shell rc / login-env 文件读 (grep 缺口) — token 泄露事件根治

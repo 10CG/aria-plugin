@@ -2,7 +2,7 @@
 
 # Aria Plugin
 
-> **Version**: 1.50.2 | **Released**: 2026-07-01
+> **Version**: 1.51.0 | **Released**: 2026-07-03
 >
 > AI-DDD methodology plugin for Claude Code — 35 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 
@@ -30,7 +30,7 @@
 | `PreToolUse` | Write\|Edit\|NotebookEdit | handoff-location-guard.sh | Rule #9 L1 — block writes to `.aria/handoff/*.md` |
 | `PreToolUse` | Bash | **secret-guard.sh** | Rule #7 Layer 2 — block raw secret reads (cmd pattern scan), v1.24.0+ |
 | `PreToolUse` | Read\|Edit\|Write\|MultiEdit | **secret-guard.sh** | Rule #7 Layer 2 — block secret-bearing file paths (.env, id_rsa, etc.), v1.24.0+ |
-| `PostToolUse` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — REDACT secret-shaped output before reaching LLM context, v1.24.0+ |
+| `PostToolUse` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — detect secret-shaped output + warn (additionalContext/systemMessage); cannot redact (PostToolUse architectural limit), real defense = PreToolUse secret-guard, v1.24.0+ |
 
 **Disable Hooks**:
 ```bash
@@ -150,8 +150,9 @@ After installation, hooks fire automatically:
 # PreToolUse Read|Edit|Write|MultiEdit — block secret-bearing file paths (v1.24.0+)
 # → e.g. reading .env / id_rsa / .pem / .aws/credentials / .kube/config → BLOCKED
 
-# PostToolUse * — scan output for secret-shaped content, REDACT before LLM (v1.24.0+)
-# → warn-only (exit 0 always); replaces secret values in tool_response
+# PostToolUse * — scan output for secret-shaped content, DETECT + warn (v1.24.0+)
+# → warn-only (exit 0 always); detects + warns via additionalContext/systemMessage,
+#   does NOT rewrite tool_response (PostToolUse cannot redact — real defense = PreToolUse)
 
 # Diagnose install state:
 bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh
