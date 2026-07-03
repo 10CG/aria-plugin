@@ -30,7 +30,7 @@
 | `PreToolUse` | Write\|Edit\|NotebookEdit | handoff-location-guard.sh | Rule #9 L1 — 阻断写入 `.aria/handoff/*.md` |
 | `PreToolUse` | Bash | **secret-guard.sh** | Rule #7 Layer 2 — 阻断 raw secret 读取（命令模式扫描），v1.24.0+ |
 | `PreToolUse` | Read\|Edit\|Write\|MultiEdit | **secret-guard.sh** | Rule #7 Layer 2 — 阻断含 secret 的文件路径（.env、id_rsa 等），v1.24.0+ |
-| `PostToolUse` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — 在输出进入 LLM 上下文前 REDACT secret 形态内容，v1.24.0+ |
+| `PostToolUse` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — 检测 secret 形态输出 + 告警（additionalContext/systemMessage）；无法 redact（PostToolUse 架构限制），真实防线 = PreToolUse secret-guard，v1.24.0+ |
 
 **禁用 Hooks**：
 ```bash
@@ -150,8 +150,9 @@ export ARIA_HOOKS_DISABLED=true
 # PreToolUse Read|Edit|Write|MultiEdit — 阻断含 secret 的文件路径 (v1.24.0+)
 # → 如读取 .env / id_rsa / .pem / .aws/credentials / .kube/config → BLOCKED
 
-# PostToolUse * — 扫描输出中的 secret 形态内容, 进 LLM 前 REDACT (v1.24.0+)
-# → warn-only (始终 exit 0); 替换 tool_response 中的 secret 值
+# PostToolUse * — 扫描输出中的 secret 形态内容, 检测 + 告警 (v1.24.0+)
+# → warn-only (始终 exit 0); 经 additionalContext/systemMessage 检测 + 告警,
+#   不改写 tool_response (PostToolUse 无法 redact — 真实防线 = PreToolUse)
 
 # 诊断安装状态:
 bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh

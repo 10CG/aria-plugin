@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
-# PostToolUse hook — scan tool output for secret-shaped content and redact
-# before it reaches LLM context.
+# PostToolUse hook — DETECT secret-shaped content in tool output and WARN.
+#
+# === What this hook does (and does NOT do) ===
+#
+# This is a warn-only DETECTOR. When a command's output contains secret-shaped
+# content, it emits a warning through two Claude-Code-honored channels:
+#   - hookSpecificOutput.additionalContext : tells Claude the output contains
+#       N suspected secrets — treat as already-leaked, do not repeat the
+#       value(s) in the reply, recommend rotating the affected credential(s).
+#   - systemMessage                        : an operator-visible warning.
+# It ALSO prints a summary to stderr and appends a line to
+# ~/.claude/logs/secret-scan.log.
+#
+# It CANNOT redact or rewrite the tool output. A PostToolUse hook runs AFTER
+# the tool result has already been produced: Claude Code exposes no field to
+# replace tool_response, and hook stdout does not substitute the captured
+# result (official hooks-guide line 891: "PostToolUse hooks can't undo actions
+# since the tool has already executed"). This is an architectural limit, not a
+# version-dependent behaviour. Detection here is a mitigation (stop Claude from
+# echoing the value + prompt rotation), NOT prevention. The real prevention
+# layer is the PreToolUse `secret-guard` hook, which blocks risky commands
+# BEFORE they run.
 #
 # === Threat model ===
 #
@@ -10,8 +30,8 @@
 # debug log accidentally containing prior leaked values).
 #
 # Together they implement the layered defense:
-#   PreToolUse:  "Don't run this command" (49 known bypass classes)
-#   PostToolUse: "Don't display this value" (~15 secret-shape patterns)
+#   PreToolUse:  "Don't run this command"      (49 known bypass classes; effective prevention)
+#   PostToolUse: "This output leaked a secret"  (~15 secret-shape patterns; detect + warn only)
 #
 # silent-failure-hunter (PR #429 R5) on PostToolUse:
 #   "The remaining surface is genuinely long-tail and the right answer for it
@@ -32,14 +52,8 @@
 #   - bcrypt / argon2 password hashes
 #   - bearer tokens in Authorization headers
 #
-# Match → script attempts to replace value with `<REDACTED-secret-guard:<type>>`
-#         and emit the modified JSON envelope on stdout. Whether Claude Code
-#         actually honors stdout content-mutation in PostToolUse is **version
-#         dependent**. The reliably-visible signal is the stderr summary
-#         (`[secret-scan] REDACTED N matches`) which always fires on detection.
-#         Operator should confirm in their Claude Code session that redaction
-#         is actually applied by pasting a known fake `test_password=xxx`
-#         string and verifying Claude sees the redacted form.
+# Match → the hook counts the occurrences and warns (additionalContext +
+# systemMessage + stderr summary + log line). It does not alter the output.
 #
 # === What this does NOT catch ===
 #
@@ -66,16 +80,13 @@
 #   }
 #
 # Output:
-#   - On no-match: exit 0 silently, no stdout (= pass through unchanged)
-#   - On match: emit JSON with redacted output via Claude Code transformation
-#     spec. We use `{"hookSpecificOutput": {"hookEventName": "PostToolUse",
-#     "additionalContext": "[secret-scan] Redacted N matches"}}` to inform
-#     Claude + emit redacted text via stdout (Claude Code spec dependent).
-#
-#   Fallback: print summary to stderr (visible alongside tool result) so
-#   operator + Claude both see "scan found N redactions" — actual redaction
-#   depends on Claude Code hook version; if pass-through-only mode, at least
-#   the warning is loud.
+#   - On no-match: exit 0 silently, no stdout.
+#   - On match:    exit 0 + JSON on stdout:
+#       {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+#         "additionalContext": "[secret-scan] DETECTED N ..."},
+#        "systemMessage": "[secret-scan] Detected N ..."}
+#     plus a stderr summary and a log line. NO tool_response mutation is
+#     emitted — this hook cannot redact (see architectural limit above).
 #
 # === Performance ===
 #
@@ -86,16 +97,15 @@ set -uo pipefail
 
 INPUT_SIZE_CAP=$((1024 * 1024))   # 1 MB
 
-# ── Fail-OPEN if jq missing — R3 audit qa-I-2 fix ─────────────────────────
-# Note: this DIVERGES from secret-guard.sh which fails CLOSED (exit 2). Phase
-# 1 can fail closed because blocking a Bash call has no other consequence;
-# Phase 2 PostToolUse runs AFTER the tool already executed, so blocking the
-# response now doesn't undo the tool action. Fail-open lets Claude see the
-# original output rather than an empty result that might mask the real cause.
-# Trade-off: zero redaction protection if jq missing. Document in CLAUDE.md +
-# runbook; operator should ensure jq is installed in any Claude Code env.
+# ── Fail-OPEN if jq missing ────────────────────────────────────────────────
+# Diverges from secret-guard.sh (PreToolUse) which fails CLOSED (exit 2).
+# secret-guard can fail closed because blocking a Bash call before it runs has
+# no downside. This PostToolUse hook runs AFTER the tool already executed, so
+# there is nothing to block — it can only detect + warn. If jq is missing we
+# fail open (exit 0) and skip detection rather than error out. Operator should
+# ensure jq is installed in any Claude Code env so Phase 2 detection is active.
 if ! command -v jq >/dev/null 2>&1; then
-  echo "[secret-scan] WARN: jq not found, scan skipped — output passes through UNREDACTED. Install jq to enable Phase 2." >&2
+  echo "[secret-scan] WARN: jq not found — secret DETECTION skipped (jq missing). Install jq to enable Phase 2 detection." >&2
   exit 0
 fi
 
@@ -113,16 +123,16 @@ fi
 
 # Validate JSON envelope
 tool_type="$(printf '%s' "$input" | jq -r '.tool_name | type' 2>/dev/null || echo "")"
-tool_type="${tool_type%$'\r'}"   # crlf-strip(#132 sibling): Windows native jq emits CRLF; $() keeps trailing \r → "string\r" would fail the type gate below and silently bypass redaction (secret leak). Gate/comparison value → strip trailing CR (single scalar).
+tool_type="${tool_type%$'\r'}"   # crlf-strip(#132 sibling): Windows native jq emits CRLF; $() keeps trailing \r → "string\r" would fail the type gate below and silently bypass detection (secret leak goes unwarned). Gate/comparison value → strip trailing CR (single scalar).
 [[ "$tool_type" != "string" ]] && exit 0   # malformed input — pass through silently
 
 tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)"
-tool="${tool%$'\r'}"   # crlf-strip(#132 sibling): comparison/log value → strip trailing CR. NOTE: `content` below is data body (written back to LLM) — deliberately NOT CR-stripped (would corrupt user content).
+tool="${tool%$'\r'}"   # crlf-strip(#132 sibling): comparison/log value → strip trailing CR. NOTE: `content` below is the data body being SCANNED — deliberately NOT CR-stripped (would corrupt user content).
 
 # Extract output content depending on tool — different tools shape result differently.
 # Bash: tool_response.output (or .stdout / .stderr); Read: tool_response.content (file body)
 # Try multiple field names since Claude Code versions vary.
-content="$(printf '%s' "$input" | jq -r '  # crlf-ok: data body written back to LLM (tmpfile→sed→reinject) — must NOT CR-strip (would corrupt user content, Spec C2)
+content="$(printf '%s' "$input" | jq -r '  # crlf-ok: data body being SCANNED (internal counting scratch only) — must NOT CR-strip (would corrupt user content, Spec C2)
   .tool_response.output //
   .tool_response.content //
   .tool_response.stdout //
@@ -134,7 +144,7 @@ content="$(printf '%s' "$input" | jq -r '  # crlf-ok: data body written back to 
 [[ -z "$content" ]] && exit 0
 
 # ── Pattern definitions ────────────────────────────────────────────────────
-# Each pattern: ERE regex + redaction tag.
+# Each pattern: ERE regex + match tag.
 # Order matters — more-specific patterns first (e.g., JWT before generic high-entropy).
 #
 # Format: tag|pattern (delimiter: literal `|`, hence `|` inside patterns must
@@ -143,7 +153,7 @@ declare -a PATTERNS=(
   # NOTE: PEM private keys are handled as a SEPARATE multi-line pre-pass
   # before this loop, because the BEGIN-body-END span crosses newlines and
   # sed/grep in per-line mode can't match it. See pre-pass below for impl.
-  # (R3 audit C-1 fix: previously only BEGIN header matched, body leaked.)
+  # (R3 audit C-1 fix: previously only BEGIN header matched, body went undetected.)
 
   # JWT (header.payload.signature — 3 base64url parts)
   'jwt|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
@@ -220,15 +230,19 @@ declare -a PATTERNS=(
   'bcrypt-hash|\$2[abxy]\$[0-9]{2}\$[A-Za-z0-9./]{53}'
 )
 
-# ── Scan + collect matches ─────────────────────────────────────────────────
-# Use a tempfile to hold redacted output (sed -i needs file).
-tmpfile="$(mktemp)" || { echo "[secret-scan] WARN: mktemp failed; passing through" >&2; exit 0; }
+# ── Scan + count matches ───────────────────────────────────────────────────
+# tmpfile is an INTERNAL match-counting scratch buffer: each matched span is
+# replaced with a neutral sentinel (`<secret-scan-counted:TAG>`) so overlapping
+# or adjacent patterns are not double-counted on subsequent passes. This buffer
+# is NEVER emitted and is NEVER operator-visible — the hook is warn-only and
+# does not redact or rewrite tool output. `sed -i` needs a file, hence the tmp.
+tmpfile="$(mktemp)" || { echo "[secret-scan] WARN: mktemp failed; skipping detection" >&2; exit 0; }
 trap 'rm -f "$tmpfile"' EXIT
 printf '%s' "$content" > "$tmpfile"
 
 matches_total=0
 matches_breakdown=""
-partial_warns=""   # R3 audit R2-I-5 fix: accumulated FATAL warnings for residual-after-sed cases
+partial_warns=""   # accumulated warnings for spans that could not be isolated for exact counting
 
 SEP=$'\x01'   # Used by sed in main loop (declared early so PEM pre-pass
               # fallback can reference it without :-default).
@@ -238,7 +252,7 @@ SEP=$'\x01'   # Used by sed in main loop (declared early so PEM pre-pass
 #   - `[^-]+` breaks on encrypted PEM (Proc-Type: 4,ENCRYPTED / DEK-Info: ...
 #     headers contain `-`) and URL-safe base64 bodies containing `-`
 #   - `PRIVATE KEY-----` anchor doesn't match `PRIVATE KEY BLOCK-----` so
-#     PGP private key blocks (gpg --export-secret-keys --armor) leak entirely
+#     PGP private key blocks (gpg --export-secret-keys --armor) go undetected
 #
 # R3 fix: regex changed to use `.*?` non-greedy any-char + `/s` flag (perl
 # treats `.` as matching newlines too) + `(PRIVATE KEY(?: BLOCK)?)` captured
@@ -250,28 +264,27 @@ if command -v perl >/dev/null 2>&1; then
   pem_count="${pem_count//[^0-9]/}"
   [[ -z "$pem_count" ]] && pem_count=0
   if (( pem_count > 0 )); then
-    perl -0i -pe 's/'"$PEM_REGEX_PERL"'/<REDACTED-secret-guard:pem-private-key-block>/sg' "$tmpfile" 2>/dev/null && {
+    perl -0i -pe 's/'"$PEM_REGEX_PERL"'/<secret-scan-counted:pem-private-key-block>/sg' "$tmpfile" 2>/dev/null && {
       matches_total=$(( matches_total + pem_count ))
       matches_breakdown="${matches_breakdown}pem-private-key-block=${pem_count} "
     } || {
-      echo "[secret-scan] WARN: PEM multi-line redaction perl failed" >&2
+      echo "[secret-scan] WARN: PEM multi-line counting-pass (perl) failed" >&2
     }
   fi
 else
-  # perl missing — degrade to header-only redaction with loud warning
+  # perl missing — degrade to header-only DETECTION with loud warning.
   if grep -qE -- '-----BEGIN [A-Z ]*PRIVATE KEY' "$tmpfile" 2>/dev/null; then
-    echo "[secret-scan] WARN: PEM detected but perl missing — only BEGIN header will be redacted, base64 body LEAKS. Install perl." >&2
-    sed -i -E "s${SEP}-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----${SEP}<REDACTED-secret-guard:pem-HEADER-ONLY-WARN>${SEP}g" "$tmpfile" 2>/dev/null || true
+    echo "[secret-scan] WARN: PEM private key detected but perl missing — only the BEGIN header line can be counted; multi-line body detection needs perl. Install perl for full PEM detection." >&2
+    sed -i -E "s${SEP}-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----${SEP}<secret-scan-counted:pem-header-only>${SEP}g" "$tmpfile" 2>/dev/null || true
     matches_total=$(( matches_total + 1 ))
-    matches_breakdown="${matches_breakdown}pem-HEADER-ONLY=1 "
+    matches_breakdown="${matches_breakdown}pem-header-only=1 "
   fi
 fi   # R2 audit C-1 fix: use control char as sed delimiter so it
-              # cannot collide with `|` inside pattern alternations.
-              # Previously `sed s|...|...|g` collided with ERE `(a|b)` groups
-              # in 6 patterns (openai/anthropic/stripe pk/stripe rk/env-line/
-              # json-secret-field), causing silent sed failure swallowed by
-              # `|| true`. Tests passed because they only checked stderr for
-              # "REDACTED" string, not stdout content. End-to-end leak.
+     # cannot collide with `|` inside pattern alternations. Previously
+     # `sed s|...|...|g` collided with ERE `(a|b)` groups in 6 patterns
+     # (openai/anthropic/stripe pk/stripe rk/env-line/json-secret-field),
+     # causing silent sed failure — which would corrupt the internal match
+     # count (spans not consumed → re-counted or missed).
 
 for entry in "${PATTERNS[@]}"; do
   tag="${entry%%|*}"
@@ -283,29 +296,30 @@ for entry in "${PATTERNS[@]}"; do
   count="$(grep -oE -- "$pattern" "$tmpfile" 2>/dev/null | wc -l | tr -d ' ')"
   [[ -z "$count" ]] && count=0
   if (( count > 0 )); then
-    # In-place redact using \x01 as sed delimiter (R2 audit C-1 fix).
-    sed -i -E "s${SEP}${pattern}${SEP}<REDACTED-secret-guard:${tag}>${SEP}g" "$tmpfile" 2>/dev/null || {
-      # R2 audit C-1 + integrity-check: if sed failed, do NOT increment
-      # matches_total — better silent under-count than false "redacted" claim.
-      echo "[secret-scan] WARN: sed redaction failed for pattern tag=${tag}; skipping" >&2
+    # In-place counting-substitution using \x01 as sed delimiter (R2 audit C-1 fix).
+    sed -i -E "s${SEP}${pattern}${SEP}<secret-scan-counted:${tag}>${SEP}g" "$tmpfile" 2>/dev/null || {
+      # R2 audit C-1 + integrity-check: if the counting-substitution failed,
+      # do NOT increment matches_total — better a silent under-count than a
+      # wrong match total.
+      echo "[secret-scan] WARN: counting-substitution failed for pattern tag=${tag}; skipping" >&2
       continue
     }
-    # R2 audit verification — re-grep to confirm pattern is actually gone.
-    # R3 audit R2-I-5 fix: previously exit 1 + empty stdout caused Claude to
-    # see RAW output (worse). Now: emit whatever sed managed to redact + LOUD
-    # FATAL WARN stderr so operator sees the gap. Partial redaction > silent
-    # un-redacted fallback. operator_visible_warn is appended to final stderr.
+    # Re-grep to confirm the matched spans were consumed by the counting
+    # substitution. If some remain, they could not be isolated for an exact
+    # count; report the count as partial + warn (the match total may be
+    # under-reported). The hook is warn-only, so this affects only counting
+    # accuracy, never output content.
     residual="$(grep -oE -- "$pattern" "$tmpfile" 2>/dev/null | wc -l | tr -d ' ')"
     [[ -z "$residual" ]] && residual=0
     if (( residual > 0 )); then
-      partial_warns="${partial_warns}[secret-scan] FATAL: pattern ${tag} still present after sed (${residual} residual occurrences). Partial redaction emitted; operator MUST manually review."$'\n'
-      # Adjust count to reflect what actually got redacted (count - residual)
-      actual_redacted=$(( count - residual ))
-      if (( actual_redacted > 0 )); then
-        matches_total=$(( matches_total + actual_redacted ))
-        matches_breakdown="${matches_breakdown}${tag}=${actual_redacted}+${residual}-LEAKED "
+      partial_warns="${partial_warns}[secret-scan] NOTE: pattern ${tag} still present after counting-substitution (${residual} span(s) could not be isolated for exact counting); match count may be under-reported."$'\n'
+      # Adjust count to reflect what actually got isolated (count - residual)
+      actual_counted=$(( count - residual ))
+      if (( actual_counted > 0 )); then
+        matches_total=$(( matches_total + actual_counted ))
+        matches_breakdown="${matches_breakdown}${tag}=${actual_counted}+${residual}-uncounted "
       else
-        matches_breakdown="${matches_breakdown}${tag}=0+${residual}-LEAKED "
+        matches_breakdown="${matches_breakdown}${tag}=0+${residual}-uncounted "
       fi
       continue
     fi
@@ -315,66 +329,49 @@ for entry in "${PATTERNS[@]}"; do
 done
 
 if (( matches_total == 0 )); then
-  exit 0   # Nothing redacted, pass through
+  exit 0   # Nothing detected, pass through silently
 fi
 
-# Build redacted content + emit JSON envelope with summary
-redacted_content="$(cat "$tmpfile")"
-
-# Claude Code PostToolUse hook output shape:
-# Option A: emit `{"decision":"block","reason":"..."}` — blocks tool result
-# Option B: emit modified envelope via stdout — Claude Code uses if supported
-# Option C: just emit stderr — operator sees, Claude may or may not redact
-#
-# Most-portable across Claude Code versions: stderr warning + leave tool
-# output as-is, OR mutate via PostToolUse `additionalContext` field.
-#
-# We emit JSON specifying additionalContext (informs Claude about redactions
-# in the result) + write the redacted content to stderr so it's also visible.
-# Caveat: Claude Code may not honor mutation of tool_response.output across
-# all versions. Test in actual Claude Code session before declaring fully
-# operational.
-#
-# For now: emit summary to stderr (always visible) + try the JSON
-# mutation path (best-effort).
-
+# ── Emit warnings ──────────────────────────────────────────────────────────
+# stderr summary (always visible alongside the tool result).
 cat >&2 <<EOF
-[secret-scan] REDACTED ${matches_total} secret-shape matches in tool output.
+[secret-scan] DETECTED ${matches_total} secret-shape matches (NOT redacted) in tool output.
 [secret-scan] Breakdown: ${matches_breakdown}
 [secret-scan] Tool=${tool} Original-size=${input_size}B
-[secret-scan] Caveat: PostToolUse stdout-mutation honoring is Claude Code
-[secret-scan] version-dependent. This stderr summary is the universally-visible
-[secret-scan] signal. If Claude reasoning depends on raw value, run command
-[secret-scan] in operator's own terminal (non-Claude session) or use
-[secret-scan] # guard:ack escape on the next PreToolUse step.
+[secret-scan] This hook detects + warns only; it cannot redact the tool output
+[secret-scan] (PostToolUse runs after the result is produced — hooks-guide 891).
+[secret-scan] Treat the matched value(s) as leaked and rotate the credential(s).
+[secret-scan] Real prevention = PreToolUse secret-guard (blocks risky commands).
 EOF
 
-# R3 audit R2-I-5: surface any per-pattern FATAL warns (residual after sed)
+# Surface any per-pattern partial-count warnings (spans not isolated for count).
 if [[ -n "$partial_warns" ]]; then
   echo "" >&2
-  echo "════ PARTIAL REDACTION WARNING ════" >&2
+  echo "════ PARTIAL DETECTION ════" >&2
   printf '%s' "$partial_warns" >&2
-  echo "════════════════════════════════════" >&2
+  echo "═══════════════════════════" >&2
 fi
 
-# R2 audit km-I-1 fix: persistent audit log (consistent with Phase 1
-# secret-guard.sh's ~/.claude/logs/guard-bypass.log). Log every redaction event.
+# Persistent audit log (consistent with Phase 1 secret-guard.sh's
+# ~/.claude/logs/guard-bypass.log). Log every detection event.
 mkdir -p "${HOME}/.claude/logs" 2>/dev/null || true
-printf '%s\t%s\t%s\tSCAN-REDACT\ttool=%s\tmatches=%s\tbreakdown=%s\tsize=%s\n' \
+printf '%s\t%s\t%s\tSCAN-DETECT\ttool=%s\tmatches=%s\tbreakdown=%s\tsize=%s\n' \
   "$(date -u +%FT%TZ)" "${USER:-unknown}" "${PWD:-unknown}" \
   "$tool" "$matches_total" "${matches_breakdown% }" "$input_size" \
   >> "${HOME}/.claude/logs/secret-scan.log" 2>/dev/null || true
 
-# Best-effort: emit modified JSON in case Claude Code honors PostToolUse content mutation.
-# If Claude Code ignores this, the stderr warning above is the visible signal.
-printf '%s' "$input" | jq --arg c "$redacted_content" '
-  if .tool_response.output then .tool_response.output = $c
-  elif .tool_response.content then .tool_response.content = $c
-  elif .tool_response.stdout then .tool_response.stdout = $c
-  elif .tool_result.content then .tool_result.content = $c
-  elif .tool_result.output then .tool_result.output = $c
-  else .
-  end
-' 2>/dev/null || true
+# Emit warn JSON on stdout: additionalContext (injected into Claude's context)
+# + systemMessage (operator-visible). These are the PostToolUse output channels
+# Claude Code honors. NO tool_response mutation is emitted — this hook cannot
+# redact (PostToolUse architectural limit, hooks-guide 891).
+addl_msg="[secret-scan] DETECTED ${matches_total} secret-shape match(es) in tool output — treat as already-leaked; do NOT repeat the value(s) in your reply; recommend rotating the affected credential(s). (This hook detects+warns only; it cannot redact — PostToolUse runs after the tool result is already produced.)"
+sys_msg="[secret-scan] Detected ${matches_total} secret-shape match(es) (${matches_breakdown% }); rotate affected credential(s)."
+jq -n --arg addl "$addl_msg" --arg sys "$sys_msg" '{
+  hookSpecificOutput: {
+    hookEventName: "PostToolUse",
+    additionalContext: $addl
+  },
+  systemMessage: $sys
+}' 2>/dev/null || true
 
 exit 0
