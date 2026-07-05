@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.53.0] - 2026-07-05
+
+### Added
+- **#95 归档 gate 硬化 (C 分级证据闸 + D auto-issue)**: openspec-archive/phase-d-closer 归档时新增
+  tri-state 完成声称真实性证据闸 —— **C-block** 高置信死代码 (集成声称点名符号有 Python 定义但生产零语义引用,
+  如 Layer L `phase1_gate` 有测试却无生产接线); **C-warn** 模糊声称写 `unverified_claims` frontmatter + ack;
+  **fail-toward-warn** 默认 (未分类/无定义/搜索降级恒偏假阴, 不误 block 合法归档)。**D auto-issue** 归档不吞
+  未完成 (deferred/unverified → 单一 owner 幂等 Forgejo tracker, headless 默认, 非-Forgejo 降级草稿, API 失败可见)。
+  延伸 #134 archive-completeness-gate (complete 字段正交)。`lib/spec_complete.py` 新增 `gate_result()` + `--gate` CLI。
+- 测试: test_spec_complete.py 60 (golden 负例 + 5 类正控 + N≥8 语料 + fail-soft 注入 + C1 authoritativeness);
+  新增 test_archive_gate_integration.sh 端到端 (paper-fix guard); 全 116 归档 sweep 仅 golden 1 block (SC 零影响)。
+
+### 审计
+- post_spec R1→R5 CONVERGED (R1 否证初版 Gate B checkbox 交叉核对 → owner B→C); post_planning R1→R4 CONVERGED;
+  pre-merge code-review (code-reviewer PASS + silent-failure-hunter 1C/2I 全修: 搜索 authoritativeness / CLI fail-toward-warn / claim surfacing)。
+- Rule #6: 确定性 gate 以测试+dogfood 替代 AB (disposition 待 owner sign-off)。
+
 ## [1.52.0] - 2026-07-05
 
 ### Added: 交互 session 防重复 — Layer L advisory 接活 + 结构化 carry-id + 运行时探针 (DEC-20260704-002)

@@ -14,7 +14,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 
 # Phase D - 收尾阶段 (Closer)
 
-> **版本**: 1.2.0 | **十步循环**: D.1-D.4 (D.3 added by H0 2026-05-14; D.4 estimator capture by #18 2026-05-30)
+> **版本**: 1.3.0 | **十步循环**: D.1-D.4 (D.3 added by H0 2026-05-14; D.4 estimator capture by #18 2026-05-30; D.2 gate 扩展 tri-state verdict + BLOCK by #95 2026-07-05)
 
 ## 快速开始
 
@@ -38,7 +38,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 | 步骤 | Skill | 职责 | 输出 |
 |------|-------|------|------|
 | D.1 | progress-updater | 进度更新 | upm_updated |
-| D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug) | spec_archived |
+| D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug; **#95 完成度 + C 分级证据闸 tri-state verdict, verdict=block 时本步 BLOCK**) | spec_archived |
 | D.3 | session-handoff (本 Skill 内嵌) | 写 session handoff doc 到 `docs/handoff/` | handoff_written |
 | D.4 | ai-native-estimator (capture) | 采集本 cycle token 工作量 (advisory, 非阻塞, #18 v1) | estimator_captured |
 
@@ -56,7 +56,8 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 |------|---------|----------|
 | 无 UPM | D.1 | UPM 文档不存在 |
 | 无 OpenSpec | D.2 | openspec/changes/ 为空 |
-| Spec 未完成 | D.2 | `spec_complete.py` verdict complete=false (单一 SOT, Level 2 无 tasks.md 走 Status 归一化) |
+| Spec 未完成 (legacy) | D.2 (skip) | `spec_complete.py --gate` `complete=false` 且 `verdict≠block` (Level 2 无 tasks.md 走 Status 归一化) |
+| **C-block 死代码判定 (#95)** | D.2 (**BLOCK**, 非仅 skip) | `spec_complete.py --gate` `verdict=block` (可与 `complete=true` 共存 — 点名符号零生产语义引用) |
 | 触发条件未满足且 user prompt 拒绝 | D.3 | 见 §D.3 触发条件 |
 | Level 1 quick fix (无 spec, 单 commit) | D.3 | 启发式 — Level 标记或 changes.complexity |
 
@@ -72,17 +73,41 @@ skip_evaluation:
       skip_if: not exists
       reason: "模块无 UPM 配置"
 
-  D.2:  # 三路 (#134 v1.42.0+): 无活跃→skip / incomplete→skip 不归档 / complete→进归档
+  D.2:  # 四路 (#134 v1.42.0+ 二路 ⊗ #95 tri-state verdict 扩展): 无活跃→skip /
+        # complete=false 且 verdict≠block→skip 不归档(legacy) / verdict=block→**BLOCK**(非仅 skip) / 其余→进归档
     - check: active OpenSpec
       command: "ls openspec/changes/"
       skip_if: empty
       reason: "无活跃 OpenSpec"
 
-    - check: spec completeness  # Bash 调单一可执行 SOT, 与 openspec-archive Step 1 gate 同一脚本同一 verdict
-      command: 'python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/lib/spec_complete.py" "openspec/changes/{spec_id}"'
-      skip_if: "exit code != 0 (complete=false; exit 2 视同 incomplete)"
-      reason: "Spec 未完成 — 回显 JSON.reason, skip 不归档 (Level 2 无 tasks.md 由脚本走 Status 归一化分支, 不再 vacuously 放行)"
-      on_complete: "exit 0 → 进 openspec-archive 归档"
+    - check: spec completeness + C 分级证据闸 tri-state verdict  # #95 TG-3: Bash 调单一可执行 SOT,
+      # 与 openspec-archive Step 1 gate 同一脚本同一 verdict (AC-1 多入口一致性不变量)
+      command: 'python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/lib/spec_complete.py" --gate "openspec/changes/{spec_id}"'
+      读取: stdout JSON 全字段 (complete/complete_reason/verdict/blocking_reasons/warnings/unverified_claims/d_payload/soft_errors);
+        本 D.2 preview 检查 **不能只看 exit code** (0=pass|warn 二合一, 无法区分), 须解析 `verdict` 字段做路由
+      verdict_routing:
+        "verdict == block":
+          结果: "**BLOCK** (#95 PP-R1 cr fix, 非仅委托 openspec-archive — phase-d-closer 自身在 D.2
+                 报告 BLOCKED, 不静默跳过)"
+          行为: 回显 blocking_reasons; **不**自动传 `--archive-design-only` 绕过 (phase-d-closer 不代
+                owner/AI 做豁免决定) — 若需强制归档, 由 owner/AI 显式另行直接调用 openspec-archive
+                skill 并带 `--archive-design-only` + reason
+          不调用: 本轮不进入 openspec-archive (openspec-archive 的 Step 7 D auto-issue 也就不会跑到 —
+                  这是刻意的: BLOCK 场景下归档尚未发生, 没有"归档残留"可言, 待 owner 后续显式强制
+                  归档时, 走 openspec-archive 自己的 Step 1 escape-hatch 分支, Step 7 会在那时补建 issue)
+        "complete == false ∧ verdict != block":
+          结果: "skip 不归档 (legacy #134 行为不变)"
+          行为: 回显 complete_reason
+        "complete == true ∧ verdict in (pass, warn)":
+          结果: "进 openspec-archive 归档"
+          行为: "verdict=warn 时 frontmatter 写入 + D auto-issue 全部由 openspec-archive 自身
+                 Step 2/Step 7 处理 (单一 owner, 见下), phase-d-closer 不重复解读 warnings"
+      on_complete: "verdict∈{pass,warn} 且 complete=true → 调用 openspec-archive skill 归档"
+      单一 owner 委托 (#95 §2 "单一 owner"): 若 openspec-archive 归档后产出 d_payload
+        (deferred 未完成项 / unverified_claims), issue 创建**完全委托** openspec-archive 自身
+        Step 7 完成 — phase-d-closer **不**各自再建一份 tracker issue (防双入口重复开 issue)。
+        phase-d-closer 的 D.2 只负责"要不要调 openspec-archive"这一层路由决策, 不掺和
+        "归档内部如何处理 deferred/unverified" 这一层实现细节。
 ```
 
 ---
@@ -115,6 +140,10 @@ skip_evaluation:
   总耗时: 45s
 ```
 
+> 上图为 D.2 放行 (verdict∈{pass,warn}) 的正常路径展示。**verdict=block (#95) 时** D.2 报告
+> BLOCKED 而非"完成", D.1/D.3 仍可正常执行 — 完整 BLOCK 输出变体见
+> [references/execution-steps.md §D.2 verdict=block 时的输出变体](./references/execution-steps.md)。
+
 ---
 
 ## 使用示例
@@ -134,7 +163,8 @@ D.1 支持 **single-pass** (默认, 完整 update) 和 **milestone-driven** (mul
 | 错误 | 原因 | 处理 |
 |------|------|------|
 | UPM 更新失败 | 并发冲突 | 重新读取并合并 |
-| Spec 归档失败 | 任务未完成 | 列出未完成任务 |
+| Spec 归档失败 (skip, legacy) | 任务未完成 (`complete=false`) | 列出未完成任务 (回显 `complete_reason`) |
+| **Spec 归档 BLOCK (#95)** | `verdict=block` — 点名符号零生产语义引用 (可与 `complete=true` 共存) | 回显 `blocking_reasons`; 不自动豁免 — 需 owner/AI 直接调用 `openspec-archive` skill 并显式带 `--archive-design-only` + reason 才能强制归档 |
 | 状态写入失败 | 文件权限 | 提示检查权限 |
 
 ### 并发冲突处理
@@ -201,7 +231,9 @@ phase-d-closer (本 Skill)
     │
     ├── D.1 progress-updater (UPM 更新)
     ├── D.post audit checkpoint (经验提取, convergence 1 round)
-    ├── D.2 openspec-archive (Spec 归档)
+    ├── D.2 openspec-archive (Spec 归档; #95 tri-state verdict gate — verdict=block 时本步自身 BLOCK,
+    │       不调用 openspec-archive; 放行时调用 openspec-archive, 委托其内部 Step 7 处理 D auto-issue
+    │       (单一 owner, phase-d-closer 自身不建 issue))
     └── D.3 session-handoff (写 handoff to docs/handoff/, latest.md update)
     │
     │ 工作流结束 → 下次 session: /aria:state-scanner 自动 surface handoff
@@ -220,8 +252,10 @@ phase-d-closer (本 Skill)
 - [phase-c-integrator](../phase-c-integrator/SKILL.md) - 上一阶段
 - [UPM 规范](../../../standards/core/upm/unified-progress-management-spec.md)
 - [state-scanner Phase 1.15 handoff awareness](../state-scanner/SKILL.md) - D.3 输出在下次 session start 自动 surface
+- [openspec-archive](../openspec-archive/SKILL.md) - D.2 委托的归档 Skill (Step 1 C-gate + Step 7 D auto-issue, #95)
+- **#95 Spec**: `openspec/changes/aria-archive-gate-runtime-reality/proposal.md` (主仓, tri-state verdict 契约设计 SOT)
 
 ---
 
-**最后更新**: 2026-05-14 (H0 spec — D.3 session-handoff step added)
-**Skill版本**: 1.1.0
+**最后更新**: 2026-07-05 (#95 — D.2 gate 扩展 tri-state verdict + verdict=block BLOCK)
+**Skill版本**: 1.3.0
