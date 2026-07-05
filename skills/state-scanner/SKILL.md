@@ -125,11 +125,40 @@ scan.py 按顺序执行 15 个 collector 子阶段, 每个产出 snapshot 一个
 
 ---
 
-## Layer L Phase B 集成 (multi-terminal-coordination v1.22.x+)
+## Layer L Phase B 集成 (multi-terminal-coordination v1.22.x+; advisory 接活 DEC-20260704-002)
 
-P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。在 Phase 1 结束、Phase 2 推荐前, 若 `tracks_multibranch` 检测到 cross-owner collision, 阶段 2 推荐会触发 `phase1_gate` (急切认领闸门, **opt-in**, 默认关闭) — 9-step 序列含二次 git fetch / acquire_claim / heartbeat 设置 / 放行 Phase B。
+P2 Layer L 已 ship (TASK-010~022, 108 tests PASS)。**DEC-20260704-002 完成了母 spec 从未落地的 TASK-024 集成** —— `run_gate()` 从死代码 (零生产调用) 接活成 **advisory 认领**: AI 编排层 (本 skill 阶段 2 / Phase B-entry) 首次成为 `run_gate` 的调用者。
 
-**完整设计意图 (phase1_gate 触发条件 / acquire_claim+heartbeat+release 调用关系 / track_board+latest_md_writer 输出 / P3 TASK-024/025 worktree 触发设计)**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md)。
+### 编排契约 (AI 阶段 2 → Phase B-entry, 非 scan.py)
+
+**接线点 = AI 编排层, 不是 `scan.py`** (layer-l-integration.md:15 Design A: 闸门仅在用户确认进 Phase B 时调用, 不在只读 collector 内自动跑)。触发条件 (**opt-in**): `state_scanner.coordination.enabled == true` **且** `tracks_multibranch.collision.kind` 非空 (cross-owner / self_multi_container)。
+
+调用时序:
+```
+scan.py → snapshot (含 tracks_multibranch.collision.kind)
+  → 阶段 2 推荐: AI 读 collision.kind + 读最新 handoff §6 选定 carry-id (raw_track_id)
+  → 用户确认进入 Phase B (phase-b-developer B.1 / branch-manager)
+  → AI 编排层经 subprocess 调 phase1_gate CLI (Phase B 启动前, 对齐 :44):
+      python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py" \
+        --raw-track-id "<§6 选定 carry-id 原始串>" --phase B --mode advisory --repo-path "<repo root>"
+  → 解析 stdout JSON (GateResult projection); exit 0 = 可进 Phase B
+```
+
+- **carry-id 原始串直接传入** `--raw-track-id`; 归一 (`derive_track_id`) 在 `run_gate` 内部完成, 编排层不预归一 (R1-m6)。carry-id 来源 = handoff §6 结构化 `{id, desc}` (见 `standards/conventions/session-handoff.md §2.3`)。
+- **mode 由 `state_scanner.coordination.mode` 决定** (默认 `advisory`)。advisory = 放行 + 写推自己 claim + 返回 surface 告警 (advisory-over-hardlock); reconcile 仍是最终仲裁 (earliest claimed_at 胜)。
+- **CLI 是 advisory 设计**: 单次 JSON I/O 传不了活体 user_decision 回调; `mode=block` 经 CLI 退化为安全默认 abort (已知限制, 生产默认 advisory)。
+
+### JSON 消费 + surface 渲染 (阶段 2 推荐区)
+
+CLI 输出 `{outcome, proceed, track_id, error, own_claim, competing_winner, surface, push_success}`。渲染规则:
+- `proceed == true` (outcome ∈ passed / advisory_proceed / user_takeover / user_override_proceed) → 放行进 Phase B。
+- `surface != null` → 在推荐区渲染 🔴 告警行 (**按 `surface.kind` 分化, 不 blanket 静默** R2-Major-B):
+  - `kind == "occupied"` → 🔴 `surface.message` (含 `<owner/container> <age> 已认领 <carry-id>`), **回显 `surface.carry_id` 供逐字 copy** (R1-m5, 减少转录漂移)。
+  - `kind == "clock_skew"` → 🔴 `surface.message` (含 `max_clock_skew_seconds`) —— 最高风险路径, 提示查容器时钟同步; advisory **不吞** 此告警。
+  - `kind == "push_failed"` → 🔴 claim 已写本地未同步远端, reconcile 下次 fetch 仲裁。
+- `enabled == false` (默认) → **零调用** `run_gate` (向后兼容, 无 collision surface)。
+
+**完整设计意图 (phase1_gate 9-step 序列 / acquire_claim+heartbeat+release 调用关系 / advisory outcome 映射 / track_board+latest_md_writer 输出)**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md)。
 
 ---
 

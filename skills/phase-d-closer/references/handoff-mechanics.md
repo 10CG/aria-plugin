@@ -83,6 +83,14 @@ slug 规则 (优先级):
 
 ## 写后 frontmatter 自校验 (#137 v1.43.0+, latest.md 维护的前置)
 
+**`owner-container` 机械填, 勿手动组装** (DEC-20260704-002 §4, 病根 #3): 手填曾漂移出 6 种不一致值 (同一物理容器 3 种主串: `simonfishgit/dev-claude` / `simonfish/dev-claude` / 裸 `dev-claude`), 破坏 §2.3.5 cross-owner vs self-multi-container collision 分类 (看板把同一人误判成多 owner)。写 frontmatter 时逐字粘贴以下确定性输出 (复用 Layer L `identity.get_identity().owner_container`):
+
+```bash
+python3 aria/skills/session-closer/scripts/handoff_autofill.py --owner-container   # e.g. simonfish/bfe8285d
+```
+
+> best-effort: 命令失败 (空输出/exit 1) 时回退模板手填规则。若机械值是裸 uuid (`~/.aria/container-id` label 空), 可给该文件设人类 label 使值更可读 + 与历史一致 (owner env 动作)。
+
 handoff doc 写出后、进入下方 latest.md 维护**之前**, 机械验证 §2.3.1 frontmatter 5 字段齐全:
 
 ```bash

@@ -210,10 +210,34 @@ def enumerate_new_memory(memory_dir, since_epoch):
 
 # --- snapshot adapter + 编排 (R1 M-1: 解析编排层原在被弃薄入口 prose, 此处重建) -----
 
-def assemble_from_snapshot(snapshot, *, changes_dir=None, subagent_pending=None):
-    """从真 snapshot 组装 §7/§2/§5 机械结果。R1 M-1 重建的 adapter 层。
+def owner_container():
+    """机械 owner-container (frontmatter 用) — 替代 AI 手填 (DEC-20260704-002 §4,
+    病根 #3: 手填漂移出 6 种不一致值破坏 collision 分类)。
 
-    返回 {sync, unfinished, four_dim}。供 session-closer step0/3 机械兜底 + cross_check。
+    复用 Layer L 的 identity.get_identity().owner_container (state-scanner 兄弟 skill)。
+    best-effort: 任何失败返回 None, 调用方 (phase-d-closer D.3 / session-closer step4)
+    保留手填作 fallback。与本模块 advisory/缺字段不报错 哲学一致。
+    """
+    try:
+        import sys
+        from pathlib import Path
+
+        # state-scanner/lib 是兄弟 skill 的包; 加其 skill root 使 `from lib.identity` 解析。
+        _ss_root = str(Path(__file__).resolve().parents[2] / "state-scanner")
+        if _ss_root not in sys.path:
+            sys.path.insert(0, _ss_root)
+        from lib.identity import get_identity
+
+        ident = get_identity()
+        return ident.owner_container if ident is not None else None
+    except Exception:
+        return None
+
+
+def assemble_from_snapshot(snapshot, *, changes_dir=None, subagent_pending=None):
+    """从真 snapshot 组装 §7/§2/§5 机械结果 + frontmatter owner-container。R1 M-1 重建的 adapter 层。
+
+    返回 {sync, unfinished, four_dim, frontmatter}。供 session-closer step0/3 机械兜底 + cross_check。
     """
     snapshot = snapshot or {}
     sync_status = snapshot.get("sync_status") or {}
@@ -242,6 +266,7 @@ def assemble_from_snapshot(snapshot, *, changes_dir=None, subagent_pending=None)
             followups=followups, carry_forward=carry_forward,
             unchecked_tasks=unchecked, subagent_pending=subagent_pending),
         "four_dim": four_dim_status(snapshot, prd_exists=prd_exists),
+        "frontmatter": {"owner_container": owner_container()},  # 机械填, 替代手填 (§4)
     }
 
 
@@ -249,9 +274,20 @@ def main(argv=None):
     import argparse
     import json
     p = argparse.ArgumentParser(description="session-closer handoff autofill (mechanical backstop)")
-    p.add_argument("--snapshot-json", required=True, help="state-scanner snapshot path")
+    p.add_argument("--snapshot-json", default=None, help="state-scanner snapshot path")
     p.add_argument("--changes-dir", default=None, help="openspec/changes dir for unchecked-task grep")
+    p.add_argument(
+        "--owner-container",
+        action="store_true",
+        help="仅打印机械 owner-container (get_identity) 供 frontmatter 逐字粘贴, 替代手填",
+    )
     a = p.parse_args(argv)
+    if a.owner_container:
+        oc = owner_container()
+        print(oc if oc is not None else "")
+        return 0 if oc is not None else 1
+    if not a.snapshot_json:
+        p.error("--snapshot-json required unless --owner-container")
     with open(a.snapshot_json, encoding="utf-8") as f:
         snapshot = json.load(f)
     result = assemble_from_snapshot(snapshot, changes_dir=a.changes_dir)

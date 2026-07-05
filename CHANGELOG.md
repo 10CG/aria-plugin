@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.52.0] - 2026-07-05
+
+### Added: 交互 session 防重复 — Layer L advisory 接活 + 结构化 carry-id + 运行时探针 (DEC-20260704-002)
+
+双子星 (两个并行交互 session) 各自独立做同一 Spec 后 push 才发现重复。排查暴露双层病理: (1) carry-forward 是无主、无稳定 id 的自由文本待办队列; (2) Aria 早为此造过 Layer L 防护 (`multi-terminal-coordination` v1.22.0, 2,934 行有测试引擎) 但 `run_gate()` **零生产调用点** —— 母 spec `tasks.md` 2.5/P3 勾 `[x]` 却 `layer-l-integration.md` 自陈 TASK-024 集成 deferred, 是 aria-plugin #95「勾选完成 ≠ 运行现实」的活样本。本版**不退役、不重建**, 把 Layer L 从死代码接活成 advisory 认领 (完成 TASK-024)。
+
+- **接线 + advisory (P1)**: `phase1_gate.run_gate` 新增 `mode` 参 (默认 advisory) + 新 CLI 入口 (AI 编排层经 subprocess 调, 对齐 `layer-l-integration.md:15` Design A —— Phase B 启动前调, 非 scan.py)。advisory 下 7b clock_skew / 7c occupied / step9 push-fail / 7a self-resume 四路径**放行 = 跳过 abort/yield, 无条件写+推自己 claim + 返回分化 surface** (advisory-over-hardlock, DEC-20260519-001 #1); **复合路径 augment 不覆写** (保留 max_clock_skew_seconds/winner, R2-Major-B 最危险路径不静默); block 模式保留原语义。`state_scanner.coordination.mode: advisory|block` (config-loader 默认 advisory, ⊥ 既有 `.enabled`)。
+- **结构化 carry-id + 稳定身份 (P2)**: `standards/conventions/session-handoff.md §2.3` + `templates/session-handoff.md §6` 加 `{id, desc}` carry-id schema (kebab `carry-<slug>`, 禁冒号 —— `derive_track_id` 不译 `:`; 留 §6 prose 不进 frontmatter 向后兼容)。handoff-write 改用机械 `handoff_autofill.py --owner-container` (复用 `identity.get_identity().owner_container`) 填 frontmatter, 根除手填漂移 (实测 6 种不一致值破坏 collision 分类)。
+- **遥测 + 运行时探针 + AB (P3)**: append-only `.aria/coordination-telemetry.jsonl` **结构性分区防伪** (生产分区仅私有 `_gated(_source="production")` 可达, 唯一调用点 = CLI `_main`; public `run_gate` 无 source 参 / `run_gate_synthetic` 强制 harness → 无法虚增)。`coordination_probe.py` custom-check 断言生产分区有 **14 天内**记录 (防再退化死代码, #95 修法示范)。合成双-session `dedup_harness.py`: 可证伪 (control 臂复现 #94 漏检) + 预注册决策规则 (检出≥90%/假阳性≤5%/摩擦≤500tok)。
+- **文档 + dogfood (P4)**: 母 spec archive `ERRATA.md` (归档后回溯纠错) + CLAUDE.md/layer-l-integration.md doc-sync + Rule #6 structural substitute。Aria 主仓 dogfood: `coordination.enabled=true` + 真调 run_gate (claim 推 shared `refs/aria/coordination`, 探针 PASS)。
+- **质量**: run_gate **首个直测** (此前零测试死代码) + 31 dedicated tests (advisory 13 / telemetry 13 / backcompat 6, 全绿, 0 回归)。双轮 code-grounded 多-agent 对抗审计: R1 抓 2 Critical + 8 Important 真实假绿洞 (advisory 复合覆盖 / 探针无新鲜度 / source 可伪造 / harness 死分支) 全修 + 新锁测 → R2 CONVERGED (0 Critical)。关 aria-plugin [#94](https://forgejo.10cg.pub/10CG/aria-plugin/issues/94) / 部分回应 [#95](https://forgejo.10cg.pub/10CG/aria-plugin/issues/95)。
+
 ## [1.51.0] - 2026-07-03
 
 ### Changed: secret-scan 诚实降级 — PostToolUse redaction 撤宣称, 转 warn-only 检测器 (aria-plugin #91 A)

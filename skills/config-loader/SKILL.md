@@ -131,6 +131,20 @@ state_scanner.issue_scan.label_filter:
   type: array of string
   default: []
 
+# Layer L 多终端协调闸门 (multi-terminal-coordination, opt-in)
+# — coordination.enabled 承载 #133 AC-2 互斥不变式 (advanced-rules.md rule 1.54):
+#   enabled==true  → cross-owner collision 由 phase1_gate 处理;
+#   enabled==false → 切口2 advisory (rule 1.54) surface collision。两者在 enabled 上严格互斥。
+state_scanner.coordination.enabled:
+  type: boolean
+  default: false                  # opt-in; true 时 state-scanner 阶段 2/Phase B-entry 调 phase1_gate.run_gate
+
+# mode 与 enabled 正交 (仅 enabled==true 时相关), 不改 rule 1.54 disjointness (DEC-20260704-002 §1, R1-C2)
+state_scanner.coordination.mode:
+  type: string
+  valid_values: [advisory, block]
+  default: "advisory"             # advisory=放行+写推自己 claim+surface 告警 (advisory-over-hardlock); block=旧交互 abort/yield 语义
+
 tdd.strictness:
   type: string
   valid_values: [advisory, strict, superpowers]

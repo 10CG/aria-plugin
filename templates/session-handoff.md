@@ -31,12 +31,16 @@ Schema canonical source: `standards/conventions/session-handoff.md` §2.3.1
                             "aria-2-0-m5-carryover-layer2-redo-mode-aux"
 
   {owner_container} — `<owner>/<container-id>` 复合标识
+                      ⚠️ **机械填, 勿手动组装** (DEC-20260704-002 §4, 病根 #3):
+                      手填曾漂移出 6 种不一致值 (同一容器 3 种主串), 破坏 collision 分类。
+                      逐字粘贴以下命令输出 (get_identity, 确定性):
+                        python3 aria/skills/session-closer/scripts/handoff_autofill.py --owner-container
                       <owner>        = git user.email 的 local-part (`@` 之前)
                       <container-id> = `~/.aria/container-id` 内容
                                        (持久 short-UUID + 可选人类标签;
                                         文件缺失时回退 hostname)
                       示例: "creationhikari/devbox-A"
-                            "simonfishgit/laptop"
+                            "simonfish/bfe8285d"  (label 空 → uuid; 设 label 使更可读)
 
   {phase}           — 写出时该 track 所处的十步循环阶段。
                       enum: A / A.1 / A.2 / A.3
@@ -186,9 +190,21 @@ SOT,两者不冲突 (per standards/conventions/session-handoff.md §2.3.3)。
 
 **优先级建议** (按本 session 判断, 新 session 可调整):
 
-1. ⭐ **{top priority item}** — {rationale, est hours, type}
-2. {second priority} — ...
-3. {third priority} — ...
+每条 carry-forward = `{id, desc}` (prose markdown, **非 frontmatter**;schema 详见
+`standards/conventions/session-handoff.md` §2.3):
+
+- `id` — kebab 格式 `carry-<slug>` (**禁用 `:`** — `derive_track_id` 归一时不译冒号)。
+  若该条与本 handoff frontmatter `track-id` 指向同一工作,**直接复用该原始串**
+  (防同一工作被算作两条 track;复用时**不强制** `carry-` 前缀,前缀仅新起 carry-id
+  时的可读性约定)
+- `desc` — 优先级理由 + 估时 + 类型 (即下方 {rationale, est hours, type} 内容)
+- 本 §6 carry-id 是 **human-curated prose 层**,与 §2 `carry_forward_inventory`
+  (机读, tasks.md inline 注解自动汇入,当前占位 — id 化留 #95 follow-up) **分工不同,
+  互不替代**
+
+1. ⭐ **`{id: carry-<slug>}`** {top priority item} — {rationale, est hours, type}
+2. **`{id: carry-<slug>}`** {second priority} — ...
+3. **`{id: carry-<slug>}`** {third priority} — ...
 
 **不应该做的**:
 - 不要重复 {recently completed work}
