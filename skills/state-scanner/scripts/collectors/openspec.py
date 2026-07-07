@@ -29,11 +29,21 @@ from ._status import (
 #       `from lib.carry_forward import ...`: the top-level name `lib` may
 #       already be bound to state-scanner/lib (skill root) by
 #       handoff_multibranch.py's _SS_ROOT sys.path insertion.
+#
+# `_FRONTMATTER_RE` / `_frontmatter_block` moved the same way to
+# scripts/lib/frontmatter_block.py (runtime-probe-archive-gate-integration,
+# TASK-004, #95 follow-up A) so lib/spec_complete.py (TASK-005) can reuse the
+# SAME frontmatter-block regex too, without opening a THIRD circular-import
+# path. Re-exported here unchanged, for the same backward-compat reason.
 # ---------------------------------------------------------------------------
 try:
     from ..lib.carry_forward import (  # type: ignore[import]
         _CARRY_FORWARD_RE,
         _extract_carry_forward_annotations,
+    )
+    from ..lib.frontmatter_block import (  # type: ignore[import]
+        _FRONTMATTER_RE,
+        _frontmatter_block,
     )
     from ..lib.spec_complete import is_spec_complete  # type: ignore[import]
 except ImportError:
@@ -46,6 +56,10 @@ except ImportError:
     from carry_forward import (  # type: ignore[import]
         _CARRY_FORWARD_RE,
         _extract_carry_forward_annotations,
+    )
+    from frontmatter_block import (  # type: ignore[import]
+        _FRONTMATTER_RE,
+        _frontmatter_block,
     )
     from spec_complete import is_spec_complete  # type: ignore[import]
 
@@ -73,17 +87,11 @@ _DESIGN_DEFERRED_ALWAYS_STATES = frozenset({"reviewed", "active", "implemented"}
 _KNOWN_ARCHIVE_TYPES = frozenset({"implementation-deferred"})
 
 # stdlib-only frontmatter field extraction (C5: 不引 PyYAML — 消费侧只需逐行
-# 字段 regex)。frontmatter 区块 = 文件起始 `---` 行至下一 `---` 行之间。
-# \r?\n: CRLF checkout (Windows core.autocrlf) 下标记不可静默丢失 (#132 同类教训)
-_FRONTMATTER_RE = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t\r]*(?:\n|$)", re.DOTALL)
+# 字段 regex)。frontmatter 区块 = 文件起始 `---` 行至下一 `---` 行之间 (提取逻辑
+# + CRLF 处理见 lib/frontmatter_block.py::_FRONTMATTER_RE, 本文件仅 re-import
+# — 见上方 import 区块注释, #132 同类教训随 move 带走不复制)。
 _ARCHIVE_TYPE_FIELD_RE = re.compile(r"^archive_type[ \t]*[：:][ \t]*(.+?)[ \t]*$", re.MULTILINE)
 _UPDATED_AT_FIELD_RE = re.compile(r"^updated-at[ \t]*[：:][ \t]*(.+?)[ \t]*$", re.MULTILINE)
-
-
-def _frontmatter_block(text: str) -> str | None:
-    """Return the YAML frontmatter body (delimiters excluded), or None."""
-    m = _FRONTMATTER_RE.match(text)
-    return m.group(1) if m else None
 
 
 def _read_archive_type(archive_entry: Path, r: CollectorResult) -> str | None:
