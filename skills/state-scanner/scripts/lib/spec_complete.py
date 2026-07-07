@@ -40,6 +40,13 @@ integration/调用/registered/hook) 有无真实生产语义引用:
         "unverified_claims": [{"claim": str, "reason": str, "symbols": [str]}],
         "d_payload": {...} | None,    # TASK-011, 供 openspec-archive Step2 建 issue
         "soft_errors": [str, ...],    # TASK-008 fail-soft 诊断轨迹 (从不因此 block)
+        # 条件性字段 (runtime-probe-archive-gate-integration TASK-005/007, #95
+        # follow-up A) — 仅当 proposal.md frontmatter 声明 `runtime_probe:` 时
+        # 才存在于本 dict/JSON 中 (SC-1: 无声明 spec 的 key 集合逐字节不变, 禁
+        # `null` 占位):
+        # "runtime_probe": {"outcome": "pass"|"warn"|"skipped"|"invalid",
+        #                    "count": int, "reason": str, "symbol": str,
+        #                    "ts": str},  # ISO-8601 UTC, 本次评估时刻
     }
 
 管线 (每步 fail-soft, 见 TASK-008):
@@ -66,6 +73,16 @@ integration/调用/registered/hook) 有无真实生产语义引用:
      (无论是否 ack) 生成 issue body + 去重 marker ``<!-- archive-tracker:{spec_id} -->``
      (实际 Forgejo issue 创建是 TG-2 openspec-archive Step2 SKILL.md Bash 侧职责,
      本模块只产 payload)。
+  6. runtime_probe 声明式动态子检查 (``_fold_runtime_probe_declaration``,
+     runtime-probe-archive-gate-integration TASK-005/006/007/008, #95
+     follow-up A) — 若 proposal.md frontmatter 声明 ``runtime_probe:`` (经
+     ``lib/frontmatter_block.py`` 受限 YAML 子集解析 + ``lib/runtime_probe.py``
+     校验/探测), 折入本函数的 tri-state 裁决: pass/skipped → verdict 不变
+     (``gate_result.runtime_probe`` 字段本身即 note); warn (含声明无效) →
+     verdict 抬至 ≥warn (绝不 block, 已 block 保持 block), probe-warn 条目
+     **同时**并入 ``unverified_claims[]`` 与 ``warnings[]``。无声明 → 零动作,
+     ``result`` 不含 ``runtime_probe`` 键 (SC-1); 该步骤跑在 D payload 装配
+     **之前**, 使其产出的 unverified_claims 条目能被 D payload 一并聚合。
 
 verdict 单调升级 (pass < warn < block), 从不因后续判定降级。已知局限 (非绕过口,
 显式承认, 见 proposal §What Changes 1 known-limitation): 本模块是**静态**正则
@@ -105,6 +122,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -133,6 +151,30 @@ except ImportError:
     if _SCRIPTS_DIR not in sys.path:
         sys.path.insert(0, _SCRIPTS_DIR)
     from collectors._status import _extract_status, _normalize_status  # type: ignore[import]
+
+# runtime_probe declaration lib (runtime-probe-archive-gate-integration,
+# TASK-005, #95 follow-up A) — both are `lib/` siblings of this file, same
+# dual-context dance as `carry_forward` above (NOT `collectors.openspec`:
+# that module already imports `lib.spec_complete` at load time — importing it
+# back from here would close a circular-import loop; see
+# `lib/frontmatter_block.py`'s module docstring for the acyclic-graph proof).
+try:
+    from .frontmatter_block import _frontmatter_block, extract_runtime_probe
+except ImportError:
+    _LIB_DIR = str(Path(__file__).resolve().parent)
+    if _LIB_DIR not in sys.path:
+        sys.path.insert(0, _LIB_DIR)
+    from frontmatter_block import _frontmatter_block, extract_runtime_probe  # type: ignore[import]
+
+try:
+    from .runtime_probe import probe as _rp_probe
+    from .runtime_probe import validate_descriptor as _rp_validate_descriptor
+except ImportError:
+    _LIB_DIR = str(Path(__file__).resolve().parent)
+    if _LIB_DIR not in sys.path:
+        sys.path.insert(0, _LIB_DIR)
+    from runtime_probe import probe as _rp_probe  # type: ignore[import]
+    from runtime_probe import validate_descriptor as _rp_validate_descriptor  # type: ignore[import]
 
 # Markdown task checkbox: `- [x]` / `* [ ]` 等。捕获括号内单字符; checked 仅
 # 认 x/X — 其它标记 (如 `[~]`) 视为未完成 (gate 宁紧勿松)。
@@ -1109,6 +1151,120 @@ def _build_d_payload(
 
 
 # ---------------------------------------------------------------------------
+# TASK-005/006/007/008 (runtime-probe-archive-gate-integration, #95 follow-up
+# A): optional ``runtime_probe:`` frontmatter declaration → fold into
+# gate_result(). Semantics SOT: proposal.md §What Changes 3.
+# ---------------------------------------------------------------------------
+
+
+def _fold_runtime_probe_declaration(
+    result: dict, proposal_text: str, project_root: Path
+) -> None:
+    """TASK-005/006/007: parse the optional ``runtime_probe:`` frontmatter
+    declaration out of `proposal_text`, run the probe if declared, and fold
+    the tri-state (+ invalid) outcome into `result` **in place**.
+
+    No-op when the declaration is absent — `result` is left byte-for-byte
+    untouched (no ``"runtime_probe"`` key added; SC-1 requires the whole key
+    to be absent, never a ``null`` placeholder — this is the overwhelmingly
+    common case, every existing archived/active spec with no declaration).
+
+    TASK-008 (silent-failure 防线): every fallible sub-step below (text-layer
+    parse / value-layer validate / partition probe) already resolves to a
+    well-formed local ``(outcome, count, reason, symbol)`` tuple through this
+    function's own control flow — ``result`` is only ever mutated in the
+    single block at the very end, after all of those steps have already
+    succeeded. So if this function DOES raise (a genuinely unexpected bug,
+    not a mere "declaration is malformed" outcome — malformed declarations
+    are the ``"invalid"`` branch below, not an exception), the caller's
+    fail-soft wrapper is guaranteed to find `result` untouched by this call:
+    "exception ⇒ no `runtime_probe` key, no partial fold" holds by
+    construction (deferred single-writer), not by explicit try/except
+    rollback inside this function.
+
+    Folding rules (TASK-006, verdict is a monotonic upgrade — never
+    downgraded, an existing "block" is never touched):
+      pass / skipped → verdict unchanged; no ``warnings``/``unverified_claims``
+        addition — the conditional ``result["runtime_probe"]`` field itself
+        IS the "note" (SC-2 绿色 note / SC-4 低调 note): its ``reason`` string
+        already carries count/symbol (pass) or the skip cause (skipped).
+      warn, OR invalid (text-layer shape rejection, value-layer descriptor
+        validation failure, OR probe()'s ``enabled_when`` mid-path-not-dict
+        form) → verdict raised to at least "warn"; a probe-warn entry is
+        appended to BOTH ``warnings[]`` (human-readable) AND
+        ``unverified_claims[]`` (structured — shape matches this file's other
+        4 append points exactly: ``{claim, reason, symbols}``, PP-R1 cr fix
+        "除 warnings[] 外" 双写语义) — the deliberate TASK-007 double-write so
+        the entry reaches both #95 downstream consumers (warn_overlay
+        persistence AND ``_build_d_payload``'s D auto-issue) with zero
+        signature changes to either.
+    """
+    fm_block = _frontmatter_block(proposal_text)
+    parsed = extract_runtime_probe(fm_block)
+    if parsed["status"] == "absent":
+        return  # 无 runtime_probe 键 → 零动作, 静态路径逐字节不变 (SC-1)
+
+    now = datetime.now(timezone.utc)
+    ts = now.isoformat(timespec="seconds")
+
+    if parsed["status"] == "invalid":
+        # 文本层四拒绝形态 (深嵌套/flow-style/锚点/多行值, lib/frontmatter_block.py)
+        # — 解析未能产出 fields dict, 无可用 symbol (SC-5 文本层)。
+        outcome, count, reason, symbol = "invalid", 0, parsed["reason"], ""
+    else:
+        validated = _rp_validate_descriptor(parsed["fields"], project_root)
+        if validated["status"] == "invalid":
+            # 值层五形态之四 (缺字段/类型错/max_age_days≤0/partition 越界仓库,
+            # lib/runtime_probe.py::validate_descriptor) — 尽力从未校验的原始
+            # 字符串里带出 symbol 供 claim 标注 (SC-5 值层); 若该字段本身就是
+            # 问题所在 (缺失/非 str), 安全退回空字符串, 不猜。
+            raw_symbol = parsed["fields"].get("symbol")
+            symbol = raw_symbol if isinstance(raw_symbol, str) else ""
+            outcome, count, reason = "invalid", 0, validated["reason"]
+        else:
+            probe_out = _rp_probe(validated["descriptor"], project_root, now)
+            outcome = probe_out["outcome"]
+            count = probe_out["count"]
+            reason = probe_out["reason"]
+            # 值层五形态之五 (enabled_when 中间段非 dict) 落在这里, probe() 内部
+            # outcome=="invalid" 分支同样保证 symbol 已填 (descriptor 校验已过)。
+            symbol = probe_out["symbol"]
+
+    # ── 折入裁决 (TASK-006/007) — 单笔写入 result, 见 docstring "exception ⇒
+    #    无部分状态" 的延迟写入设计。 ──
+    if outcome in ("warn", "invalid"):
+        if result["verdict"] != "block":
+            result["verdict"] = "warn"
+        if outcome == "warn":
+            human_reason = reason
+        else:
+            human_reason = f"runtime_probe 声明无效 — 无法核验 (cannot verify): {reason}"
+        # "runtime_probe:<symbol>" 合成 claim 标签 (proposal §What Changes 3 字面
+        # 模板) —— 无真实 tasks.md 行可关联 (声明活在 proposal.md frontmatter,
+        # 非某条 checkbox), 故用此标签替代其余 4 个既有 append 点里的
+        # `claim["line"]`。symbol 未知时 (文本层无效) 退化为裸 "runtime_probe"
+        # (不留悬空冒号), reason 字符串仍完整解释原因。
+        claim_tag = f"runtime_probe:{symbol}" if symbol else "runtime_probe"
+        result["warnings"].append(f"runtime_probe[{symbol or '?'}]: {human_reason}")
+        result["unverified_claims"].append(
+            {
+                "claim": claim_tag,
+                "reason": human_reason,
+                "symbols": [symbol] if symbol else [],
+            }
+        )
+    # pass / skipped → verdict 不变; 无 warnings/unverified_claims 新增 (SC-2/SC-4)。
+
+    result["runtime_probe"] = {
+        "outcome": outcome,
+        "count": count,
+        "reason": reason,
+        "symbol": symbol,
+        "ts": ts,
+    }
+
+
+# ---------------------------------------------------------------------------
 # TASK-007: tri-state gate_result — 契约入口
 # ---------------------------------------------------------------------------
 
@@ -1240,6 +1396,48 @@ def gate_result(spec_dir: str | Path) -> dict:
             )
             if result["verdict"] != "block":
                 result["verdict"] = "warn"
+
+    # ── runtime_probe (TASK-005/006/007/008, #95 follow-up A): 声明式可选动态
+    # 子检查折入 — 必须在 D payload 组装前跑, 使 probe-warn 产生的
+    # unverified_claims 条目能被 _build_d_payload 一并聚合 (TASK-007 双下游复用)。
+    # 独立于 tasks.md 早退路径之外单独判定 (proposal.md 的存在性/可读性是本
+    # 检查自己的输入, 与 #134 的 tasks.md 判定正交)。
+    proposal_path_for_probe = spec_dir / "proposal.md"
+    if not proposal_path_for_probe.is_file():
+        # 缺失等同无声明零动作, 但比 tasks.md 缺失先例更响 (TASK-005, spec
+        # §What Changes 3 已言明: change 目录缺 proposal.md 本身即异常, 不适用
+        # tasks.md 的"合法可缺"静默逻辑)。
+        result["soft_errors"].append(
+            f"proposal.md not found for runtime_probe declaration check: {proposal_path_for_probe}"
+        )
+    else:
+        try:
+            probe_proposal_text = proposal_path_for_probe.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError as e:
+            result["soft_errors"].append(
+                f"proposal.md read failed for runtime_probe declaration check: {e}"
+            )
+        else:
+            try:
+                _fold_runtime_probe_declaration(result, probe_proposal_text, project_root)
+            except Exception as e:  # TASK-008: 探针全异常兜底 (silent-failure 防线)
+                # 探针评估全链 (extract→validate→probe→fold) 外层兜底: 任何未预期
+                # 异常 → verdict 抬至 ≥warn (已 block 保持 block) + warnings[] 记
+                # 探针内部错误 + 照常产出完整裁决 (归档不 abort 无静默, #95
+                # pre-merge Critical 教训)。有意不追加 unverified_claims/D
+                # payload 条目 (与本 task verification 文字范围一致 — 记入
+                # 报告供 review, 而非默认延伸到 D tracker)。_fold_runtime_probe_
+                # declaration 把全部 result 写入延后到单笔末尾完成 (见其
+                # docstring), 故此处 result 保证未被部分写入 —— 异常路径不产
+                # runtime_probe 键 (评估未完成)。
+                if result["verdict"] != "block":
+                    result["verdict"] = "warn"
+                result["warnings"].append(
+                    f"runtime_probe evaluation crashed — fail-toward-warn (not blocking): {e}"
+                )
+                result["soft_errors"].append(f"runtime_probe evaluation unexpected error: {e}")
 
     # ── D payload (TASK-011): deferred 未勾项 + 全部 unverified_claims (无论 ack) ──
     try:
