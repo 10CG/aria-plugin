@@ -26,6 +26,15 @@ Covers (#95 TG-5, DEC-20260704-003, detailed-tasks.yaml TASK-018~023):
 - TASK-023: tri-state ``gate_result()`` schema 契约 — 见
   ``TestGateResultTriStateSchema``.
 
+Covers (runtime-probe-archive-gate-integration TASK-012, #95 follow-up A,
+detailed-tasks.yaml parent 3.2): ``gate_result()`` 对 proposal.md frontmatter
+``runtime_probe:`` 声明的折入集成测试 —— 无声明零动作 (SC-1 兜底) / pass 内存
+态折入 (SC-2) / 四形态 warn 折入 + block 组合不降不升 (SC-3) / skipped 静默
+(SC-4) / 声明无效 (文本层+值层) + IO 边界 (SC-5) / 探针异常全兜底 (SC-6) — 见
+``TestRuntimeProbeFold*`` 系列 class (与 unit 层 ``test_runtime_probe.py``
+互补: 那边钉 ``probe()``/``validate_descriptor()`` 自身契约, 这里钉它们被
+``gate_result()`` 折入后的编排行为)。
+
 真树 dogfood 语料 (TASK-018/019) 依赖 Aria **元仓库**的 openspec/archive/
 (而非 aria-plugin 自身仓库 —— aria/ 是 Aria 的 git submodule, 两者 openspec/
 目录是分开的, 见 CLAUDE.md 规则 #5)。当 aria-plugin 独立于 Aria 元仓库跑测试
@@ -36,9 +45,11 @@ Covers (#95 TG-5, DEC-20260704-003, detailed-tasks.yaml TASK-018~023):
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1149,6 +1160,588 @@ class TestSearchAuthoritativenessNotDeadOnDegraded(unittest.TestCase):
         ), patch.object(spec_complete, "_symbol_has_python_definition", return_value=True):
             res = spec_complete.classify_symbol_liveness("phase1_gate", root, {"x/phase1_gate.py"})
         self.assertEqual(res["status"], "dead")
+
+
+# =============================================================================
+# TASK-012 (runtime-probe-archive-gate-integration, #95 follow-up A,
+# detailed-tasks.yaml parent 3.2) — gate_result() runtime_probe declaration
+# folding integration tests.
+#
+# Complements tests/test_runtime_probe.py (TASK-011, unit-level: pins
+# validate_descriptor()/probe()/extract_runtime_probe()'s OWN contracts in
+# isolation) — this section instead pins how spec_complete.py's
+# _fold_runtime_probe_declaration()/gate_result() ORCHESTRATE those units:
+# frontmatter parsing -> descriptor validation -> partition probe -> verdict
+# folding -> unverified_claims/warnings double-write -> d_payload aggregation,
+# end-to-end through the same gate_result() entry point every other class in
+# this file already exercises.
+#
+# Verification bullets -> TestCase classes (TASK-012 detailed-tasks.yaml):
+#   SC-1 兜底 (无声明零动作)     - TestRuntimeProbeFoldAbsentDeclaration
+#   SC-2 (pass 内存态折入)       - TestRuntimeProbeFoldPass
+#   SC-3 (四形态 warn 折入)      - TestRuntimeProbeFoldWarnForms
+#   SC-3 (block 组合不降不升)    - TestRuntimeProbeFoldBlockCombination
+#   SC-4 (skipped 静默)          - TestRuntimeProbeFoldSkipped
+#   SC-5 (声明无效, 文本/值层)   - TestRuntimeProbeFoldInvalidDeclaration
+#   SC-5 (IO 边界)               - TestRuntimeProbeFoldIOBoundary
+#   SC-6 (fault-injection)       - TestRuntimeProbeFoldFaultInjection
+#   AC-1 extension (CLI parity)  - TestRuntimeProbeFoldCliConsistency (bonus,
+#                                   not an explicit TASK-012 bullet — added to
+#                                   match this file's existing AC-1 CLI/import
+#                                   parity standard applied to every other
+#                                   verdict branch)
+#
+# gate_result() exposes NO clock-injection seam for the runtime_probe fold
+# (_fold_runtime_probe_declaration always calls datetime.now(timezone.utc)
+# internally) — unlike lib/runtime_probe.py's own probe(), which
+# test_runtime_probe.py pins via an injected `now` (its `_NOW` constant).
+# Fixtures here instead express telemetry recency RELATIVE to the real wall
+# clock at test-execution time (`_probe_ts(days_ago)`), so pass/warn
+# classification stays deterministic regardless of which calendar date the
+# suite runs on (verification bullet 5: "受控 telemetry ts (相对 now 生成),
+# 不依赖真实时钟绝对值").
+# =============================================================================
+
+_PROBE_PARTITION_REL = ".aria/probe-telemetry.jsonl"
+
+
+def make_gate_spec_with_probe(
+    root: Path,
+    *,
+    runtime_probe_yaml: str,
+    tasks_md: str | None = None,
+    detailed_tasks_yaml: str | None = None,
+    spec_id: str = "probe-gate-test-spec",
+    status: str = "Approved",
+    extra_files: dict[str, str] | None = None,
+) -> Path:
+    """Like ``make_gate_spec`` but proposal.md carries a YAML frontmatter
+    block (opening ``---`` line, then `runtime_probe_yaml` verbatim, then a
+    closing ``---`` line and a blank line) prepended before the usual body —
+    same construction ``tests/test_runtime_probe.py``'s
+    ``TestOfficialExampleHermetic`` already locks against
+    ``_frontmatter_block``/``extract_runtime_probe``. Keyword-only args (vs.
+    ``make_gate_spec``'s positional style): ``runtime_probe_yaml`` is a new
+    REQUIRED parameter, and mixing it positionally among the pre-existing
+    optional ones would be an easy transcription footgun at call sites.
+    """
+    spec_dir = root / "openspec" / "changes" / spec_id
+    write_file(
+        spec_dir / "proposal.md",
+        f"---\n{runtime_probe_yaml}---\n\n"
+        f"# {spec_id}\n\n> **Status**: {status}\n\n## Why\ntest\n",
+    )
+    if tasks_md is not None:
+        write_file(spec_dir / "tasks.md", tasks_md)
+    if detailed_tasks_yaml is not None:
+        write_file(spec_dir / "detailed-tasks.yaml", detailed_tasks_yaml)
+    for rel_path, content in (extra_files or {}).items():
+        write_file(root / rel_path, content)
+    return spec_dir
+
+
+def _runtime_probe_yaml(
+    *,
+    symbol: str,
+    partition: str = _PROBE_PARTITION_REL,
+    max_age_days: int | None = None,
+    enabled_when: str | None = None,
+) -> str:
+    """Build a minimal ``runtime_probe:`` frontmatter body (2-space indent,
+    one field per line, no trailing comments) — a parametrized sibling of
+    ``test_runtime_probe.py``'s hardcoded ``_OFFICIAL_EXAMPLE_YAML`` (that one
+    pins the spec's exact example text verbatim for the SC-2 hermetic lock;
+    this one generates the many different descriptor shapes TASK-012's
+    integration fixtures need)."""
+    lines = ["runtime_probe:", f"  partition: {partition}", f"  symbol: {symbol}"]
+    if max_age_days is not None:
+        lines.append(f"  max_age_days: {max_age_days}")
+    if enabled_when is not None:
+        lines.append(f"  enabled_when: {enabled_when}")
+    return "\n".join(lines) + "\n"
+
+
+def _probe_ts(days_ago: float) -> str:
+    """ISO-8601 UTC timestamp `days_ago` days before the REAL wall clock (see
+    section header: gate_result() gives callers no clock-injection seam)."""
+    dt = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _probe_prod_record(days_ago: float, **extra) -> dict:
+    rec = {"ts": _probe_ts(days_ago), "source": "production"}
+    rec.update(extra)
+    return rec
+
+
+def _write_probe_partition(root: Path, rel_path: str, records: list) -> None:
+    """Write a JSONL telemetry partition. Each item is a dict (JSON-encoded)."""
+    path = root / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [r if isinstance(r, str) else json.dumps(r) for r in records]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def _skip_if_root() -> None:
+    """A chmod-000 unreadable-partition fixture is meaningless under
+    euid==0 (root bypasses POSIX permission bits) — mirrors
+    test_runtime_probe.py's own guard of the same name (this file's
+    one-file-only constraint means it can't be imported/shared, so it is
+    re-declared locally)."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        raise unittest.SkipTest(
+            "running as root - chmod 000 fixture would still be readable, "
+            "so the unreadable-partition warn branch cannot be exercised"
+        )
+
+
+def _assert_probe_warn_family_folded(
+    tc: unittest.TestCase, result: dict, *, symbol: str, expected_outcome: str
+) -> dict:
+    """Shared assertion for every probe-fold outcome that lands in the "warn
+    ceiling" (SC-3's 4 warn forms union SC-5's "声明无效" forms — TASK-006/007's
+    ``outcome in ("warn", "invalid")`` branch is one shared code path):
+    ``gate_result.runtime_probe.outcome`` matches, a probe-warn entry is
+    folded into BOTH ``warnings[]`` (human-readable) AND
+    ``unverified_claims[]`` (structured, shape locked to this file's other 4
+    append points: ``{claim, reason, symbols}`` — PP-R1 cr "除 warnings[] 外"
+    double-write fix), and that same entry flows unmodified into
+    ``d_payload`` (TASK-007 D-tracker double-write reuse, zero signature
+    changes). Does NOT assert on ``result["verdict"]`` itself — callers
+    decide that (plain warn-form tests expect "warn"; the block-combination
+    test expects "block" unchanged) since this helper's job is only the
+    entry-shape/double-write contract, not the verdict-ceiling policy.
+    Returns the matched ``unverified_claims`` entry so callers needing extra
+    assertions (e.g. the "无法核验" invalid-declaration wording) don't have to
+    re-search for it.
+    """
+    tc.assertIn("runtime_probe", result)
+    tc.assertEqual(result["runtime_probe"]["outcome"], expected_outcome)
+    claim_tag = f"runtime_probe:{symbol}" if symbol else "runtime_probe"
+    matches = [c for c in result["unverified_claims"] if c["claim"] == claim_tag]
+    tc.assertEqual(len(matches), 1, result["unverified_claims"])
+    entry = matches[0]
+    tc.assertEqual(set(entry), {"claim", "reason", "symbols"})
+    tc.assertEqual(entry["symbols"], [symbol] if symbol else [])
+    tc.assertTrue(entry["reason"])
+    tc.assertTrue(
+        any(f"runtime_probe[{symbol or '?'}]:" in w for w in result["warnings"]),
+        result["warnings"],
+    )
+    tc.assertIsNotNone(result["d_payload"])
+    tc.assertIn(entry, result["d_payload"]["unverified_claims"])
+    return entry
+
+
+class TestRuntimeProbeFoldAbsentDeclaration(unittest.TestCase):
+    """SC-1 兜底: 无 ``runtime_probe:`` frontmatter 声明的 spec → gate_result()
+    的返回 dict 里该键**整体缺席** (非 ``None`` 占位, TASK-005: "禁 `null` 占
+    位")。用 plain ``make_gate_spec`` (无 frontmatter block) —— 与既有全部 60
+    个测试共享的构造法, 本测试只是把"缺席"这一隐含在 schema 测试里的事实显式
+    钉成 TASK-012 verification 明文要求的独立断言。
+    """
+
+    def test_no_declaration_key_absent_not_none(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec(root, TASKS_ALL_CHECKED, spec_id="probe-absent")
+            result = gate_result(spec_dir)
+            self.assertNotIn("runtime_probe", result)
+            self.assertEqual(result["verdict"], "pass")
+
+
+class TestRuntimeProbeFoldPass(unittest.TestCase):
+    """SC-2 内存态: 声明 + 窗口内 production 记录 → ``gate_result.runtime_probe``
+    存在且 ``count>=1``, verdict 不变, 无新增 warnings/unverified_claims (pass
+    不新增 — TASK-006: conditional 字段本身就是 note)。归档文件级"pass 不落
+    盘"断言归 TASK-016 E2E (test_archive_gate_integration.sh); 本 task 只锚定
+    ``gate_result()`` 的纯内存契约。
+    """
+
+    def test_pass_fold_verdict_unchanged_field_present(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_pass"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-pass",
+            )
+            _write_probe_partition(root, _PROBE_PARTITION_REL, [_probe_prod_record(1)])
+            result = gate_result(spec_dir)
+
+            self.assertIn("runtime_probe", result)
+            self.assertEqual(
+                set(result["runtime_probe"]), {"outcome", "count", "reason", "symbol", "ts"}
+            )
+            self.assertEqual(result["runtime_probe"]["outcome"], "pass")
+            self.assertGreaterEqual(result["runtime_probe"]["count"], 1)
+            self.assertEqual(result["runtime_probe"]["symbol"], "probe_pass")
+            datetime.fromisoformat(result["runtime_probe"]["ts"])  # ISO-8601 round-trips
+
+            self.assertEqual(result["verdict"], "pass")
+            self.assertEqual(result["warnings"], [])
+            self.assertEqual(result["unverified_claims"], [])
+            self.assertIsNone(result["d_payload"])
+            self.assertEqual(result["soft_errors"], [])
+
+
+class TestRuntimeProbeFoldWarnForms(unittest.TestCase):
+    """SC-3: 四种 warn 形态各一 fixture — 分区缺失 / 存在不可读 (IO error) /
+    全陈旧 / 仅非生产记录。每种都必须把 verdict 从 pass 抬到 warn, 且经
+    ``_assert_probe_warn_family_folded`` 钉死的双写 shape 折入
+    unverified_claims[]/warnings[]/d_payload。
+    """
+
+    def test_warn_partition_missing(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_missing"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-warn-missing",
+            )
+            # partition 文件有意不写 —— 声明了探针但从未产出过 telemetry。
+            result = gate_result(spec_dir)
+            self.assertEqual(result["verdict"], "warn")
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="probe_missing", expected_outcome="warn"
+            )
+            self.assertIn("missing", entry["reason"])
+
+    def test_warn_partition_unreadable_io_error(self):
+        """既有假绿 bug 修复锁定的边界 (proposal §What 2): 分区存在但读失败,
+        绝不能悄悄落入 pass。"""
+        _skip_if_root()
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_unreadable"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-warn-unreadable",
+            )
+            partition = root / _PROBE_PARTITION_REL
+            _write_probe_partition(root, _PROBE_PARTITION_REL, [_probe_prod_record(1)])
+            os.chmod(partition, 0o000)
+            try:
+                result = gate_result(spec_dir)
+            finally:
+                os.chmod(partition, 0o644)  # restore so tempdir cleanup can unlink it
+            self.assertEqual(result["verdict"], "warn")
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="probe_unreadable", expected_outcome="warn"
+            )
+            self.assertIn("unreadable", entry["reason"])
+
+    def test_warn_all_records_stale(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_stale"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-warn-stale",
+            )
+            _write_probe_partition(root, _PROBE_PARTITION_REL, [_probe_prod_record(20)])
+            result = gate_result(spec_dir)
+            self.assertEqual(result["verdict"], "warn")
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="probe_stale", expected_outcome="warn"
+            )
+            self.assertIn("stale", entry["reason"])
+
+    def test_warn_only_nonproduction_records(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_nonprod"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-warn-nonprod",
+            )
+            _write_probe_partition(
+                root, _PROBE_PARTITION_REL, [{"ts": _probe_ts(1), "source": "harness"}]
+            )
+            result = gate_result(spec_dir)
+            self.assertEqual(result["verdict"], "warn")
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="probe_nonprod", expected_outcome="warn"
+            )
+            self.assertIn("non-production", entry["reason"])
+
+
+class TestRuntimeProbeFoldSkipped(unittest.TestCase):
+    """SC-4: ``enabled_when`` 开关关 → verdict 不变 + warnings **无新增** (低调
+    note only — note IS the conditional ``runtime_probe`` field itself, TASK-
+    006 docstring)."""
+
+    def test_skipped_enabled_when_off_no_new_warnings(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(
+                    symbol="probe_skipped",
+                    enabled_when="state_scanner.coordination.enabled",
+                ),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-skipped",
+            )
+            write_file(
+                root / ".aria" / "config.json",
+                json.dumps({"state_scanner": {"coordination": {"enabled": False}}}),
+            )
+            result = gate_result(spec_dir)
+            self.assertIn("runtime_probe", result)
+            self.assertEqual(result["runtime_probe"]["outcome"], "skipped")
+            self.assertEqual(result["verdict"], "pass")
+            self.assertEqual(result["warnings"], [])
+            self.assertEqual(result["unverified_claims"], [])
+            self.assertIsNone(result["d_payload"])
+
+
+class TestRuntimeProbeFoldInvalidDeclaration(unittest.TestCase):
+    """SC-5 (声明无效 → warn 不猜): 文本层 + 值层各一形态。folded through the
+    SAME warn ceiling as SC-3 — ``_fold_runtime_probe_declaration``'s
+    ``outcome in ("warn", "invalid")`` branch is one shared code path;
+    "runtime_probe 声明无效 — 无法核验 (cannot verify)" 前缀是唯一的文案区分
+    标记, 结构化折入 shape 完全相同 (复用 ``_assert_probe_warn_family_folded``)。
+    """
+
+    def test_text_layer_invalid_flow_style_mapping_symbol_unknown(self):
+        """文本层拒绝形态 (flow-style mapping, 沿用 test_runtime_probe.py 已锁
+        定的同一拒绝形态) —— 声明整体解析失败, symbol 未知, claim_tag 退化为
+        裸 "runtime_probe" (无悬空冒号, TASK-007 docstring)。"""
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=(
+                    "runtime_probe:\n"
+                    "  partition: .aria/probe-telemetry.jsonl\n"
+                    "  enabled_when: {a: b}\n"
+                ),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-invalid-text-layer",
+            )
+            result = gate_result(spec_dir)
+            self.assertEqual(result["verdict"], "warn")
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="", expected_outcome="invalid"
+            )
+            self.assertIn("无法核验", entry["reason"])
+            self.assertEqual(entry["claim"], "runtime_probe")
+
+    def test_value_layer_invalid_missing_partition_symbol_known(self):
+        """值层五形态之一 (缺必填 partition) —— 文本层解析成功 (symbol 键独立
+        可读), 值层校验失败; claim_tag 仍带 symbol (TASK-007: "尽力从未校验的
+        原始字符串里带出 symbol 供 claim 标注")。"""
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml="runtime_probe:\n  symbol: probe_missing_partition\n",
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-invalid-value-layer",
+            )
+            result = gate_result(spec_dir)
+            self.assertEqual(result["verdict"], "warn")
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="probe_missing_partition", expected_outcome="invalid"
+            )
+            self.assertIn("无法核验", entry["reason"])
+            self.assertIn("partition", entry["reason"])
+
+
+class TestRuntimeProbeFoldIOBoundary(unittest.TestCase):
+    """SC-5 IO 边界: proposal.md 缺失 / OSError —— 均先于任何声明解析发生
+    (声明内容根本没有机会被读到), 等同"无声明零动作"但比 tasks.md 缺失先例
+    更响 (TASK-005: change 目录缺 proposal.md 本身即异常) —— soft_errors 必须
+    记录, key 仍整体缺席。
+    """
+
+    def test_missing_proposal_md_zero_action_plus_soft_error(self):
+        with tmp_project() as root:
+            spec_dir = root / "openspec" / "changes" / "probe-io-missing-proposal"
+            write_file(spec_dir / "tasks.md", TASKS_ALL_CHECKED)
+            result = gate_result(spec_dir)
+            self.assertNotIn("runtime_probe", result)
+            self.assertTrue(
+                any(
+                    "proposal.md not found for runtime_probe declaration check" in e
+                    for e in result["soft_errors"]
+                ),
+                result["soft_errors"],
+            )
+
+    def test_oserror_scoped_read_failure_zero_action_plus_soft_error(self):
+        """monkeypatch ``Path.read_text`` **作用域化到本 fixture 的
+        proposal.md**: 真实实现原样代理其它一切路径, 尤其 tasks.md —— 若不作
+        用域化 (直接给 ``Path.read_text`` 全局塞一个恒抛异常的 side_effect),
+        tasks.md 自身的读取会在 runtime_probe 检查段之前就先撞见同一个坏
+        mock, 触发 ``gate_result`` 的早退分支 (`tasks.md read failed` ->
+        `return result`), 本要测的分支永远走不到。"""
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_io_oserror"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-io-oserror",
+            )
+            proposal_path = spec_dir / "proposal.md"
+            real_read_text = Path.read_text
+
+            def _scoped_read_text(self_path, *args, **kwargs):
+                if self_path == proposal_path:
+                    raise OSError("simulated unreadable proposal.md (scoped fixture)")
+                return real_read_text(self_path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", _scoped_read_text):
+                result = gate_result(spec_dir)
+
+            self.assertNotIn("runtime_probe", result)
+            self.assertTrue(
+                any(
+                    "proposal.md read failed for runtime_probe declaration check" in e
+                    for e in result["soft_errors"]
+                ),
+                result["soft_errors"],
+            )
+
+
+class TestRuntimeProbeFoldBlockCombination(unittest.TestCase):
+    """SC-3 "block 组合": 触发静态 C-block 的死代码声称 fixture (构造法沿用
+    ``TestGateResultSyntheticDeadCodeAnchor``) + 探针 warn 声明 → verdict 必须
+    **仍 block**, 不因探针 warn 被降级也不被升级 (TASK-006: "已 block 保持
+    block, 不降不升"; 折入代码里 ``if result["verdict"] != "block":
+    result["verdict"] = "warn"`` 的 if 守卫正是本测试要钉死的行为)。两个符号
+    (死代码符号 / 探针符号) 故意取不同名字, 避免探针声明文本本身意外给死代码
+    符号提供一处"引用" (即便 proposal.md 是 *.md 恒归 prose 桶、理论上不会
+    误判 alive, 仍不依赖这层隐性安全网)。
+    """
+
+    def test_static_block_survives_probe_warn_unchanged(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_block_combo"),
+                tasks_md=(
+                    "# Tasks\n\n"
+                    "- [x] 9.1 集成 `probe_combo_dead_symbol` 到 orchestrator "
+                    "(死代码, 应 block)\n"
+                ),
+                detailed_tasks_yaml=(
+                    '  - id: TASK-901\n    parent: "9.1"\n'
+                    '    deliverables: ["lib/probe_combo_dead_symbol.py"]\n'
+                ),
+                spec_id="probe-block-combo",
+                extra_files={
+                    "lib/probe_combo_dead_symbol.py": "def probe_combo_dead_symbol():\n    pass\n",
+                    "README.md": "probe_combo_dead_symbol 仅此散文提及, 从未被生产调用。\n",
+                },
+            )
+            # partition 文件有意不写 → 探针 outcome=warn (分区缺失形态)。
+            result = gate_result(spec_dir)
+            self.assertEqual(result["verdict"], "block")
+            self.assertTrue(
+                any("probe_combo_dead_symbol" in r for r in result["blocking_reasons"])
+            )
+            entry = _assert_probe_warn_family_folded(
+                self, result, symbol="probe_block_combo", expected_outcome="warn"
+            )
+            self.assertIn("missing", entry["reason"])
+
+
+class TestRuntimeProbeFoldFaultInjection(unittest.TestCase):
+    """SC-6: monkeypatch 探针本身 (``spec_complete._rp_probe``) 抛异常 → gate
+    不 raise, verdict 从 pass 起点降级到 warn, 照常产出完整 8 键 schema 裁决
+    (#95 pre-merge Critical 教训: 探针评估全链的意外异常绝不能让归档流程崩
+    溃/挂起)。有意验证 TASK-008 的非对称设计: 崩溃路径**不**追加
+    unverified_claims/d_payload 条目 (与 warn/invalid 折入路径不同 —— 源码
+    注释: "有意不追加 ... 而非默认延伸到 D tracker"), 也**不**产出
+    ``runtime_probe`` 键 (异常路径评估未完成, "exception ⇒ 无部分状态" 的
+    延迟单笔写入设计, TASK-005 docstring)。
+    """
+
+    def test_probe_crash_downgrades_to_warn_full_schema_preserved(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_fault"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-fault-injection",
+            )
+            with patch("spec_complete._rp_probe", side_effect=RuntimeError("probe exploded")):
+                result = gate_result(spec_dir)
+
+            self.assertEqual(result["verdict"], "warn")
+            self.assertNotIn("runtime_probe", result)
+            self.assertTrue(
+                any("runtime_probe evaluation crashed" in w for w in result["warnings"])
+            )
+            self.assertTrue(
+                any(
+                    "runtime_probe evaluation unexpected error" in e
+                    for e in result["soft_errors"]
+                )
+            )
+            # TASK-008 非对称设计: 崩溃路径不追加 unverified_claims/d_payload。
+            self.assertEqual(result["unverified_claims"], [])
+            self.assertIsNone(result["d_payload"])
+            # 照常产出完整 8 键 schema (归档不 abort 无静默)。
+            self.assertEqual(
+                set(result),
+                {
+                    "complete",
+                    "complete_reason",
+                    "verdict",
+                    "blocking_reasons",
+                    "warnings",
+                    "unverified_claims",
+                    "d_payload",
+                    "soft_errors",
+                },
+            )
+
+
+class TestRuntimeProbeFoldCliConsistency(unittest.TestCase):
+    """AC-1 (module docstring "多入口一致 verdict 不变量") 扩展到 runtime_probe
+    折入路径 —— 不是 TASK-012 verification bullet 的明文条目, 而是与本文件
+    既有标准对齐的补充覆盖: ``TestGateResultTriStateSchema.
+    test_cli_gate_mode_matches_import_and_exit_codes`` 已经对 pass/block 两条
+    既有路径钉了 CLI/import 一致性, 若新增的 runtime_probe 分支没有同等锚点,
+    它就是唯一未经 subprocess 边界验证的新增 verdict 来源。
+    """
+
+    def test_cli_gate_mode_matches_import_with_probe_declaration(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_cli_parity"),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-cli-parity",
+            )
+            _write_probe_partition(root, _PROBE_PARTITION_REL, [_probe_prod_record(1)])
+            import_result = gate_result(spec_dir)
+            proc = subprocess.run(
+                [sys.executable, str(_SPEC_COMPLETE_PY), "--gate", str(spec_dir)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0)
+            cli_result = json.loads(proc.stdout)
+
+            # `runtime_probe.ts` 由各自进程独立调用 datetime.now(timezone.utc)
+            # 产生 (import 调用 vs subprocess 调用) —— 不是共享/注入的时钟,
+            # 跨 subprocess 启动边界允许相差 1 秒级, 故排除 ts 后再逐字节比较
+            # 其余全部字段 (含 outcome/count/reason/symbol)。
+            for result in (import_result, cli_result):
+                self.assertIn("runtime_probe", result)
+                datetime.fromisoformat(result["runtime_probe"]["ts"])
+            import_result["runtime_probe"] = {
+                k: v for k, v in import_result["runtime_probe"].items() if k != "ts"
+            }
+            cli_result["runtime_probe"] = {
+                k: v for k, v in cli_result["runtime_probe"].items() if k != "ts"
+            }
+            self.assertEqual(
+                cli_result,
+                import_result,
+                "CLI --gate vs import gate_result() drift (runtime_probe branch)",
+            )
 
 
 if __name__ == "__main__":
