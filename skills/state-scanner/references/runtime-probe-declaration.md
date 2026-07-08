@@ -23,6 +23,12 @@
 **不确定是否需要就不声明** —— 声明是新增负担而非默认义务，且分区必须已存在真实
 telemetry 写入路径；无中生有声明一个不存在的分区只会换来恒定 `warn`。
 
+**前置条件（L3 Full spec）**: 探针折入发生在归档门完成 `tasks.md` 读取之后 ——
+**无 `tasks.md` 的 spec（Level 2 / proposal-only）即使写了声明也不会被评估**，
+归档时零痕迹（无 warn / 无 note / 无 soft_error；designed 行为，proposal §What 3
+R3 裁决 + 集成测试锁定）。若你的 L2 spec 真需要运行时核验，先补 `tasks.md` 升级
+为 L3。
+
 ## 声明 Schema
 
 在 `proposal.md` YAML frontmatter 里新增一个 `runtime_probe:` 顶层键，4 个
@@ -61,6 +67,8 @@ runtime_probe:
 - **未识别的额外 scalar 子键**（同样 2-space `key: value` 形态）会被**宽容忽略并
   透传**，值层校验单纯不认识这些键、不报错。这是实现的既定行为，**不算**下面
   的拒绝形态之一
+- **重复的同名子键**取最后一次出现的值（last-wins），同样不算拒绝形态 —— 值层
+  照常校验终值。避免依赖此行为，它是宽容而非承诺
 
 **拒绝形态（判"声明无效"，不猜）**：
 

@@ -163,6 +163,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"STALE — runtime probe declaration/config invalid: {result['reason']}")
         return 1
 
+    if outcome != "warn":
+        # Defensive floor (SFH M-2): probe()'s contract defines exactly four
+        # outcomes (pass/warn/skipped/invalid) and the other three are all
+        # handled above — this is only reachable if that contract is ever
+        # violated (e.g. a future new outcome value added upstream). Fail
+        # honestly with the raw outcome instead of silently falling into the
+        # "warn"-branch wording below, which would misdiagnose whatever this
+        # outcome actually means.
+        print(f"STALE — runtime probe returned unrecognized outcome {outcome!r}: {result.get('reason', '')}")
+        return 1
+
     # outcome == "warn": partition missing / unreadable (new, false-green fix)
     # / all stale / only non-production records. Message selection mirrors
     # the legacy four-state dispatch (SC-9); the one new sub-case (unreadable)
@@ -174,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
             "(dead-code risk); dogfood (TASK-019) should produce ≥1"
         )
         return 1
+    # COUPLING LOCK: this substring check is tied to the exact wording
+    # lib.runtime_probe.probe()'s `scan["status"] == "unreadable"` branch
+    # emits ("production telemetry partition unreadable (IO error): ...").
+    # If that upstream reason text ever changes, this branch silently stops
+    # matching and falls through to the generic all-stale message below —
+    # keep the two in sync.
     if "unreadable" in result["reason"]:
         # result["reason"] already reads "production telemetry partition
         # unreadable (IO error): <path>: <error>" — print it directly rather

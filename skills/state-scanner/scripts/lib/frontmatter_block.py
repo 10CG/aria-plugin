@@ -64,9 +64,12 @@ def _frontmatter_block(text: str) -> str | None:
 #   lib/runtime_probe.py) ignores what it doesn't recognize. This is a
 #   deliberate choice, NOT a 5th textual rejection form.
 # - Anything else — deeper nesting, flow-style `{}`, YAML anchors/aliases
-#   (`&`/`*`), multi-line block-scalar values (`|`/`>`), or any other shape
-#   outside this restricted grammar — is "声明无效" (invalid): fail toward
-#   warn, never guess at intent.
+#   (`&`/`*`), multi-line block-scalar values (`|`/`>`), tab-indented lines
+#   (a bare `lstrip(" ")` cannot see tabs, so a tab-led line's indent would
+#   otherwise miscompute to 0 and be silently misread as a dedent — see the
+#   `line != line.lstrip()` guard below), or any other shape outside this
+#   restricted grammar — is "声明无效" (invalid): fail toward warn, never
+#   guess at intent.
 #
 # Type conversion / requiredness / value-range validation (e.g. "symbol is
 # required", "max_age_days must be a positive int") is explicitly OUT of
@@ -174,6 +177,14 @@ def extract_runtime_probe(fm_block: str | None) -> dict:
 
         indent = len(line) - len(line.lstrip(" "))
         if indent == 0:
+            if line != line.lstrip():
+                # Leading whitespace exists (e.g. a tab) that a space-only
+                # lstrip(" ") can't see, so `indent` miscomputes to 0 even
+                # though this ISN'T a genuine dedent. Treating it as "block
+                # ended" here would silently drop this line and every
+                # subsequent one (e.g. max_age_days / enabled_when) instead
+                # of rejecting the malformed declaration — reject instead.
+                return {"status": "invalid", "reason": "tab_indentation"}
             break  # dedent — a sibling top-level key; runtime_probe block ends
 
         m = _SUB_KEY_RE.match(line)

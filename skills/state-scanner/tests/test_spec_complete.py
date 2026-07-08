@@ -1125,6 +1125,11 @@ class TestGateResultTriStateSchema(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertEqual(result["verdict"], "warn")
         self.assertTrue(result["soft_errors"], "usage error 应记 loud soft_error")
+        # [qa M-f3] strengthen: the hardcoded fallback JSON literal (SC-1
+        # "CLI 两处硬编码 fallback JSON" contract) must not carry a
+        # `runtime_probe` key either — this path never reaches gate_result()
+        # at all, so the key must be absent exactly like the SC-1 no-op case.
+        self.assertNotIn("runtime_probe", result)
 
     def test_cli_gate_mode_unexpected_error_fails_toward_warn(self):
         # I1 fix: gate 意外 crash → fail-toward-warn (不 block)。用不存在路径不足以触发 crash
@@ -1136,7 +1141,12 @@ class TestGateResultTriStateSchema(unittest.TestCase):
             text=True,
         )
         self.assertIn(proc.returncode, (0,))
-        self.assertNotEqual(json.loads(proc.stdout)["verdict"], "block")
+        result = json.loads(proc.stdout)
+        self.assertNotEqual(result["verdict"], "block")
+        # [qa M-f3] strengthen: same fallback-key-absence guarantee as the
+        # usage-error sibling test above — this crash-smoke path also never
+        # reaches a real gate_result() JSON with a runtime_probe key.
+        self.assertNotIn("runtime_probe", result)
 
 
 class TestSearchAuthoritativenessNotDeadOnDegraded(unittest.TestCase):
@@ -1373,7 +1383,12 @@ class TestRuntimeProbeFoldPass(unittest.TestCase):
                 set(result["runtime_probe"]), {"outcome", "count", "reason", "symbol", "ts"}
             )
             self.assertEqual(result["runtime_probe"]["outcome"], "pass")
-            self.assertGreaterEqual(result["runtime_probe"]["count"], 1)
+            # [qa M-f5] tightened from assertGreaterEqual: this fixture
+            # writes exactly 1 record via _write_probe_partition above, so
+            # the exact count is a deterministic, precise expectation — not
+            # merely "at least 1" (which would also silently pass if the
+            # scan double-counted or leaked records from elsewhere).
+            self.assertEqual(result["runtime_probe"]["count"], 1)
             self.assertEqual(result["runtime_probe"]["symbol"], "probe_pass")
             datetime.fromisoformat(result["runtime_probe"]["ts"])  # ISO-8601 round-trips
 
@@ -1489,6 +1504,40 @@ class TestRuntimeProbeFoldSkipped(unittest.TestCase):
             result = gate_result(spec_dir)
             self.assertIn("runtime_probe", result)
             self.assertEqual(result["runtime_probe"]["outcome"], "skipped")
+            self.assertEqual(result["verdict"], "pass")
+            self.assertEqual(result["warnings"], [])
+            self.assertEqual(result["unverified_claims"], [])
+            self.assertIsNone(result["d_payload"])
+
+    def test_skipped_enabled_when_config_missing_no_new_warnings(self):
+        """[qa I-f2] SC-4's SECOND skipped root cause, at the ORCHESTRATION
+        layer (twin of test_skipped_enabled_when_off_no_new_warnings above,
+        which writes a config.json with the switch explicitly off): here
+        `.aria/config.json` is never written at all — `_load_config`'s
+        missing_or_unreadable bucket — and must fold IDENTICALLY: declared
+        (enabled_when set) + no config file → outcome=skipped, verdict
+        unchanged, zero new warnings/unverified_claims/d_payload. The unit
+        layer already pins this for `probe()` itself
+        (test_runtime_probe.py::TestProbeSkippedAndConfigTraversal::
+        test_skipped_config_file_missing) — this class pins the same
+        orchestration-layer double-write ABSENCE that
+        test_skipped_enabled_when_off_no_new_warnings pins for the
+        switch-off root cause."""
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(
+                    symbol="probe_skipped_no_config",
+                    enabled_when="state_scanner.coordination.enabled",
+                ),
+                tasks_md=TASKS_ALL_CHECKED,
+                spec_id="probe-skipped-no-config",
+            )
+            # .aria/config.json intentionally never written.
+            result = gate_result(spec_dir)
+            self.assertIn("runtime_probe", result)
+            self.assertEqual(result["runtime_probe"]["outcome"], "skipped")
+            self.assertIn("missing", result["runtime_probe"]["reason"])
             self.assertEqual(result["verdict"], "pass")
             self.assertEqual(result["warnings"], [])
             self.assertEqual(result["unverified_claims"], [])
@@ -1742,6 +1791,120 @@ class TestRuntimeProbeFoldCliConsistency(unittest.TestCase):
                 import_result,
                 "CLI --gate vs import gate_result() drift (runtime_probe branch)",
             )
+
+
+# ---------------------------------------------------------------------------
+# pre-merge R1 fix-verification lock — second block-preservation guard
+# [qa M-f7] + L2/proposal-only designed early-exit [SFH C-1③]
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeProbeFoldBlockSurvivesCrash(unittest.TestCase):
+    """[qa M-f7] Second guard lock (spec_complete.py `gate_result`'s outer
+    `except Exception` around `_fold_runtime_probe_declaration`, currently at
+    line ~1435) — DISTINCT from the guard `TestRuntimeProbeFoldBlockCombination`
+    already pins (the `if result["verdict"] != "block":` INSIDE
+    `_fold_runtime_probe_declaration` itself, ~line 1236, which only fires
+    when the probe cleanly resolves to a warn/invalid OUTCOME). This class
+    instead pins the OUTER exception handler's own copy of the same idiom:
+    when the runtime_probe fold path CRASHES (raises, rather than merely
+    resolving to warn/invalid) while a static C-block dead-code verdict is
+    already in effect (the C-block loop runs BEFORE the runtime_probe fold
+    section in gate_result()'s pipeline), the crash handler must ALSO
+    preserve "block", not downgrade it to "warn". Two independent guards,
+    two independent fixtures — one is not a substitute for the other."""
+
+    def test_static_block_survives_probe_crash_unchanged(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_crash_combo"),
+                tasks_md=(
+                    "# Tasks\n\n"
+                    "- [x] 9.1 集成 `probe_crash_dead_symbol` 到 orchestrator "
+                    "(死代码, 应 block)\n"
+                ),
+                detailed_tasks_yaml=(
+                    '  - id: TASK-902\n    parent: "9.1"\n'
+                    '    deliverables: ["lib/probe_crash_dead_symbol.py"]\n'
+                ),
+                spec_id="probe-block-crash-combo",
+                extra_files={
+                    "lib/probe_crash_dead_symbol.py": "def probe_crash_dead_symbol():\n    pass\n",
+                    "README.md": "probe_crash_dead_symbol 仅此散文提及, 从未被生产调用。\n",
+                },
+            )
+            with patch(
+                "spec_complete._rp_probe",
+                side_effect=RuntimeError("probe exploded (combo)"),
+            ):
+                result = gate_result(spec_dir)
+
+            self.assertEqual(result["verdict"], "block")
+            self.assertTrue(
+                any("probe_crash_dead_symbol" in r for r in result["blocking_reasons"])
+            )
+            # Same TASK-008 non-addition contract as the plain fault-injection
+            # test — crash path never gains a runtime_probe key or a probe
+            # unverified_claims/d_payload entry, block or no block.
+            self.assertNotIn("runtime_probe", result)
+            self.assertTrue(
+                any("runtime_probe evaluation crashed" in w for w in result["warnings"])
+            )
+            self.assertTrue(
+                any(
+                    "runtime_probe evaluation unexpected error" in e
+                    for e in result["soft_errors"]
+                )
+            )
+            self.assertEqual(result["unverified_claims"], [])
+            self.assertIsNone(result["d_payload"])
+
+
+class TestRuntimeProbeFoldL2ProposalOnlyEvaporates(unittest.TestCase):
+    """[SFH C-1③] designed early-exit lock: a proposal-only (Level 2, no
+    tasks.md) spec's runtime_probe declaration is NEVER evaluated.
+    `gate_result()`'s tasks.md-presence early return (`if not
+    tasks_path.is_file(): return result`) fires BEFORE the proposal.md /
+    runtime_probe fold section is ever reached — regardless of how the
+    declaration itself would otherwise resolve.
+
+    This is a DESIGNED early-exit, not an accidental gap: proposal.md
+    §What Changes ③ (R3 裁决) states "gate_result 两个既有早退路径 (tasks.md
+    缺失/不可读) 不评估探针 (spec 结构性不完整时探针无意义, designed 行为,
+    等同零动作)", and the pre-merge R1 disclosure (2026-07-08) added to the
+    same section makes the L2/proposal-only case explicit: "该早退面含合法
+    L2/proposal-only spec (tasks.md 合法可缺、complete 可为 true) —— 有声明
+    也不评估、零痕迹". The front-matter authoring guidance in
+    references/runtime-probe-declaration.md was updated alongside this test
+    lock: "无 tasks.md 的 spec (Level 2 / proposal-only) 即使写了声明也不会
+    被评估". Zero trace: no `runtime_probe` key, and no
+    warnings/unverified_claims/soft_errors additions of ANY kind — not even
+    the ones a missing-partition declaration would normally produce at the
+    unit level (twin fixture: test_runtime_probe.py::TestProbeTriState::
+    test_warn_partition_missing / this file's own
+    TestRuntimeProbeFoldWarnForms.test_warn_partition_missing)."""
+
+    def test_l2_proposal_only_declaration_never_evaluated(self):
+        with tmp_project() as root:
+            spec_dir = make_gate_spec_with_probe(
+                root,
+                runtime_probe_yaml=_runtime_probe_yaml(symbol="probe_l2_evaporates"),
+                tasks_md=None,  # Level 2 / proposal-only — no tasks.md at all
+                spec_id="probe-l2-proposal-only",
+            )
+            # partition intentionally never written either — if this
+            # declaration WERE evaluated, it would resolve to outcome="warn"
+            # (partition missing), exactly like
+            # TestRuntimeProbeFoldWarnForms.test_warn_partition_missing.
+            result = gate_result(spec_dir)
+
+            self.assertNotIn("runtime_probe", result)
+            self.assertEqual(result["warnings"], [])
+            self.assertEqual(result["unverified_claims"], [])
+            self.assertEqual(result["soft_errors"], [])
+            self.assertIsNone(result["d_payload"])
+            self.assertEqual(result["verdict"], "pass")
 
 
 if __name__ == "__main__":

@@ -325,6 +325,22 @@ class TestValidateDescriptorValueLayer(unittest.TestCase):
         self.assertEqual(result["status"], "invalid")
         self.assertIn("outside repo", result["reason"])
 
+    # --- pre-merge R1 fix lock (FIX-2): NUL byte embedded in `partition` ---
+
+    def test_invalid_partition_embedded_nul_byte_resolution_failure(self):
+        """FIX-2 lock: a NUL byte inside `partition` makes `Path.resolve()`
+        raise `ValueError` (not `OSError`) — pre-fix, only `OSError` was
+        caught in this try/except, so a NUL byte escaped `validate_descriptor`
+        entirely as an uncaught exception instead of resolving to a clean
+        "声明无效" verdict (source comment: "both must be caught here or it
+        escapes ... and lands in the caller's generic exception handling").
+        Must return a normal (non-raising) invalid result, same "resolution
+        failed" wording as the OSError sibling forms."""
+        with _tmp_repo() as repo:
+            result = validate_descriptor({"partition": "x\x00y", "symbol": "s"}, repo)
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("resolution failed", result["reason"])
+
     # --- bonus: enabled_when wrong type + non-mapping fields (explicit
     #     defensive guards in the source, cheap to lock) ---
 
@@ -430,6 +446,37 @@ class TestExtractRuntimeProbeTextLayer(unittest.TestCase):
         self.assertEqual(result["status"], "invalid")
         self.assertEqual(result["reason"], "multiline_value")
 
+    # --- pre-merge R1 fix lock (FIX-1): tab-indented sub-key line ---
+
+    def test_rejects_tab_indented_subkey_line(self):
+        """FIX-1 lock: a tab-led line inside the runtime_probe block must be
+        rejected — a bare `lstrip(" ")` can't see tabs, so `indent` would
+        otherwise miscompute to 0 and be misread as a genuine dedent,
+        silently truncating the block (frontmatter_block.py's own comment on
+        the `line != line.lstrip()` guard)."""
+        fm = "runtime_probe:\n  partition: .aria/x.jsonl\n\tsymbol: run_gate\n"
+        result = extract_runtime_probe(fm)
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(result["reason"], "tab_indentation")
+
+    def test_true_dedent_no_leading_whitespace_still_ok_contrast_with_tab(self):
+        """Contrast fixture for the tab-indentation guard above (FIX-1): a
+        GENUINE dedent — a sibling top-level key with NO leading whitespace
+        at all (not even a tab) — must still correctly end the block as
+        `ok`, not be misclassified by the new guard. Twin of
+        test_stops_at_sibling_top_level_key, restated here side-by-side with
+        the tab-rejection case so the two are directly comparable."""
+        fm = (
+            "runtime_probe:\n"
+            "  partition: .aria/x.jsonl\n"
+            "  symbol: run_gate\n"
+            "unverified_claims:\n"
+            "  - foo\n"
+        )
+        result = extract_runtime_probe(fm)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["fields"], {"partition": ".aria/x.jsonl", "symbol": "run_gate"})
+
     def test_frontmatter_block_requires_absolute_file_start(self):
         """`_frontmatter_block` anchors at the file's ABSOLUTE start — a
         `---` block appearing later in the prose body (e.g. a markdown
@@ -497,6 +544,64 @@ class TestOfficialExampleHermetic(unittest.TestCase):
                 "enabled_when": "state_scanner.coordination.enabled",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# pre-merge R1 fix-verification lock — CRLF robustness [qa M-f6]
+# ---------------------------------------------------------------------------
+
+
+class TestExtractRuntimeProbeCRLFRobustness(unittest.TestCase):
+    """[qa M-f6] CRLF robustness: a proposal.md checked out under Windows
+    core.autocrlf (or any \\r\\n-terminated source) must parse identically to
+    the LF form. `_FRONTMATTER_RE` is already `\\r?\\n`-aware for the OUTER
+    delimiter lines (#132 lesson, module comment), but the INNER per-field
+    lines of the captured frontmatter body were never separately exercised
+    under CRLF before this lock.
+
+    Empirically verified against the current implementation (not assumed):
+    `str.splitlines()` already treats a bare `\\r\\n` as a single line
+    boundary with no stray `\\r` left on either side, and the
+    `_strip_inline_comment`/`.strip()` calls further scrub any stray `\\r`
+    at a value's edge — so every assertion below already passes against the
+    unmodified implementation. This class is therefore a REGRESSION LOCK for
+    already-correct behavior, not an `expectedFailure` bug report (no defect
+    found; see task findings)."""
+
+    def test_official_example_crlf_variant_extracts_all_four_fields_no_cr_pollution(self):
+        crlf_yaml = _OFFICIAL_EXAMPLE_YAML.replace("\n", "\r\n")
+        full_text = "---\r\n" + crlf_yaml + "---\r\n\r\n# Proposal body\r\n"
+        fm_body = _frontmatter_block(full_text)
+        self.assertIsNotNone(fm_body)
+        result = extract_runtime_probe(fm_body)
+        self.assertEqual(result["status"], "ok")
+        expected_fields = {
+            "partition": ".aria/coordination-telemetry.jsonl",
+            "symbol": "run_gate",
+            "max_age_days": "14",
+            "enabled_when": "state_scanner.coordination.enabled",
+        }
+        self.assertEqual(result["fields"], expected_fields)
+        for key, value in result["fields"].items():
+            self.assertFalse(
+                value.endswith("\r"), f"field {key!r} carries a trailing CR: {value!r}"
+            )
+            self.assertNotIn("\r", value, f"field {key!r} has an embedded CR: {value!r}")
+
+    def test_single_crlf_line_with_trailing_comment_combo(self):
+        """One line combining BOTH edge cases at once: a CRLF line ending
+        AND an end-of-line trailing comment on that same physical line."""
+        fm = (
+            "runtime_probe:\r\n"
+            "  partition: .aria/x.jsonl   # a trailing comment\r\n"
+            "  symbol: run_gate\r\n"
+        )
+        result = extract_runtime_probe(fm)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["fields"]["partition"], ".aria/x.jsonl")
+        self.assertEqual(result["fields"]["symbol"], "run_gate")
+        self.assertFalse(result["fields"]["partition"].endswith("\r"))
+        self.assertFalse(result["fields"]["symbol"].endswith("\r"))
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +714,35 @@ class TestProbeSkippedAndConfigTraversal(unittest.TestCase):
             result = probe(_descriptor(enabled_when=self._ENABLED_WHEN), repo, _NOW)
         self.assertEqual(result["outcome"], "skipped")
 
+    # --- pre-merge R1 fix lock (FIX-3): config reason wording split ---
+
+    def test_skipped_config_file_malformed_json_reason_says_unparseable(self):
+        """FIX-3 wording lock: malformed JSON text collapses to the SAME
+        outcome=skipped as the sibling test above, but `_load_config`'s
+        SFH M-1 fix now distinguishes the failure classes so the `reason`
+        text must say 'unparseable' (not the missing/unreadable wording) —
+        an honest reason instead of one misleading catch-all message. The
+        'config 缺失 → reason 含 missing' wording is already locked by
+        test_skipped_config_file_missing above (pre-existing regression
+        lock, unchanged by this fix)."""
+        with _tmp_repo() as repo:
+            _write_config(repo / ".aria" / "config.json", "{not valid json")
+            result = probe(_descriptor(enabled_when=self._ENABLED_WHEN), repo, _NOW)
+        self.assertEqual(result["outcome"], "skipped")
+        self.assertIn("unparseable", result["reason"])
+
+    def test_skipped_config_file_non_dict_top_level_reason_says_unparseable(self):
+        """Twin of the above for `_load_config`'s OTHER 'unparseable'
+        sub-form: valid JSON that parses successfully but whose top-level
+        value isn't an object (e.g. a bare JSON array) — same reason
+        wording, same skipped outcome (module docstring: "the top-level
+        JSON value isn't an object/dict")."""
+        with _tmp_repo() as repo:
+            _write_config(repo / ".aria" / "config.json", "[1, 2, 3]")
+            result = probe(_descriptor(enabled_when=self._ENABLED_WHEN), repo, _NOW)
+        self.assertEqual(result["outcome"], "skipped")
+        self.assertIn("unparseable", result["reason"])
+
     def test_skipped_enabled_when_segment_not_configured_defaults_off(self):
         """A missing key at any level means 'switch not configured' = off —
         NOT an error (contrast with the mid-segment-non-dict invalid form
@@ -703,6 +837,39 @@ class TestProbeParsingRobustness(unittest.TestCase):
             result = probe(_descriptor(symbol="totally_unrelated_label"), repo, _NOW)
         self.assertEqual(result["outcome"], "pass")
         self.assertEqual(result["symbol"], "totally_unrelated_label")
+
+
+# ---------------------------------------------------------------------------
+# pre-merge R1 fix-verification lock — staleness cutoff fencepost [qa I-f1]
+# ---------------------------------------------------------------------------
+
+
+class TestProbeStalenessFencepost(unittest.TestCase):
+    """[qa I-f1] boundary semantics: `_scan_partition`'s ONLY staleness
+    comparison is `ts < cutoff` (strict less-than), where
+    `cutoff = ref - timedelta(days=max_age_days)` — so the boundary is
+    INCLUSIVE: a record whose `ts` lands EXACTLY on the cutoff still counts
+    as recent (`pass`), while one just one second earlier does not (`warn`,
+    all-stale). Both fixtures inject the same fixed `_NOW` clock used
+    throughout this file."""
+
+    def test_pass_when_ts_exactly_equals_cutoff(self):
+        with _tmp_repo() as repo:
+            cutoff = _NOW - timedelta(days=14)
+            _write_lines(repo / _PARTITION_REL, [_prod_record(cutoff)])
+            result = probe(_descriptor(max_age_days=14), repo, _NOW)
+        self.assertEqual(result["outcome"], "pass")
+        self.assertEqual(result["count"], 1)
+
+    def test_warn_when_ts_one_second_before_cutoff(self):
+        with _tmp_repo() as repo:
+            cutoff = _NOW - timedelta(days=14)
+            just_stale = cutoff - timedelta(seconds=1)
+            _write_lines(repo / _PARTITION_REL, [_prod_record(just_stale)])
+            result = probe(_descriptor(max_age_days=14), repo, _NOW)
+        self.assertEqual(result["outcome"], "warn")
+        self.assertEqual(result["count"], 0)
+        self.assertIn("all stale", result["reason"])
 
 
 # ---------------------------------------------------------------------------

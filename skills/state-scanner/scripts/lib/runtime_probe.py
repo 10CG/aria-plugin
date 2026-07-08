@@ -99,7 +99,12 @@ def validate_descriptor(fields: dict, repo: Path) -> dict:
     try:
         resolved = (repo / partition_path).resolve()
         repo_resolved = repo.resolve()
-    except OSError as e:
+    except (OSError, ValueError) as e:
+        # ValueError: e.g. a NUL byte embedded in `partition` — pathlib's
+        # resolve() raises ValueError (not OSError) for that case, so both
+        # must be caught here or it escapes validate_descriptor entirely and
+        # lands in the caller's generic exception handling instead of being
+        # classified as a clean "声明无效" (invalid declaration).
         return {"status": "invalid", "reason": f"partition path resolution failed: {e}"}
     if not resolved.is_relative_to(repo_resolved):
         return {
@@ -187,19 +192,34 @@ def _parse_ts(value) -> "datetime | None":
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _load_config(repo: Path) -> "dict | None":
-    """Load ``.aria/config.json``. Returns ``None`` on ANY failure (missing /
-    unreadable / malformed JSON / top-level not an object) — proposal text
-    deliberately lumps "缺失/读不到" together into one conservative bucket
-    (caller treats this as ``skipped`` + low-key note, never ``warn``)."""
+def _load_config(repo: Path) -> "tuple[dict | None, str]":
+    """Load ``.aria/config.json``. Returns ``(data, "ok")`` on success, or
+    ``(None, kind)`` on failure — ``kind`` distinguishes two DIFFERENT
+    failure classes (SFH M-1) so the caller can give an honest ``reason``
+    instead of one misleading catch-all message:
+
+      "missing_or_unreadable" — the file doesn't exist, or reading it raised
+          (permission denied, I/O error, ...). Proposal text deliberately
+          lumps "缺失/读不到" together into one conservative bucket here.
+
+      "unparseable" — the file WAS read successfully but its content isn't
+          valid JSON, or the top-level JSON value isn't an object/dict.
+
+    Both failure kinds still collapse to the SAME ``outcome="skipped"`` at
+    the call site (spec 明文, unchanged) — only the printed ``reason`` text
+    differs, so callers don't cry "warn" over either."""
     cfg_path = repo / _CONFIG_REL_PATH[0] / _CONFIG_REL_PATH[1]
     try:
-        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        text = cfg_path.read_text(encoding="utf-8")
     except Exception:
-        return None
+        return None, "missing_or_unreadable"
+    try:
+        data = json.loads(text)
+    except Exception:
+        return None, "unparseable"
     if not isinstance(data, dict):
-        return None
-    return data
+        return None, "unparseable"
+    return data, "ok"
 
 
 def _resolve_enabled_when(config: dict, dotted_path: str) -> dict:
@@ -298,9 +318,11 @@ def probe(descriptor: dict, repo: Path, now: datetime) -> dict:
                   fixed false-green edge) / all records stale / only
                   non-production records found.
       "skipped" — enabled_when switch resolved to a falsy value (including
-                  "key not configured"), OR config file missing/unreadable
-                  (conservative: cannot confirm the switch should be on, so
-                  don't cry warn — 低调 note only).
+                  "key not configured"), OR config file missing/unreadable/
+                  unparseable (conservative: cannot confirm the switch
+                  should be on, so don't cry warn — 低调 note only; see
+                  ``_load_config`` for the missing-vs-unparseable reason
+                  wording split).
       "invalid" — enabled_when dotted-path hit a non-dict mid-path value in
                   the REAL config content (fifth invalid form; only
                   decidable here, see module docstring).
@@ -313,12 +335,17 @@ def probe(descriptor: dict, repo: Path, now: datetime) -> dict:
 
     enabled_when = descriptor.get("enabled_when")
     if enabled_when and isinstance(enabled_when, str):
-        config = _load_config(repo)
+        config, load_kind = _load_config(repo)
         if config is None:
+            reason = (
+                "config file missing or unreadable (assumed off)"
+                if load_kind == "missing_or_unreadable"
+                else "config file unparseable (assumed off)"
+            )
             return {
                 "outcome": "skipped",
                 "count": 0,
-                "reason": "config file missing or unreadable (assumed off)",
+                "reason": reason,
                 "symbol": symbol,
             }
         switch = _resolve_enabled_when(config, enabled_when)

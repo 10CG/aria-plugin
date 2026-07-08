@@ -83,6 +83,9 @@ for _p in (_LIB_DIR, _SCRIPTS_DIR):
 from frontmatter_block import (  # noqa: E402
     _FRONTMATTER_RE,
     _frontmatter_block,
+    _TOP_KEY_RE,
+    _strip_inline_comment,
+    _rejected_scalar_reason,
     extract_runtime_probe,
 )
 import collectors.openspec as _openspec_mod  # noqa: E402
@@ -93,39 +96,93 @@ def _q(s):
     return json.dumps(s, ensure_ascii=False)
 
 
+class RuntimeProbeMergeContractError(RuntimeError):
+    """顶键行既非裸块声明又非可识别的降级形态 (SKILL.md :226-227) —— 契约
+    破坏, 必须显式报错, 不得静默追加第二个同名顶层键。同样覆盖"完全找不到
+    顶键行"的结构上不可达兜底 (旧版在此静默退化成新增完整结果块, R1 修法
+    改为同一 hard-fail 出口, 不再有第二条隐藏的兜底路径)。"""
+
+
 def _merge_append_runtime_probe(lines, rp):
     """merge-append 语义 (openspec-archive SKILL.md "runtime_probe 同名键
-    merge-append 规则" :213-221, 主控裁决 2026-07-08 — 替代 TASK-016 首版
-    replace-in-place 实现选择): 结果三字段 (outcome/count/ts) 追加进既有
-    顶层 `runtime_probe:` mapping 内, 不新起第二个同名顶层键, 不产生 YAML
-    重复键; symbol 仅当该 mapping 尚未含 `symbol:` 子键时才补写 (声明已携带
-    symbol 则不重复) —— 既有全部作者声明子行原样保留、原始顺序不变
-    (partition/max_age_days/enabled_when 等一个不丢一个不改)。返回
-    ``(new_lines, merged: bool)`` —— ``merged=False`` 表示扫描完毕未见既有
-    顶层 `runtime_probe:` 键 (理论不可达: 声明唯一被 gate 发现的途径正是
-    这个既有块, 见调用方防御性兜底)。"""
-    out, i, n = [], 0, len(lines)
-    merged = False
-    while i < n:
-        line = lines[i]
-        out.append(line)
-        if line == "runtime_probe:":
-            merged = True
-            has_symbol = False
-            i += 1
-            while i < n and (lines[i].startswith(" ") or lines[i] == ""):
-                if lines[i].strip().startswith("symbol:"):
-                    has_symbol = True
-                out.append(lines[i])
-                i += 1
-            out.append(f"  outcome: {_q(rp['outcome'])}")
-            out.append(f"  count: {rp['count']}")
-            out.append(f"  ts: {_q(rp['ts'])}")
-            if not has_symbol:
-                out.append(f"  symbol: {_q(rp['symbol'])}")
-            continue
+    merge-append 规则" :213-227, 主控裁决 2026-07-08 — 替代 TASK-016 首版
+    replace-in-place 实现选择; R1 [SFH I-1 / TL F3] 顶键定位与降级路径修法):
+
+    顶键定位改产**等价语义** —— 复用生产 `_TOP_KEY_RE`/`_strip_inline_comment`
+    两级解析原语 (非裸字符串 `==` 比较), 与 `extract_runtime_probe` 同一判定:
+    顶键行尾随空格 / 行尾注释被生产解析器判合法声明, 定位不应因此失败。
+
+    三路分叉 (SKILL.md :221-227, 与 `extract_runtime_probe` 的"拒绝任何非裸
+    `runtime_probe:` 顶键行内容"判定同一棵判定树):
+
+      (a) 裸块声明 (top_value 剥行尾注释剥首尾空白后为空) → 沿用既有
+          merge-append: outcome/count/ts 追加进块内 (symbol 已由声明携带
+          则不重复写), 既有作者子行原样保留、顺序不变。返回
+          ``(new_lines, "merged")``。
+
+      (b) 降级路径 (作者值非块 mapping —— 顶层 flow-style `{...}` / 锚点
+          别名 `&`/`*` / 多行块量 `|`/`>`, 即 `_rejected_scalar_reason` 可
+          归类的非空 top_value): merge-append 结构上不适用 →
+          **保留作者行原样, 结果键不落盘** (不新起同名键/不产生重复键/不
+          改写作者行; "无法核验"信号已由同批 unverified_claims 条目完整
+          承载)。返回 ``(lines 原样不变, "degraded")``。
+
+      (c) 意外结构 (非空 top_value 但 `_rejected_scalar_reason` 无法归类
+          —— 既非(a)又非(b)) **以及** 扫描完毕未见任何顶层 `runtime_probe:`
+          键 (write_rp=True 却无声明行, 结构上不可达: write_rp 恒源自对
+          同一 proposal 文本 --gate 折入, 折入前提正是该顶键行已被生产
+          `extract_runtime_probe` 定位到) —— 两种情形均视为**契约破坏**,
+          **显式报错** (`RuntimeProbeMergeContractError`), 不再静默退化为
+          "新增一个完整结果块" (旧版行为, 直接违反 SKILL.md "不产生 YAML
+          重复键")。
+    """
+    start = None
+    top_rest = ""
+    for idx, line in enumerate(lines):
+        m = _TOP_KEY_RE.match(line)
+        if m:
+            start = idx
+            top_rest = m.group(1)
+            break
+
+    if start is None:
+        raise RuntimeProbeMergeContractError(
+            "write_rp=True but no top-level `runtime_probe:` line found in "
+            "body — refusing silent duplicate-key fallback"
+        )
+
+    top_value = _strip_inline_comment(top_rest).strip()
+
+    if top_value != "":
+        reason = _rejected_scalar_reason(top_value)
+        if reason is None:
+            raise RuntimeProbeMergeContractError(
+                f"unexpected runtime_probe top-key line shape: {lines[start]!r} "
+                f"(top_value={top_value!r} unclassifiable — neither bare block "
+                f"nor a recognized degraded form)"
+            )
+        # (b) 降级路径: 保留作者行原样, 结果键不落盘, 不消费/不改写该行
+        # 之后的任何内容 (非块声明, 无"块内容"概念可言)。
+        return list(lines), "degraded"
+
+    # (a) 裸块声明 —— 与生产 extract_runtime_probe 同一判定 (top_value 剥
+    # 注释剥空白后为空), 沿用既有 merge-append 行为。
+    out = list(lines[: start + 1])
+    has_symbol = False
+    i = start + 1
+    n = len(lines)
+    while i < n and (lines[i].startswith(" ") or lines[i] == ""):
+        if lines[i].strip().startswith("symbol:"):
+            has_symbol = True
+        out.append(lines[i])
         i += 1
-    return out, merged
+    out.append(f"  outcome: {_q(rp['outcome'])}")
+    out.append(f"  count: {rp['count']}")
+    out.append(f"  ts: {_q(rp['ts'])}")
+    if not has_symbol:
+        out.append(f"  symbol: {_q(rp['symbol'])}")
+    out.extend(lines[i:])
+    return out, "merged"
 
 
 def write_warn_overlay(proposal_path, gate_json, ack=False):
@@ -168,22 +225,16 @@ def write_warn_overlay(proposal_path, gate_json, ack=False):
     else:
         # 已有块 (本 change 唯一来源: 活跃期作者自写的 runtime_probe 声明本身
         # 就需要一个既有块才能被 gate 解析到) → merge-append 语义 (SKILL.md
-        # "runtime_probe 同名键 merge-append 规则", 主控裁决 2026-07-08):
-        # outcome/count/ts 追加进既有 runtime_probe: mapping 内 (symbol 仅
-        # 声明未携带时补写), 不删不改任何作者声明字段, 不产生 YAML 重复键。
+        # "runtime_probe 同名键 merge-append 规则", 主控裁决 2026-07-08; R1
+        # 修法): outcome/count/ts 追加进既有 runtime_probe: mapping 内
+        # (symbol 仅声明未携带时补写), 不删不改任何作者声明字段, 不产生
+        # YAML 重复键。`_merge_append_runtime_probe` 现在是这条规则的**唯一**
+        # 出口 —— "merged"(追加)/"degraded"(降级路径, body_lines 原样不变)
+        # 两态都已是终态, 不再需要旧版"未 merged 时退化新增完整块"的兜底
+        # 分支 (该兜底已被移除, 换成函数内部的显式 hard-fail, 见其 docstring)。
         body_lines = m.group(1).splitlines()
         if write_rp:
-            body_lines, merged = _merge_append_runtime_probe(body_lines, rp)
-            if not merged:
-                # 防御性兜底 (理论不可达, 同上): 找不到既有 runtime_probe:
-                # 顶层键时退化为新增一个完整结果块, 不静默吞掉本该落盘的结果。
-                body_lines += [
-                    "runtime_probe:",
-                    f"  outcome: {_q(rp['outcome'])}",
-                    f"  count: {rp['count']}",
-                    f"  ts: {_q(rp['ts'])}",
-                    f"  symbol: {_q(rp['symbol'])}",
-                ]
+            body_lines, _merge_outcome = _merge_append_runtime_probe(body_lines, rp)
         merged_body = "\n".join(body_lines + new_lines)
         new_text = "---\n" + merged_body + "\n---\n" + text[m.end():]
     path.write_text(new_text, encoding="utf-8")
@@ -218,11 +269,19 @@ def parse_unverified_claims(fm_body):
 def parse_runtime_probe_result(fm_body):
     """真实解析路径: 定位含 `outcome` 子字段的 `runtime_probe:` 块 (与
     declaration 子块 [partition/symbol/...] 区分 — declaration 从无 outcome
-    子字段), 缺席时返回 None。"""
+    子字段), 缺席时返回 None。顶键行定位与写入侧 `_merge_append_runtime_probe`
+    同一等价语义 (`_TOP_KEY_RE`/`_strip_inline_comment`, 容忍尾随空格/行尾
+    注释) —— 若仍用裸 `== "runtime_probe:"` 字节比较, R1 新增案例(ii) 的
+    "顶键行带行尾注释" 场景会在读侧误判块缺席, 即便写侧 merge-append 已经
+    正确工作, 也测不出来 (读写两侧判定必须同一棵判定树, 否则测试本身就是
+    盲区)。非空 top_value (降级路径场景) 时不当作块起点 —— 该行不消费,
+    继续向后扫描 (与 `_merge_append_runtime_probe` 的"降级路径不生产结果键"
+    互为镜像: 读侧自然返回 None, 无需额外分支)。"""
     lines = fm_body.splitlines()
     i, n = 0, len(lines)
     while i < n:
-        if lines[i] == "runtime_probe:":
+        m = _TOP_KEY_RE.match(lines[i])
+        if m and _strip_inline_comment(m.group(1)).strip() == "":
             fields, j = {}, i + 1
             while j < n and lines[j].startswith("  "):
                 k, _, v = lines[j].strip().partition(":")
@@ -256,6 +315,10 @@ def read_archived_summary(archive_dir):
     return {
         "fm_present": fm is not None,
         "starts_at_absolute_start": text.startswith("---"),
+        # 原始 frontmatter 块逐行 (R1 案例(i)/(ii) 用来断言"作者行逐字节原样
+        # 保留" + "无重复顶层键" —— 比逐个新增专用 summary 字段更直接, 复用
+        # 同一份已解析好的行列表)。
+        "fm_body_lines": fm.splitlines() if fm is not None else None,
         "unverified_claims": parse_unverified_claims(fm) if fm is not None else None,
         "runtime_probe_result": parse_runtime_probe_result(fm) if fm is not None else None,
         "declaration_parse_status": extract_runtime_probe(fm)["status"] if fm is not None else None,
@@ -373,7 +436,13 @@ mkdir -p "$POS_SPEC" "$POS_ROOT/.aria"
 # "作者声明字段无一丢失/无一被改", 四字段齐全才能把这条断言钉扎实; enabled_when 指向的开关
 # 显式置真 (.aria/config.json), 使其"落入 partition 探测分支"而不误变成 skipped, 不干扰
 # warn-outcome 的正控设计意图。
-printf -- '---\nruntime_probe:\n  partition: .aria/probe-telemetry.jsonl\n  symbol: e2e_pos_symbol\n  max_age_days: 10\n  enabled_when: e2e.pos_switch\n---\n\n# probe-e2e-positive\n\n> **Status**: Approved\n\n## Why\ntest\n' > "$POS_SPEC/proposal.md"
+# updated-at 当场写入 (R1 [qa M-f4] _staleness_days 断言强化): 取本次跑测的
+# "现在" (probe_ts 0, 而非硬编码日历日期 — 与文件其余时间戳同一"相对当前时间
+# 生成"手法), 使下方 staleness_days 断言能从"非负整数"这种宽松形状检查收紧到
+# 精确 `assertEqual 0` —— 顶层 0-indent 兄弟键, 在 runtime_probe: 块 dedent
+# 边界之外, 不进入 merge-append 消费范围 (不扰动声明 4 字段/结果 3 字段断言)。
+POS_UPDATED_AT="$(probe_ts 0)"
+printf -- '---\nruntime_probe:\n  partition: .aria/probe-telemetry.jsonl\n  symbol: e2e_pos_symbol\n  max_age_days: 10\n  enabled_when: e2e.pos_switch\nupdated-at: %s\n---\n\n# probe-e2e-positive\n\n> **Status**: Approved\n\n## Why\ntest\n' "$POS_UPDATED_AT" > "$POS_SPEC/proposal.md"
 printf '# Tasks\n\n- [x] task one\n- [x] task two\n' > "$POS_SPEC/tasks.md"
 printf '{"e2e": {"pos_switch": true}}' > "$POS_ROOT/.aria/config.json"
 # warn 形态: 全陈旧 (窗口 10d 外的唯一一条 production 记录, 20d 前)
@@ -431,11 +500,14 @@ ARCHTYPE="$(printf '%s' "$POS_SUMMARY" | python3 -c 'import sys,json;print(json.
 SOFTERR="$(printf '%s' "$POS_SUMMARY" | python3 -c 'import sys,json;print(json.load(sys.stdin)["soft_errors"])')"
 [ "$ARCHTYPE" = None ] && [ "$SOFTERR" = "[]" ] && ok "正控: _read_archive_type() 既有消费者无扰 (None, 零 soft_error)" || bad "正控: _read_archive_type 受扰: archive_type=$ARCHTYPE soft_errors=$SOFTERR"
 
+# R1 [qa M-f4] 断言强化: fixture 的 updated-at 当场写入 (probe_ts 0, 即"现在"),
+# 精确期望 staleness_days==0 —— 从"非负整数"这种任何值都能蒙混过关的宽松形状
+# 检查, 收紧到 assertEqual 0 语义 (与 unittest assertEqual 同一严格度), 同时
+# 顺带实证 _UPDATED_AT_FIELD_RE 真读到了这个新增顶层字段 (而非巧合落在 mtime
+# 兜底分支上 — mtime 兜底同样会给出 0, 但不能证明 updated-at 解析路径本身
+# 工作正常)。
 STALENESS="$(printf '%s' "$POS_SUMMARY" | python3 -c 'import sys,json;print(json.load(sys.stdin)["staleness_days"])')"
-case "$STALENESS" in
-  ''|*[!0-9]*) bad "正控: _staleness_days() 非预期输出: $STALENESS" ;;
-  *) ok "正控: _staleness_days() 既有消费者无扰 (int>=0: $STALENESS)" ;;
-esac
+[ "$STALENESS" = "0" ] && ok "正控: _staleness_days() 既有消费者无扰 (fixture updated-at 当场写入 → 精确 staleness_days=0)" || bad "正控: _staleness_days() got=$STALENESS (期望精确 0)"
 
 echo "== 7. SC-10 负控(a): pass-outcome fixture 同流程 → 归档 frontmatter 无 runtime_probe 键 =="
 A_ROOT="$TMP/e2e-negA"
@@ -557,6 +629,113 @@ C2_SYMBOL_SUPPLEMENTED="$(printf '%s' "$C2_SUMMARY" | python3 -c 'import sys,jso
 [ "$C2_SYMBOL_SUPPLEMENTED" = True ] && ok "负控(c') 补充: 声明缺 symbol → merge-append 补写 probe 返回的 symbol (空串)" || bad "负控(c') 补充: symbol 补写异常"
 C2_RP_KEYS="$(printf '%s' "$C2_SUMMARY" | python3 -c 'import sys,json;d=json.load(sys.stdin)["runtime_probe_result"] or {};print(sorted(d.keys()))')"
 [ "$C2_RP_KEYS" = "['count', 'enabled_when', 'outcome', 'partition', 'symbol', 'ts']" ] && ok "负控(c') 补充: mapping 字段集恰为声明∪结果 (含补写的 symbol)" || bad "负控(c') 补充: 字段集异常: $C2_RP_KEYS"
+
+# =============================================================================
+# §10-11: R1 pre-merge 修复轮新增 —— openspec-archive SKILL.md "runtime_probe
+# 同名键 merge-append 规则" :221-227 新增「降级路径 (作者值非块 mapping)」条款的
+# 首次 E2E 覆盖 ([SFH I-1 / TL F3] `_merge_append_runtime_probe` 顶键定位改产
+# 等价语义, 见 e2e_probe_lib.py 内 `_merge_append_runtime_probe` docstring)。
+# =============================================================================
+
+echo "== 10. R1 新增(i): 顶层 flow-style 声明 (作者值非块 mapping) → 降级路径, 结果键不落盘, 作者行原样保留 =="
+# 顶层 flow-style `runtime_probe: {...}` —— extract_runtime_probe 文本层判 invalid
+# (reason=flow_style_mapping), 与 §9/§9b 的"子键 flow-style" (enabled_when: {a: b})
+# 不同形状: 本例是**顶键行自身**携带非空值, merge-append 结构上不适用 (无"块"可 merge
+# 进), 必须走降级路径 —— 保留作者行原样, 结果键不落盘, 不新起第二个同名顶层键。
+D_ROOT="$TMP/e2e-negD"
+D_SPEC="$D_ROOT/openspec/changes/probe-e2e-negD"
+mkdir -p "$D_SPEC"
+D_DECL_LINE='runtime_probe: {partition: x}'
+printf -- '---\n%s\n---\n\n# probe-e2e-negD\n\n> **Status**: Approved\n\n## Why\ntest\n' "$D_DECL_LINE" > "$D_SPEC/proposal.md"
+printf '# Tasks\n\n- [x] task one\n- [x] task two\n' > "$D_SPEC/tasks.md"
+
+gate "$D_SPEC"
+[ "$VERDICT" = warn ] && ok "R1(i) Step1 verdict=warn (顶层 flow-style 声明文本层无效自身致 warn)" || bad "R1(i) Step1 verdict=$VERDICT (期望 warn)"
+D_PROBE_OUTCOME_MEM="$(printf '%s' "$GATE_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["runtime_probe"]["outcome"])')"
+[ "$D_PROBE_OUTCOME_MEM" = invalid ] && ok "R1(i): 探针内存态 outcome=invalid (文本层拒绝)" || bad "R1(i): 探针 outcome got=$D_PROBE_OUTCOME_MEM (期望 invalid)"
+if [ "$VERDICT" = warn ]; then python3 "$E2ELIB" write "$D_SPEC/proposal.md" "$GATE_JSON"; fi
+D_ARCHIVE="$D_ROOT/openspec/archive/2026-07-08-probe-e2e-negD"
+mkdir -p "$D_ROOT/openspec/archive"
+mv "$D_SPEC" "$D_ARCHIVE"
+D_SUMMARY="$(python3 "$E2ELIB" read "$D_ARCHIVE")"
+
+D_ASSERT="$(printf '%s' "$D_SUMMARY" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+lines = d["fm_body_lines"] or []
+top_lines = [l for l in lines if l.startswith("runtime_probe:")]
+print(json.dumps({
+    "line_preserved": "runtime_probe: {partition: x}" in lines,
+    "top_key_count": len(top_lines),
+}))
+')"
+D_LINE_PRESERVED="$(printf '%s' "$D_ASSERT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["line_preserved"])')"
+[ "$D_LINE_PRESERVED" = True ] && ok "R1(i): 作者行逐字节原样保留 (降级路径不改写作者行)" || bad "R1(i): 作者行被改写: $D_SUMMARY"
+
+D_TOPKEY_COUNT="$(printf '%s' "$D_ASSERT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["top_key_count"])')"
+[ "$D_TOPKEY_COUNT" = "1" ] && ok "R1(i): 无重复顶层键 (恰一行 runtime_probe: 前缀, 未静默追加第二个)" || bad "R1(i): 顶层键计数异常: $D_TOPKEY_COUNT"
+
+D_RP_RESULT="$(printf '%s' "$D_SUMMARY" | python3 -c 'import sys,json;print(json.load(sys.stdin)["runtime_probe_result"])')"
+[ "$D_RP_RESULT" = "None" ] && ok "R1(i): 无 runtime_probe 结果键 (降级路径, 结果不落盘)" || bad "R1(i): runtime_probe 结果键异常出现: $D_RP_RESULT"
+
+D_UC_HAS_INVALID="$(printf '%s' "$D_SUMMARY" | python3 -c 'import sys,json;d=json.load(sys.stdin)["unverified_claims"] or [];print(any(c["claim"]=="runtime_probe" and "flow_style_mapping" in c["reason"] for c in d))')"
+[ "$D_UC_HAS_INVALID" = True ] && ok "R1(i): unverified_claims 含 invalid 条目 (claim=runtime_probe 裸标签, reason 含 flow_style_mapping)" || bad "R1(i): unverified_claims 缺 invalid 条目: $D_SUMMARY"
+
+D_DECL_STATUS="$(printf '%s' "$D_SUMMARY" | python3 -c 'import sys,json;print(json.load(sys.stdin)["declaration_parse_status"])')"
+[ "$D_DECL_STATUS" = invalid ] && ok "R1(i): extract_runtime_probe() 对归档后原样声明仍判 status=invalid (降级路径未改写语义)" || bad "R1(i): declaration_parse_status got=$D_DECL_STATUS (期望 invalid)"
+
+echo "== 11. R1 新增(ii): 顶键行带行尾注释 (合法声明) + warn 分区 → merge-append 正常工作 (声明∪结果单一 mapping) =="
+# 与 §6 POS 正控同一 partition/config 设计 (全陈旧探针 → warn), 唯一变量是顶键行带
+# 行尾注释 `runtime_probe:   # my probe` —— 生产解析器 (_TOP_KEY_RE/_strip_inline_
+# comment) 判该行仍是合法裸块声明, merge-append 应正常工作: 声明字段保留 ∪ 结果
+# 字段追加, 单一 mapping (不因注释误判块缺席而漏写结果, 也不因此另起一个块)。
+E_ROOT="$TMP/e2e-negE"
+E_SPEC="$E_ROOT/openspec/changes/probe-e2e-negE"
+mkdir -p "$E_SPEC" "$E_ROOT/.aria"
+E_TOP_LINE='runtime_probe:   # my probe'
+printf -- '---\n%s\n  partition: .aria/probe-telemetry.jsonl\n  symbol: e2e_negE_symbol\n  max_age_days: 10\n  enabled_when: e2e.negE_switch\n---\n\n# probe-e2e-negE\n\n> **Status**: Approved\n\n## Why\ntest\n' "$E_TOP_LINE" > "$E_SPEC/proposal.md"
+printf '# Tasks\n\n- [x] task one\n- [x] task two\n' > "$E_SPEC/tasks.md"
+printf '{"e2e": {"negE_switch": true}}' > "$E_ROOT/.aria/config.json"
+printf '{"ts": "%s", "source": "production"}\n' "$(probe_ts 20)" > "$E_ROOT/.aria/probe-telemetry.jsonl"
+
+gate "$E_SPEC"
+[ "$VERDICT" = warn ] && ok "R1(ii) Step1 verdict=warn (全陈旧探针, 顶键行注释不影响声明有效性)" || bad "R1(ii) Step1 verdict=$VERDICT (期望 warn)"
+E_PROBE_OUTCOME_MEM="$(printf '%s' "$GATE_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["runtime_probe"]["outcome"])')"
+[ "$E_PROBE_OUTCOME_MEM" = warn ] && ok "R1(ii): 探针内存态 outcome=warn (声明本身合法, 顶键行注释被生产解析器容忍)" || bad "R1(ii): 探针 outcome got=$E_PROBE_OUTCOME_MEM (期望 warn)"
+if [ "$VERDICT" = warn ]; then python3 "$E2ELIB" write "$E_SPEC/proposal.md" "$GATE_JSON"; fi
+E_ARCHIVE="$E_ROOT/openspec/archive/2026-07-08-probe-e2e-negE"
+mkdir -p "$E_ROOT/openspec/archive"
+mv "$E_SPEC" "$E_ARCHIVE"
+E_SUMMARY="$(python3 "$E2ELIB" read "$E_ARCHIVE")"
+
+E_RP_OUTCOME="$(printf '%s' "$E_SUMMARY" | python3 -c 'import sys,json;d=json.load(sys.stdin)["runtime_probe_result"];print(d["outcome"] if d else "ABSENT")')"
+[ "$E_RP_OUTCOME" = "warn" ] && ok "R1(ii): merge-append 成功 — runtime_probe.outcome=warn 落盘 (顶键行注释未致误判块缺席)" || bad "R1(ii): runtime_probe outcome got=$E_RP_OUTCOME"
+
+E_DECL_PRESERVED="$(printf '%s' "$E_SUMMARY" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["runtime_probe_result"] or {}
+expected_decl = {
+    "partition": ".aria/probe-telemetry.jsonl",
+    "symbol": "e2e_negE_symbol",
+    "max_age_days": 10,
+    "enabled_when": "e2e.negE_switch",
+}
+print(all(d.get(k) == v for k, v in expected_decl.items()))
+')"
+[ "$E_DECL_PRESERVED" = True ] && ok "R1(ii): 声明字段保留 (顶键行注释场景下 4 字段原样不丢)" || bad "R1(ii): 声明字段被扰动: $E_SUMMARY"
+
+E_RP_KEYS="$(printf '%s' "$E_SUMMARY" | python3 -c 'import sys,json;d=json.load(sys.stdin)["runtime_probe_result"] or {};print(sorted(d.keys()))')"
+EXPECT_E_KEYS="['count', 'enabled_when', 'max_age_days', 'outcome', 'partition', 'symbol', 'ts']"
+[ "$E_RP_KEYS" = "$EXPECT_E_KEYS" ] && ok "R1(ii): 结果字段追加 ∪ 声明字段 = 单一 mapping (字段集恰为并集)" || bad "R1(ii): 字段集异常: got=$E_RP_KEYS want=$EXPECT_E_KEYS"
+
+E_TOPKEY_COUNT="$(printf '%s' "$E_SUMMARY" | python3 -c 'import sys,json;lines=json.load(sys.stdin)["fm_body_lines"] or [];print(sum(1 for l in lines if l.startswith("runtime_probe:")))')"
+[ "$E_TOPKEY_COUNT" = "1" ] && ok "R1(ii): 单一 mapping (恰一个顶层 runtime_probe: 前缀行, 无重复键)" || bad "R1(ii): 顶层键计数异常: $E_TOPKEY_COUNT"
+
+E_TOP_LINE_PRESERVED="$(printf '%s' "$E_SUMMARY" | python3 -c 'import sys,json;lines=json.load(sys.stdin)["fm_body_lines"] or [];print("runtime_probe:   # my probe" in lines)')"
+[ "$E_TOP_LINE_PRESERVED" = True ] && ok "R1(ii): 顶键行本身 (含尾随注释) 原样保留" || bad "R1(ii): 顶键行被改写: $E_SUMMARY"
+
+E_DECL_STATUS="$(printf '%s' "$E_SUMMARY" | python3 -c 'import sys,json;print(json.load(sys.stdin)["declaration_parse_status"])')"
+[ "$E_DECL_STATUS" = ok ] && ok "R1(ii): extract_runtime_probe() 对归档后混合 mapping 仍判 status=ok (顶键行注释不制造声明无效噪音)" || bad "R1(ii): declaration_parse_status got=$E_DECL_STATUS (期望 ok)"
 
 echo
 echo "== 结果: $PASS_CNT passed, $FAIL_CNT failed =="
