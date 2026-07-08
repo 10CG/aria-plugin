@@ -78,6 +78,7 @@ runtime_probe:
 | flow-style `{}` 映射 | `runtime_probe: {partition: x}` |
 | YAML 锚点/别名（`&` / `*`） | `partition: &anchor foo` |
 | 多行 block-scalar（`\|` / `>`，含 chomping/缩进变体如 `\|-`、`>+3`） | `partition: \|` 后跟多行内容 |
+| tab 缩进（子键行以 tab 而非 2-space 缩进；pre-merge R1 加固，防 tab 行被误判 dedent 静默截断声明） | `<TAB>max_age_days: 3` |
 
 ## 值层五种无效形态
 

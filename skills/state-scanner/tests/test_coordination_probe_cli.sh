@@ -130,11 +130,13 @@ probe "$D4"
 echo "== 5. read-failure — 新行为独立锁定 (非逐字节对旧版, 旧版本身是待修假绿) =="
 
 if [ "$(id -u)" = "0" ]; then
-  # 3 条跳过对应下方 else 分支的 3 条断言 (exit=1 / STALE 前缀 / 无 'OK (' 片段) ——
-  # 逐条 skip() 而非单条聚合, 让 SKIP_CNT 与"本该跑但没跑的断言数"一一对应。
+  # 4 条跳过对应下方 else 分支的 4 条断言 (exit=1 / STALE 前缀 / 无 'OK (' 片段 /
+  # unreadable 专属分支判别) —— 逐条 skip() 而非单条聚合, 让 SKIP_CNT 与"本该跑
+  # 但没跑的断言数"一一对应。
   skip "read-failure: exit=1 (root 运行, chmod 000 对 root 无意义)"
   skip "read-failure: stdout 以 STALE 开头 (root 运行, 同上)"
   skip "read-failure: stdout 不含 'OK (' 假绿片段 (root 运行, 同上)"
+  skip "read-failure: stdout 含 'unreadable' 专属分支判别 (root 运行, 同上)"
 else
   D5="$TMP/unreadable"; mkdir -p "$D5/.aria"
   printf '{"state_scanner": {"coordination": {"enabled": true}}}' > "$D5/.aria/config.json"
@@ -150,6 +152,14 @@ else
   case "$OUT" in
     *"OK ("*) bad "read-failure: stdout 不应含旧假绿片段 'OK (' (got: [$OUT])" ;;
     *) ok "read-failure: stdout 不含 'OK (' 假绿片段" ;;
+  esac
+  # R2 [qa new-2]: 判别 unreadable 专属分支 vs 通用全陈旧消息 —— 前两条断言
+  # (STALE 前缀 / 无 OK) 对两个分支无区分力; 本断言锁死 coordination_probe.py
+  # COUPLING LOCK 注释自陈的子串耦合风险 (上游 reason 措辞漂移 → 静默滑入
+  # 通用 stale 文案, 此断言即翻红)。
+  case "$OUT" in
+    *unreadable*) ok "read-failure: stdout 含 'unreadable' (IO-error 专属分支, 非通用全陈旧文案)" ;;
+    *) bad "read-failure: stdout 未含 'unreadable' — 疑似退化到通用全陈旧消息: [$OUT]" ;;
   esac
 
   chmod 644 "$D5/.aria/coordination-telemetry.jsonl"
