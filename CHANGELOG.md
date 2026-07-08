@@ -10,6 +10,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.54.0] - 2026-07-08
+
+### Added: runtime-probe 泛化 → 归档门声明式可选动态子检查 (#95 follow-up A)
+- **通用探针库** `state-scanner/scripts/lib/runtime_probe.py`: coordination_probe (DEC-002 单一用途硬编码件) 泛化 —
+  descriptor 值层校验 (五无效形态: 缺必填/类型错/max_age_days≤0/partition 绝对路径或逃逸 repo [含 pathlib 拼接陷阱 +
+  NUL ValueError 防御]/enabled_when 中间段非 dict) + `probe(descriptor, repo, now)` 四态判定 (pass / warn 四形态 /
+  skipped [config 缺失与 unparseable 分型 reason] / invalid)。
+- **声明面**: spec 作者活跃期在 proposal.md frontmatter 自写 `runtime_probe:` (partition/symbol 必填, max_age_days/
+  enabled_when 可选); `lib/frontmatter_block.py` 新叶子 (自 collectors/openspec.py 物理 move `_FRONTMATTER_RE`/
+  `_frontmatter_block`, 单一 SOT) + 受限 YAML 子集 stdlib 手写解析 (2-space scalar 子键 + 行尾注释剥离 + 文本层
+  五拒绝形态 [深嵌套/flow-style/锚点/多行值/tab 缩进]); 声明作者手册 `references/runtime-probe-declaration.md`
+  (含 L3 前置条件: L2/proposal-only spec 声明不评估零痕迹, designed + 测试锁定)。
+- **归档门折入** `lib/spec_complete.py::gate_result`: 有声明才评估, **fail-toward-warn 单调** (pass 不变+note / warn
+  抬升**绝不 block** / 已 block 不降不升 / skipped 低调 note / 声明无效→warn 无法核验); probe-warn **双写**
+  warnings[] + unverified_claims[] (`{claim: "runtime_probe:<symbol>"}` 复用 #95 双下游: warn_overlay 持久化 +
+  d_payload/D auto-issue 兜底); 条件性字段 `gate_result.runtime_probe` {outcome,count,reason,symbol,ts} (无声明键
+  整体缺席, 禁 null 占位); 全异常兜底 (崩溃→warn 照常产出完整裁决; known-limitation: crash 不入 D tracker — gate
+  自身故障归错 owner 论证, SOT 明文)。**无声明 spec 零动作逐字节不变** (SC-1: 118 归档 + 6 活跃全语料 v1.53.0 vs
+  新代码同树双跑 diff=0)。
+- **归档写入契约** (openspec-archive SKILL.md Step 1 schema 补注 + Step 2 warn_overlay): runtime_probe 结果
+  {outcome,count,ts,symbol} 仅探针自身 outcome∈{warn,invalid} 时与 unverified_claims **同批落盘** (R3 内容归属,
+  与门级 verdict 来源正交); **同名键 merge-append 规则** (SC-10 E2E 首次连续流程行使实证契约缺口后裁决: 结果字段
+  追加进作者声明 mapping, 不删改作者字段、不产生 YAML 重复键; 作者值非块 mapping 走降级路径结果不落盘, 信号由
+  claims 承载) + dry_run 回显扩展 + `runtime_probe_written` additive flag; phase-d-closer SKILL.md additive 提及。
+- **coordination_probe.py 薄壳化**: 委托通用库; 四种既有可达状态输出+exit **逐字节不变** (`coordination-gate-invocation`
+  check 零改动); 唯一有意行为变化 = read-failure 假绿修复 (旧 `OK (-1 ...)` exit 0 → STALE 类消息 exit 1)。
+
+### Tests
+- test_runtime_probe.py **57** (三态×形态矩阵 + fencepost ts==cutoff 含语义 + CRLF + 恒-pass 可证伪 harness [SC-8]) /
+  test_spec_complete.py **77** (折入全路径 + IO 边界 soft_errors + block 组合 + fault-injection + L2 蒸发行为锁) /
+  test_coordination_probe_cli.sh **10** (v1.53.0 实测 golden 四态逐字节 + read-failure unreadable 判别) /
+  test_archive_gate_integration.sh **67** (SC-10 正控 merge-append + 负控矩阵 [pass 不落盘/混合场景/skipped/invalid/
+  裸 scalar 降级] + `_staleness_days` 3 天判别式) / resweep_zero_regression.sh (SC-1 + required-corpus 守卫)。
+  python 全套 968。
+- dogfood (SC-7): TASK-018 phase1_gate CLI 真调 (production telemetry 记录 + `coordination-gate-invocation` 转绿) +
+  TASK-019 真分区 probe=pass 一次性观测。
+
+### 审计
+- Phase A: post_spec R1→R4 + post_planning R1→R3 CONVERGED。pre-merge 4 视角 (code-reviewer / silent-failure-hunter /
+  qa / tech-lead): R1 (1C/7I/13M) → R1-fix (4 代码修 + 测试锁 + SOT 三处回传) → R2 (3 PASS + 1 窄幅 REVISE) →
+  R2-fix → R3 **零新 finding CONVERGED**。R1 Critical (L2 声明蒸发) 裁决为行为 per spec (R3 裁决) + 三面补课
+  (SOT 披露/作者文档前置/测试锁), owner 可在 merge 签字时复议。
+- Rule #6: 确定性探针/折入逻辑以 unit+integration+E2E+一次性真分区 dogfood 替代 AB benchmark (#95 同款 disposition)。
+
 ## [1.53.0] - 2026-07-05
 
 ### Added
