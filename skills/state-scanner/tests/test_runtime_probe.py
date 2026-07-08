@@ -5,9 +5,9 @@ Spec: openspec/changes/runtime-probe-archive-gate-integration/proposal.md
 Task: detailed-tasks.yaml TASK-011 (this file, parent 3.1) — probe library
       tri-state × descriptor value-layer five invalid forms × text-layer
       restricted-YAML parsing. TASK-014 (falsifiable "probe 恒 pass"
-      injection harness, SC-8, parent 3.4) APPENDS to this SAME file in a
-      later task — class/method names below are scoped to this task's
-      surface, leaving clean room; do not repurpose them.
+      injection harness, SC-8, parent 3.4) APPENDS to this SAME file — see
+      `TestFalsifiableAlwaysPassVariant` at the bottom; its class/method
+      names are new (not a repurposing of any name below).
 
 Modules under test (both new leaves added by TASK-001/002/004; zero prior
 test coverage confirmed via repo-wide grep for
@@ -51,6 +51,15 @@ Coverage map (verification bullets -> TestCase classes):
                                         `max_age_days` window narrows
                                         recency; `symbol` is a message label
                                         only, never a record-level filter.
+  TestFalsifiableAlwaysPassVariant   - TASK-014/SC-8: anti-false-green
+                                        harness — inject a "probe 恒 pass"
+                                        variant via module-attribute patch
+                                        and prove >=1 representative
+                                        assertion goes red under it (all-
+                                        stale warn + switch-off skipped),
+                                        plus a structural guard confirming
+                                        the patch actually reaches the call
+                                        path exercised by every other test.
 
 All fixtures are synthetic, not real corpus (feedback_gate_tracks_reality_
 synthetic_fixture) — contract tests pin a controlled fixture rather than
@@ -85,6 +94,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
+from unittest import mock
 
 _SKILL_ROOT = Path(__file__).resolve().parent.parent
 _LIB_DIR = str(_SKILL_ROOT / "scripts" / "lib")
@@ -693,6 +703,165 @@ class TestProbeParsingRobustness(unittest.TestCase):
             result = probe(_descriptor(symbol="totally_unrelated_label"), repo, _NOW)
         self.assertEqual(result["outcome"], "pass")
         self.assertEqual(result["symbol"], "totally_unrelated_label")
+
+
+# ---------------------------------------------------------------------------
+# TASK-014 — falsifiable harness: "probe 恒 pass" variant injection (SC-8)
+# ---------------------------------------------------------------------------
+
+
+def _always_pass_variant(descriptor: dict, repo: Path, now: datetime) -> dict:
+    """The SC-8 mutant: a drop-in stand-in for ``probe()`` that
+    unconditionally reports ``outcome="pass"`` — no partition read, no
+    staleness cutoff, no ``enabled_when`` traversal; ``descriptor``/``repo``/
+    ``now`` are all ignored. This is the shape a real regression would take
+    if e.g. the staleness cutoff were accidentally dropped or a warn/skipped
+    branch got short-circuited to pass.
+
+    Matches ``probe()``'s exact positional signature — the only calling
+    convention used anywhere in this codebase (``coordination_probe.py``'s
+    ``probe(_DESCRIPTOR, repo, now)`` and ``spec_complete.py``'s
+    ``_rp_probe(validated["descriptor"], project_root, now)``) — so it is
+    call-compatible everywhere the real ``probe`` is invoked.
+    """
+    return {
+        "outcome": "pass",
+        "count": 1,
+        "reason": "SC-8 harness variant: constant pass, all input ignored",
+        "symbol": descriptor.get("symbol", "") if isinstance(descriptor, dict) else "",
+    }
+
+
+class TestFalsifiableAlwaysPassVariant(unittest.TestCase):
+    """SC-8 anti-false-green harness (DEC-002 tradition —
+    ``test_phase1_gate_telemetry.py``'s ``TestTelemetryPartitionAntiSpoof`` /
+    ``TestCoordinationProbe.test_probe_stale_production_record_fails``
+    precedent of pinning "a degraded implementation must be CAUGHT", not
+    merely "a correct implementation passes").
+
+    Machine proof required by SC-8: "若实现退化为恒 pass, 测试套会红" — if
+    ``probe()`` ever regresses into something behaviorally equivalent to
+    ``_always_pass_variant`` above, this test suite must go red, not stay
+    silently green.
+
+    Mechanism: ``mock.patch.object(runtime_probe, "probe",
+    _always_pass_variant)`` swaps the MODULE ATTRIBUTE inside a controlled
+    ``with`` block — additive, test-process-only, never touches production
+    ``runtime_probe.py`` on disk. Each sensitivity-point test below follows
+    the same two-step shape:
+
+      1. Sanity — assert the REAL (unpatched) implementation genuinely
+         produces the non-pass outcome for this fixture. Without this step,
+         "the assertion fails under the variant" could be vacuously true for
+         the wrong reason (e.g. a broken fixture that never distinguished
+         real-vs-variant behavior to begin with).
+      2. Proof — inside the patched context, re-run the assertion used by
+         the sibling representative test (same fixture, same expected
+         outcome as ``TestProbeTriState``/``TestProbeSkippedAndConfigTraversal``,
+         not a weakened restatement) wrapped in
+         ``assertRaises(AssertionError)``: mechanically demonstrates that
+         assertion goes red under the mutant.
+
+    Two mandated sensitivity points (task verification bullet, parent 3.4):
+      - warn 形态判定: 全陈旧 (all-stale) fixture, twin of
+        ``TestProbeTriState.test_warn_all_records_stale``.
+      - skipped 判定: ``enabled_when`` 开关关 fixture, twin of
+        ``TestProbeSkippedAndConfigTraversal.test_skipped_enabled_when_switch_off``.
+
+    Why this is not vacuous (three independent guards):
+      (a) the variant is invoked through the SAME call path production code
+          uses — module-attribute lookup ``runtime_probe.probe(...)`` —
+          proven distinct from the bare ``from runtime_probe import probe``
+          name imported at file top (used by every OTHER test in this file)
+          by ``test_bare_imported_name_survives_patch`` below. If that guard
+          ever failed, the two proof tests above would silently stop
+          injecting the variant and pass for a meaningless reason.
+      (b) the re-run assertion in each proof test targets the identical
+          fixture + expected outcome as its sibling's real assertion — no
+          weakened threshold, no relaxed shape check.
+      (c) the sanity pre-check in step 1 fails loudly (redundantly with the
+          sibling test's own coverage) if the fixture itself ever stops
+          distinguishing real-vs-variant behavior.
+    """
+
+    _ENABLED_WHEN = "state_scanner.coordination.enabled"
+
+    def test_all_stale_variant_flips_warn_assertion_to_failure(self):
+        """Sensitivity point 1/2 (SC-8): 全陈旧 → pass 变体应被抓."""
+        with _tmp_repo() as repo:
+            _write_lines(repo / _PARTITION_REL, [_prod_record(_NOW - timedelta(days=20))])
+
+            real_result = runtime_probe.probe(_descriptor(), repo, _NOW)
+            self.assertEqual(
+                real_result["outcome"],
+                "warn",
+                "sanity precondition failed: fixture must genuinely warn "
+                "under the REAL implementation, else the demonstration "
+                "below would be vacuous",
+            )
+
+            with mock.patch.object(runtime_probe, "probe", _always_pass_variant):
+                patched_result = runtime_probe.probe(_descriptor(), repo, _NOW)
+                with self.assertRaises(
+                    AssertionError,
+                    msg="HARNESS IS VACUOUS: the all-stale warn assertion "
+                    "did not go red under the constant-pass variant — the "
+                    "test suite would not catch a probe() regression to "
+                    "always-pass",
+                ):
+                    self.assertEqual(patched_result["outcome"], "warn")
+
+    def test_switch_off_variant_flips_skipped_assertion_to_failure(self):
+        """Sensitivity point 2/2 (SC-8): 开关关 → pass 变体应被抓."""
+        with _tmp_repo() as repo:
+            _write_config(
+                repo / ".aria" / "config.json",
+                {"state_scanner": {"coordination": {"enabled": False}}},
+            )
+            real_result = runtime_probe.probe(
+                _descriptor(enabled_when=self._ENABLED_WHEN), repo, _NOW
+            )
+            self.assertEqual(
+                real_result["outcome"],
+                "skipped",
+                "sanity precondition failed: fixture must genuinely skip "
+                "under the REAL implementation, else the demonstration "
+                "below would be vacuous",
+            )
+
+            with mock.patch.object(runtime_probe, "probe", _always_pass_variant):
+                patched_result = runtime_probe.probe(
+                    _descriptor(enabled_when=self._ENABLED_WHEN), repo, _NOW
+                )
+                with self.assertRaises(
+                    AssertionError,
+                    msg="HARNESS IS VACUOUS: the switch-off skipped "
+                    "assertion did not go red under the constant-pass "
+                    "variant — the test suite would not catch a probe() "
+                    "regression to always-pass",
+                ):
+                    self.assertEqual(patched_result["outcome"], "skipped")
+
+    def test_bare_imported_name_survives_patch(self):
+        """Structural guard underpinning guarantee (a) above:
+        ``mock.patch.object(runtime_probe, "probe", ...)`` rebinds only the
+        MODULE's own attribute. The bare ``probe`` name imported at file top
+        (``from runtime_probe import probe``, used by every OTHER test in
+        this file) is a separate binding captured at import time and is NOT
+        affected — proving the two proof tests above exercise the variant
+        via the intended call path, rather than accidentally testing
+        nothing."""
+        with _tmp_repo() as repo:
+            _write_lines(repo / _PARTITION_REL, [_prod_record(_NOW - timedelta(days=20))])
+            with mock.patch.object(runtime_probe, "probe", _always_pass_variant):
+                bare_result = probe(_descriptor(), repo, _NOW)  # unpatched binding
+                patched_result = runtime_probe.probe(_descriptor(), repo, _NOW)  # patched
+        self.assertEqual(
+            bare_result["outcome"], "warn", "bare imported name must still be the real probe()"
+        )
+        self.assertEqual(
+            patched_result["outcome"], "pass", "module attribute must be the injected variant"
+        )
 
 
 if __name__ == "__main__":
