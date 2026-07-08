@@ -110,6 +110,16 @@ skip_evaluation:
         "归档内部如何处理 deferred/unverified" 这一层实现细节。
 ```
 
+> **动态子检查 (runtime_probe, #95 follow-up A)**: 上表 verdict 三态判定现覆盖**声明式可选
+> 动态子检查** —— spec 若在 `proposal.md` frontmatter 声明 `runtime_probe:` (partition/symbol/
+> max_age_days/enabled_when), gate 会额外核验"该符号近期是否真被生产入口调用过", 结果按
+> fail-toward-warn 折入同一 `verdict` (绝不因此升级到 block; 已是 block 的不受影响)。声明是
+> **完全可选**的 —— 无声明 spec 的 D.2 行为逐字节不变 (SC-1)。phase-d-closer 本身不解析该
+> 声明, 只按上表既有 verdict 路由消费折入后的结果; 声明 schema + 解析约束见
+> [runtime-probe-declaration.md](../state-scanner/references/runtime-probe-declaration.md),
+> 折入裁决与归档写入契约见 [openspec-archive SKILL.md §Step
+> 1-2](../openspec-archive/SKILL.md) (本节不复制契约细节)。
+
 ---
 
 ## 输出格式

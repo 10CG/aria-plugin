@@ -32,9 +32,19 @@
 #                           ROOT 探测手法)。--selftest 模式内部覆盖此变量指向
 #                           合成语料, 不影响默认生产路径。
 #
-# 退出码: 0 = 全部 diff=0 (或 --selftest 通过); 1 = 发现 ≥1 diff (或
-# --selftest 断言失败); 2 = preflight 失败 (基线/新代码/语料路径缺失, 环境
-# 问题, 非回归发现)。
+# required-corpus 守卫 (TASK-017, SC-1 真语料显式确认, proposal.md §What
+# 4(iii)): 生产 sweep (非 --selftest) 在全语料汇总之后, 额外对 coordination
+# 归档 spec (2026-07-05-interactive-session-dedup-coordination) 显式核验三
+# 件事 —— (a) 它确实出现在被扫语料中 (防 CORPUS_ROOT 发现静默漂移导致漏扫
+# 却仍报"全绿"); (b) 其 proposal.md frontmatter 经生产同一套解析器
+# (lib/frontmatter_block.py) 确认无 runtime_probe 声明 (owner 决策
+# 2026-07-05: 归档纯净, 不回改归档, 也防未来误加声明破坏此假设); (c) 它的
+# diff 结果 = PASS。三项皆通过才算"零动作路径对这一个具体 spec 确实验证
+# 过", 而不只是隐含在 124-corpus 汇总行里蒙混过去。见 check_required_corpus()。
+#
+# 退出码: 0 = 全部 diff=0 且 required-corpus 守卫通过 (或 --selftest 通过);
+# 1 = 发现 ≥1 diff 或 required-corpus 守卫失败 (或 --selftest 断言失败);
+# 2 = preflight 失败 (基线/新代码/语料路径缺失, 环境问题, 非回归发现)。
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,6 +60,13 @@ _discover_root() {
   printf '%s' "$d"
 }
 CORPUS_ROOT="${CORPUS_ROOT:-$(_discover_root "$HERE")}"
+
+# TASK-017 (SC-1 真语料显式确认, proposal.md §What 4(iii)): coordination 归档
+# spec 保持"无声明"是本 change 的一个具体 owner 决策 (2026-07-05, 不回改归
+# 档), 不能只靠"它恰好也落在 124-corpus 循环范围内"这个隐含事实——见下方
+# check_required_corpus()。kind 对应 sweep() 的 case 分支 (archive|changes)。
+REQUIRED_CORPUS_SPEC_ID="2026-07-05-interactive-session-dedup-coordination"
+REQUIRED_CORPUS_SPEC_KIND="archive"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -118,8 +135,11 @@ PY
 # ---------------------------------------------------------------------------
 # sweep <corpus_root> — 对 corpus_root/openspec/{archive,changes}/*/ 逐个跑
 # gate_one(baseline) + gate_one(new) + compare_json, 打印 PASS/DIFF 行 +
-# 尾部汇总。副作用: 设 SWEEP_N / SWEEP_DIFFS / DIFF_SPECS (供调用方 —— 生产
-# sweep 或 --selftest —— 断言)。
+# 尾部汇总。副作用: 设 SWEEP_N / SWEEP_DIFFS / DIFF_SPECS / SWEPT_SPECS (供
+# 调用方 —— 生产 sweep 或 --selftest —— 断言)。SWEPT_SPECS 是本次 sweep 实际
+# 处理过的全部 spec_id (TASK-017 required-corpus 守卫用它核验"这个 spec 真被
+# 语料发现命中过", 比"没出现在 DIFF_SPECS 里"更强 —— 后者无法区分"扫过且一
+# 致"与"根本没扫到", 见 check_required_corpus())。
 # ---------------------------------------------------------------------------
 sweep() {
   local corpus_root="$1"
@@ -128,6 +148,7 @@ sweep() {
   local t_start t_end
   t_start=$(date +%s)
   DIFF_SPECS=()
+  SWEPT_SPECS=()
 
   for d in "$corpus_root"/openspec/archive/*/ "$corpus_root"/openspec/changes/*/; do
     [ -d "$d" ] || continue
@@ -138,6 +159,7 @@ sweep() {
       */openspec/archive/*) kind=archive ;;
       *) kind=changes ;;
     esac
+    SWEPT_SPECS+=("$spec_id")
 
     t0=$(date +%s%N)
     gate_one "$BASELINE_LIB" "$d" "$TMP/baseline.json"; bexit=$GATE_EXIT
@@ -248,6 +270,101 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# check_no_runtime_probe_declaration <proposal_md_path> — TASK-017 守卫 (b):
+# 复用生产同一套 frontmatter 解析器 (lib/frontmatter_block.py::extract_runtime_probe,
+# TASK-004 单一 SOT), 不用裸 grep 'runtime_probe:' —— 裸 grep 无法区分"合法
+# 声明" (status=ok) 与"文本层不合法但仍是声明企图" (status=invalid, 例如更深
+# 嵌套/flow-style), 也可能被 fenced code block 或散文提及误伤出假阳/假阴。
+# status 为 ok 或 invalid 都算"存在声明", 只有 status==absent 才是本守卫要
+# 的"保持无声明"。exit 0 = 确认 absent; exit 1 = 声明存在或解析/读取失败
+# (诊断信息打到 stdout, 调用方决定转 stderr)。用 flat import (sys.path 插入
+# lib/ 本身, 非 `lib.` 包前缀) —— 与 spec_complete.py 在同样"被当独立脚本跑"
+# 上下文里的 fallback import 分支手法一致。
+# ---------------------------------------------------------------------------
+check_no_runtime_probe_declaration() {
+  local proposal="$1"
+  if [ ! -f "$proposal" ]; then
+    echo "proposal.md 未找到: $proposal"
+    return 1
+  fi
+  python3 -B - "$HERE/../scripts/lib" "$proposal" <<'PY'
+import sys
+
+lib_dir, path = sys.argv[1], sys.argv[2]
+sys.path.insert(0, lib_dir)
+from frontmatter_block import _frontmatter_block, extract_runtime_probe  # type: ignore[import]
+
+with open(path, encoding="utf-8") as f:
+    text = f.read()
+result = extract_runtime_probe(_frontmatter_block(text))
+status = result["status"]
+if status == "absent":
+    sys.exit(0)
+print(f"{path} 含 runtime_probe 声明 (status={status}) —— 违反「归档纯净不回改」owner 决策 (2026-07-05)")
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# check_required_corpus <spec_id> <kind> — TASK-017 (SC-1 真语料显式确认,
+# proposal.md §What 4(iii)): coordination 归档 spec 保持"无声明"这一 owner
+# 决策 (2026-07-05, 不回改归档) 不能只隐含在"124 specs 0 diff"汇总行里蒙混
+# 过去 —— 汇总行既不会告诉你 CORPUS_ROOT 探测是否悄悄漂到了一个不含该 spec
+# 的目录 (漏扫 ≠ 通过), 也不会告诉你有没有人未来给它误加了声明破坏"归档纯
+# 净"这个假设。三项断言, 任一失败即整体 FAIL (对应 verification (a)/(b)/(c)):
+#   (a) spec_id 确实出现在被扫语料中 (读 sweep() 填充的 SWEPT_SPECS, 而非重
+#       新做一次目录存在性判断 —— 后者只能证明"磁盘上有这个目录", 证不了
+#       "这次 sweep 真的处理过它", 在 CORPUS_ROOT 指错但该目录路径本身仍存
+#       在的边缘场景下两者会分道扬镳)
+#   (b) 其 proposal.md frontmatter 用生产同一套解析器确认 status==absent
+#   (c) 该 spec_id 不在 DIFF_SPECS 中 (sweep() 判它 diff=0) —— 显式确认零动
+#       作路径对这一个具体 spec 真的验证过, 不是"因为没扫到所以自然没 diff"
+#       这种假阴性 (故 (c) 依赖 (a) 成立才有意义, 见下方 found 门控)
+# 只读, 不修改任何被扫语料 (含目标 spec 本身), 符合"不回改归档"决策。
+# ---------------------------------------------------------------------------
+check_required_corpus() {
+  local spec_id="$1" kind="$2"
+  local ok=1 found=0 s
+
+  for s in "${SWEPT_SPECS[@]:-}"; do
+    [ "$s" = "$spec_id" ] && { found=1; break; }
+  done
+  if [ "$found" -eq 1 ]; then
+    echo "REQUIRED-CORPUS (a) PASS: '$spec_id' 出现在被扫语料中"
+  else
+    echo "REQUIRED-CORPUS (a) FAIL: '$spec_id' 未出现在被扫语料中 —— corpus 发现静默漂移 (CORPUS_ROOT=$CORPUS_ROOT 下未命中 openspec/$kind/$spec_id/)" >&2
+    ok=0
+  fi
+
+  local proposal="$CORPUS_ROOT/openspec/$kind/$spec_id/proposal.md"
+  local decl_msg
+  if decl_msg="$(check_no_runtime_probe_declaration "$proposal")"; then
+    echo "REQUIRED-CORPUS (b) PASS: $proposal frontmatter 无 runtime_probe 声明 (status=absent)"
+  else
+    echo "REQUIRED-CORPUS (b) FAIL: ${decl_msg:-$proposal 解析失败}" >&2
+    ok=0
+  fi
+
+  if [ "$found" -eq 1 ]; then
+    local is_diff=0
+    for s in "${DIFF_SPECS[@]:-}"; do
+      [ "$s" = "$spec_id" ] && { is_diff=1; break; }
+    done
+    if [ "$is_diff" -eq 0 ]; then
+      echo "REQUIRED-CORPUS (c) PASS: '$spec_id' diff=0 (零动作路径逐字节不变)"
+    else
+      echo "REQUIRED-CORPUS (c) FAIL: '$spec_id' 在本次 sweep 中被判定为 DIFF —— 零动作路径未保持不变" >&2
+      ok=0
+    fi
+  else
+    echo "REQUIRED-CORPUS (c) FAIL: 无法核验 —— spec 未被扫到, 见 (a)" >&2
+    ok=0
+  fi
+
+  [ "$ok" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 if [ ! -f "$NEW_LIB" ]; then
@@ -278,9 +395,19 @@ echo
 
 sweep "$CORPUS_ROOT"
 
-if [ "$SWEEP_DIFFS" -eq 0 ]; then
+echo
+echo "== required-corpus 守卫 (TASK-017, SC-1 真语料显式确认): $REQUIRED_CORPUS_SPEC_ID =="
+guard_ok=1
+check_required_corpus "$REQUIRED_CORPUS_SPEC_ID" "$REQUIRED_CORPUS_SPEC_KIND" || guard_ok=0
+
+if [ "$SWEEP_DIFFS" -eq 0 ] && [ "$guard_ok" -eq 1 ]; then
   exit 0
 fi
 echo
-echo "DIFF specs: ${DIFF_SPECS[*]}"
+if [ "$SWEEP_DIFFS" -ne 0 ]; then
+  echo "DIFF specs: ${DIFF_SPECS[*]}"
+fi
+if [ "$guard_ok" -ne 1 ]; then
+  echo "REQUIRED-CORPUS GUARD FAILED — 见上方 (a)/(b)/(c) 明细" >&2
+fi
 exit 1
