@@ -1,5 +1,5 @@
 # Aria Agent Capabilities Taxonomy
-# Used by agent-gap-analyzer for deterministic tag matching
+# Used by agent-gap-analyzer (coverage gap matching) and agent-router (§CAP capability routing, v1.55.0+)
 # Tags use kebab-case; synonyms enable cross-vocabulary normalization
 version: "1"
 
