@@ -1,7 +1,7 @@
 # Agent Router 路由规则配置
 
-> **版本**: 1.1.0
-> **更新**: 2026-07-09 - 新增 §CAP 项目级 capability 匹配评分与决策规则 (#153 发现 B)
+> **版本**: 1.1.1
+> **更新**: 2026-07-09 - 基线层 5 处语义补明 (#99: 关键词词边界/task_type 推断/FP-022 注/兜底条文/threshold 边界); 同日早前 1.1.0 新增 §CAP 项目级 capability 匹配评分与决策规则 (#153 发现 B)
 
 ---
 
@@ -47,14 +47,28 @@
 | FP-019 | ai-engineer | `llm/**/*` | 0.95 | LLM 目录 |
 | FP-020 | ai-engineer | `rag/**/*` | 0.95 | RAG 目录 |
 | FP-021 | ai-engineer | `agents/**/*` | 0.85 | Agent 目录 |
-| FP-022 | frontend-developer | `frontend/**/*` | 0.85 | 前端目录 |
-| FP-023 | frontend-developer | `web/**/*` | 0.85 | Web 目录 |
-| FP-024 | frontend-developer | `*.jsx` | 0.70 | React |
-| FP-025 | frontend-developer | `*.vue` | 0.70 | Vue |
+| FP-022 | frontend-developer | `frontend/**/*` | 0.85 | 前端目录 (注 1) |
+| FP-023 | frontend-developer | `web/**/*` | 0.85 | Web 目录 (注 1) |
+| FP-024 | frontend-developer | `*.jsx` | 0.70 | React (注 1) |
+| FP-025 | frontend-developer | `*.vue` | 0.70 | Vue (注 1) |
+
+> **注 1 (v1.1.1, #99)**: `frontend-developer` **非插件内置 Agent** (不在 SKILL.md §Agent
+> 能力矩阵)。FP-022~025 命中且其胜出时, 按 SKILL.md §错误处理「Agent 不存在」惯例:
+> 警告并回退 `general-purpose`; 例外 — 项目级 `.aria/agents/frontend-developer.md` 存在时
+> 即为可用 Agent, 正常路由 (无需同名保护, 插件级本无此 Agent 实体); 此时其 FP-022~025
+> 命中分按 §CAP-6 吸收分同语义归 Stage 1 (名匹配随名走), 其 CAP 分录同样不参与
+> Stage 2 挑战者遴选。
 
 ---
 
 ## 任务类型规则
+
+> **task_type 自动推断程序 (v1.1.1, #99)**: `task_type` 未显式传入时, 以本表「触发关键词」
+> 列为**唯一推断依据** — 对 task 文本做词边界逐字命中 (与 §关键词匹配语义同准绳,
+> **非语义联想**: 触发关键词逐字出现才算, 不做同义/意图扩展)。命中某行任一触发关键词
+> → 视为该行 task_type 成立, 产出该 TT 候选; 多行命中 → 各自产出候选 (后续按
+> §优先级处理聚合); 零命中 → task_type 无, TT 类不产出候选 (不影响 FP/技术栈/关键词类)。
+> 显式传入 task_type 时跳过推断, 直接按值匹配本表「任务类型」列。
 
 | ID | Agent | 任务类型 | 置信度 | 触发关键词 |
 |----|-------|----------|--------|------------|
@@ -87,6 +101,16 @@
 ---
 
 ## 关键词匹配规则
+
+> **匹配语义 (v1.1.1, #99, 与 §CAP-1 L1 同准绳)**:
+> - **词边界全词匹配, 大小写不敏感**: `SQL` 命中 "写 SQL 语句", 不命中 "SQLAlchemy"
+>   (子串不算)。中文关键词无词边界概念: **连续出现即命中, 不要求前后隔断**
+>   (如 "性能分析" 命中 "做性能分析器优化" — 中英准绳不同系诚实反映文字系统差异)。
+> - **匹配对象 = 纯 task 文本** (任务描述): `files` 路径与显式传入的 task_type 值均
+>   **不参与**关键词加成 — 路径信号由 §文件路径规则 (FP) 专责, task_type 值由
+>   §任务类型规则 (TT) 专责, 避免同一信号双重计分。
+> - **计分**: 同一表行多个关键词任一命中即触发该行加成, **每行至多计一次** (同行多词
+>   命中不叠加); 不同表行各自独立可叠加; 最终置信度上限 1.0 (见 §置信度计算, 既有)。
 
 ### 后端相关
 
@@ -306,6 +330,13 @@ max_candidates 仍为 3 (居 legacy 配置, 见 SKILL.md §项目级配置 legac
   最终: 0.95 + 0.1 = 1.0 (上限为 1.0)
 ```
 
+### threshold 比较语义 (v1.1.1, #99)
+
+一切「达到 threshold」的判定**一律取 `>=` (恰等合格)**: `confidence == threshold`
+(如 0.90 恰等默认 0.9) → auto 直派合格, 不降级。与既有条文互补一致 — SKILL.md
+§推荐模式触发条件为 `confidence < threshold` (严格小于), §CAP-4 R-b(2)/(3) 与
+R-b(0.5) 的 `match_rate >= threshold` 同语义。
+
 ---
 
 ## 优先级处理
@@ -331,6 +362,18 @@ Fallback 层级:
   2. general-purpose (兜底)
   3. 错误: 无可用 Agent (不应发生)
 ```
+
+### recommend 兜底填充 (v1.1.1, #99 条文化)
+
+recommend 输出候选不足 `max_candidates` (默认 3) 时, 以 `general-purpose` 补足末位:
+
+- 填充条目: `agent: general-purpose, confidence: 0.50, reason: "通用任务兜底"` —
+  **0.50 是约定填充值, 非规则得分** (此前仅由 SKILL.md 示例确立, 本节成文)。
+- `general-purpose` 已凭规则得分入池 → 不重复添加, 用其实际得分与排位。
+- 填充至多 1 条 (仍不足 3 就输出实际数量, 不虚构其他候选)。
+- **适用前提: 候选池 ≥ 1 个真候选**; 零候选 (无任何规则命中) 不走本节填充,
+  走既有无匹配路径 (SKILL.md §输出格式「无匹配 (Fallback)」, `status: fallback`,
+  confidence 0.0), 两条路径互斥不叠加。
 
 ---
 
@@ -388,4 +431,4 @@ tasks:
 
 ---
 
-**最后更新**: 2026-01-22
+**最后更新**: 2026-07-09 (v1.1.1 基线语义补明 #99)
