@@ -74,7 +74,7 @@ allowed-tools: Read, Glob, Grep, Bash
   路由结果:
     [1] backend-architect (0.85) - 后端架构优化
     [2] qa-engineer (0.60) - 性能分析
-    [3] general-purpose (0.50) - 通用优化
+    [3] general-purpose (0.50) - 通用任务兜底
   动作: 询问用户选择
 ```
 
@@ -469,7 +469,7 @@ tasks:
 |------|------|----------|
 | 无匹配规则 | 任务特征不符合任何规则 | 使用 general-purpose |
 | Agent 不存在 | 指定的 Agent 无效 | 警告并回退到 general-purpose |
-| 多高置信度 | 多个 Agent 置信度都 > threshold | 降级到推荐模式 |
+| 多高置信度 | 多个 Agent 置信度都 >= threshold | 降级到推荐模式 |
 | 3e 扫描失败 (目录不可读) | 权限/IO 异常 | skip 3e 退化纯基线, WARN 不阻断 |
 | 项目级 frontmatter 损坏 | capabilities 缺失/非 list/parse 失败 | skip 该 agent 不阻断; 空 list = 合法零命中 |
 | 缓存写入失败 | 权限/磁盘/目录缺失 | mkdir -p 或 WARN + 直读 frontmatter, 不阻断 (§缓存) |
