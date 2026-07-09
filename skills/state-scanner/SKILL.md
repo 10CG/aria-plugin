@@ -345,6 +345,7 @@ workflow-runner v2.0
 - [cross-platform-commands.md](./references/cross-platform-commands.md) - 跨平台命令参考
 - [sync-detection.md](./references/sync-detection.md) - 同步检测详细逻辑 (Phase 1.12)
 - [issue-scanning.md](./references/issue-scanning.md) - Issue 扫描详细逻辑 (Phase 1.13)
+- [runtime-probe-declaration.md](./references/runtime-probe-declaration.md) - 归档门 runtime_probe 声明 schema (给声明作者, #95 follow-up A)
 ### 审计相关
 - [audit-engine](../audit-engine/SKILL.md) - 多轮收敛审计编排引擎
 ### 工作流相关
