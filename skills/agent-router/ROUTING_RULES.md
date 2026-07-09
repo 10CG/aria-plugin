@@ -1,7 +1,7 @@
 # Agent Router 路由规则配置
 
-> **版本**: 1.0.0
-> **更新**: 2026-01-22
+> **版本**: 1.1.0
+> **更新**: 2026-07-09 - 新增 §CAP 项目级 capability 匹配评分与决策规则 (#153 发现 B)
 
 ---
 
@@ -169,6 +169,127 @@
 
 ---
 
+## §CAP 项目级 capability 匹配 (v1.1.0, #153 发现 B)
+
+> 消费 `.aria/agents/*.md` 项目级 Agent 的 `capabilities` 机读标签, 与任务需求标签
+> (required_caps) 做确定性覆盖率匹配。仅对**项目级候选**评分 — 插件级 agent 的路由
+> 沿用上方 FP/TT/技术栈/关键词四类既有刻度, 其 capabilities 字段不参与本节评分 (留观)。
+> 词表与归一锚定 `aria/references/capabilities-taxonomy.yaml` (tag 名 + synonyms)。
+
+### CAP-1 required_caps 确定 — 显式传参优先 + 两级闭集推断
+
+```
+第 0 优先 — 显式传参 (v1.2.0 新增可选输入参数, additive):
+    router 输入含 required_caps (list of tag) 时 → 跳过 L1/L2 推断, 经 taxonomy
+    归一后直接采用; 无法归一的传入值 (off-taxonomy/拼写错) → 剔除 + WARN,
+    不进入 required_caps 分母。
+    (fixture 与高级调用方由此获得推断-裁决解耦。)
+
+无显式传参时 — 两级闭集推断:
+L1 (机械, 可复算): 对 taxonomy (tag 名 + synonyms) 的词边界全名命中:
+    - 显式传入的 task_type 参数值 == tag 名或 synonym (单值参数, 最多贡献 1 个命中)
+    - task 文本 / files 路径中逐字出现 tag 名或 synonym
+L2-negation (恒时执行, 不受下方启用条件门控):
+    执行 agent 可依据相反证据 token 将 L1 命中标记 negated 并移除
+    (否定语境鉴别, 须引用任务原文证据)
+L2-addition (受启用条件门控): 语义补充 tag, 约束:
+    (a) taxonomy 闭集; (b) 每 tag 引用任务原文 evidence token;
+    (c) 标记 inferred=semantic; (d) 上界 3 个;
+    (e) 启用条件: 仅当 |L1_hits − negated| < 2 (净值计数)
+
+编排: required_caps = (L1_hits − negated) ∪ L2_additions
+去重按 canonical tag; required_caps 为空 → CAP 候选空集 → 纯基线路由
+```
+
+**确定性定位 (诚实版)**: agent-router 是 prose Skill, FP/TT 匹配同样由 LLM 执行 (受本文件确定性规则表约束 — 既有性质)。§CAP 的确定性 = 显式传参全机械 + L1 机械可复算 + L2 闭集/证据/上界受约束 + 推断轨迹落输出字段 (`required_caps_trace`) 可审计。生产自然语言路径 (无传参) 以 L2 为常态。
+
+### CAP-2 归一语义
+
+- tag 在 taxonomy (名或 synonym) → 归一到 canonical tag
+- **off-taxonomy 自造标签 = 惰性**: 不可能命中 required_caps (零分), **也不计入 precision 分母** — 惰性标签无匹配力, 不构成劫持向量, 计入分母只会错杀携带遗留/自定义标签的真 specialist。候选条目输出 `off_taxonomy_tags` 字段提示 owner 修标签。
+
+### CAP-3 评分公式
+
+```
+valid_caps = normalize(agent.capabilities) ∩ taxonomy 词表   # off-tax 惰性排除
+matched    = valid_caps ∩ required_caps
+match_rate = |matched| / |required_caps|                     # 覆盖率, [0,1]
+precision  = |matched| / |valid_caps|                        # 精度; valid_caps = ∅ →
+                                                             #   不产出候选 (含除零防护)
+match_rate == 0 → 不产出候选 (不入池, 不进 recommend)
+```
+
+> 防劫持语义: generalist 靠**有效标签**堆宽度 → precision 被稀释 → CAP-4 R-a 拒之门外;
+> off-tax 标签不增加任何匹配力, 故不参与该攻防。
+
+### CAP-4 auto 决策规则 (两段式)
+
+**Rationale**: 唯一硬理由是数学事实 — CAP match_rate 上限 1.0, 对 confidence >0.9 的插件对手差值恒 <0.1, 纯数值比较 + 差值护栏会把「specialist 全命中」黄金场景 (#153) 恒降级 recommend。故为 exact-full-match 设 R-a 序数快路; R-b 的跨刻度数值比较是**有界务实近似** (护栏 + 单标签禁令 + threshold), 不声称两刻度同量纲。
+
+```
+Stage 1 — 基线裁决 (规则与既有行为一致):
+    基线侧候选 = FP/TT/技术栈/关键词候选 + B12 同名吸收分候选 (若有, 见 CAP-6)
+    按既有规则: 同 Agent 多规则取最高 → 全局排序 → **基线侧候选间**差值 < 0.1
+    (严格, 沿用下方「优先级处理」的「多个 Agent 置信度相近」既有规则; 吸收候选
+    一并适用, 不因 agent_source=project 逃逸) → 降级 recommend; threshold 检查照旧
+    产出: baseline 决策 + baseline_top
+
+Stage 2 — 项目级 CAP 挑战 (仅当池中存在纯 CAP 项目级候选; 无则采纳 Stage 1):
+    挑战者 = 纯 CAP 候选 (B12 吸收候选的 CAP 分录不参与遴选, 防自我挑战)
+             中 match_rate 最高者 (再平按 CAP-5)
+
+    R-a 决定性直派 (序数快路):
+        挑战者满足全部三条:
+          match_rate == 1.0  AND  |required_caps| >= 2  AND  precision >= 0.5
+        → auto 直派挑战者 (多候选同满足 → CAP-5 tiebreak)
+    R-b 跨池数值裁决 (R-a 不满足; 有序分支 (0)-(4), 按序判定, 先匹配先裁决;
+        d = 挑战者 match_rate − baseline_top confidence):
+        (0) |required_caps| == 1 的挑战者永不 auto 直派, 仅进 recommend
+        (0.5) **基线候选池为空** (无任何 FP/TT/技术栈/关键词命中, baseline_top
+              不存在, d 无定义): 挑战者 match_rate >= threshold → 直派挑战者;
+              < threshold → 降级 recommend — 均记 decision_path = R-b
+              (不得为凑 baseline 而语义虚构 TT/关键词命中)
+        (1) |d| <= 0.1 (含 0.1, 本新路径边界显式取含; 精确同分同此) → 降级 recommend
+        (2) d > 0.1 且 match_rate >= threshold → 直派挑战者
+        (3) d > 0.1 且 match_rate <  threshold → 降级 recommend (领先但不够格)
+        (4) 其余 (d < -0.1, baseline_top 显著领先) → 采纳 Stage 1 决策
+    decision_path 赋值通则: R-b 评估中结论 = 采纳 Stage 1 (分支 4)
+        → decision_path = baseline; 由 R-b 逻辑裁定 (分支 0/1/2/3) → decision_path = R-b
+
+R-a 覆盖面诚实刻画: |required_caps| 大时全命中率下降, R-a 只服务「需求标签集中且
+specialist 精确对位」场景, 其余走 R-b/recommend; L2 上界 3 防 required_caps 膨胀。
+```
+
+### CAP-5 CAP 候选互相平局
+
+match_rate 相等的项目级候选之间: precision 高者优先, 再平 → agent name 字典序。(跨池不适用, 跨池走 CAP-4。)
+
+理论注记: 项目级互相 0<差值≤0.1 近分场景无专门护栏 — match_rate 量化为 k/|required_caps|, 该窗口需 |required_caps| ≥ 10 才可达, 现实几乎不可达, 接受。
+
+### CAP-6 同名保护复合 (B12 得分归属)
+
+项目级与插件级同名时 (候选池构建期, 先于评分):
+- 项目级替换插件级候选 + 输出警告 (v1.1.0 同名保护语义保留: 项目级优先 + `plugin_only` 逃生门)
+- 幸存项目级候选**吸收**插件级按名命中的全部 FP/TT/技术栈/关键词 confidence (名匹配语义随名走 — 「覆盖插件级路由」= 接管其路由); `agent_source` 恒 = project
+- **裁决消歧**: 吸收的 baseline confidence 是该候选在 auto 裁决中的 governing confidence, 于 Stage 1 按基线侧参与 (可为 baseline_top, 也受基线侧 <0.1 近分检查); 其自身 CAP match_rate 仅用于 trace 与 recommend 排序, **不作为 auto 挑战分数** (防同一候选自我挑战)
+- 凭吸收分胜出 → `decision_path = "baseline"` + `agent_source = "project"` (组合语义 = 同名接管)
+- junk-caps 同名候选 (match_rate == 0): 无 CAP 候选产出, 仅以吸收分走 Stage 1 — 一切候选恒有唯一归属 (吸收分→Stage 1; 纯 CAP 分→Stage 2)
+
+### CAP-7 recommend Top-3 混排
+
+```
+排序: (1) R-a 合格候选置顶 (若有);
+      (2) 其余按 confidence 数值降序混排 (项目级 CAP 候选用 match_rate, 基线候选
+          [含 B12 吸收候选] 用基线 confidence; 跨刻度务实近似, recommend 由人裁决);
+      (3) 同分 → 项目级列前, 再平字典序
+候选条目携带 agent_source (+项目级候选带 off_taxonomy_tags); decision_path 为
+decision 级单值字段 (本次裁决整体路径), 不逐候选携带
+max_candidates 仍为 3 (居 legacy 配置, 见 SKILL.md §项目级配置 legacy 标注)
+本节适用于一切 recommend 输出 — 原生 recommend 模式与 auto 内部降级产出者同
+```
+
+---
+
 ## 置信度计算
 
 ```yaml
@@ -252,7 +373,7 @@ tasks:
 
 ### 添加新规则
 
-1. 确定规则类型 (FP/TT/关键词)
+1. 确定规则类型 (FP/TT/关键词/技术栈/CAP — 五类; CAP 规则见 §CAP, 其"规则"是评分与决策算法而非映射表行)
 2. 分配唯一 ID
 3. 定义匹配条件和置信度
 4. 更新此文档

@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.55.0] - 2026-07-09
+
+### Added: agent-router 项目级 capability 匹配接入 auto 主链 (#153 发现 B)
+
+cesura 实测: `agent-creator` 生成的项目级 Agent (`.aria/agents/database-specialist.md`, capabilities 3 标签) 在 auto 路由**从不进候选池** —— v1.1.0「项目级 Agent 发现」是贴在 SKILL.md 文末的孤儿段 (从未接进 §执行流程主链), step 5 `top_confidence >= threshold` 短路 return 使 FP/TT 命中插件级即收工, 且 ROUTING_RULES 无 capability 评分规则。gap→create→route 闭环在自动路径断裂 (Aria #153 发现 B; 发现 A 原生列表可见性归 M7 agent-lifecycle #128)。本版接线修复:
+
+- **主链接入 (agent-router v1.1.0 → v1.2.0)**: §执行流程 step 3 新增 **3e 项目级 capability 匹配** (主链默认步, 受 `.aria/config.json` `agent_router.scan_project_agents`/`plugin_only` 门控 — 门控最先判定, 跳过支输出 shape 逐字节等同 v1.1.x); step 5 auto 改**两段式**: Stage 1 基线裁决 (基线四类规则 + <0.1 近分降级, 与既有行为一致) → Stage 2 项目级 CAP 挑战 (R-a 序数决定性直派: match_rate==1.0 ∧ |required_caps|≥2 ∧ precision≥0.5 [拦宽标签 generalist]; R-b 有序分支 (0)-(4) 含单标签禁令/基线池空分支/±0.1 护栏)。
+- **§CAP 评分规则成文 (ROUTING_RULES v1.0.0 → v1.1.0)**: CAP-1 required_caps 三级确定 (显式传参 [新可选输入参数, 推断-裁决解耦] > L1 词边界机械命中 > L2 闭集受约束语义补充 [negation 恒时/addition 净值<2 启用+上界 3]); CAP-2 off-taxonomy 惰性 (零分且不计 precision 分母, 不错杀带遗留标签真 specialist); CAP-3 公式 (match_rate 覆盖率 + precision 精度); CAP-6 同名保护得分归属 (吸收插件级按名命中 confidence 走基线侧, 防 0.95 FP 静默蒸发; decision_path=baseline + agent_source=project = 同名接管); CAP-7 recommend Top-3 混排。
+- **输出契约 additive**: auto_match/recommend 增 `agent_source` / `decision_path` (decision 级单值) / `required_caps_trace` (l1/l2+evidence/negated, 可审计) / `off_taxonomy_tags` / warnings 断言载体 — 仅 3e 实际执行时输出; manual/fallback 与门控跳过支不含 (零回归)。subagent-driver handoff-contract 预留字段 `agent_source` 供给侧接线。
+- **缓存 per-file 语义**: 目录 mtime 对原地编辑不敏感的 latent gap (3e 承重后成路由错误源) → `last_full_scan` + per-file (path, mtime[ns], size) stat 集合比对 + `cache_ttl_seconds` 重定义为强制重扫上限 (更严) + 原子写/失败降级直读。
+- **周边**: `.aria/config.template.json` 补 `agent_router` 块; taxonomy 头注补 agent-router 消费者; US-011 AC-4/D4/Scope 三锚点 errata + DEC-20260621-001 L13/L21/L90 勘误 (「已实现/那条路正常」对 auto 失实); SKILL L17 header 既有 1.0.0/1.1.0 版本漂移一并修复。
+
+### 验证 (Rule #6 structural substitute)
+- structural fixture 16 AC × 双跑 (48 runner 执行, 显式传参 pin 推断-裁决解耦): 正召/不误召/零回归三支 (新旧文本对照 @93b7406)/堵短路/同名接管/宽标签拦截/off-tax 惰性/缓存端到端/推断层 L1+negation/纯插件 =0.1 边界防再犯。R1 21/24 → 回炉 (真歧义: 基线池空分支缺失, 双跑分叉实锤) → 修文本重跑全批。
+- 审计: post_spec R1→R4 (152 findings 全处置, 3C 全灭, owner 接受 Rev4); post_planning R1→R4 CONVERGED (unanimous PASS 5/5)。
+
 ## [1.54.0] - 2026-07-08
 
 ### Added: runtime-probe 泛化 → 归档门声明式可选动态子检查 (#95 follow-up A)
