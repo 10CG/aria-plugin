@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.55.1] - 2026-07-09
+
+### Fixed: agent-router 基线层 5 处文本模糊补明 (#99)
+
+v1.55.0 structural fixture 的 48-run ambiguity_notes 收纳的 5 处 pre-existing (v1.0.0 起) 基线层语义空白, 逐处成文 (纯 prose, 0 代码; 不改既有意图行为):
+
+- **关键词匹配语义** (ROUTING_RULES §关键词匹配规则 preamble): 词边界全词匹配 (与 §CAP-1 L1 同准绳, SQL 不匹配 SQLAlchemy) + 大小写不敏感 + 匹配对象 = task 文本 (`files` 路径不参与, 路径信号 FP 专责防双重计分) + 同行多词任一命中每行至多计一次、异行可叠加。
+- **task_type 自动推断程序** (ROUTING_RULES §任务类型规则 preamble + SKILL §输入参数): 未传时以 TT 表「触发关键词」为唯一依据, task 文本词边界逐字命中 (非语义联想); 多行命中各自产出候选, 零命中 = TT 类不产出。
+- **SKILL 摘要表 frontend 行对齐 canonical**: `frontend/**/*` 行 `general-purpose 0.70` → `frontend-developer 0.85` (FP-022); ROUTING_RULES FP-022~025 补注 1 — frontend-developer 非插件内置 roster, 胜出时按「Agent 不存在」回退 general-purpose, 项目级 `.aria/agents/frontend-developer.md` 存在则正常路由。
+- **recommend 兜底条文化** (ROUTING_RULES §Fallback 规则新小节): 候选不足 max_candidates 以 general-purpose 补足末位 (0.50 = 约定填充值非规则得分; 已入池不重复; 至多补 1 条)。
+- **threshold 比较语义** (ROUTING_RULES §置信度计算新小节 + SKILL §输入参数): 一律 `>=` 恰等合格, 与 recommend 触发 `< threshold` 及 §CAP-4 R-b 既有 `>=` 互补一致。
+
+SKILL 1.2.0→1.2.1 / ROUTING_RULES 1.1.0→1.1.1; 随手修 ROUTING_RULES footer 陈旧日期 (2026-01-22→2026-07-09)。
+
+### 验证 (Rule #6 smoke+defer, doc-dominant 0 代码)
+- 5 处补明逐条对照 #99 原文自查 + 每处 grep 落地验证; 与 §CAP-1/CAP-4/优先级处理/推荐模式触发条件一致性人工核对。
+- 全量 fixture 重跑 defer 至下次触碰 router 逻辑的 cycle (v1.55.0 48-run 基线已建立)。
+
 ## [1.55.0] - 2026-07-09
 
 ### Added: agent-router 项目级 capability 匹配接入 auto 主链 (#153 发现 B)

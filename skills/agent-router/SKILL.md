@@ -14,8 +14,8 @@ allowed-tools: Read, Glob, Grep, Bash
 
 # Agent Router (智能路由器)
 
-> **版本**: 1.2.0 | **类型**: 路由器 (Agent 选择)
-> **更新**: 2026-07-09 - 项目级 capability 匹配接入 auto 主链 (#153 发现 B; ROUTING_RULES §CAP 两段式决策)
+> **版本**: 1.2.1 | **类型**: 路由器 (Agent 选择)
+> **更新**: 2026-07-09 - 基线层语义补明 #99 (摘要表 frontend 行对齐 canonical + task_type 推断/threshold 边界成文); 同日早前 1.2.0 项目级 capability 匹配接入 auto 主链 (#153 发现 B; ROUTING_RULES §CAP 两段式决策)
 
 ## 快速开始
 
@@ -106,9 +106,15 @@ allowed-tools: Read, Glob, Grep, Bash
 | `database/**/*` | backend-architect | 0.90 |
 | `mobile/**/*` | mobile-developer | 0.95 |
 | `*.dart` | mobile-developer | 0.90 |
-| `frontend/**/*` | general-purpose | 0.70 |
+| `frontend/**/*` | frontend-developer (注) | 0.85 |
 | `docs/**/*` | knowledge-manager | 0.85 |
 | `ai/**/*` | ai-engineer | 0.90 |
+
+> **注 (v1.2.1, #99)**: `frontend/**/*` 行此前写 `general-purpose 0.70`, 与 canonical
+> ROUTING_RULES FP-022 (`frontend-developer 0.85`) 冲突, 现对齐。`frontend-developer`
+> 非插件内置 Agent (不在 §Agent 能力矩阵) — 胜出时按 §错误处理「Agent 不存在」回退
+> `general-purpose`, 除非项目级 `.aria/agents/frontend-developer.md` 提供该 Agent
+> (详见 ROUTING_RULES FP-022~025 注 1)。
 
 ### 任务类型匹配
 
@@ -139,10 +145,10 @@ allowed-tools: Read, Glob, Grep, Bash
 | 参数 | 必需 | 说明 | 默认值 |
 |------|------|------|--------|
 | `task` | ✅ | 任务描述 | - |
-| `task_type` | ❌ | 任务类型 | 自动推断 |
+| `task_type` | ❌ | 任务类型。未传时自动推断: 以 TT 表「触发关键词」为唯一依据, task 文本词边界逐字命中 (非语义联想), 见 ROUTING_RULES §任务类型规则推断程序 (v1.2.1, #99) | 自动推断 |
 | `files` | ❌ | 相关文件列表 | [] |
 | `mode` | ❌ | 路由模式 | recommend |
-| `threshold` | ❌ | 自动模式阈值 | 0.9 |
+| `threshold` | ❌ | 自动模式阈值; 比较取 `>=` (恰等合格, 见 ROUTING_RULES §threshold 比较语义, v1.2.1 #99) | 0.9 |
 | `user_agent` | ❌ | 用户指定的 Agent | null |
 | `required_caps` | ❌ | 显式任务需求标签 (taxonomy tag list, v1.2.0)。传入 → 跳过 L1/L2 推断直接采用 (归一失败值剔除+WARN), 见 ROUTING_RULES §CAP-1 | null (推断) |
 
@@ -531,4 +537,4 @@ tasks:
 ---
 
 **最后更新**: 2026-07-09
-**Skill版本**: 1.2.0 (项目级 capability 匹配接入 auto 主链 — 两段式决策 + 显式传参 + 输出契约扩展 + 缓存 per-file 语义; #153 发现 B)
+**Skill版本**: 1.2.1 (基线层 5 处语义补明 #99: 关键词词边界/task_type 推断/摘要表 frontend 行对齐/recommend 兜底条文/threshold >= 边界; 前版 1.2.0 项目级 capability 匹配接入 auto 主链 #153 发现 B)
