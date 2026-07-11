@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.55.2] - 2026-07-11
+
+### Fixed: secret-guard 四票并案修复 (#154/#156/#157/#152) — macOS 崩溃 + 多行截断 + 中段逃逸
+
+`hooks/secret-guard.sh` (Rule #7 载体, 默认启用 PreToolUse hook) 两个独立缺陷, 均 `e9dc0f7` (v1.26.0) 引入, v1.26.0–v1.55.1 受影响。`/issue-triage` 四票核对确认:
+
+- **缺陷 A — `readarray` 逐行读** (`:118`, #154/#156 崩溃 + #157 截断):
+  - `readarray` 是 bash-4.0+ builtin, macOS 系统 bash 3.2 / zsh 无 → hook 崩溃 fail-closed 阻断**全部工具** (#154/#156)。
+  - 逐行读在字段值第一个换行处截断 → 多行 `tool_input.command` 只有第一行进拦截正则 (Rule #7 静默失效, #157)。
+  - **修复**: `jq -j` 输出 NUL 分隔 (JSON 值不含 NUL 故为无歧义分隔符) + `while IFS= read -r -d ''` 读入 — newline-safe + bash 3.2 兼容 (无 readarray/mapfile)。源码用可见 `\u0000` escape (jq 运行时产 NUL, 不嵌真 NUL 字节)。
+- **re-exec-to-bash guard (zsh 端到端实测揭示的 #154 更深根因)**:
+  - 只做 NUL 修复后, zsh **直接执行仍对所有输入 fail-closed** (合法 `ls` 也 exit 2) — Claude Code hook runner 用 `$SHELL` (macOS=zsh) 忽略 shebang, 整个 bash-specific 脚本体 (`read -d ''` / `[[ =~ ]]` / 数组下标 / 进程替换) 在 zsh 下错乱。
+  - **修复**: 脚本顶部 POSIX-sh `if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi` — 脚本体永远在 bash (3.2+) 执行, 与 hook runner shell 无关。
+- **缺陷 B — `^` 锚定正则** (`:463` 等 7 处, #152 中段逃逸):
+  - `^[[:space:]]*env(...)` 只匹配命令开头; `;`/`&&`/`||`/`|` 后的 env/printenv 逃逸。
+  - **修复**: 前缀改 `(^|[;&|]|[[:space:]])[[:space:]]*` (含换行 — 缺陷 A 修好后多行第 2 行 env 前是 `\n`, issue 建议前缀漏此仍逃逸); bare dump 后缀补 `[[:cntrl:]]` 分支 (bare printenv 后跟换行正确 BLOCK, `printenv VAR` 查询保持 ALLOW)。
+- **dual-install 漂移根治**: 主仓 dogfood 挂的 `.claude/scripts/secret-guard.sh` 是 2026-05-20 落后副本 (逐字段 jq 完整捕获多行, 掩盖了 #157 回归) — 字节同步为分发版 (`diff -q` IDENTICAL)。
+
+### 验证 (Rule #6 structural substitute + RED-first)
+- 回归测试 260 → 286: 16 缺陷 case (7 中段 + 5 多行 + 4 不误拦, RED-first 修复前 11 FAIL) + 4 静态断言 (无 readarray/mapfile + re-exec guard) + 6 zsh 端到端 (条件跑, secret BLOCK / 合法 ALLOW 与 bash 等价)。
+- zsh 实测: re-exec guard 前 zsh 全 fail-closed, 后与 bash 等价。
+- pre-merge code-review (安全修复)。
+
 ## [1.55.1] - 2026-07-09
 
 ### Fixed: agent-router 基线层 5 处文本模糊补明 (#99)

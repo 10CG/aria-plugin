@@ -62,6 +62,19 @@
 #   Read/Edit:   SECRET_GUARD_ACK_PATH="$file_path" claude ...
 #                (one-shot — must re-set before each subsequent Read/Edit on same path)
 
+# ── Re-exec under bash if launched by another shell (#154 root fix) ─────────
+# Claude Code's hook runner executes `command` hooks via $SHELL and ignores the
+# `#!/usr/bin/env bash` shebang. On macOS $SHELL is zsh, so this hook can arrive
+# under zsh — where bash-isms (read -d '', [[ =~ ]], 0-based arrays, process
+# substitution) misparse every field → tool_type empty → fail-closed → ALL
+# tools blocked. That is the #154 deadlock's deeper cause: replacing `readarray`
+# alone is insufficient because the whole body is bash-specific. Re-exec
+# guarantees the body always runs under bash (3.2+, present on macOS as
+# /bin/bash). POSIX-sh syntax only above this line so zsh/sh reach it.
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
 set -uo pipefail   # NOT -e — we control exit codes
 
 # ── Fail-closed if jq missing ─────────────────────────────────────────────
@@ -105,22 +118,38 @@ fi
 # command/file_path extract). Saves ~2 × jq startup overhead. Case branches
 # below no longer re-invoke jq for their fields.
 #
-# Note: `readarray -t` per-line is used (not `IFS=$'\t' read` with @tsv)
-# because tab is whitespace IFS — consecutive tabs collapse, dropping empty
-# fields. Per-line preserves empty values (e.g. command="" when tool=Read).
+# Field extraction: NUL-delimited (#154/#156/#157 fix). The prior `readarray -t`
+# per-line form (e9dc0f7, v1.26.0) had two defects sharing this one line:
+#   #154/#156: `readarray` is a bash-4.0+ builtin — macOS system /bin/bash (3.2)
+#     and zsh lack it → hook crashes → _sg_fields empty → tool_type empty →
+#     fail-closed below blocks ALL tools (session deadlock).
+#   #157: per-line read truncates any field VALUE containing a newline (a
+#     multiline tool_input.command: heredoc / multi-line script) at its first
+#     newline. Line 2+ then never reaches ANY pattern below (silent Rule #7
+#     failure — only the command's first line is scanned), and line 2 is
+#     misparsed as file_path.
+# Fix: `jq -j` joins the 4 fields with a NUL byte (JSON string values can never
+# contain NUL, so it is an unambiguous separator), and `read -r -d ''` splits on
+# NUL. Newline-safe (field values keep embedded newlines) AND portable to bash
+# 3.2 / zsh (no readarray/mapfile). A trailing NUL after the 4th field yields
+# exactly 4 successful reads. `while ... < <(...)` (process substitution, not a
+# pipe) keeps the array in the current shell.
 #
-# `tr -d '\r'` strips carriage returns from jq output (#132): Windows native
-# jq builds emit CRLF, and `readarray -t` only strips the trailing `\n`, not
-# the `\r`. Without this, every field carries a trailing CR — tool_type
-# becomes "string\r" and fails the `!= "string"` check below, fail-closing
-# ALL tools on Windows. Stripping CR from the whole stream cleans all 4
-# fields at once; embedded CR is meaningless for secret-pattern matching.
-readarray -t _sg_fields < <(jq -r '(.tool_name | type), (.tool_name // ""), (.tool_input.command // ""), (.tool_input.file_path // "")' 2>/dev/null <<<"$input" | tr -d '\r')
+# `tr -d '\r'` strips carriage returns from jq output (#132): Windows native jq
+# builds emit CRLF; without stripping, tool_type becomes "string\r" and fails
+# the `!= "string"` check below, fail-closing ALL tools on Windows. Embedded CR
+# is meaningless for secret-pattern matching, so stripping the whole stream is
+# safe (orthogonal to NUL split: jq -j adds no newline, tr removes any CR;
+# multiline command newline bytes are preserved).
+_sg_fields=()
+while IFS= read -r -d '' _sg_f; do
+  _sg_fields+=("$_sg_f")
+done < <(jq -j '(.tool_name | type) + "\u0000" + (.tool_name // "") + "\u0000" + (.tool_input.command // "") + "\u0000" + (.tool_input.file_path // "") + "\u0000"' 2>/dev/null <<<"$input" | tr -d '\r')
 tool_type="${_sg_fields[0]:-}"
 tool="${_sg_fields[1]:-}"
 command="${_sg_fields[2]:-}"
 file_path="${_sg_fields[3]:-}"
-unset _sg_fields
+unset _sg_fields _sg_f
 
 if [[ "$tool_type" != "string" ]]; then
   if [[ "$tool_type" == "null" ]] || [[ -z "$tool_type" ]]; then
@@ -435,8 +464,8 @@ declare -a risky_patterns=(
   'while[[:space:]]+(IFS=|read)[^|]*<[[:space:]]*[^|]*\.env'
   '<[[:space:]]*[^|]*\.env[[:space:]]*(\$\(|`)[^)]*cat'
   '\bcp[[:space:]]+[^|]*\.env[[:space:]]+/dev/(stdout|tty)'
-  '^[[:space:]]*\.[[:space:]]+[^|]*\.env'                 # `. .env` source
-  '^[[:space:]]*source[[:space:]]+[^|]*\.env'             # `source .env`
+  '(^|[;&|]|[[:space:]])[[:space:]]*\.[[:space:]]+[^|]*\.env'                 # `. .env` source
+  '(^|[;&|]|[[:space:]])[[:space:]]*source[[:space:]]+[^|]*\.env'             # `source .env`
 
   # SSH-remote reads of secret files / dumps (R2-I-3 expanded)
   'ssh[^|]*(cat|head|tail|less|more|printenv|env|find|strings|hexdump|od|dd|awk|perl)[^|]*(\.env|\.envrc|/secrets|/credentials|id_rsa|id_ed25519|\.pem|\.key)'
@@ -451,7 +480,7 @@ declare -a risky_patterns=(
   'set[[:space:]]*\|[[:space:]]*grep[[:space:]]+[^|]*(pass|secret|token|key|credential)'
 
   # Docker env dumps (compose / direct / inspect)
-  'docker[[:space:]]+(compose[[:space:]]+)?exec[^|]*[[:space:]](printenv|env)([[:space:]]+\||[[:space:]]*$)'
+  'docker[[:space:]]+(compose[[:space:]]+)?exec[^|]*[[:space:]](printenv|env)([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
   'docker[[:space:]]+inspect[^|]*--format[^|]*\.Config\.Env'
 
   # R2-C-5 fix: kubectl exec env|cat|printenv (the K8s secret leak path)
@@ -460,10 +489,10 @@ declare -a risky_patterns=(
   'kubectl[[:space:]]+exec[^|]*--[^|]*(cat|head|tail)[^|]*(/run/secrets|\.env|/etc/[^|]*passwd)'
 
   # Bare printenv / bare env (no args = dump everything)
-  '^[[:space:]]*printenv([[:space:]]+\||[[:space:]]*$)'
-  '^[[:space:]]*env([[:space:]]+\||[[:space:]]*$)'
-  '^[[:space:]]*/bin/printenv'                              # absolute path
-  '^[[:space:]]*/usr/bin/printenv'
+  '(^|[;&|]|[[:space:]])[[:space:]]*printenv([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
+  '(^|[;&|]|[[:space:]])[[:space:]]*env([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
+  '(^|[;&|]|[[:space:]])[[:space:]]*/bin/printenv'                              # absolute path
+  '(^|[;&|]|[[:space:]])[[:space:]]*/usr/bin/printenv'
 
   # psql sensitive-column reads
   'psql[^|]*(key_encrypted|encrypted_data|encrypted_blob|ciphertext|key_material)'
@@ -563,7 +592,7 @@ declare -a risky_patterns=(
   'psql[[:space:]]+[^|]*-f[[:space:]]+[^|]+\.sql'
 
   # R3-I-6: compgen -e / set -o posix; set (env-dump cousins)
-  '^[[:space:]]*compgen[[:space:]]+-e([[:space:]]+\||[[:space:]]*$)'
+  '(^|[;&|]|[[:space:]])[[:space:]]*compgen[[:space:]]+-e([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
   'set[[:space:]]+-o[[:space:]]+posix.*set[[:space:]]*\|[[:space:]]*grep'
 
   # ── #69 (Aether v1.28.0 14-day dogfood — 5 confirmed FN + corpus) ──────────
