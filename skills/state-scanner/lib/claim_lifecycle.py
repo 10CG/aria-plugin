@@ -37,6 +37,7 @@ from typing import NamedTuple, Optional
 from .claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT
 from .coordination_ref import write_claim, read_claims, WriteClaimResult
 from .identity import Identity, get_identity
+from .track_id import derive_track_id
 
 logger = logging.getLogger(__name__)
 
@@ -361,5 +362,82 @@ def release_claim(
         status,
         resolved.container_id,
         resolved.session_id,
+    )
+    return AcquireResult(success=True, record=released, error=None)
+
+
+def release_claim_by_track(
+    raw_track_id: str,
+    status: str = "done",
+    identity: Optional[Identity] = None,
+    repo_path: Optional[Path] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> AcquireResult:
+    """Release THIS container's active claim for a track, located by track_id.
+
+    Defect (c) fix (coordination-claim-lifecycle-and-overlap): ``release_claim``
+    locates by ``(container, session)``, but a later ship/close invocation
+    (phase-d-closer, on cycle completion) runs with a FRESH ``session_id`` and
+    cannot match the original acquiring session — so claims never got released
+    and accumulated as ``active`` forever. The ship context DOES know the
+    ``track_id`` (the carry-id being closed), so this variant locates by
+    ``(normalized track_id, container)`` and ignores session.
+
+    ``raw_track_id`` is normalized via ``derive_track_id`` (same as acquire), so
+    the caller passes the raw carry-id. If several active claims match (same
+    container re-claimed a track across sessions), the EARLIEST ``claimed_at``
+    is released (deterministic, matches reconcile's earliest-wins). Fail-soft:
+    ``claim_not_found`` when no active match exists (already released / never
+    claimed — both benign at ship time).
+    """
+    _TERMINAL_STATUSES = frozenset({"done", "yielded", "abandoned"})
+    if status not in _TERMINAL_STATUSES:
+        return AcquireResult(success=False, record=None, error="invalid_status")
+
+    resolved = _resolve_identity(identity, repo_path)
+    if resolved is None:
+        return AcquireResult(success=False, record=None, error="identity_error")
+
+    norm = derive_track_id(raw_track_id)
+
+    read_result = read_claims(repo_path)
+    if not read_result.ref_exists:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    matches = [
+        rec
+        for rec in read_result.claims
+        if rec.container == resolved.container_id
+        and rec.track_id == norm
+        and rec.status == "active"
+    ]
+    if not matches:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    # deterministic: earliest claimed_at (lexical ISO-8601 sort is chronological)
+    existing = sorted(matches, key=lambda r: r.claimed_at)[0]
+
+    ts_str = _iso(now if now is not None else _utc_now())
+    released = ClaimRecord(
+        schema_version=existing.schema_version,
+        track_id=existing.track_id,
+        owner=existing.owner,
+        container=existing.container,
+        session=existing.session,
+        phase=existing.phase,
+        status=status,
+        claimed_at=existing.claimed_at,
+        heartbeat_at=ts_str,
+        superseded_from=existing.superseded_from,
+    )
+    result: WriteClaimResult = write_claim(released, repo_path)
+    if not result.success:
+        return AcquireResult(success=False, record=None, error=result.error or "write_failed")
+    logger.info(
+        "claim_lifecycle.release_claim_by_track: released track=%s status=%s container=%s",
+        norm,
+        status,
+        resolved.container_id,
     )
     return AcquireResult(success=True, record=released, error=None)
