@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.55.3] - 2026-07-11
+
+### Fixed: secret-guard 加固 — NUL-in-field 绕过 + log_ack 多行 (v1.55.2 follow-up)
+
+v1.55.2 ship 后, owner 发现并发的 dev-claude 容器起了一份更周全的 L3 spec (`secret-guard-bash3-multiline-hardening`), 其 post_spec 审计抓到 v1.55.2 实现的真实缺陷。采纳其发现:
+
+- **NUL-in-field 绕过 (安全 Critical, dev-claude spec Critical-2)**: v1.55.2 用 NUL 分隔字段, 注释断言 "JSON 值不能含 NUL" —— 但那只对**字面** NUL 成立, JSON 的 `\u0000` **转义**可以, jq 会把它解码成真 NUL, 与字段分隔符同形。攻击: command 值含 `\u0000` → 分裂使 `command` 截断成良性前缀 (放行), 真正的 dumper (env/printenv) 溢出到 `file_path` —— Bash 分支从不扫描 file_path → **secret-dump 绕过**。实测 v1.55.2: `ls\u0000printenv` / `echo hi\u0000env | grep TOKEN` 均 exit 0 放行。**修复**: 字段数守卫 —— well-formed 输入恒 4 个 NUL 分隔段, 任何其他数量 (嵌入 NUL / 畸形 JSON) → fail-closed exit 2。
+- **log_ack 多行日志 (dev-claude spec qa M-3)**: #157 修复后 `command` 可多行; `log_ack` 把它写进 `guard-bypass.log` (TSV) 会破坏 "一行一条目" 不变量 (裸换行拆成多行 / 嵌入 tab 移列)。净化 payload 的 CR/LF/TAB → 空格。
+- **#152 归因订正**: v1.55.2 changelog 称 `^` 锚定由 `e9dc0f7`/v1.26.0 引入 —— 错。git 史 (`git log -S`) 证由 **`e8e847c`** (2026-05-23 从 SilkNode cherry-pick, **先于 v1.26.0**) 引入; `e9dc0f7` diff 零触及 env/printenv 锚定行。dev-claude spec 独立核实在先。
+
+### 未纳入本 hotfix (随 dev-claude L3 spec 落地)
+- **命令替换/包装器全覆盖** (dev-claude spec 部件 B): `$(env)` / 反引号 / `{ env; }` / `sudo env` / `nice env` 等命令位识别扩展。该 spec 做了 spike (36/37) + 误报矩阵, 缺此覆盖是 fail-safe 漏拦 (非活可利用洞), 应按其 L3 设计实现, 不在本 hotfix 临时拍。dev-claude spec 转为权威设计 (标注 v1.55.2/v1.55.3 已实现部件 A + re-exec + NUL 守卫 + log_ack; 部件 B 待实现)。
+
+### 验证
+- 测试 292→297 (+5 NUL 绕过锁测: ls/echo/nomad 溢出 + Read file_path NUL + 良性对照); NUL 绕过实测修复前 exit 0 → 修复后 exit 2。
+- 源码卫生: jq 程序 + 注释用可见 `\u0000` escape, 无真 NUL 字节。
+- 副本 `.claude/scripts/` 字节同步。
+
 ## [1.55.2] - 2026-07-11
 
 ### Fixed: secret-guard 四票并案修复 (#154/#156/#157/#152) — macOS 崩溃 + 多行截断 + 中段逃逸
