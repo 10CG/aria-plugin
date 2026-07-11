@@ -78,6 +78,7 @@ try:
     from ..lib.identity import Identity, get_identity
     from ..lib.reconcile import reconcile, ReconcileVerdict
     from ..lib.track_id import derive_track_id
+    from ..lib.collision import linked_issue_overlaps
 except ImportError:
     # Context (a): scripts/ imported directly (test harness / CLI entry).  The
     # lib/ modules cross-import each other with *relative* imports (from
@@ -115,6 +116,7 @@ except ImportError:
     from lib.identity import Identity, get_identity  # type: ignore[import]
     from lib.reconcile import reconcile, ReconcileVerdict  # type: ignore[import]
     from lib.track_id import derive_track_id  # type: ignore[import]
+    from lib.collision import linked_issue_overlaps  # type: ignore[import]
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +341,7 @@ def _run_gate_impl(
     user_decision: Optional[UserDecisionCallback] = None,
     remote: str = "origin",
     mode: str = "advisory",
+    linked_issue: Optional[str] = None,
 ) -> GateResult:
     """Execute Phase 1 acquisition gate for a single track selection.
 
@@ -725,6 +728,7 @@ def _run_gate_impl(
         resolved_identity,
         repo,
         now=ts,
+        linked_issue=linked_issue,
     )
 
     if not acq.success:
@@ -749,6 +753,7 @@ def _run_gate_impl(
             claimed_at=ts_str,
             heartbeat_at=ts_str,
             superseded_from=None,
+            linked_issue=linked_issue,
         )
         rwr: ResilientWriteResult = resilient_write_claim(fallback_record, repo)
         if not rwr.success:
@@ -987,6 +992,7 @@ def _gated(
     user_decision: Optional[UserDecisionCallback] = None,
     remote: str = "origin",
     mode: str = "advisory",
+    linked_issue: Optional[str] = None,
     _source: Optional[str] = None,
 ) -> GateResult:
     """PRIVATE telemetry-wrapping entry.  ``_source`` selects the telemetry
@@ -1012,6 +1018,7 @@ def _gated(
         user_decision=user_decision,
         remote=remote,
         mode=mode,
+        linked_issue=linked_issue,
     )
     latency_ms = int((_time.monotonic() - t0) * 1000)
     _emit_telemetry(repo, result, _source, ts, latency_ms)
@@ -1028,6 +1035,7 @@ def run_gate(
     user_decision: Optional[UserDecisionCallback] = None,
     remote: str = "origin",
     mode: str = "advisory",
+    linked_issue: Optional[str] = None,
 ) -> GateResult:
     """Public entry — runs the acquisition gate and records telemetry to the
     NON-production partition (library/direct-call source).
@@ -1047,6 +1055,7 @@ def run_gate(
         user_decision=user_decision,
         remote=remote,
         mode=mode,
+        linked_issue=linked_issue,
         _source=None,
     )
 
@@ -1183,6 +1192,14 @@ def _main(argv: Optional[list[str]] = None) -> int:
         choices=["advisory", "block"],
         help="outcome 姿态; 默认 advisory (放行+写推 claim+surface)。见 CLI 已知限制",
     )
+    parser.add_argument(
+        "--linked-issue",
+        default=None,
+        help=(
+            "可选语义重叠信号 (Part B1, 如 '10CG/Aria#160'): 写入 claim 并检测 "
+            "同 linked_issue 不同 track-id 的 active claim (advisory 告警, 不阻断)"
+        ),
+    )
     parser.add_argument("--repo-path", default=None, help="仓库根路径 (默认 cwd)")
     parser.add_argument("--remote", default="origin", help="git remote (默认 origin)")
     args = parser.parse_args(argv)
@@ -1197,11 +1214,26 @@ def _main(argv: Optional[list[str]] = None) -> int:
         repo_path=repo,
         remote=args.remote,
         mode=args.mode,
+        linked_issue=args.linked_issue,
         _source=_PRODUCTION_SOURCE,
         # user_decision omitted — advisory ignores it; block via CLI degrades to
         # the None safe-default (abort) per the documented PP-R2 limitation.
     )
-    print(json.dumps(_gate_result_to_dict(result), ensure_ascii=False, indent=2))
+    out = _gate_result_to_dict(result)
+
+    # Part B1 (additive key): "same issue, two names" advisory. Bypasses
+    # reconcile's exact track_id grouping; never changes outcome/proceed.
+    if args.linked_issue:
+        try:
+            claims = read_claims(repo).claims
+            out["linked_issue_overlap"] = linked_issue_overlaps(
+                claims, result.track_id, args.linked_issue
+            )
+        except Exception as exc:  # fail-soft: overlap advisory must not break the gate
+            logger.warning("phase1_gate: linked_issue overlap check skipped (%s)", exc)
+            out["linked_issue_overlap"] = []
+
+    print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if result.outcome in _PROCEED_OUTCOMES else 1
 
 

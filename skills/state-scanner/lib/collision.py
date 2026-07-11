@@ -168,6 +168,72 @@ def classify_claims(claims: "list[ClaimRecord]") -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Part B1 — linked_issue semantic-overlap advisory
+# (coordination-claim-lifecycle-and-overlap; bypasses reconcile_all's
+#  track_id grouping, which by design cannot see "same issue, two names")
+# ---------------------------------------------------------------------------
+
+
+def linked_issue_overlaps(
+    claims: "list[ClaimRecord]",
+    own_track_id: str,
+    own_linked_issue: Optional[str],
+) -> "list[dict]":
+    """Detect active claims sharing our linked_issue under a DIFFERENT track_id.
+
+    Defect (b) mitigation: track_id collision detection is exact-string only
+    (``reconcile_all`` groups by track_id), so two sessions naming the same
+    work differently (e.g. ``secret-guard-bash3-multiline-hardening`` vs
+    ``carry-secretguard-fieldparse-anchor``) never collide.  When both claims
+    carry the same ``linked_issue``, this function surfaces the overlap.
+
+    ADVISORY-ONLY: the result is a warning list for the orchestration layer /
+    CLI JSON (additive key).  It never feeds winner determination and never
+    blocks — per DEC-20260519-001 advisory-over-hardlock.
+
+    Args:
+        claims:            All ClaimRecords (e.g. from read_claims()).
+        own_track_id:      This session's normalized track_id (excluded from
+                           matching — same track_id is the ordinary collision
+                           path, already handled by reconcile).
+        own_linked_issue:  This session's linked_issue.  None/empty → no
+                           overlap possible → always [].
+
+    Returns:
+        One dict per overlapping claim, sorted by (track_id, owner, container):
+        ``{"track_id", "owner", "container", "session", "status",
+           "linked_issue", "claimed_at"}``
+    """
+    if not own_linked_issue:
+        return []
+
+    _TERMINAL = ("done", "abandoned", "unknown")
+    out: "list[dict]" = []
+    for c in claims or []:
+        if c.status in _TERMINAL:
+            continue
+        if not getattr(c, "linked_issue", None):
+            continue
+        if c.linked_issue != own_linked_issue:
+            continue
+        if c.track_id == own_track_id:
+            continue  # same-name collision — reconcile's job, not ours
+        out.append(
+            {
+                "track_id": c.track_id,
+                "owner": c.owner,
+                "container": c.container,
+                "session": c.session,
+                "status": c.status,
+                "linked_issue": c.linked_issue,
+                "claimed_at": c.claimed_at,
+            }
+        )
+    out.sort(key=lambda d: (d["track_id"], d["owner"], d["container"]))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Public aggregate API — persisted as tracks_multibranch.collision (TASK-000)
 # ---------------------------------------------------------------------------
 

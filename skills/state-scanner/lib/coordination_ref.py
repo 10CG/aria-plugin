@@ -1008,6 +1008,222 @@ def write_claim(
     )
 
 
+class TreeEditResult(NamedTuple):
+    """Result of :func:`apply_tree_edits`.
+
+    Fields
+    ------
+    success : bool
+    commit_sha : str
+        New commit SHA on the coordination ref; empty string on failure or
+        when ``edits`` was empty (no-op, success=True).
+    edit_count : int
+        Number of edits actually applied (0 for the empty no-op case).
+    error : str | None
+        Short error token; None on success.  Possible values:
+        ``"yaml_unavailable"`` (never — this function is yaml-free),
+        ``"ref_not_exists"``, ``"invalid_edit"``, ``"invalid_path"``,
+        ``"hash_object_failed"``, ``"update_index_failed"``,
+        ``"mktree_failed"``, ``"commit_tree_failed"``, ``"update_ref_failed"``.
+    """
+
+    success: bool
+    commit_sha: str
+    edit_count: int
+    error: Optional[str]
+
+
+def _validate_tree_path(path: str) -> bool:
+    """Reject absolute paths and parent-dir escapes in tree edit paths."""
+    if not path or path.startswith("/") or path.startswith("\\"):
+        return False
+    return ".." not in Path(path).parts
+
+
+def apply_tree_edits(
+    edits: list,
+    repo_path: Path | None = None,
+    *,
+    message: str = "coordination: batch tree edit",
+) -> TreeEditResult:
+    """Apply a batch of remove/add edits to the coordination ref in ONE commit.
+
+    Part C (coordination-claim-lifecycle-and-overlap): the primitive that
+    ``gc.archive_done_claims`` (move claims/ → archive/, previously a no-op
+    stub) and ``gc.sweep_stale_active`` (batch rewrite stale active →
+    abandoned) both build on.  ``write_claim`` can only add/replace a single
+    file; archival needs remove+add pairs batched into one commit (the gc
+    module docstring always intended "a higher-level orchestrator that can
+    batch the git operations" — this is it).
+
+    Parameters
+    ----------
+    edits:
+        List of tuples: ``("remove", path)`` or ``("add", path, content_str)``.
+        Paths are ref-tree-relative (e.g. ``claims/cA/s1.yaml``).  An empty
+        list is a benign no-op (success=True, no commit created).
+    repo_path:
+        Absolute path to the repository root.  Defaults to ``Path.cwd()``.
+    message:
+        Commit message for the single batch commit.
+
+    Rule #7: all subprocess I/O goes through ``_run`` (capture_output=True).
+    """
+    repo: Path = repo_path if repo_path is not None else Path.cwd()
+
+    if not edits:
+        return TreeEditResult(success=True, commit_sha="", edit_count=0, error=None)
+
+    # Validate edit shapes + paths up-front (all-or-nothing: one bad edit
+    # aborts the whole batch before any git object is written).
+    for edit in edits:
+        if not isinstance(edit, (tuple, list)) or len(edit) < 2:
+            return TreeEditResult(False, "", 0, "invalid_edit")
+        op, path = edit[0], edit[1]
+        if op == "remove" and len(edit) == 2:
+            pass
+        elif op == "add" and len(edit) == 3 and isinstance(edit[2], str):
+            pass
+        else:
+            return TreeEditResult(False, "", 0, "invalid_edit")
+        if not isinstance(path, str) or not _validate_tree_path(path):
+            return TreeEditResult(False, "", 0, "invalid_path")
+
+    if not _ref_exists_local(repo, REF_NAME):
+        return TreeEditResult(False, "", 0, "ref_not_exists")
+
+    # Resolve git-dir (works for both regular repos and worktrees).
+    rc_gd, git_dir_raw, _gd_err = _run(
+        ["git", "-C", str(repo), "rev-parse", "--git-dir"], cwd=repo
+    )
+    if rc_gd != 0 or not git_dir_raw:
+        return TreeEditResult(False, "", 0, "hash_object_failed")
+    git_dir = Path(git_dir_raw) if Path(git_dir_raw).is_absolute() else repo / git_dir_raw
+
+    # Pre-hash all add-contents into blobs.
+    add_blobs: dict[str, str] = {}
+    for edit in edits:
+        if edit[0] != "add":
+            continue
+        rc_ho, blob_sha, ho_err = _run(
+            ["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+            cwd=repo,
+            input=edit[2],
+        )
+        if rc_ho != 0 or not blob_sha:
+            logger.warning(
+                "coordination_ref.apply_tree_edits: hash-object failed (rc=%d): %s",
+                rc_ho,
+                ho_err,
+            )
+            return TreeEditResult(False, "", 0, "hash_object_failed")
+        add_blobs[edit[1]] = blob_sha
+
+    with tempfile.TemporaryDirectory(prefix="aria-coord-gc-") as tmp_str:
+        tmp = Path(tmp_str)
+        scratch_env = {"GIT_INDEX_FILE": str(tmp / ".git-index-tmp")}
+
+        # Start from the current ref tree so untouched files are preserved.
+        rc_rt, _rt_out, rt_err = _run(
+            [
+                "git",
+                "--git-dir",
+                str(git_dir),
+                "--work-tree",
+                str(tmp),
+                "read-tree",
+                f"{REF_NAME}^{{tree}}",
+            ],
+            cwd=repo,
+            extra_env=scratch_env,
+        )
+        if rc_rt != 0:
+            logger.warning(
+                "coordination_ref.apply_tree_edits: read-tree failed (rc=%d): %s",
+                rc_rt,
+                rt_err,
+            )
+            return TreeEditResult(False, "", 0, "update_index_failed")
+
+        for edit in edits:
+            if edit[0] == "remove":
+                cmd = [
+                    "git",
+                    "--git-dir",
+                    str(git_dir),
+                    "update-index",
+                    "--force-remove",
+                    edit[1],
+                ]
+            else:  # add
+                cmd = [
+                    "git",
+                    "--git-dir",
+                    str(git_dir),
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    f"100644,{add_blobs[edit[1]]},{edit[1]}",
+                ]
+            rc_ui, _ui_out, ui_err = _run(cmd, cwd=repo, extra_env=scratch_env)
+            if rc_ui != 0:
+                logger.warning(
+                    "coordination_ref.apply_tree_edits: update-index %s failed "
+                    "(rc=%d, path=%s): %s",
+                    edit[0],
+                    rc_ui,
+                    edit[1],
+                    ui_err,
+                )
+                return TreeEditResult(False, "", 0, "update_index_failed")
+
+        rc_wt, tree_sha, wt_err = _run(
+            ["git", "--git-dir", str(git_dir), "write-tree"],
+            cwd=repo,
+            extra_env=scratch_env,
+        )
+        if rc_wt != 0 or not tree_sha:
+            logger.warning(
+                "coordination_ref.apply_tree_edits: write-tree failed (rc=%d): %s",
+                rc_wt,
+                wt_err,
+            )
+            return TreeEditResult(False, "", 0, "mktree_failed")
+
+    current_sha = _resolve_ref(repo, REF_NAME)
+    ct_cmd = ["git", "-C", str(repo), "commit-tree", tree_sha, "-m", message]
+    if current_sha:
+        ct_cmd += ["-p", current_sha]
+    rc_ct, new_commit_sha, ct_err = _run(ct_cmd, cwd=repo)
+    if rc_ct != 0 or not new_commit_sha:
+        logger.warning(
+            "coordination_ref.apply_tree_edits: commit-tree failed (rc=%d): %s",
+            rc_ct,
+            ct_err,
+        )
+        return TreeEditResult(False, "", 0, "commit_tree_failed")
+
+    rc_ur, _ur_out, ur_err = _run(
+        ["git", "-C", str(repo), "update-ref", REF_NAME, new_commit_sha], cwd=repo
+    )
+    if rc_ur != 0:
+        logger.warning(
+            "coordination_ref.apply_tree_edits: update-ref failed (rc=%d): %s",
+            rc_ur,
+            ur_err,
+        )
+        return TreeEditResult(False, "", 0, "update_ref_failed")
+
+    logger.info(
+        "coordination_ref.apply_tree_edits: applied %d edits → commit %s",
+        len(edits),
+        new_commit_sha,
+    )
+    return TreeEditResult(
+        success=True, commit_sha=new_commit_sha, edit_count=len(edits), error=None
+    )
+
+
 def push_coordination_ref(
     repo_path: Path | None = None,
     *,

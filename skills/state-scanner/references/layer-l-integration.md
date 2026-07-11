@@ -9,7 +9,7 @@
 
 `scripts/phase1_gate.py` 实现**急切认领闸门 (eager-claim gate)**, 在以下条件下触发:
 
-- 当前项目配置了 `state_scanner.coordination.enabled = true` (**opt-in**, 默认 `false`)
+- 当前项目 `state_scanner.coordination.enabled == true` (**默认 `true`, opt-out** — coordination-claim-lifecycle-and-overlap Part A1 把默认 false→true; 显式设 false 退回 rule 1.54 advisory)
 - **同容器并发检测 (TASK-023)**: 同一 `container-id` 内有 ≥2 个 active claim (Phase B 或以上) 时强提示
 - **cross-owner collision**: `tracks_multibranch` snapshot 包含同一 `track-id`、不同 `owner` 的活跃 track → 触发闸门;**advisory(默认)**: claim 先写(acquire_claim), reconcile 事后仲裁, 不阻塞用户继续;**block(可选模式)**: 保留原姿态, 要求用户 reconcile 后再 claim
 - **Design A 条件触发**: 闸门仅在用户确认要进入 Phase B 时调用, **不在 scan.py 内自动执行**

@@ -143,6 +143,14 @@ branch-manager --mode worktree --task-id TASK-001
 
 分支创建前，branch-manager 会自动验证开发环境状态，确保可以顺利开始开发。
 
+### 前置: REQUIRE claim (Part A1, MUST — 与 phase-b-developer B.0 同一条约束)
+
+`action: create` (= 进 Phase B.1) 前, 本 session 必须已有 active claim; 无则先跑
+`phase1_gate.py --raw-track-id <carry-id> --phase B --mode advisory` (命令模板见
+phase-b-developer SKILL.md §B.0)。直接调 branch-manager 绕过 phase-b-developer 的
+session 同样适用。**skip 条件**: `coordination.enabled` 显式 false (默认 true) /
+非协调项目。advisory — claim 失败不阻断分支创建, 但必须先尝试。
+
 ### 验证项目
 
 | 验证项 | 说明 | 自动修复 |

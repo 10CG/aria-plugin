@@ -39,14 +39,29 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 |------|-------|------|------|
 | D.1 | progress-updater | 进度更新 | upm_updated |
 | D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug; **#95 完成度 + C 分级证据闸 tri-state verdict, verdict=block 时本步 BLOCK**) | spec_archived |
+| D.2b | release_gate CLI (state-scanner) | **本 cycle claim 释放** (coordination-claim-lifecycle Part C, advisory 非阻塞) | claim_released |
 | D.3 | session-handoff (本 Skill 内嵌) | 写 session handoff doc 到 `docs/handoff/` | handoff_written |
 | D.4 | ai-native-estimator (capture) | 采集本 cycle token 工作量 (advisory, 非阻塞, #18 v1) | estimator_captured |
+
+### D.2b claim 释放 (coordination-claim-lifecycle-and-overlap Part C)
+
+D.2 归档完成后 (或 D.2 跳过但本 session 曾在 Phase B-entry 经 phase1_gate 认领), **必须尝试释放本 cycle 的 claim** —— 否则 claim 永久 active 累积 (defect c 根因: `release_claim` 按 session 定位, 收尾 session 的 fresh session_id 找不到原 claim; release_gate 按 track_id+container 定位, 专为 ship 场景设计):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/release_gate.py" \
+  --raw-track-id "<本 cycle 的 carry-id 原始串>" --sweep-stale --gc --repo-path "<repo root>"
+```
+
+- carry-id = Phase B-entry 时传给 phase1_gate 的同一原始串 (归一在 CLI 内部, 两端一致)。
+- `--sweep-stale` 顺带把全 ref 内 heartbeat 超 STALE_TTL 的 active claim 标 abandoned; `--gc` 顺带归档超 retention 的 done claim —— 收尾是 GC 的自然挂载点, 无需独立调度。
+- **advisory 契约**: exit 1 (硬错) 只记录 warning 到收尾报告, **不阻断** D.3/D.4。`released.error == "claim_not_found"` 是 benign (早已释放/未认领), exit 0。
+- 本 session 未认领 (未走 phase1_gate) 时仍建议跑 `--sweep-stale --gc` (不带 --raw-track-id), 保持 ref 卫生。
 
 ---
 
 ## 执行流程
 
-4 步: **D.1 进度更新** (progress-updater skill, single-pass / milestone-driven 双模) → **D.post post_closure audit** (可选, audit.enabled+checkpoint enabled 时触发 convergence/max_rounds=1, 经验提取非阻塞) → **D.2 Spec 归档** (openspec-archive skill) → **D.3 Session handoff** (4-level fallback 触发, 路径硬编码 `docs/handoff/`)。
+5 步: **D.1 进度更新** (progress-updater skill, single-pass / milestone-driven 双模) → **D.post post_closure audit** (可选, audit.enabled+checkpoint enabled 时触发 convergence/max_rounds=1, 经验提取非阻塞) → **D.2 Spec 归档** (openspec-archive skill) → **D.2b claim 释放** (release_gate CLI, advisory — 见上表下方) → **D.3 Session handoff** (4-level fallback 触发, 路径硬编码 `docs/handoff/`)。
 
 **完整 step-by-step (输入 context schema + D.1/D.post/D.2/D.3 详细 action + 输出)**: 见 [references/execution-steps.md](./references/execution-steps.md)。
 

@@ -83,6 +83,23 @@ config:
 ### 步骤执行
 
 ```yaml
+B.0 - REQUIRE claim (coordination-claim-lifecycle-and-overlap Part A1, MUST):
+  precondition: 进入 B.1 前, 本 (container) 必须已有一条本 session 的 active claim
+  check: phase1_gate telemetry / 编排层记忆 (本 session 是否已跑 phase1_gate)
+  if_missing:
+    - MUST 先跑 (不可跳过, advisory 强制 — 步骤级 MUST, 非 hook 硬锁):
+      python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py" \
+        --raw-track-id "<本 cycle carry-id/Spec id>" --phase B --mode advisory \
+        [--linked-issue "<repo>#<n>"] --repo-path "<repo root>"
+    - goal 直驱 / 绕过 state-scanner 进入的 session 也适用 (B-entry 手动补 claim)
+  skip_if:
+    - coordination.enabled 显式 false (opt-out; 默认 true — config-loader SOT)
+    - 非 git repo / 无 coordination 基础设施 (gate 自身 fail-soft ABORT 不阻断)
+  rationale: defect a — 2026-07-11 双子星撞车实证"认领非强制→从不认领";
+             advisory mode 放行一切, 成本只是一次 claim 写入, 收益是 reconcile 有据可依
+  诚实边界: 本步骤管不到绕过 state-scanner/phase-b 的自主 bot (Layer 2 orchestrator
+             维度另开 aria-orchestrator issue 跟踪)
+
 B.1 - 分支管理:
   skill: branch-manager
   action: create

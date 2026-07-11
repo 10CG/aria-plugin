@@ -131,13 +131,15 @@ state_scanner.issue_scan.label_filter:
   type: array of string
   default: []
 
-# Layer L 多终端协调闸门 (multi-terminal-coordination, opt-in)
+# Layer L 多终端协调闸门 (multi-terminal-coordination; opt-out since
+# coordination-claim-lifecycle-and-overlap Part A1)
 # — coordination.enabled 承载 #133 AC-2 互斥不变式 (advanced-rules.md rule 1.54):
 #   enabled==true  → cross-owner collision 由 phase1_gate 处理;
 #   enabled==false → 切口2 advisory (rule 1.54) surface collision。两者在 enabled 上严格互斥。
 state_scanner.coordination.enabled:
   type: boolean
-  default: false                  # opt-in; true 时 state-scanner 阶段 2/Phase B-entry 调 phase1_gate.run_gate
+  default: true                   # Part A1 (defect a): false→true — 2026-07-11 双子星撞车实证 opt-in 默认导致认领从不发生; advisory mode 保证翻转不阻断任何流程。显式设 false 可退回 rule 1.54 advisory。
+                                  # 已知边界: runtime_probe._resolve_enabled_when 的缺键=off 是通用探针契约不随动 — 无此 key 的项目 coordination_probe 判 skipped (保守), 不误报 warn。
 
 # mode 与 enabled 正交 (仅 enabled==true 时相关), 不改 rule 1.54 disjointness (DEC-20260704-002 §1, R1-C2)
 state_scanner.coordination.mode:

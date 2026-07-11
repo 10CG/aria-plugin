@@ -103,6 +103,7 @@ def acquire_claim(
     repo_path: Optional[Path] = None,
     *,
     now: Optional[datetime] = None,
+    linked_issue: Optional[str] = None,
 ) -> AcquireResult:
     """Construct a new active ClaimRecord and write it to the coordination ref.
 
@@ -125,6 +126,10 @@ def acquire_claim(
     now:
         Reference UTC time for both ``claimed_at`` and ``heartbeat_at``.
         Defaults to ``datetime.now(UTC)``.  Inject in tests for determinism.
+    linked_issue:
+        Optional semantic-overlap signal (Part B1) — free-form issue reference
+        (e.g. ``"10CG/Aria#160"``) stored on the claim so collision detection
+        can flag "same issue, different track_id" overlaps (advisory).
 
     Returns
     -------
@@ -149,6 +154,7 @@ def acquire_claim(
         claimed_at=ts_str,
         heartbeat_at=ts_str,
         superseded_from=None,
+        linked_issue=linked_issue,
     )
 
     result: WriteClaimResult = write_claim(record, repo_path)
@@ -246,6 +252,7 @@ def heartbeat(
         claimed_at=existing.claimed_at,       # immutable
         heartbeat_at=ts_str,                  # updated
         superseded_from=existing.superseded_from,
+        linked_issue=existing.linked_issue,
     )
 
     result: WriteClaimResult = write_claim(updated, repo_path)
@@ -347,6 +354,7 @@ def release_claim(
         claimed_at=existing.claimed_at,       # immutable
         heartbeat_at=ts_str,                  # final timestamp
         superseded_from=existing.superseded_from,
+        linked_issue=existing.linked_issue,
     )
 
     result: WriteClaimResult = write_claim(released, repo_path)
@@ -430,6 +438,7 @@ def release_claim_by_track(
         claimed_at=existing.claimed_at,
         heartbeat_at=ts_str,
         superseded_from=existing.superseded_from,
+        linked_issue=existing.linked_issue,
     )
     result: WriteClaimResult = write_claim(released, repo_path)
     if not result.success:

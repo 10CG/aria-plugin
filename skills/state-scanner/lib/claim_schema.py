@@ -49,11 +49,14 @@ SCHEMA_VERSION_CURRENT: str = "1"
 
 # STATUS_ENUM covers all values a ClaimRecord.status may hold at runtime.
 # "unknown" is a reader-side sentinel — it is NEVER written by a live session.
-# Write-side validation should only accept {"active", "yielded", "done"}.
-STATUS_ENUM: frozenset[str] = frozenset({"active", "yielded", "done", "unknown"})
+# "abandoned" (coordination-claim-lifecycle-and-overlap Part C): terminal status
+# written by release_claim*/gc.sweep_stale_active. reconcile/collision already
+# treated it as terminal (forward-compat); before Part C the schema rejected it
+# on parse, so a written abandoned claim silently vanished on read-back.
+STATUS_ENUM: frozenset[str] = frozenset({"active", "yielded", "done", "abandoned", "unknown"})
 
 # Values that a live session may write into the status field (excludes "unknown").
-STATUS_WRITABLE: frozenset[str] = frozenset({"active", "yielded", "done"})
+STATUS_WRITABLE: frozenset[str] = frozenset({"active", "yielded", "done", "abandoned"})
 
 # Expected format for superseded_from: "owner/container/session"
 _SUPERSEDED_FROM_PARTS = 3
@@ -101,6 +104,14 @@ class ClaimRecord:
     superseded_from : Optional[str]
         Present only during a reconcile take-over.
         Format: "owner/container/session" of the claim being superseded.
+    linked_issue : Optional[str]
+        Optional semantic-overlap signal (Part B1, coordination-claim-lifecycle-
+        and-overlap): free-form issue reference (e.g. "10CG/Aria#160"). Two
+        active claims with the SAME linked_issue but DIFFERENT track_id trigger
+        an advisory overlap warning (collision.linked_issue_overlaps) — the
+        "same issue, two names" collision that pure track_id string matching
+        cannot see. Additive: absent in pre-B1 claims; never affects reconcile
+        winner determination.
     """
 
     schema_version: str
@@ -113,6 +124,7 @@ class ClaimRecord:
     claimed_at: str
     heartbeat_at: str
     superseded_from: Optional[str] = None
+    linked_issue: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +285,15 @@ def parse_claim(raw: dict) -> Optional[ClaimRecord]:
             )
             return None
 
+    # --- Step 5: validate optional linked_issue (Part B1, additive) ---
+    linked_issue: Optional[str] = raw.get("linked_issue")
+    if linked_issue is not None and not isinstance(linked_issue, str):
+        _soft_error(
+            "claim_schema_invalid",
+            f"field 'linked_issue' must be str, got {type(linked_issue).__name__}",
+        )
+        return None
+
     return ClaimRecord(
         schema_version=schema_version,
         track_id=raw["track_id"],
@@ -284,6 +305,7 @@ def parse_claim(raw: dict) -> Optional[ClaimRecord]:
         claimed_at=raw["claimed_at"],
         heartbeat_at=raw["heartbeat_at"],
         superseded_from=superseded_from,
+        linked_issue=linked_issue,
     )
 
 
@@ -318,4 +340,6 @@ def serialize_claim(record: ClaimRecord) -> dict:
     }
     if record.superseded_from is not None:
         out["superseded_from"] = record.superseded_from
+    if record.linked_issue is not None:
+        out["linked_issue"] = record.linked_issue
     return out

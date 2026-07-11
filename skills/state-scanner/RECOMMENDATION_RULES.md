@@ -27,7 +27,7 @@
 | `multi_terminal_follower_detected` | 1.51 | standby-observer | 本 container 在 `tracks_multibranch` 无 active owned track, 其他 container 有 | 90% | No — 仅信息提示, 不强制行为 |
 | `follower_safe_tasks_suggested` | 1.52 | (信息提示) | Rule 1 触发, 推荐 non-conflict 候选 task | 85% | No — 候选清单仅供参考 |
 | `multi_terminal_handoff_dual` | 1.53 | phase-d-closer-follower | D.3 阶段 + 多 track + leader pointer 仍在 latest.md | 88% | No — phase-d-closer 阶段建议 |
-| `concurrent_churn_detected` | 1.54 | (降级提示) | `tracks_multibranch.collision.kind != none` 且 config `coordination.enabled == false` | 75% | No — advisory, 不 auto-enable (#133) |
+| `concurrent_churn_detected` | 1.54 | (降级提示) | `tracks_multibranch.collision.kind != none` 且 config `coordination.enabled == false` (显式 opt-out 才触发 — Part A1 起默认 true, 缺省走 phase1_gate 不走本 rule) | 75% | No — advisory, 不 auto-enable (#133) |
 | `prd_draft_blocking` | 5 | review-prd | Draft PRD 且关联 ≥5 Story | 80% | No — 需 owner 拍板 |
 | `emergency_hotfix` | 1.85 | emergency-hotfix | `hotfix/*` 分支 (主) / commit `hotfix(` prefix (corroborating) | 85% | No — 紧急但需人判断 (#58, 详见 references/rules/basic-rules.md) |
 | `quick_fix` | 2 | quick-fix | ≤3文件 + 简单修复 | 92% | Yes — ≤3 文件 + 简单类型信号清晰 |
