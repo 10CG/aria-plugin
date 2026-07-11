@@ -128,12 +128,14 @@ fi
 #     newline. Line 2+ then never reaches ANY pattern below (silent Rule #7
 #     failure — only the command's first line is scanned), and line 2 is
 #     misparsed as file_path.
-# Fix: `jq -j` joins the 4 fields with a NUL byte (JSON string values can never
-# contain NUL, so it is an unambiguous separator), and `read -r -d ''` splits on
+# Fix: `jq -j` joins the 4 fields with a NUL byte and `read -r -d ''` splits on
 # NUL. Newline-safe (field values keep embedded newlines) AND portable to bash
-# 3.2 / zsh (no readarray/mapfile). A trailing NUL after the 4th field yields
-# exactly 4 successful reads. `while ... < <(...)` (process substitution, not a
-# pipe) keeps the array in the current shell.
+# 3.2 / zsh (no readarray/mapfile). `while ... < <(...)` (process substitution,
+# not a pipe) keeps the array in the current shell.
+# CAVEAT: a *literal* NUL byte cannot appear in a JSON string, but a `\u0000`
+# ESCAPE can, and jq decodes it to a real NUL that collides with the separator.
+# So NUL is not a fully unambiguous separator on adversarial input — the
+# field-count guard below (== 4) is what makes it safe (fail-closed on collision).
 #
 # `tr -d '\r'` strips carriage returns from jq output (#132): Windows native jq
 # builds emit CRLF; without stripping, tool_type becomes "string\r" and fails
@@ -145,6 +147,19 @@ _sg_fields=()
 while IFS= read -r -d '' _sg_f; do
   _sg_fields+=("$_sg_f")
 done < <(jq -j '(.tool_name | type) + "\u0000" + (.tool_name // "") + "\u0000" + (.tool_input.command // "") + "\u0000" + (.tool_input.file_path // "") + "\u0000"' 2>/dev/null <<<"$input" | tr -d '\r')
+# NUL-in-field guard (v1.55.3, #154 follow-up — dev-claude spec Critical-2).
+# A JSON u0000 escape inside a field value is decoded by jq into a real NUL byte
+# that COLLIDES with the field separator, splitting that value into extra
+# segments. Attack: a command value carrying an escaped NUL splits so that
+# command="ls" (benign, allowed) while the real dumper (printenv/env) overflows
+# into file_path, which the Bash branch never scans -> secret-dump bypass.
+# jq output for a well-formed input is ALWAYS exactly 4 NUL-terminated segments;
+# any other count means an embedded NUL (tampering) or malformed JSON (jq
+# errored -> empty -> 0 fields). Fail-closed on anything but 4.
+if [[ ${#_sg_fields[@]} -ne 4 ]]; then
+  echo "[secret-guard] FATAL: malformed field count (${#_sg_fields[@]} != 4 — embedded NUL or bad input). Blocking." >&2
+  exit 2
+fi
 tool_type="${_sg_fields[0]:-}"
 tool="${_sg_fields[1]:-}"
 command="${_sg_fields[2]:-}"
@@ -175,6 +190,14 @@ fi
 # without re-leaking guard:ack reason or command args into LLM context.
 log_ack() {
   local kind="$1" payload="$2"
+  # #157 follow-up (dev-claude spec qa M-3): after the multiline fix, `command`
+  # (passed as payload) can contain newlines/tabs. This log is TSV, one line per
+  # entry — a raw newline would split one bypass event across several log lines
+  # and an embedded tab would shift field columns. Collapse CR/LF/TAB to spaces
+  # so the "one TSV row per event" invariant holds. (bash 2+; re-exec guard
+  # guarantees bash.)
+  kind="${kind//[$'\t\r\n']/ }"
+  payload="${payload//[$'\t\r\n']/ }"
   local entry
   entry="$(printf '%s\t%s\t%s\t%s\t%s\n' \
     "$(date -u +%FT%TZ)" "${USER:-unknown}" "${PWD:-unknown}" "$kind" "$payload")"

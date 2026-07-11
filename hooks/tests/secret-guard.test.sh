@@ -613,6 +613,19 @@ bash_case "#152 FP: environment.txt"     0 'cat environment.txt'
 bash_case "#152 FP: multiline benign"    0 $'echo begin\necho done'
 bash_case "#152 FP: printenv in string"  0 'echo "run printenv to debug"'
 
+# ── NUL-in-field bypass (v1.55.3, dev-claude spec Critical-2) — must BLOCK ──
+# A JSON \u0000 escape in the command value is decoded by the hook's jq into a
+# real NUL that collides with the field separator, splitting command so the
+# dumper spills into file_path (never scanned by the Bash branch). The
+# field-count guard (== 4) must fail-closed on this. Input carries a literal
+# \u0000 (6 chars); the hook's own jq decodes it at parse time.
+run_case "NUL: ls<NUL>printenv spill"   2 '{"tool_name":"Bash","tool_input":{"command":"ls\u0000printenv"}}'
+run_case "NUL: safe<NUL>env dump"       2 '{"tool_name":"Bash","tool_input":{"command":"echo hi\u0000env | grep TOKEN"}}'
+run_case "NUL: nomad get spill"         2 '{"tool_name":"Bash","tool_input":{"command":"ls\u0000nomad var get x"}}'
+run_case "NUL in file_path field"       2 '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x\u0000/y/.env"}}'
+# Well-formed inputs (exactly 4 fields) must still behave normally.
+run_case "no-NUL benign still allows"   0 '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
+
 # ── #154 static assertions (shell-portability, no zsh/macOS needed) ─────────
 # Field extraction must not use bash-4+ `readarray`/`mapfile` (absent on macOS
 # bash 3.2 / zsh) and must re-exec under bash when launched by another shell.
