@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.55.4] - 2026-07-11
+
+### Fixed: secret-guard 部件 B 命令位覆盖扩展 + FP 回归修复 (dev-claude spec 部件 B 落地)
+
+采纳 dev-claude L3 spec 部件 B。实现前用 spike 重建正/反例矩阵 (双子星 spike 在其容器, 本机无) + 对抗 FP 扫。
+
+- **FP 回归修复 (v1.55.2 引入的 over-block)**: v1.55.2 的 defect-B fix 把命令位前缀写成 (^|[;&|]|[[:space:]]) — 普通空格被当命令分隔符, 任何以 env 结尾的常见命令被误拦: echo env / kubectl get env / cat env 全部 exit 2。这是我方 v1.55.2/v1.55.3 shipped 的真回归, dev-claude spike 的 FP 矩阵会抓到、我方 ad-hoc 漏掉。修复: 前缀改真命令分隔符 (区分命令位 vs 参数位; 普通空格不再触发)。
+- **部件 B 覆盖扩展**: (a) 命令替换 $(env)/反引号; (b) 组合 { env; }; (c) 单层包装器 sudo/nice/timeout/xargs/nohup/stdbuf/doas/env launcher; (d) command env 直接形式 (窄 pattern, 排除 command -v env FP); (e) printenv 始终拦 (printenv KEY 也 dump); (f) env 重定向预存 gap (env > /tmp/leak / nohup env > file, 后缀补 <> 终结符)。
+- **env 双重身份保留**: 裸 env / env|grep 拦; env python / /usr/bin/env python3 启动器放行。
+- **对抗 FP 扫全放行**: command -v env / python -m venv env / conda activate / git commit -m fix-env-bug / sudo -u env-user / envsubst / printenv_helper / docker run。
+
+> **残留 (fail-safe, 非泄漏)**: 未列包装器 (flock/watch/proxychains 等) + 深层 shell 关键字位仍可能漏拦 —— 按 hook 威胁模型 (防意外泄漏, 非对抗证明) + dev-claude spec AD-3 (包装器残留 fail-safe) 接受, 不声称穷尽。
+
+### 验证
+- spike 正/反例矩阵 51/51 (含 code-review R1 的 6 FP + 7 FN 锚点) + 对真 hook 端到端 FP 扫。测试 297->347 (+50)。源码无真 NUL。副本字节同步。
+
 ## [1.55.3] - 2026-07-11
 
 ### Fixed: secret-guard 加固 — NUL-in-field 绕过 + log_ack 多行 (v1.55.2 follow-up)
