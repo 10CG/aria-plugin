@@ -487,8 +487,8 @@ declare -a risky_patterns=(
   'while[[:space:]]+(IFS=|read)[^|]*<[[:space:]]*[^|]*\.env'
   '<[[:space:]]*[^|]*\.env[[:space:]]*(\$\(|`)[^)]*cat'
   '\bcp[[:space:]]+[^|]*\.env[[:space:]]+/dev/(stdout|tty)'
-  '(^|[;&|]|[[:space:]])[[:space:]]*\.[[:space:]]+[^|]*\.env'                 # `. .env` source
-  '(^|[;&|]|[[:space:]])[[:space:]]*source[[:space:]]+[^|]*\.env'             # `source .env`
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*\.[[:space:]]+[^|]*\.env'                 # `. .env` source
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*source[[:space:]]+[^|]*\.env'             # `source .env`
 
   # SSH-remote reads of secret files / dumps (R2-I-3 expanded)
   'ssh[^|]*(cat|head|tail|less|more|printenv|env|find|strings|hexdump|od|dd|awk|perl)[^|]*(\.env|\.envrc|/secrets|/credentials|id_rsa|id_ed25519|\.pem|\.key)'
@@ -503,7 +503,7 @@ declare -a risky_patterns=(
   'set[[:space:]]*\|[[:space:]]*grep[[:space:]]+[^|]*(pass|secret|token|key|credential)'
 
   # Docker env dumps (compose / direct / inspect)
-  'docker[[:space:]]+(compose[[:space:]]+)?exec[^|]*[[:space:]](printenv|env)([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
+  'docker[[:space:]]+(compose[[:space:]]+)?exec[^|]*[[:space:]](printenv|env)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
   'docker[[:space:]]+inspect[^|]*--format[^|]*\.Config\.Env'
 
   # R2-C-5 fix: kubectl exec env|cat|printenv (the K8s secret leak path)
@@ -512,10 +512,14 @@ declare -a risky_patterns=(
   'kubectl[[:space:]]+exec[^|]*--[^|]*(cat|head|tail)[^|]*(/run/secrets|\.env|/etc/[^|]*passwd)'
 
   # Bare printenv / bare env (no args = dump everything)
-  '(^|[;&|]|[[:space:]])[[:space:]]*printenv([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
-  '(^|[;&|]|[[:space:]])[[:space:]]*env([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
-  '(^|[;&|]|[[:space:]])[[:space:]]*/bin/printenv'                              # absolute path
-  '(^|[;&|]|[[:space:]])[[:space:]]*/usr/bin/printenv'
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*printenv\b'
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*env([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*/bin/printenv'                              # absolute path
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*/usr/bin/printenv'
+  # single-layer wrapper launching a dumper (sudo/nice/timeout/... env|printenv)
+  '\b(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env)\b[^|;&]*[[:space:]](env|printenv)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
+  # `command env`/`command printenv` direct form only (not `command -v env`)
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*command[[:blank:]]+(env|printenv)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
 
   # psql sensitive-column reads
   'psql[^|]*(key_encrypted|encrypted_data|encrypted_blob|ciphertext|key_material)'
@@ -615,7 +619,7 @@ declare -a risky_patterns=(
   'psql[[:space:]]+[^|]*-f[[:space:]]+[^|]+\.sql'
 
   # R3-I-6: compgen -e / set -o posix; set (env-dump cousins)
-  '(^|[;&|]|[[:space:]])[[:space:]]*compgen[[:space:]]+-e([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*compgen[[:space:]]+-e([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
   'set[[:space:]]+-o[[:space:]]+posix.*set[[:space:]]*\|[[:space:]]*grep'
 
   # ── #69 (Aether v1.28.0 14-day dogfood — 5 confirmed FN + corpus) ──────────
