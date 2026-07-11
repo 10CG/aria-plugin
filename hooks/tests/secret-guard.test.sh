@@ -599,6 +599,14 @@ bash_case "#157 multiline set\\necho\\nprintenv" 2 $'set -e\necho begin\nprinten
 bash_case "#157 multiline first-line hit kept" 2 $'printenv\necho done'
 bash_case "#157 multiline mid-line ; env" 2 $'echo one\necho two; env | grep X'
 bash_case "#157 heredoc-style nomad get" 2 $'cat <<EOF\nsecret\nEOF\nnomad var get nomad/jobs/x'
+# Post-separator escapes (code-review #1: env followed by ; & or no-space | ).
+bash_case "#152 env then ; more"         2 'echo hi; env; echo done'
+bash_case "#152 env|grep no-space"       2 'env|grep TOKEN'
+bash_case "#152 env then && more"        2 'echo hi; env && echo ok'
+bash_case "#152 mid;printenv;more"       2 'foo; printenv; bar'
+bash_case "#152 compgen -e then ;"       2 'x; compgen -e; y'
+# env setting a var to run a command is a query form, must ALLOW.
+bash_case "#152 FP: env VAR=v cmd"       0 'env FOO=bar ./run.sh'
 # Must still ALLOW (no false positives from wider anchor).
 bash_case "#152 FP: word myenv"          0 'echo myenv'
 bash_case "#152 FP: environment.txt"     0 'cat environment.txt'

@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **修复**: 脚本顶部 POSIX-sh `if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi` — 脚本体永远在 bash (3.2+) 执行, 与 hook runner shell 无关。
 - **缺陷 B — `^` 锚定正则** (`:463` 等 7 处, #152 中段逃逸):
   - `^[[:space:]]*env(...)` 只匹配命令开头; `;`/`&&`/`||`/`|` 后的 env/printenv 逃逸。
-  - **修复**: 前缀改 `(^|[;&|]|[[:space:]])[[:space:]]*` (含换行 — 缺陷 A 修好后多行第 2 行 env 前是 `\n`, issue 建议前缀漏此仍逃逸); bare dump 后缀补 `[[:cntrl:]]` 分支 (bare printenv 后跟换行正确 BLOCK, `printenv VAR` 查询保持 ALLOW)。
+  - **修复**: 前缀改 `(^|[;&|]|[[:space:]])[[:space:]]*` (含换行 — 缺陷 A 修好后多行第 2 行 env 前是 `\n`, issue 建议前缀漏此仍逃逸); bare dump 后缀重构 `([[:blank:]]*($|[;&|]|[[:cntrl:]]))` (pre-merge review Important#1: 原后缀漏 env 后跟 `;`/`&`/无空格 `|` 如 `echo hi; env; x` / `env|grep`; 新后缀 = dump 命令后可选水平空白然后 EOL/分隔符/换行 → BLOCK, 后跟空格+参数 `printenv VAR` → ALLOW; tab 分隔参数保守 over-block 为 fail-safe)。7 处锚定 + 4 处 dump 后缀对称加固。
 - **dual-install 漂移根治**: 主仓 dogfood 挂的 `.claude/scripts/secret-guard.sh` 是 2026-05-20 落后副本 (逐字段 jq 完整捕获多行, 掩盖了 #157 回归) — 字节同步为分发版 (`diff -q` IDENTICAL)。
 
 ### 验证 (Rule #6 structural substitute + RED-first)

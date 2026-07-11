@@ -480,7 +480,7 @@ declare -a risky_patterns=(
   'set[[:space:]]*\|[[:space:]]*grep[[:space:]]+[^|]*(pass|secret|token|key|credential)'
 
   # Docker env dumps (compose / direct / inspect)
-  'docker[[:space:]]+(compose[[:space:]]+)?exec[^|]*[[:space:]](printenv|env)([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
+  'docker[[:space:]]+(compose[[:space:]]+)?exec[^|]*[[:space:]](printenv|env)([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
   'docker[[:space:]]+inspect[^|]*--format[^|]*\.Config\.Env'
 
   # R2-C-5 fix: kubectl exec env|cat|printenv (the K8s secret leak path)
@@ -489,8 +489,8 @@ declare -a risky_patterns=(
   'kubectl[[:space:]]+exec[^|]*--[^|]*(cat|head|tail)[^|]*(/run/secrets|\.env|/etc/[^|]*passwd)'
 
   # Bare printenv / bare env (no args = dump everything)
-  '(^|[;&|]|[[:space:]])[[:space:]]*printenv([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
-  '(^|[;&|]|[[:space:]])[[:space:]]*env([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
+  '(^|[;&|]|[[:space:]])[[:space:]]*printenv([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
+  '(^|[;&|]|[[:space:]])[[:space:]]*env([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
   '(^|[;&|]|[[:space:]])[[:space:]]*/bin/printenv'                              # absolute path
   '(^|[;&|]|[[:space:]])[[:space:]]*/usr/bin/printenv'
 
@@ -592,7 +592,7 @@ declare -a risky_patterns=(
   'psql[[:space:]]+[^|]*-f[[:space:]]+[^|]+\.sql'
 
   # R3-I-6: compgen -e / set -o posix; set (env-dump cousins)
-  '(^|[;&|]|[[:space:]])[[:space:]]*compgen[[:space:]]+-e([[:space:]]+\||[[:space:]]*$|[[:cntrl:]])'
+  '(^|[;&|]|[[:space:]])[[:space:]]*compgen[[:space:]]+-e([[:blank:]]*($|[;&|]|[[:cntrl:]]))'
   'set[[:space:]]+-o[[:space:]]+posix.*set[[:space:]]*\|[[:space:]]*grep'
 
   # ── #69 (Aether v1.28.0 14-day dogfood — 5 confirmed FN + corpus) ──────────
