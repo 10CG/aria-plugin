@@ -584,6 +584,71 @@ bash_case "#69 fix: cp key as EOL dest arg"      2 'cp /tmp/x ~/.ssh/id_new'
 bash_case "#69 keep: vault HTTP header real"     2 'curl -H "X-Vault-Token: hvs.AAABBBCCC" https://vault/v1/secret/foo'
 bash_case "#69 keep: hvs. realistic long token"  2 'echo hvs.CAESIJ0aXyZ1234567890abcdefGHIJ | tee /tmp/t'
 
+# ── #152/#154/#157: multiline field parse + mid-command anchor (must BLOCK) ──
+# Defect B (#152): `^`-anchored env/printenv patterns miss separators.
+bash_case "#152 mid ; env"               2 'echo hi; env | grep TOKEN'
+bash_case "#152 mid ;env (no space)"     2 'echo hi;env'
+bash_case "#152 mid && printenv"         2 'echo begin && printenv'
+bash_case "#152 mid || env"              2 'test -f x || env'
+bash_case "#152 mid | env dump"          2 'echo x | env'
+bash_case "#152 mid ; /bin/printenv"     2 'cd /tmp; /bin/printenv'
+bash_case "#152 mid ; compgen -e"        2 'echo x; compgen -e'
+# Defect A truncation (#157): multiline command 2nd+ line must reach patterns.
+bash_case "#157 multiline echo\\nenv"    2 $'echo begin\nenv'
+bash_case "#157 multiline set\\necho\\nprintenv" 2 $'set -e\necho begin\nprintenv'
+bash_case "#157 multiline first-line hit kept" 2 $'printenv\necho done'
+bash_case "#157 multiline mid-line ; env" 2 $'echo one\necho two; env | grep X'
+bash_case "#157 heredoc-style nomad get" 2 $'cat <<EOF\nsecret\nEOF\nnomad var get nomad/jobs/x'
+# Post-separator escapes (code-review #1: env followed by ; & or no-space | ).
+bash_case "#152 env then ; more"         2 'echo hi; env; echo done'
+bash_case "#152 env|grep no-space"       2 'env|grep TOKEN'
+bash_case "#152 env then && more"        2 'echo hi; env && echo ok'
+bash_case "#152 mid;printenv;more"       2 'foo; printenv; bar'
+bash_case "#152 compgen -e then ;"       2 'x; compgen -e; y'
+# env setting a var to run a command is a query form, must ALLOW.
+bash_case "#152 FP: env VAR=v cmd"       0 'env FOO=bar ./run.sh'
+# Must still ALLOW (no false positives from wider anchor).
+bash_case "#152 FP: word myenv"          0 'echo myenv'
+bash_case "#152 FP: environment.txt"     0 'cat environment.txt'
+bash_case "#152 FP: multiline benign"    0 $'echo begin\necho done'
+bash_case "#152 FP: printenv in string"  0 'echo "run printenv to debug"'
+
+# ── #154 static assertions (shell-portability, no zsh/macOS needed) ─────────
+# Field extraction must not use bash-4+ `readarray`/`mapfile` (absent on macOS
+# bash 3.2 / zsh) and must re-exec under bash when launched by another shell.
+static_case() {
+  local name="$1" want="$2" pat="$3"   # want=present|absent
+  local hit=absent
+  grep -qE "$pat" "$HOOK" && hit=present
+  if [[ "$hit" == "$want" ]]; then pass=$((pass + 1))
+  else fail=$((fail + 1)); failures+=("FAIL [$name]: want $want, got $hit for /$pat/"); fi
+}
+static_case "#154 no readarray field-extract" absent 'readarray -t _sg_fields'
+static_case "#154 no mapfile field-extract"   absent 'mapfile -t _sg_fields'
+static_case "#154 re-exec-to-bash guard"      present 'exec bash "\$0"'
+static_case "#154 BASH_VERSION guard"         present 'BASH_VERSION'
+
+# ── #154 end-to-end under zsh (conditional — only if zsh present) ───────────
+# Verifies the re-exec guard: the hook must behave identically under zsh (the
+# macOS hook-runner shell) as under bash. Skipped where zsh is unavailable.
+if command -v zsh >/dev/null 2>&1; then
+  zsh_case() {
+    local name="$1" want="$2" input="$3" got
+    got="$(printf '%s' "$input" | zsh "$HOOK" 2>/dev/null; echo "exit=$?")"
+    local code="${got##*exit=}"
+    if [[ "$code" == "$want" ]]; then pass=$((pass + 1))
+    else fail=$((fail + 1)); failures+=("FAIL [$name]: want exit=$want, got exit=$code"); fi
+  }
+  zsh_case "zsh: bare env blocks"      2 '{"tool_name":"Bash","tool_input":{"command":"env | grep TOKEN"}}'
+  zsh_case "zsh: mid ; env blocks"     2 '{"tool_name":"Bash","tool_input":{"command":"echo hi; env | grep X"}}'
+  zsh_case "zsh: multiline env blocks" 2 $'{"tool_name":"Bash","tool_input":{"command":"echo begin\\nprintenv"}}'
+  zsh_case "zsh: benign ls allows"     0 '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
+  zsh_case "zsh: benign Read allows"   0 '{"tool_name":"Read","tool_input":{"file_path":"/x/normal.txt"}}'
+  zsh_case "zsh: Read .env blocks"     2 '{"tool_name":"Read","tool_input":{"file_path":"/x/.env"}}'
+else
+  echo "  [SKIP] zsh not installed — zsh end-to-end cases skipped (static assertions cover portability)"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
 echo
