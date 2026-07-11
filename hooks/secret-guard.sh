@@ -512,14 +512,17 @@ declare -a risky_patterns=(
   'kubectl[[:space:]]+exec[^|]*--[^|]*(cat|head|tail)[^|]*(/run/secrets|\.env|/etc/[^|]*passwd)'
 
   # Bare printenv / bare env (no args = dump everything)
-  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*printenv\b'
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*printenv([[:space:]]|[;&|)}<>]|`|$)'
   '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*env([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
   '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*/bin/printenv'                              # absolute path
   '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*/usr/bin/printenv'
   # single-layer wrapper launching a dumper (sudo/nice/timeout/... env|printenv)
-  '\b(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env)\b[^|;&]*[[:space:]](env|printenv)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
+  # single-layer launcher wrapper: dumper must be the first non-flag token
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env|time|eval|setsid|ionice|unbuffer)\b([[:space:]]+-[^[:space:]]*|[[:space:]]+[0-9]+)*[[:space:]]+(env|printenv)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
   # `command env`/`command printenv` direct form only (not `command -v env`)
   '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*command[[:blank:]]+(env|printenv)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
+  # shell keyword command positions (then/do/else/elif) before a dumper
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*(then|do|else|elif)[[:space:]]+(env|printenv)([[:blank:]]*($|[;&|)}<>]|`|[[:cntrl:]]))'
 
   # psql sensitive-column reads
   'psql[^|]*(key_encrypted|encrypted_data|encrypted_blob|ciphertext|key_material)'

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.55.4] - 2026-07-11
 
-### Fixed: secret-guard 部件 B 命令位全覆盖 + FP 回归修复 (dev-claude spec 部件 B 落地)
+### Fixed: secret-guard 部件 B 命令位覆盖扩展 + FP 回归修复 (dev-claude spec 部件 B 落地)
 
 采纳 dev-claude L3 spec 部件 B。实现前用 spike 重建正/反例矩阵 (双子星 spike 在其容器, 本机无) + 对抗 FP 扫。
 
@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **env 双重身份保留**: 裸 env / env|grep 拦; env python / /usr/bin/env python3 启动器放行。
 - **对抗 FP 扫全放行**: command -v env / python -m venv env / conda activate / git commit -m fix-env-bug / sudo -u env-user / envsubst / printenv_helper / docker run。
 
+> **残留 (fail-safe, 非泄漏)**: 未列包装器 (flock/watch/proxychains 等) + 深层 shell 关键字位仍可能漏拦 —— 按 hook 威胁模型 (防意外泄漏, 非对抗证明) + dev-claude spec AD-3 (包装器残留 fail-safe) 接受, 不声称穷尽。
+
 ### 验证
-- spike 正/反例矩阵 36/36 + 对真 hook 端到端 FP 扫。测试 297->332 (+35)。源码无真 NUL。副本字节同步。
+- spike 正/反例矩阵 51/51 (含 code-review R1 的 6 FP + 7 FN 锚点) + 对真 hook 端到端 FP 扫。测试 297->347 (+50)。源码无真 NUL。副本字节同步。
 
 ## [1.55.3] - 2026-07-11
 

@@ -650,6 +650,24 @@ bash_case "FP-fix python -m venv env"   0 'python -m venv env'
 bash_case "FP-fix conda activate env"   0 'conda activate myenv'
 bash_case "FP-fix git commit env msg"   0 'git commit -m fix-env-bug'
 bash_case "FP-fix sudo -u env-user"     0 'sudo -u env-user whoami'
+# code-review R1 Important-1: wrapper must not over-block command-name args.
+bash_case "review sudo make env"        0 'sudo make env'
+bash_case "review timeout make env"     0 'timeout 30 make env'
+bash_case "review nohup npm run env"    0 'nohup npm run env'
+bash_case "review nice gradlew env"     0 'nice -n10 ./gradlew env'
+bash_case "review sudo docker logs env" 0 'sudo docker logs env'
+bash_case "review xargs -I do env"      0 'xargs -I{} ./do env'
+bash_case "review sudo tail log/env"    0 'sudo tail -f /var/log/env'
+# code-review R1 Important-2: keyword / common-wrapper command positions BLOCK.
+bash_case "review then env"             2 'if :; then env; fi'
+bash_case "review do printenv"          2 'while :; do printenv; done'
+bash_case "review else env"             2 'if x; then y; else env; fi'
+bash_case "review time env"             2 'time env'
+bash_case "review eval env"             2 'eval env'
+bash_case "review setsid env"           2 'setsid env'
+bash_case "review ./do env script FP"   0 'bash ./do env'
+# code-review R1 Minor-3: printenv assignment must not FP.
+bash_case "review printenv=1 var FP"    0 'printenv=1 make'
 bash_case "FP-fix timeout run-env"      0 'timeout 5 ./run-env-check'
 
 # ── NUL-in-field bypass (v1.55.3, dev-claude spec Critical-2) — must BLOCK ──
