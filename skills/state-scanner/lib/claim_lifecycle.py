@@ -394,10 +394,16 @@ def release_claim_by_track(
 
     ``raw_track_id`` is normalized via ``derive_track_id`` (same as acquire), so
     the caller passes the raw carry-id. If several active claims match (same
-    container re-claimed a track across sessions), the EARLIEST ``claimed_at``
-    is released (deterministic, matches reconcile's earliest-wins). Fail-soft:
-    ``claim_not_found`` when no active match exists (already released / never
-    claimed — both benign at ship time).
+    container re-claimed a track across sessions — the NORMAL case, since
+    every session mints a fresh session_id and B.0 REQUIRE-claim runs per
+    session), **ALL matching active claims are released** (review I1: releasing
+    only the earliest would leave the later session-claims active and the
+    track would still read as occupied after ship). Releases proceed in
+    claimed_at order; on a mid-loop write failure the already-released claims
+    stay released and the error is returned (rerun completes the rest —
+    idempotent). The returned ``record`` is the earliest released claim.
+    Fail-soft: ``claim_not_found`` when no active match exists (already
+    released / never claimed — both benign at ship time).
     """
     _TERMINAL_STATUSES = frozenset({"done", "yielded", "abandoned"})
     if status not in _TERMINAL_STATUSES:
@@ -423,30 +429,43 @@ def release_claim_by_track(
     if not matches:
         return AcquireResult(success=False, record=None, error="claim_not_found")
 
-    # deterministic: earliest claimed_at (lexical ISO-8601 sort is chronological)
-    existing = sorted(matches, key=lambda r: r.claimed_at)[0]
-
+    # deterministic order: earliest claimed_at first (lexical ISO-8601 sort is
+    # chronological); ALL matches are released (review I1).
     ts_str = _iso(now if now is not None else _utc_now())
-    released = ClaimRecord(
-        schema_version=existing.schema_version,
-        track_id=existing.track_id,
-        owner=existing.owner,
-        container=existing.container,
-        session=existing.session,
-        phase=existing.phase,
-        status=status,
-        claimed_at=existing.claimed_at,
-        heartbeat_at=ts_str,
-        superseded_from=existing.superseded_from,
-        linked_issue=existing.linked_issue,
-    )
-    result: WriteClaimResult = write_claim(released, repo_path)
-    if not result.success:
-        return AcquireResult(success=False, record=None, error=result.error or "write_failed")
+    first_released: Optional[ClaimRecord] = None
+    for existing in sorted(matches, key=lambda r: r.claimed_at):
+        released = ClaimRecord(
+            schema_version=existing.schema_version,
+            track_id=existing.track_id,
+            owner=existing.owner,
+            container=existing.container,
+            session=existing.session,
+            phase=existing.phase,
+            status=status,
+            claimed_at=existing.claimed_at,
+            heartbeat_at=ts_str,
+            superseded_from=existing.superseded_from,
+            linked_issue=existing.linked_issue,
+        )
+        result: WriteClaimResult = write_claim(released, repo_path)
+        if not result.success:
+            logger.warning(
+                "claim_lifecycle.release_claim_by_track: write failed mid-loop "
+                "(error=%s, session=%s) — earlier releases stay released; rerun completes",
+                result.error,
+                existing.session,
+            )
+            return AcquireResult(
+                success=False, record=None, error=result.error or "write_failed"
+            )
+        if first_released is None:
+            first_released = released
     logger.info(
-        "claim_lifecycle.release_claim_by_track: released track=%s status=%s container=%s",
+        "claim_lifecycle.release_claim_by_track: released %d claim(s) track=%s "
+        "status=%s container=%s",
+        len(matches),
         norm,
         status,
         resolved.container_id,
     )
-    return AcquireResult(success=True, record=released, error=None)
+    return AcquireResult(success=True, record=first_released, error=None)

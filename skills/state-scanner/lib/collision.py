@@ -117,9 +117,9 @@ def track_to_claim_record(track: dict) -> ClaimRecord:
     elif status_raw == "done":
         status = "done"
     elif status_raw == "abandoned":
-        # ClaimRecord STATUS_WRITABLE only has active/yielded/done; map abandoned->done
-        # so reconcile routes it to superseded (terminal bucket) correctly.
-        status = "done"
+        # "abandoned" is a first-class schema status since Part C (C-1) —
+        # map faithfully; reconcile treats it as terminal same as done.
+        status = "abandoned"
     else:
         status = "active"
 

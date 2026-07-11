@@ -512,14 +512,17 @@ def _run_gate_impl(
     if _self_resume(verdict, resolved_identity):
         logger.info(
             "phase1_gate.run_gate: self-resume detected for track=%s "
-            "container=%s session=%s — refreshing heartbeat",
+            "container=%s session=%s — reusing existing claim (heartbeat NOT "
+            "refreshed here; no production heartbeat loop exists yet)",
             track_id,
             resolved_identity.container_id,
             resolved_identity.session_id,
         )
-        # Re-use the existing claim record (heartbeat update via normal
-        # heartbeat() flow belongs to the caller's background loop; here we
-        # treat it as "no competitor" and proceed directly to push).
+        # Re-use the existing claim record as-is.  NOTE (Part C review C1-c):
+        # heartbeat_at is NOT refreshed on this path — there is no production
+        # heartbeat loop anywhere, which is exactly why sweep_stale_active uses
+        # the long SWEEP_TTL (24h) instead of STALE_TTL (30min).  Wiring a real
+        # heartbeat refresh (here + phase transitions) is a tracked follow-up.
         own_claim: Optional[ClaimRecord] = verdict.winner
         # Skip acquire — claim already exists locally.
         push_res: ResilientPushResult = resilient_push(

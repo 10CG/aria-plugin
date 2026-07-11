@@ -116,6 +116,25 @@ class TestReleaseByTrack(unittest.TestCase):
         self.assertFalse(r.success)
         self.assertEqual(r.error, "invalid_status")
 
+    def test_release_all_sessions_of_same_track(self):
+        """review I1: 每 session 一个 fresh session_id + B.0 每 session claim →
+        同 (track, container) 常态累积多条 active; ship 释放必须全部终结,
+        否则 track 收尾后仍显示被占。"""
+        repo = _fresh_repo()
+        norm = derive_track_id("carry-multi")
+        for i, sess in enumerate(["s1", "s2", "s3"]):
+            acquire_claim(
+                norm, "B", identity=Identity("alice", "cA", sess), repo_path=repo,
+                now=datetime.now(timezone.utc) - timedelta(minutes=30 - i),
+            )
+        rel = release_claim_by_track(
+            "carry-multi", identity=Identity("alice", "cA", "s-ship"), repo_path=repo
+        )
+        self.assertTrue(rel.success)
+        self.assertEqual(rel.record.session, "s1")  # earliest 作为返回 record
+        statuses = [c.status for c in read_claims(repo).claims]
+        self.assertEqual(statuses, ["done", "done", "done"])
+
     def test_release_abandoned_roundtrips(self):
         """C-1 regression lock: before Part C, a written 'abandoned' claim was
         dropped by parse_claim on read-back (not in STATUS_WRITABLE)."""
@@ -356,12 +375,12 @@ class TestGcRealWrite(unittest.TestCase):
 
 
 class TestSweepStaleActive(unittest.TestCase):
-    """C-3b."""
+    """C-3b.  Default TTL = SWEEP_TTL (24h), NOT STALE_TTL (30min) — review C1."""
 
     def test_sweep_stale_cross_container_fresh_untouched(self):
         repo = _fresh_repo()
         now = datetime.now(timezone.utc)
-        stale_ts = now - timedelta(hours=2)
+        stale_ts = now - timedelta(days=2)
         acquire_claim(
             "t-stale", "B", identity=Identity("bot", "cBOT", "s1"),
             repo_path=repo, now=stale_ts,
@@ -376,10 +395,31 @@ class TestSweepStaleActive(unittest.TestCase):
         self.assertEqual(statuses["cBOT"], "abandoned")
         self.assertEqual(statuses["cME"], "active")
 
+    def test_sweep_default_ttl_spares_live_long_sessions(self):
+        """review C1 关键锁定: 无 heartbeat 基建的现实下, 跑了几小时的活
+        session (heartbeat 冻结在 acquire 时刻, 已超 STALE_TTL=30min) 绝不能
+        被默认 sweep durable 判死。默认 TTL 必须 > 常规 session 时长。"""
+        from lib.constants import SWEEP_TTL, STALE_TTL
+
+        self.assertGreaterEqual(SWEEP_TTL, 86400)  # 默认值本身的 lock-in
+        repo = _fresh_repo()
+        now = datetime.now(timezone.utc)
+        # 2h: 远超 STALE_TTL (takeover-eligible), 远小于 SWEEP_TTL
+        live_ts = now - timedelta(hours=2)
+        self.assertGreater((now - live_ts).total_seconds(), STALE_TTL)
+        acquire_claim(
+            "t-live-parallel", "B", identity=Identity("sis", "cSIS", "s1"),
+            repo_path=repo, now=live_ts,
+        )
+        result = sweep_stale_active(repo, now=now)
+        self.assertEqual(result.swept_count, 0)
+        (rec,) = read_claims(repo).claims
+        self.assertEqual(rec.status, "active")
+
     def test_sweep_preserves_last_alive_heartbeat(self):
         repo = _fresh_repo()
         now = datetime.now(timezone.utc)
-        stale_ts = now - timedelta(hours=3)
+        stale_ts = now - timedelta(days=3)
         acquire_claim(
             "t-stale", "B", identity=Identity("bot", "cBOT", "s1"),
             repo_path=repo, now=stale_ts,
@@ -393,7 +433,7 @@ class TestSweepStaleActive(unittest.TestCase):
         now = datetime.now(timezone.utc)
         acquire_claim(
             "t-stale", "B", identity=Identity("bot", "cBOT", "s1"),
-            repo_path=repo, now=now - timedelta(hours=2),
+            repo_path=repo, now=now - timedelta(days=2),
         )
         result = sweep_stale_active(repo, now=now, dry_run=True)
         self.assertEqual(result.swept_count, 1)
@@ -403,7 +443,7 @@ class TestSweepStaleActive(unittest.TestCase):
     def test_sweep_ignores_terminal(self):
         repo = _fresh_repo()
         now = datetime.now(timezone.utc)
-        old = now - timedelta(hours=2)
+        old = now - timedelta(days=2)
         acquire_claim(
             "t-x", "B", identity=Identity("a", "cA", "s1"), repo_path=repo, now=old
         )
@@ -458,7 +498,7 @@ class TestReleaseGateCli(unittest.TestCase):
         now = datetime.now(timezone.utc)
         acquire_claim(
             "t-stale", "B", identity=Identity("bot", "cBOT", "s1"),
-            repo_path=repo, now=now - timedelta(hours=2),
+            repo_path=repo, now=now - timedelta(days=2),
         )
         rc, out = self._run(repo, "--sweep-stale", "--gc")
         self.assertEqual(rc, 0)
@@ -482,6 +522,57 @@ class TestReleaseGateCli(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue((repo / ".aria" / "coordination-release-telemetry.jsonl").exists())
         self.assertFalse((repo / ".aria" / "coordination-telemetry.jsonl").exists())
+
+
+class TestPhase1GateLinkedIssueCli(unittest.TestCase):
+    """review I4: B1 CLI 端到端 — --linked-issue argparse→acquire→落盘 +
+    linked_issue_overlap additive 键。lib 层测试锁不住 kwarg 穿线拼写错。"""
+
+    _GATE = Path(_SKILL_ROOT) / "scripts" / "phase1_gate.py"
+
+    def test_linked_issue_written_and_overlap_surfaced(self):
+        repo = _fresh_repo()
+        # 另一容器已用不同 track 名认领同一 issue (双子星场景)
+        acquire_claim(
+            "secret-guard-hardening", "B",
+            identity=Identity("bot", "cBOT", "s1"),
+            repo_path=repo, linked_issue="10CG/Aria#160",
+        )
+        proc = subprocess.run(
+            [
+                sys.executable, str(self._GATE),
+                "--raw-track-id", "carry-secretguard-followup",
+                "--phase", "B", "--mode", "advisory",
+                "--linked-issue", "10CG/Aria#160",
+                "--repo-path", str(repo),
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+        out = json.loads(proc.stdout)
+        self.assertTrue(out["proceed"])
+        overlap = out["linked_issue_overlap"]
+        self.assertEqual(len(overlap), 1)
+        self.assertEqual(overlap[0]["track_id"], "secret-guard-hardening")
+        self.assertEqual(overlap[0]["container"], "cBOT")
+        # 本 session 的 claim 真的带着 linked_issue 落了盘
+        mine = [c for c in read_claims(repo).claims if c.container != "cBOT"]
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0].linked_issue, "10CG/Aria#160")
+
+    def test_no_linked_issue_no_overlap_key(self):
+        repo = _fresh_repo()
+        proc = subprocess.run(
+            [
+                sys.executable, str(self._GATE),
+                "--raw-track-id", "t-plain", "--phase", "B",
+                "--mode", "advisory", "--repo-path", str(repo),
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+        out = json.loads(proc.stdout)
+        self.assertNotIn("linked_issue_overlap", out)  # additive: 未给参数不出现
 
 
 if __name__ == "__main__":

@@ -93,8 +93,13 @@ B.0 - REQUIRE claim (coordination-claim-lifecycle-and-overlap Part A1, MUST):
         [--linked-issue "<repo>#<n>"] --repo-path "<repo root>"
     - goal 直驱 / 绕过 state-scanner 进入的 session 也适用 (B-entry 手动补 claim)
   skip_if:
+    # 可判定谓词 (review I5 — 注意: "无 coordination 基础设施"不是有效 skip 条件,
+    # write_claim auto_bootstrap 会自动建 ref 并 push 到项目 origin):
     - coordination.enabled 显式 false (opt-out; 默认 true — config-loader SOT)
-    - 非 git repo / 无 coordination 基础设施 (gate 自身 fail-soft ABORT 不阻断)
+    - 非 git repo / 无 origin remote (gate 自身 fail-soft ABORT, 不阻断)
+  third_party_note: 默认 true 意味着装了 aria-plugin 的项目走 Phase B 会向其
+    origin 推 refs/aria/coordination (仅协调元数据, 不碰代码分支)。单人单终端
+    项目若不想要该 ref, 显式设 state_scanner.coordination.enabled=false。
   rationale: defect a — 2026-07-11 双子星撞车实证"认领非强制→从不认领";
              advisory mode 放行一切, 成本只是一次 claim 写入, 收益是 reconcile 有据可依
   诚实边界: 本步骤管不到绕过 state-scanner/phase-b 的自主 bot (Layer 2 orchestrator

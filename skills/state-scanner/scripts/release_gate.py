@@ -38,10 +38,8 @@ logger = logging.getLogger(__name__)
 # --- import bootstrap: 同 phase1_gate (scripts/ 直跑 vs 包内 import 双上下文) ---
 try:
     from ..lib.claim_lifecycle import release_claim_by_track, AcquireResult
-    from ..lib.coordination_ref import (
-        fetch_coordination_ref,
-        push_coordination_ref,
-    )
+    from ..lib.coordination_ref import fetch_coordination_ref
+    from ..lib.failure_handlers import resilient_push
     from ..lib.gc import archive_done_claims, sweep_stale_active
     from ..lib.track_id import derive_track_id
 except ImportError:
@@ -53,10 +51,8 @@ except ImportError:
         _sys.path.remove(_SKILL_ROOT)
     _sys.path.insert(0, _SKILL_ROOT)
     from lib.claim_lifecycle import release_claim_by_track, AcquireResult  # type: ignore[import]
-    from lib.coordination_ref import (  # type: ignore[import]
-        fetch_coordination_ref,
-        push_coordination_ref,
-    )
+    from lib.coordination_ref import fetch_coordination_ref  # type: ignore[import]
+    from lib.failure_handlers import resilient_push  # type: ignore[import]
     from lib.gc import archive_done_claims, sweep_stale_active  # type: ignore[import]
     from lib.track_id import derive_track_id  # type: ignore[import]
 
@@ -168,15 +164,19 @@ def run_release(
             if e.startswith("git_write_failed") and result["hard_error"] is None:
                 result["hard_error"] = e
 
-    # Step 5: push (仅当本次真写了 ref; fail-soft — reconcile 下次 fetch 仲裁)
+    # Step 5: push (仅当本次真写了 ref)。用 resilient_push (review I2) — 与
+    # acquire 路径 (phase1_gate) 同一失败矩阵: non-FF fetch-replay 重试 (正是
+    # "别人刚推了 claim" 的协调目标场景), auth 不重试。仍 fail-soft: 失败只
+    # 记录, reconcile 下次 fetch 仲裁; 但 auth 失败升 hard_error (需 operator)。
     if wrote_anything:
-        push = push_coordination_ref(repo, remote=remote)
+        push = resilient_push(repo, remote=remote)
         result["push_success"] = push.success
         if not push.success:
             logger.warning(
-                "release_gate: push failed (kind=%s) — local ref updated, "
-                "remote converges on next fetch/reconcile",
+                "release_gate: push failed (kind=%s, attempts=%d) — local ref "
+                "updated, remote converges on next fetch/reconcile",
                 push.error_kind,
+                push.attempts,
             )
             if push.error_kind == "auth_failed" and result["hard_error"] is None:
                 result["hard_error"] = "push_auth_failed"
@@ -237,14 +237,27 @@ def _main(argv: Optional[list[str]] = None) -> int:
         parser.error("至少需要 --raw-track-id / --sweep-stale / --gc 之一")
 
     repo = Path(args.repo_path) if args.repo_path else Path.cwd()
-    result = run_release(
-        args.raw_track_id,
-        status=args.status,
-        sweep_stale=args.sweep_stale,
-        gc=args.gc,
-        repo_path=repo,
-        remote=args.remote,
-    )
+    # 顶层兜底 (review M4): "stdout = single JSON object" 契约在意外异常下也成立
+    # — caller 永远拿得到可解析 JSON, 不会收到裸 traceback。
+    try:
+        result = run_release(
+            args.raw_track_id,
+            status=args.status,
+            sweep_stale=args.sweep_stale,
+            gc=args.gc,
+            repo_path=repo,
+            remote=args.remote,
+        )
+    except Exception as exc:  # noqa: BLE001 — CLI 契约兜底
+        logger.warning("release_gate: unexpected error: %s", type(exc).__name__)
+        result = {
+            "released": None,
+            "sweep": None,
+            "gc": None,
+            "fetch_success": None,
+            "push_success": None,
+            "hard_error": f"unexpected:{type(exc).__name__}",
+        }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if result["hard_error"] else 0
 

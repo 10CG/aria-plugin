@@ -1021,10 +1021,13 @@ class TreeEditResult(NamedTuple):
         Number of edits actually applied (0 for the empty no-op case).
     error : str | None
         Short error token; None on success.  Possible values:
-        ``"yaml_unavailable"`` (never — this function is yaml-free),
-        ``"ref_not_exists"``, ``"invalid_edit"``, ``"invalid_path"``,
-        ``"hash_object_failed"``, ``"update_index_failed"``,
-        ``"mktree_failed"``, ``"commit_tree_failed"``, ``"update_ref_failed"``.
+        ``"ref_not_exists"``, ``"not_a_git_repo"``, ``"invalid_edit"``,
+        ``"invalid_path"``, ``"git_dir_failed"``, ``"hash_object_failed"``,
+        ``"update_index_failed"``, ``"mktree_failed"``,
+        ``"commit_tree_failed"``, ``"ref_moved"``, ``"update_ref_failed"``.
+        ``"ref_moved"`` (review I3): the ref advanced between our read-tree
+        and the CAS update-ref — a concurrent write_claim landed in the
+        window; nothing was written, caller may retry on the fresh tip.
     """
 
     success: bool
@@ -1089,7 +1092,20 @@ def apply_tree_edits(
         if not isinstance(path, str) or not _validate_tree_path(path):
             return TreeEditResult(False, "", 0, "invalid_path")
 
-    if not _ref_exists_local(repo, REF_NAME):
+    ref_exists = _ref_exists_local(repo, REF_NAME)
+    if ref_exists is None:
+        # git itself errored (not a repo / git missing) — distinct from a
+        # merely-absent ref (review M5).
+        return TreeEditResult(False, "", 0, "not_a_git_repo")
+    if not ref_exists:
+        return TreeEditResult(False, "", 0, "ref_not_exists")
+
+    # CAS base (review I3): resolve the tip BEFORE read-tree; the final
+    # update-ref passes this as the expected old value, so a concurrent
+    # write_claim landing in the window makes update-ref fail ("ref_moved")
+    # instead of being silently overwritten by our batch tree.
+    base_sha = _resolve_ref(repo, REF_NAME)
+    if not base_sha:
         return TreeEditResult(False, "", 0, "ref_not_exists")
 
     # Resolve git-dir (works for both regular repos and worktrees).
@@ -1097,7 +1113,7 @@ def apply_tree_edits(
         ["git", "-C", str(repo), "rev-parse", "--git-dir"], cwd=repo
     )
     if rc_gd != 0 or not git_dir_raw:
-        return TreeEditResult(False, "", 0, "hash_object_failed")
+        return TreeEditResult(False, "", 0, "git_dir_failed")
     git_dir = Path(git_dir_raw) if Path(git_dir_raw).is_absolute() else repo / git_dir_raw
 
     # Pre-hash all add-contents into blobs.
@@ -1123,7 +1139,9 @@ def apply_tree_edits(
         tmp = Path(tmp_str)
         scratch_env = {"GIT_INDEX_FILE": str(tmp / ".git-index-tmp")}
 
-        # Start from the current ref tree so untouched files are preserved.
+        # Start from the CAS base tree (NOT the live ref — the ref could
+        # advance between base resolve and here; anchoring both read-tree and
+        # the final CAS to base_sha keeps them consistent).
         rc_rt, _rt_out, rt_err = _run(
             [
                 "git",
@@ -1132,7 +1150,7 @@ def apply_tree_edits(
                 "--work-tree",
                 str(tmp),
                 "read-tree",
-                f"{REF_NAME}^{{tree}}",
+                f"{base_sha}^{{tree}}",
             ],
             cwd=repo,
             extra_env=scratch_env,
@@ -1190,10 +1208,12 @@ def apply_tree_edits(
             )
             return TreeEditResult(False, "", 0, "mktree_failed")
 
-    current_sha = _resolve_ref(repo, REF_NAME)
-    ct_cmd = ["git", "-C", str(repo), "commit-tree", tree_sha, "-m", message]
-    if current_sha:
-        ct_cmd += ["-p", current_sha]
+    # Parent is the CAS base (the tree we read), NOT a re-resolved tip — a
+    # re-resolve here would just shrink, not close, the race window.
+    ct_cmd = [
+        "git", "-C", str(repo), "commit-tree", tree_sha, "-m", message,
+        "-p", base_sha,
+    ]
     rc_ct, new_commit_sha, ct_err = _run(ct_cmd, cwd=repo)
     if rc_ct != 0 or not new_commit_sha:
         logger.warning(
@@ -1203,16 +1223,21 @@ def apply_tree_edits(
         )
         return TreeEditResult(False, "", 0, "commit_tree_failed")
 
+    # CAS update (review I3): third arg = expected old value; git rejects the
+    # update if the ref no longer points at base_sha.
     rc_ur, _ur_out, ur_err = _run(
-        ["git", "-C", str(repo), "update-ref", REF_NAME, new_commit_sha], cwd=repo
+        ["git", "-C", str(repo), "update-ref", REF_NAME, new_commit_sha, base_sha],
+        cwd=repo,
     )
     if rc_ur != 0:
+        moved = _resolve_ref(repo, REF_NAME) != base_sha
         logger.warning(
-            "coordination_ref.apply_tree_edits: update-ref failed (rc=%d): %s",
+            "coordination_ref.apply_tree_edits: update-ref failed (rc=%d, %s): %s",
             rc_ur,
+            "ref moved concurrently" if moved else "unexpected",
             ur_err,
         )
-        return TreeEditResult(False, "", 0, "update_ref_failed")
+        return TreeEditResult(False, "", 0, "ref_moved" if moved else "update_ref_failed")
 
     logger.info(
         "coordination_ref.apply_tree_edits: applied %d edits → commit %s",

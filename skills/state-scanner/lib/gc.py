@@ -50,7 +50,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from .constants import ARCHIVE_RETENTION_DAYS, STALE_TTL
+from .constants import ARCHIVE_RETENTION_DAYS, SWEEP_TTL
 from .coordination_ref import read_claims, apply_tree_edits
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,8 @@ def archive_done_claims(
     1. ``read_claims(include_archive=False)`` — enumerate current active claims.
     2. For each ClaimRecord where:
        - ``record.status == 'done'``  AND
-       - ``(now - claimed_at) > timedelta(days=retention_days)``
+       - ``(now - heartbeat_at) > timedelta(days=retention_days)``
+         (heartbeat_at == release timestamp for released claims; review M1)
        Compute:
          a. ``archive_path`` = ``archive/<YYYY-MM>/<container>/<session>-<claimed_at>.yaml``
          b. ``tombstone``    = ``sha256(serialized_yaml)[:16]``
@@ -212,31 +213,40 @@ def archive_done_claims(
         if record.status not in ("done", "abandoned"):
             continue
 
-        # Parse claimed_at for age computation.
-        claimed_dt = _iso_to_dt(record.claimed_at)
-        if claimed_dt is None:
-            errors.append(f"unparseable_claimed_at:{record.container}/{record.session}")
+        # Retention age is measured from heartbeat_at, not claimed_at (review
+        # M1): release_claim* writes the release timestamp into heartbeat_at,
+        # so retention counts from when the claim actually became terminal.
+        # claimed_at-based aging would archive a long-running cycle's claim
+        # the instant it is released (claimed weeks ago), losing the 7-day
+        # inspection window that retention exists to provide.
+        terminal_dt = _iso_to_dt(record.heartbeat_at)
+        if terminal_dt is None:
+            errors.append(f"unparseable_heartbeat_at:{record.container}/{record.session}")
             logger.warning(
-                "gc.archive_done_claims: unparseable claimed_at for container=%s session=%s: %r",
+                "gc.archive_done_claims: unparseable heartbeat_at for container=%s session=%s: %r",
                 record.container,
                 record.session,
-                record.claimed_at,
+                record.heartbeat_at,
             )
             continue
+        if terminal_dt.tzinfo is None:
+            terminal_dt = terminal_dt.replace(tzinfo=timezone.utc)
 
-        if claimed_dt > cutoff:
+        if terminal_dt > cutoff:
             # Within retention window — leave it.
             continue
 
         # Compute serialised content for tombstone (lazy import to avoid
-        # circular dependency at module load time).
+        # circular dependency at module load time).  No str() fallback (review
+        # M6): a non-YAML serialisation must never become the archived file
+        # content — route to the serialize_failed soft-error instead.
         try:
             from .claim_schema import serialize_claim  # type: ignore[import]
-            try:
-                import yaml as _yaml  # type: ignore[import-untyped]
-                serialized = _yaml.safe_dump(serialize_claim(record), default_flow_style=False)
-            except Exception:
-                serialized = str(serialize_claim(record))
+            import yaml as _yaml  # type: ignore[import-untyped]
+
+            serialized = _yaml.safe_dump(
+                serialize_claim(record), default_flow_style=False, allow_unicode=True
+            )
         except Exception as exc:
             errors.append(f"serialize_failed:{record.container}/{record.session}")
             logger.warning(
@@ -328,7 +338,7 @@ class SweepResult(NamedTuple):
 def sweep_stale_active(
     repo_path: Optional[Path] = None,
     *,
-    stale_ttl_seconds: int = STALE_TTL,
+    stale_ttl_seconds: int = SWEEP_TTL,
     now: Optional[datetime] = None,
     dry_run: bool = False,
 ) -> SweepResult:
@@ -339,16 +349,19 @@ def sweep_stale_active(
     forever, and reconcile keeps re-deriving "stale_takeover_eligible" on
     every read instead of the state converging.  This sweep makes the terminal
     state durable: any ``active`` claim whose ``heartbeat_at`` is older than
-    ``stale_ttl_seconds`` (default STALE_TTL = 3 missed heartbeat windows) is
-    rewritten in place with ``status='abandoned'`` (heartbeat_at untouched —
-    it documents when the claim was last alive).
+    ``stale_ttl_seconds`` is rewritten in place with ``status='abandoned'``
+    (heartbeat_at untouched — it documents when the claim was last alive).
+
+    TTL choice (pre-merge review C1): the default is **SWEEP_TTL (24h), NOT
+    STALE_TTL (30min)**.  The durable rewrite is unrecoverable for the victim,
+    and no production heartbeat loop exists (heartbeat_at freezes at acquire),
+    so a 30-minute threshold would abandon live parallel sessions and erase
+    them from collision/overlap advisory surfaces.  See constants.SWEEP_TTL.
 
     Cross-container by design: sweep is a GC action, not a session action, so
     it MAY rewrite other containers' claim files.  This intentionally relaxes
-    the file-per-writer invariant; the race window is negligible because only
-    claims silent for > TTL (30 min default) are touched — a live writer would
-    have heartbeated.  All rewrites are batched into ONE commit via
-    ``apply_tree_edits``.
+    the file-per-writer invariant; only claims silent for > 24h are touched.
+    All rewrites are batched into ONE commit via ``apply_tree_edits``.
 
     Parameters mirror ``archive_done_claims`` (injectable now / dry_run).
     """
@@ -394,7 +407,7 @@ def sweep_stale_active(
                 linked_issue=record.linked_issue,
             )
             serialized = _yaml.safe_dump(
-                serialize_claim(abandoned), default_flow_style=False
+                serialize_claim(abandoned), default_flow_style=False, allow_unicode=True
             )
         except Exception as exc:
             errors.append(f"serialize_failed:{record.container}/{record.session}")

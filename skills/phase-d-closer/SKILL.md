@@ -55,6 +55,7 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/release_gate.p
 - carry-id = Phase B-entry 时传给 phase1_gate 的同一原始串 (归一在 CLI 内部, 两端一致)。
 - `--sweep-stale` 顺带把全 ref 内 heartbeat 超 STALE_TTL 的 active claim 标 abandoned; `--gc` 顺带归档超 retention 的 done claim —— 收尾是 GC 的自然挂载点, 无需独立调度。
 - **advisory 契约**: exit 1 (硬错) 只记录 warning 到收尾报告, **不阻断** D.3/D.4。`released.error == "claim_not_found"` 是 benign (早已释放/未认领), exit 0。
+- **除 exit code 外还须看 `push_success`** (review I2): `released.success=true` 但 `push_success=false` = 释放只在本地生效, 远端/其他终端仍看到 active claim — 报告里注明 "本地已释放, 待下次 fetch/reconcile 收敛", 不要报成"已释放"完事。
 - 本 session 未认领 (未走 phase1_gate) 时仍建议跑 `--sweep-stale --gc` (不带 --raw-track-id), 保持 ref 卫生。
 
 ---
