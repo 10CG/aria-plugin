@@ -37,6 +37,7 @@ from typing import NamedTuple, Optional
 from .claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT
 from .coordination_ref import write_claim, read_claims, WriteClaimResult
 from .identity import Identity, get_identity
+from .track_id import derive_track_id
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ def acquire_claim(
     repo_path: Optional[Path] = None,
     *,
     now: Optional[datetime] = None,
+    linked_issue: Optional[str] = None,
 ) -> AcquireResult:
     """Construct a new active ClaimRecord and write it to the coordination ref.
 
@@ -124,6 +126,10 @@ def acquire_claim(
     now:
         Reference UTC time for both ``claimed_at`` and ``heartbeat_at``.
         Defaults to ``datetime.now(UTC)``.  Inject in tests for determinism.
+    linked_issue:
+        Optional semantic-overlap signal (Part B1) — free-form issue reference
+        (e.g. ``"10CG/Aria#160"``) stored on the claim so collision detection
+        can flag "same issue, different track_id" overlaps (advisory).
 
     Returns
     -------
@@ -148,6 +154,7 @@ def acquire_claim(
         claimed_at=ts_str,
         heartbeat_at=ts_str,
         superseded_from=None,
+        linked_issue=linked_issue,
     )
 
     result: WriteClaimResult = write_claim(record, repo_path)
@@ -245,6 +252,7 @@ def heartbeat(
         claimed_at=existing.claimed_at,       # immutable
         heartbeat_at=ts_str,                  # updated
         superseded_from=existing.superseded_from,
+        linked_issue=existing.linked_issue,
     )
 
     result: WriteClaimResult = write_claim(updated, repo_path)
@@ -346,6 +354,7 @@ def release_claim(
         claimed_at=existing.claimed_at,       # immutable
         heartbeat_at=ts_str,                  # final timestamp
         superseded_from=existing.superseded_from,
+        linked_issue=existing.linked_issue,
     )
 
     result: WriteClaimResult = write_claim(released, repo_path)
@@ -363,3 +372,100 @@ def release_claim(
         resolved.session_id,
     )
     return AcquireResult(success=True, record=released, error=None)
+
+
+def release_claim_by_track(
+    raw_track_id: str,
+    status: str = "done",
+    identity: Optional[Identity] = None,
+    repo_path: Optional[Path] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> AcquireResult:
+    """Release THIS container's active claim for a track, located by track_id.
+
+    Defect (c) fix (coordination-claim-lifecycle-and-overlap): ``release_claim``
+    locates by ``(container, session)``, but a later ship/close invocation
+    (phase-d-closer, on cycle completion) runs with a FRESH ``session_id`` and
+    cannot match the original acquiring session — so claims never got released
+    and accumulated as ``active`` forever. The ship context DOES know the
+    ``track_id`` (the carry-id being closed), so this variant locates by
+    ``(normalized track_id, container)`` and ignores session.
+
+    ``raw_track_id`` is normalized via ``derive_track_id`` (same as acquire), so
+    the caller passes the raw carry-id. If several active claims match (same
+    container re-claimed a track across sessions — the NORMAL case, since
+    every session mints a fresh session_id and B.0 REQUIRE-claim runs per
+    session), **ALL matching active claims are released** (review I1: releasing
+    only the earliest would leave the later session-claims active and the
+    track would still read as occupied after ship). Releases proceed in
+    claimed_at order; on a mid-loop write failure the already-released claims
+    stay released and the error is returned (rerun completes the rest —
+    idempotent). The returned ``record`` is the earliest released claim.
+    Fail-soft: ``claim_not_found`` when no active match exists (already
+    released / never claimed — both benign at ship time).
+    """
+    _TERMINAL_STATUSES = frozenset({"done", "yielded", "abandoned"})
+    if status not in _TERMINAL_STATUSES:
+        return AcquireResult(success=False, record=None, error="invalid_status")
+
+    resolved = _resolve_identity(identity, repo_path)
+    if resolved is None:
+        return AcquireResult(success=False, record=None, error="identity_error")
+
+    norm = derive_track_id(raw_track_id)
+
+    read_result = read_claims(repo_path)
+    if not read_result.ref_exists:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    matches = [
+        rec
+        for rec in read_result.claims
+        if rec.container == resolved.container_id
+        and rec.track_id == norm
+        and rec.status == "active"
+    ]
+    if not matches:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    # deterministic order: earliest claimed_at first (lexical ISO-8601 sort is
+    # chronological); ALL matches are released (review I1).
+    ts_str = _iso(now if now is not None else _utc_now())
+    first_released: Optional[ClaimRecord] = None
+    for existing in sorted(matches, key=lambda r: r.claimed_at):
+        released = ClaimRecord(
+            schema_version=existing.schema_version,
+            track_id=existing.track_id,
+            owner=existing.owner,
+            container=existing.container,
+            session=existing.session,
+            phase=existing.phase,
+            status=status,
+            claimed_at=existing.claimed_at,
+            heartbeat_at=ts_str,
+            superseded_from=existing.superseded_from,
+            linked_issue=existing.linked_issue,
+        )
+        result: WriteClaimResult = write_claim(released, repo_path)
+        if not result.success:
+            logger.warning(
+                "claim_lifecycle.release_claim_by_track: write failed mid-loop "
+                "(error=%s, session=%s) — earlier releases stay released; rerun completes",
+                result.error,
+                existing.session,
+            )
+            return AcquireResult(
+                success=False, record=None, error=result.error or "write_failed"
+            )
+        if first_released is None:
+            first_released = released
+    logger.info(
+        "claim_lifecycle.release_claim_by_track: released %d claim(s) track=%s "
+        "status=%s container=%s",
+        len(matches),
+        norm,
+        status,
+        resolved.container_id,
+    )
+    return AcquireResult(success=True, record=first_released, error=None)

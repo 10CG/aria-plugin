@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.56.0] - 2026-07-11
+
+### Added: 协调机制 claim 生命周期闭环 + 认领强制 + linked_issue 重叠 advisory (coordination-claim-lifecycle-and-overlap)
+
+2026-07-11 双子星撞车实战暴露 DEC-002 Layer L 协调 3 缺陷 (Explore recon 定位): (a) 认领非强制 / (b) track-id 纯字符串匹配看不见"同一件事两个名字" / (c) claim 从不释放永久累积。owner 决策 a=A1 / b=B1 / c=都做含一次性清理。
+
+**Part C — claim 释放生命周期 (defect c)**:
+- `scripts/release_gate.py` 新 CLI: acquire (phase1_gate) 的对偶, 按 (归一 track_id, container) 定位释放 — session 无关 (根因: `release_claim` 按 session 定位, 收尾 session 的 fresh session_id 永远找不到原 claim)。释放**全部**同 track 匹配 (多 session 累积常态, review I1); fetch→release→sweep→gc→resilient_push 全 fail-soft; 独立遥测分区 `coordination-release-telemetry.jsonl` (不污染 run_gate 探针计数)。
+- `coordination_ref.apply_tree_edits`: 批量 remove/add 单 commit 原语, **CAS update-ref** (base_sha 锚定 read-tree + expected-old-value, 并发写入窗口返回 `ref_moved` 而非静默覆写, review I3)。
+- `gc.archive_done_claims` 补真 git 写入 (替换 shipped 以来的 no-op stub); **abandoned 与 done 同 retention 归档** (防 sweep 产物永久累积); retention 改按 `heartbeat_at` (=释放时刻) 计, 长 cycle 的 claim 释放后保留完整 7 天检视窗 (review M1)。
+- `gc.sweep_stale_active`: heartbeat 超 TTL 的 active → durable abandoned (跨容器批量)。**TTL = 新常量 SWEEP_TTL (24h), 非 STALE_TTL (30min)** — 无 heartbeat 基建的现实下 (heartbeat() 零生产调用, heartbeat_at 冻结在 acquire), 30min 阈值会把并行活 session durable 判死并从 collision/overlap advisory 面板抹掉 (review C1, 配锁定测试)。
+- claim schema: `STATUS_ENUM`/`STATUS_WRITABLE` 增 `abandoned` — 修 latent bug: release 写 abandoned 后 parse_claim 读回即判 invalid 丢弃。
+- phase-d-closer 新 **D.2b claim 释放** 步骤 (advisory 非阻塞; 除 exit code 外须看 `push_success` — 本地释放 ≠ 远端可见, review I2)。
+- 一次性清理真协调 ref: 4 条 stale release (dec002/followup-99/secretguard×2) + bot runtime-probe sweep + 2 条 GC 归档; 清理后唯一 active = 本 cycle claim (D.2b dogfood)。
+
+**Part A1 — 认领强制 (defect a, 插件内)**:
+- ⚠️ **行为变更**: `state_scanner.coordination.enabled` 默认 **false→true** (opt-out)。装 aria-plugin 的项目走 Phase B 会经 phase1_gate 向项目 origin 推 `refs/aria/coordination` (仅协调元数据, 不碰代码分支); 单人单终端项目可显式设 `false`。advisory mode 保证翻转不阻断任何流程。
+- phase-b-developer 新 **B.0 REQUIRE claim** + branch-manager 前置: 进 Phase B/B.1 前必须有本 session active claim, 无则先跑 phase1_gate (步骤级 MUST; 诚实边界: 管不到绕过 state-scanner 的自主 bot, orchestrator 维度另行跟踪)。
+- doc lock-in 测试 `test_coordination_default_lockin.py` (默认无 python 解析点, config-loader SKILL.md 即 SOT — 机械防回退)。
+
+**Part B1 — 语义重叠 advisory (defect b)**:
+- claim schema 可选 `linked_issue` 字段 (additive; roundtrip 向后兼容, 全 6 个 ClaimRecord 构造点穿线防静默丢字段)。
+- phase1_gate `--linked-issue`: 写入 claim + 输出 JSON additive 键 `linked_issue_overlap[]` — 同 linked_issue 不同 track-id 的 active claim advisory 告警 (正是双子星"同一批 issue 两个 spec 名"场景), 不改 winner 判定不阻断。
+- `collision.linked_issue_overlaps` 纯函数 (reconcile track_id grouping 旁路)。
+
+**兼容性说明**: abandoned/linked_issue 对旧版本读者 (≤1.55.4) 是 additive — abandoned 记录被旧 parse 丢弃后旧读者视 track 空闲可 takeover, 这对 abandoned track 正是正确结局 (review M2); 混版本期仅 `claim_schema_invalid` 告警噪音。
+
+**测试**: 968→1006 (+38)。含: test_release_by_track 从 pytest 裸函数改 unittest (原 4 测试在 stdlib runner 下从未执行 = 假绿, 一并修) + sweep 误杀锁定 + CAS/GC/CLI I/O 契约 + linked_issue CLI 端到端。pre-merge 对抗 review 1C/5I 全修。
+
+Spec: 主仓 `openspec/changes/coordination-claim-lifecycle-and-overlap/`。Skills/Agents 数不变 (35+7=42, 11 Agents)。
+
 ## [1.55.4] - 2026-07-11
 
 ### Fixed: secret-guard 部件 B 命令位覆盖扩展 + FP 回归修复 (dev-claude spec 部件 B 落地)

@@ -50,8 +50,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from .constants import ARCHIVE_RETENTION_DAYS
-from .coordination_ref import read_claims
+from .constants import ARCHIVE_RETENTION_DAYS, SWEEP_TTL
+from .coordination_ref import read_claims, apply_tree_edits
 
 logger = logging.getLogger(__name__)
 
@@ -144,20 +144,21 @@ def archive_done_claims(
     1. ``read_claims(include_archive=False)`` — enumerate current active claims.
     2. For each ClaimRecord where:
        - ``record.status == 'done'``  AND
-       - ``(now - claimed_at) > timedelta(days=retention_days)``
+       - ``(now - heartbeat_at) > timedelta(days=retention_days)``
+         (heartbeat_at == release timestamp for released claims; review M1)
        Compute:
          a. ``archive_path`` = ``archive/<YYYY-MM>/<container>/<session>-<claimed_at>.yaml``
          b. ``tombstone``    = ``sha256(serialized_yaml)[:16]``
     3. If ``dry_run=False``: perform git write operations to move the claim
        from ``claims/`` to the computed ``archive_path``.
 
-       Current implementation note: the git plumbing for step 3 is
-       intentionally **deferred** — this shipping unit delivers the function
-       skeleton, eligibility detection, tombstone computation, and the
-       dry_run path.  A follow-up task will wire the actual git rm + add
-       operations when the GC scheduler is integrated.  Until then,
-       ``dry_run=False`` behaves identically to ``dry_run=True`` (no-op
-       writes) and logs a WARNING so operators are aware.
+       Implementation (Part C, coordination-claim-lifecycle-and-overlap):
+       all moves are batched into ONE commit via
+       ``coordination_ref.apply_tree_edits`` (remove old path + add archive
+       path per claim).  On batch-write failure the GcResult carries an
+       ``errors`` entry ``git_write_failed:<token>`` and ``archived_count``
+       reports 0 (nothing actually moved).  This replaces the pre-Part-C
+       deferred no-op stub that only logged a WARNING.
 
     Edge cases
     ----------
@@ -202,36 +203,50 @@ def archive_done_claims(
     archived_paths: list[str] = []
     tombstones: dict[str, str] = {}
     errors: list[str] = []
+    # Batched tree edits for the non-dry_run write (one commit for all moves).
+    pending_edits: list = []
 
     for record in read_result.claims:
-        if record.status != "done":
+        # Part C: "abandoned" (sweep_stale_active output) is archived on the
+        # same retention path as "done" — otherwise abandoned claims would
+        # accumulate in claims/ forever (the exact defect-c shape again).
+        if record.status not in ("done", "abandoned"):
             continue
 
-        # Parse claimed_at for age computation.
-        claimed_dt = _iso_to_dt(record.claimed_at)
-        if claimed_dt is None:
-            errors.append(f"unparseable_claimed_at:{record.container}/{record.session}")
+        # Retention age is measured from heartbeat_at, not claimed_at (review
+        # M1): release_claim* writes the release timestamp into heartbeat_at,
+        # so retention counts from when the claim actually became terminal.
+        # claimed_at-based aging would archive a long-running cycle's claim
+        # the instant it is released (claimed weeks ago), losing the 7-day
+        # inspection window that retention exists to provide.
+        terminal_dt = _iso_to_dt(record.heartbeat_at)
+        if terminal_dt is None:
+            errors.append(f"unparseable_heartbeat_at:{record.container}/{record.session}")
             logger.warning(
-                "gc.archive_done_claims: unparseable claimed_at for container=%s session=%s: %r",
+                "gc.archive_done_claims: unparseable heartbeat_at for container=%s session=%s: %r",
                 record.container,
                 record.session,
-                record.claimed_at,
+                record.heartbeat_at,
             )
             continue
+        if terminal_dt.tzinfo is None:
+            terminal_dt = terminal_dt.replace(tzinfo=timezone.utc)
 
-        if claimed_dt > cutoff:
+        if terminal_dt > cutoff:
             # Within retention window — leave it.
             continue
 
         # Compute serialised content for tombstone (lazy import to avoid
-        # circular dependency at module load time).
+        # circular dependency at module load time).  No str() fallback (review
+        # M6): a non-YAML serialisation must never become the archived file
+        # content — route to the serialize_failed soft-error instead.
         try:
             from .claim_schema import serialize_claim  # type: ignore[import]
-            try:
-                import yaml as _yaml  # type: ignore[import-untyped]
-                serialized = _yaml.safe_dump(serialize_claim(record), default_flow_style=False)
-            except Exception:
-                serialized = str(serialize_claim(record))
+            import yaml as _yaml  # type: ignore[import-untyped]
+
+            serialized = _yaml.safe_dump(
+                serialize_claim(record), default_flow_style=False, allow_unicode=True
+            )
         except Exception as exc:
             errors.append(f"serialize_failed:{record.container}/{record.session}")
             logger.warning(
@@ -257,15 +272,26 @@ def archive_done_claims(
                 tombstone,
             )
         else:
-            # Git write operations are deferred to a follow-up integration task.
-            # Log a WARNING so operators know GC ran but did not write.
+            pending_edits.append(("remove", original_path))
+            pending_edits.append(("add", dest_path, serialized))
+
+    # Part C: apply all moves in a single commit (batched, all-or-nothing).
+    if not dry_run and pending_edits:
+        edit_result = apply_tree_edits(
+            pending_edits,
+            repo_path,
+            message=f"gc: archive {len(archived_paths)} done claim(s)",
+        )
+        if not edit_result.success:
+            errors.append(f"git_write_failed:{edit_result.error}")
             logger.warning(
-                "gc.archive_done_claims: git write deferred (not yet implemented); "
-                "would archive %s → %s tombstone=%s",
-                original_path,
-                dest_path,
-                tombstone,
+                "gc.archive_done_claims: batch git write failed (error=%s); "
+                "no claims were moved",
+                edit_result.error,
             )
+            # Nothing actually moved — report zero archived.
+            archived_paths = []
+            tombstones = {}
 
     archived_count = len(archived_paths)
     if archived_count > 0:
@@ -282,3 +308,143 @@ def archive_done_claims(
         tombstones=tombstones,
         errors=errors,
     )
+
+
+# ---------------------------------------------------------------------------
+# Part C — stale-active sweep (coordination-claim-lifecycle-and-overlap)
+# ---------------------------------------------------------------------------
+
+
+class SweepResult(NamedTuple):
+    """Outcome of a single ``sweep_stale_active()`` call.
+
+    Fields
+    ------
+    swept_count : int
+        Number of stale active claims rewritten to ``status='abandoned'``
+        (or that *would* be, in dry_run mode).
+    swept : list[str]
+        ``"<container>/<session>"`` identifiers of the swept claims.
+    errors : list[str]
+        Short soft-error tokens (unparseable heartbeat_at, serialize failure,
+        ``git_write_failed:<token>``).  Non-empty ≠ hard failure.
+    """
+
+    swept_count: int
+    swept: list   # list[str]
+    errors: list  # list[str]
+
+
+def sweep_stale_active(
+    repo_path: Optional[Path] = None,
+    *,
+    stale_ttl_seconds: int = SWEEP_TTL,
+    now: Optional[datetime] = None,
+    dry_run: bool = False,
+) -> SweepResult:
+    """Rewrite stale active claims (heartbeat older than TTL) to 'abandoned'.
+
+    Defect (c) companion to release-on-ship: sessions that die without
+    releasing (crash / bot dispatch that never closes) leave ``active`` claims
+    forever, and reconcile keeps re-deriving "stale_takeover_eligible" on
+    every read instead of the state converging.  This sweep makes the terminal
+    state durable: any ``active`` claim whose ``heartbeat_at`` is older than
+    ``stale_ttl_seconds`` is rewritten in place with ``status='abandoned'``
+    (heartbeat_at untouched — it documents when the claim was last alive).
+
+    TTL choice (pre-merge review C1): the default is **SWEEP_TTL (24h), NOT
+    STALE_TTL (30min)**.  The durable rewrite is unrecoverable for the victim,
+    and no production heartbeat loop exists (heartbeat_at freezes at acquire),
+    so a 30-minute threshold would abandon live parallel sessions and erase
+    them from collision/overlap advisory surfaces.  See constants.SWEEP_TTL.
+
+    Cross-container by design: sweep is a GC action, not a session action, so
+    it MAY rewrite other containers' claim files.  This intentionally relaxes
+    the file-per-writer invariant; only claims silent for > 24h are touched.
+    All rewrites are batched into ONE commit via ``apply_tree_edits``.
+
+    Parameters mirror ``archive_done_claims`` (injectable now / dry_run).
+    """
+    effective_now: datetime = now if now is not None else _utc_now()
+    if effective_now.tzinfo is None:
+        effective_now = effective_now.replace(tzinfo=timezone.utc)
+
+    read_result = read_claims(repo_path)
+    if not read_result.ref_exists:
+        return SweepResult(swept_count=0, swept=[], errors=[])
+
+    swept: list[str] = []
+    errors: list[str] = []
+    pending_edits: list = []
+
+    for record in read_result.claims:
+        if record.status != "active":
+            continue
+        hb_dt = _iso_to_dt(record.heartbeat_at)
+        if hb_dt is None:
+            errors.append(f"unparseable_heartbeat_at:{record.container}/{record.session}")
+            continue
+        if hb_dt.tzinfo is None:
+            hb_dt = hb_dt.replace(tzinfo=timezone.utc)
+        if (effective_now - hb_dt).total_seconds() <= stale_ttl_seconds:
+            continue
+
+        try:
+            from .claim_schema import serialize_claim, ClaimRecord  # type: ignore[import]
+            import yaml as _yaml  # type: ignore[import-untyped]
+
+            abandoned = ClaimRecord(
+                schema_version=record.schema_version,
+                track_id=record.track_id,
+                owner=record.owner,
+                container=record.container,
+                session=record.session,
+                phase=record.phase,
+                status="abandoned",
+                claimed_at=record.claimed_at,
+                heartbeat_at=record.heartbeat_at,  # last-alive timestamp preserved
+                superseded_from=record.superseded_from,
+                linked_issue=record.linked_issue,
+            )
+            serialized = _yaml.safe_dump(
+                serialize_claim(abandoned), default_flow_style=False, allow_unicode=True
+            )
+        except Exception as exc:
+            errors.append(f"serialize_failed:{record.container}/{record.session}")
+            logger.warning(
+                "gc.sweep_stale_active: serialize failed for %s/%s: %s",
+                record.container,
+                record.session,
+                exc,
+            )
+            continue
+
+        claim_path = f"claims/{record.container}/{record.session}.yaml"
+        swept.append(f"{record.container}/{record.session}")
+        if not dry_run:
+            # In-place rewrite: add with the same path replaces the blob.
+            pending_edits.append(("add", claim_path, serialized))
+
+    if not dry_run and pending_edits:
+        edit_result = apply_tree_edits(
+            pending_edits,
+            repo_path,
+            message=f"gc: sweep {len(swept)} stale active claim(s) → abandoned",
+        )
+        if not edit_result.success:
+            errors.append(f"git_write_failed:{edit_result.error}")
+            logger.warning(
+                "gc.sweep_stale_active: batch git write failed (error=%s); "
+                "no claims were swept",
+                edit_result.error,
+            )
+            swept = []
+
+    if swept:
+        logger.info(
+            "gc.sweep_stale_active: %s=%d dry_run=%s",
+            "would_sweep" if dry_run else "swept",
+            len(swept),
+            dry_run,
+        )
+    return SweepResult(swept_count=len(swept), swept=swept, errors=errors)

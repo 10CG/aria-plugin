@@ -35,6 +35,21 @@ HEARTBEAT_INTERVAL: int = 600  # seconds
 # latency and brief network partitions.
 STALE_TTL: int = 1800  # seconds
 
+# Sweep TTL (Part C, coordination-claim-lifecycle-and-overlap; pre-merge
+# review C1): the DURABLE-abandon threshold used by gc.sweep_stale_active.
+# Deliberately much longer than STALE_TTL: STALE_TTL only marks a claim
+# "takeover-eligible" (advisory, reversible on next read), but the sweep
+# REWRITES status=abandoned durably and the victim has no recovery path —
+# and in reality NO production heartbeat loop exists (heartbeat() has zero
+# production call sites; phase1_gate self-resume does not refresh either),
+# so every live claim's heartbeat_at is frozen at acquire time.  A 30-minute
+# sweep threshold would abandon any parallel session still working after
+# 30 min (the common case) and erase it from all collision/overlap advisory
+# surfaces — defeating the coordination this spec exists to protect.  24h
+# comfortably exceeds real interactive session lengths while still clearing
+# genuinely dead claims daily.  Revisit when a heartbeat loop ships.
+SWEEP_TTL: int = 86400  # seconds (24h)
+
 # ---------------------------------------------------------------------------
 # Clock skew
 # ---------------------------------------------------------------------------
