@@ -114,8 +114,11 @@ readme_detection:
       - "version: (v?[0-9]+\\.[0-9]+\\.[0-9]+)"
 
   version_source:
-    primary: "cat VERSION 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'"
-    fallback: "grep '\"version\"' aria/.claude-plugin/plugin.json 2>/dev/null"
+    # #158: plugin.json 是版本 SOT; 旧 primary (grep 人类可读 VERSION 快照) 会把
+    # 文内示例串/历史行全部吐出, 不可作抽取源。实际 collector (collectors/readme.py)
+    # 一直从 plugin.json json 解析 — 本参考文档此前与实现脱节, 现对齐。
+    primary: "jq -r '.version' aria/.claude-plugin/plugin.json 2>/dev/null"
+    fallback: "grep -m1 -oE '\\*\\*版本\\*\\*: *[0-9]+\\.[0-9]+\\.[0-9]+' aria/VERSION | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+'"
 
   date_extraction:
     readme_pattern: "更新.*: ([0-9]{4}-[0-9]{2}-[0-9]{2})"

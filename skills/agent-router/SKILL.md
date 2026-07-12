@@ -14,8 +14,8 @@ allowed-tools: Read, Glob, Grep, Bash
 
 # Agent Router (智能路由器)
 
-> **版本**: 1.2.1 | **类型**: 路由器 (Agent 选择)
-> **更新**: 2026-07-09 - 基线层语义补明 #99 (摘要表 frontend 行对齐 canonical + task_type 推断/threshold 边界成文); 同日早前 1.2.0 项目级 capability 匹配接入 auto 主链 (#153 发现 B; ROUTING_RULES §CAP 两段式决策)
+> **版本**: 1.2.2 | **类型**: 路由器 (Agent 选择)
+> **更新**: 2026-07-12 - 摘要表残余漂移对齐 #101 (architecture→backend-architect 0.85 / api-doc·llm·rag 0.95 / React Native·Flutter 0.95 [后两行 recon 新发现]) + 表级 canonical banner (ROUTING_RULES=SOT, 根治双写漂移); 前版 1.2.1 基线层语义补明 #99
 
 ## 快速开始
 
@@ -96,6 +96,11 @@ allowed-tools: Read, Glob, Grep, Bash
 ## 路由规则
 
 > 本节为插件级基线四类规则 (文件路径/任务类型/技术栈/关键词) 摘要。**项目级 capability 匹配 (§CAP: required_caps 推断 / 评分公式 / 两段式决策 / 同名得分归属 / recommend 混排)** 见 [ROUTING_RULES.md §CAP](./ROUTING_RULES.md)。
+>
+> **Canonical banner (v1.2.2, #101)**: 本节摘要表的目标 Agent 与置信度以
+> [ROUTING_RULES.md](./ROUTING_RULES.md) 为 **canonical SOT**, 摘要仅便于扫读;
+> 与 canonical 冲突时一律以 canonical 为准。改路由规则**只改 ROUTING_RULES**,
+> 摘要表随之对齐 (摘要表历史上已两次漂移: #99 frontend 行 / #101 六行, 皆双写所致)。
 
 ### 文件路径匹配
 
@@ -120,20 +125,20 @@ allowed-tools: Read, Glob, Grep, Bash
 
 | 任务类型 | 目标 Agent | 置信度 |
 |----------|-----------|--------|
-| `architecture` | knowledge-manager | 0.90 |
+| `architecture` | backend-architect | 0.85 |
 | `code-review` | qa-engineer | 0.95 |
 | `ui-design` | ui-ux-designer | 0.90 |
 | `legal` | legal-advisor | 0.95 |
-| `api-doc` | api-documenter | 0.90 |
-| `llm` / `rag` | ai-engineer | 0.90 |
+| `api-doc` | api-documenter | 0.95 |
+| `llm` / `rag` | ai-engineer | 0.95 |
 | `tech-lead` / `planning` | tech-lead | 0.85 |
 
 ### 技术栈匹配
 
 | 技术关键词 | 目标 Agent | 置信度 |
 |-----------|-----------|--------|
-| `React Native` | mobile-developer | 0.90 |
-| `Flutter` | mobile-developer | 0.90 |
+| `React Native` | mobile-developer | 0.95 |
+| `Flutter` | mobile-developer | 0.95 |
 | `REST` / `GraphQL` | backend-architect | 0.85 |
 | `vector` / `embedding` | ai-engineer | 0.90 |
 | `OpenAPI` / `Swagger` | api-documenter | 0.90 |
@@ -536,5 +541,5 @@ tasks:
 
 ---
 
-**最后更新**: 2026-07-09
-**Skill版本**: 1.2.1 (基线层 5 处语义补明 #99: 关键词词边界/task_type 推断/摘要表 frontend 行对齐/recommend 兜底条文/threshold >= 边界; 前版 1.2.0 项目级 capability 匹配接入 auto 主链 #153 发现 B)
+**最后更新**: 2026-07-12
+**Skill版本**: 1.2.2 (摘要表残余漂移对齐 #101: 6 行对齐 canonical + 表级 canonical banner; 前版 1.2.1 基线层 5 处语义补明 #99)
