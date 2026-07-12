@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.56.1] - 2026-07-12
+
+### Fixed: 小票并批 — #158 aria-report 版本抽取 + #101 agent-router 摘要表漂移 (agent team recon + release train)
+
+- **#158 aria-report 版本抽取修复**: `skills/aria-report/SKILL.md` Step 2 的 `PLUGIN_VERSION` 从 `grep -m1 '^[0-9]'` 扫 VERSION 人类可读快照 (恒命中围栏代码块内冻结示例串 `1.47.0` — VERSION 真实版本行以 `>` 开头永不匹配, 已确认污染 #152/#154/#156/#159 的版本字段, 连带 `/issue-triage` 版本筛 `gap: behind` 恒假) 改为 `jq -r '.version'` 读 `.claude-plugin/plugin.json` **SOT** (CLAUDE.md 明文: plugin.json 是版本真理来源)。端到端验证: 新命令 1.56.0 / 旧命令复现 1.47.0 / 缺文件 fallback unknown。
+- **#158 附带**: recon 全仓 sweep 同款「grep 人类可读文件抽结构化字段」写法 — `state-scanner/references/rules/operations.md` version_source.primary 同款 (参考文档从未接线, collectors/readme.py 实现一直读 plugin.json), 现对齐消除潜在陷阱; `issue-triage/_version.py` Path 3 同款但被 Path 1/2 (plugin.json) 遮蔽, 对 Aria 永不触发, 不改 (有测试锚定)。
+- **#101 agent-router 摘要表残余漂移对齐** (逐行对齐 canonical, 同 #99 frontend 行做法): `architecture` knowledge-manager 0.90 → **backend-architect 0.85** (TT-001) / `api-doc` 0.90 → 0.95 (TT-019) / `llm`·`rag` 0.90 → 0.95 (TT-015/016) 为票内 3 处; recon 全表对比**新发现** `React Native`·`Flutter` 0.90 → 0.95 (canonical tech-stack 显式同名行) 一并修。加**表级 canonical banner** (ROUTING_RULES = SOT, 摘要仅扫读; 根治双写漂移 — 历史已两次: #99/#101)。SKILL 1.2.1→1.2.2。Rule #6: 摘要对齐 canonical 语义零变更, smoke+defer (48-run 基线留下次触碰 router 逻辑回归)。
+- **#102 (aria-context-monitor) recon 证伪, 零代码关票**: 票内指控架构 (`read_context.py`/`_load_snapshot`/`~/.claude/aria/statusline-snapshot.json`/假读数/无 fallback/`DEFAULT_TOTAL_TOKENS`) 经干净代码 + 全 git 历史核实**均不存在** (报告者自述其 session 工具通道不可靠)。真实架构 (aria-token-telemetry 数据层): relay cache 缺失 → 严格 `source=unavailable` 永无假读数 (有测试) / transcript fallback 完整实现且 proxy 明确标 estimate / relay 路径直接采用 statusLine `used_percentage` 权威值 / `setup_relay.sh` 幂等装配器 + `aria-doctor` 健康自检俱在。票内 4 条建议全部已被现行实现满足。
+
+Skills/Agents 数不变 (35+7=42, 11 Agents)。
+
 ## [1.56.0] - 2026-07-11
 
 ### Added: 协调机制 claim 生命周期闭环 + 认领强制 + linked_issue 重叠 advisory (coordination-claim-lifecycle-and-overlap)

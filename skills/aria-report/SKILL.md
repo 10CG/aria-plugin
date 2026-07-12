@@ -56,7 +56,9 @@ GITHUB_TOKEN / GH_TOKEN?         → GitHub API
 ### Step 2: 自动收集环境信息
 
 ```bash
-PLUGIN_VERSION=$(cat "${CLAUDE_PLUGIN_ROOT}/VERSION" 2>/dev/null | grep -m1 '^[0-9]' || echo "unknown")
+# 版本从 SOT (plugin.json) 读, 不 grep 人类可读快照 (#158: 旧写法 grep -m1 '^[0-9]'
+# 恒命中 VERSION 围栏代码块内的冻结示例串, 所有生成的 issue 版本字段恒错)
+PLUGIN_VERSION=$(jq -r '.version // "unknown"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")
 SKILLS_COUNT=$(find "${CLAUDE_PLUGIN_ROOT}/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
 OS_INFO=$(uname -s -m 2>/dev/null || echo "unknown")
 HAS_CONFIG=$( [ -f ".aria/config.json" ] && echo "yes" || echo "no" )
