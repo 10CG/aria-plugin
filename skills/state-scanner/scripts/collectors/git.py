@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run
+from ._common import CollectorResult, _run, classify_git_error
 
 _COMMIT_LINE = re.compile(r"^([0-9a-f]{7,40})\s+(.*)$")
 
@@ -181,7 +181,8 @@ def _collect_recent_commits(
         ["git", "log", "--oneline", f"-{limit}", "--no-decorate"], project_root
     )
     if rc != 0:
-        r.soft_error("git_log_failed", err.strip())
+        cls = classify_git_error(rc, err, "git log")
+        r.soft_error("git_log_failed", f"git log {cls.label} (rc={cls.rc})")
         return []
     commits: list[dict[str, str]] = []
     for line in out.splitlines():
@@ -353,7 +354,8 @@ def collect_git_state(project_root: Path) -> CollectorResult:
 
     rc, out, err = _run(["git", "status", "--porcelain=v1", "-z"], project_root)
     if rc != 0:
-        r.soft_error("git_status_failed", err.strip())
+        cls = classify_git_error(rc, err, "git status")
+        r.soft_error("git_status_failed", f"git status {cls.label} (rc={cls.rc})")
         data.update(
             staged_files=[], unstaged_files=[], untracked_files=[], uncommitted_count=0
         )

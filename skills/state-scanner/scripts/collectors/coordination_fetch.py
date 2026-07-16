@@ -87,7 +87,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ._common import CollectorResult, _run, log
+from ._common import CollectorResult, _run, classify_git_error, log
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -158,9 +158,6 @@ _CACHE_KEY_REFS: str = "refs"
 # coordination_ref_present (else it would appear only on fetch-runs and disappear
 # on cache-hits → normalize_snapshot two-consecutive-runs drift).
 _CACHE_KEY_COORD_PRESENT: str = "coordination_ref_present"
-
-# git exit code sentinels (from _run convention: rc=127 → command not found)
-_RC_COMMAND_NOT_FOUND: int = 127
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -237,34 +234,22 @@ def _classify_error(rc: int, stderr: str) -> tuple[str, str]:
 
     Callers must have already confirmed rc != 0.
     error_msg is kept short and non-secret (no env var values, no tokens).
+
+    Spec B v5 (option B): the (rc, stderr) → label SIGNAL MAP lives in
+    ``_common.classify_git_error`` as the single SOT — this function DELEGATES to it
+    for the label and keeps ONLY its own "git fetch ..." wording layer here (so the
+    signal map is not duplicated into a third copy — R7 M-2). The wording strings are
+    byte-identical to the pre-delegation implementation, so existing tests are green.
     """
-    if rc == _RC_COMMAND_NOT_FOUND:
+    label = classify_git_error(rc, stderr, "git fetch").label
+    if label == "git_missing":
         return "git_missing", "git command not found in PATH"
-
-    stderr_lower = stderr.lower()
-
-    # Authentication failures (HTTP 401/403 or SSH key rejection)
-    if "403" in stderr or "401" in stderr or "authentication failed" in stderr_lower:
+    if label == "auth_403":
         return "auth_403", f"git fetch authentication error (rc={rc})"
-
-    # Non-fast-forward (someone force-pushed or orphan ref rewound)
-    if "non-fast-forward" in stderr_lower or "rejected" in stderr_lower:
+    if label == "non_ff":
         return "non_ff", f"git fetch rejected / non-fast-forward (rc={rc})"
-
-    # Network-level failures (DNS, TCP, SSL, timeout)
-    network_signals = (
-        "could not resolve",
-        "connection refused",
-        "timed out",
-        "ssl",
-        "network",
-        "unable to connect",
-        "fatal: repository",
-    )
-    if any(sig in stderr_lower for sig in network_signals):
+    if label == "network":
         return "network", f"git fetch network error (rc={rc})"
-
-    # Fall through to generic
     return "other", f"git fetch failed with rc={rc}"
 
 

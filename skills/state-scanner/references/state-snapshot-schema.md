@@ -762,11 +762,15 @@ Persisted in the cache payload so cache-hit / stale-serve paths return a **stabl
 errors: list[{
   collector: str,               # e.g. "git", "sync", "issue_scan"
   error: str,                   # snake_case error kind
-  detail: str                   # human-readable context
+  detail: str                   # human-readable context — for GIT COMMAND failures,
+                                # a bounded classified form "git <cmd> <label> (rc=N)"
+                                # NEVER raw stderr (Rule #7, Spec B typed channel)
 }]
 ```
 
 Every soft_error across all collectors is aggregated here in call order, namespaced by collector name. Exit code 10 fires when this list is non-empty.
+
+**Rule #7 typed channel** (Spec B `state-scanner-snapshot-stderr-secret-leak`): git-command soft errors route their stderr through `_common.classify_git_error(rc, stderr, cmd) → GitErrorClass(label, rc, cmd)` (label ∈ `{network, auth_403, non_ff, git_missing, other}`). `GitErrorClass` has **no stderr field**, so raw git stderr (which for `git fetch` can echo a credential URL) is structurally incapable of reaching `detail`. This also caps the secondary leak where `_run`'s timeout/FileNotFound branches place the argv into the returned stderr string. `issue_scan` keeps its own independent CLI-domain classifier (`issue_scan.py`, OQ-B2 — not merged); `multi_remote` already emits structured `reason` labels (out of scope).
 
 ---
 

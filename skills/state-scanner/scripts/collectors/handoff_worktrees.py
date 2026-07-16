@@ -71,7 +71,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from ._common import CollectorResult, _run, resolve_max_worktrees_scanned
+from ._common import (
+    CollectorResult,
+    _run,
+    classify_git_error,
+    resolve_max_worktrees_scanned,
+)
 from .handoff import (
     _ScanError,
     _resolve_latest,
@@ -137,7 +142,8 @@ def _list_worktrees(project_root: Path) -> tuple[Optional[list[dict]], Optional[
     """
     rc, out, err = _run(["git", "worktree", "list", "--porcelain"], cwd=project_root)
     if rc != 0:
-        return None, f"git worktree list rc={rc}: {err.strip()}"
+        cls = classify_git_error(rc, err, "git worktree list")
+        return None, f"git worktree list {cls.label} (rc={cls.rc})"
 
     worktrees: list[dict] = []
     cur: dict = {}

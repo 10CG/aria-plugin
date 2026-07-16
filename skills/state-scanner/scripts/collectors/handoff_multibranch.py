@@ -68,7 +68,13 @@ from pathlib import Path
 # misinterpreted as a flag. Adding `--` would require a refactor for `git show`'s
 # `<ref>:<path>` syntax (which does not accept `--` between ref and path).
 
-from ._common import CollectorResult, _run, log, resolve_max_branches_scanned
+from ._common import (
+    CollectorResult,
+    _run,
+    classify_git_error,
+    log,
+    resolve_max_branches_scanned,
+)
 from .handoff import parse_handoff_frontmatter
 
 # ---------------------------------------------------------------------------
@@ -143,7 +149,11 @@ def _list_origin_branches(project_root: Path) -> tuple[list[str], str | None]:
     ]
     rc, stdout, stderr = _run(cmd, cwd=project_root, timeout=_GIT_LIST_TIMEOUT)
     if rc != 0:
-        return [], f"git for-each-ref failed (rc={rc}): {stderr.strip()[:200]}"
+        # Internal classification (Spec B v5 R8 C-1): stderr is consumed here and
+        # NOT returned raw — the caller receives a bounded label, so stderr never
+        # escapes this function into snapshot.
+        cls = classify_git_error(rc, stderr, "git for-each-ref")
+        return [], f"git for-each-ref {cls.label} (rc={cls.rc})"
 
     branches: list[str] = []
     for line in stdout.splitlines():
@@ -195,7 +205,10 @@ def _list_handoff_files(project_root: Path, branch: str) -> tuple[list[str], str
         stderr_lower = stderr.lower()
         if "not a tree object" in stderr_lower or "not a valid object" in stderr_lower:
             return [], None  # Branch has no docs/handoff/ tree — silently skip
-        return [], f"git ls-tree failed for {ref} (rc={rc}): {stderr.strip()[:200]}"
+        # benign-skip preserved above (still first, still in-function); only a
+        # NON-benign failure reaches classify_git_error (Spec B v5 R8 C-1 / R7 m-1).
+        cls = classify_git_error(rc, stderr, "git ls-tree")
+        return [], f"git ls-tree failed for {ref} ({cls.label}, rc={cls.rc})"
 
     filenames: list[str] = []
     for line in stdout.splitlines():
@@ -230,7 +243,8 @@ def _read_file_content(
     cmd = ["git", "show", ref]
     rc, stdout, stderr = _run(cmd, cwd=project_root, timeout=_GIT_SHOW_TIMEOUT)
     if rc != 0:
-        return None, f"git show failed for {ref} (rc={rc}): {stderr.strip()[:200]}"
+        cls = classify_git_error(rc, stderr, "git show")
+        return None, f"git show failed for {ref} ({cls.label}, rc={cls.rc})"
     return stdout, None
 
 

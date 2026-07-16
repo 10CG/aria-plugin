@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run
+from ._common import CollectorResult, _run, classify_git_error
 from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 
@@ -147,7 +147,8 @@ def _collect_current_branch(
         project_root,
     )
     if rc != 0:
-        r.soft_error("rev_list_failed", err.strip() or f"rc={rc}")
+        cls = classify_git_error(rc, err, "git rev-list")
+        r.soft_error("rev_list_failed", f"git rev-list {cls.label} (rc={cls.rc})")
         return {
             "name": branch,
             "upstream": upstream,
@@ -229,9 +230,10 @@ def _collect_submodule_entry(
         if len(tok) >= 3:
             entry["tree_commit"] = tok[2][:40]
     else:
+        cls = classify_git_error(rc, err, "git ls-tree")
         r.soft_error(
             "submodule_ls_tree_failed",
-            f"path={path} err={err.strip() or f'rc={rc}'}",
+            f"path={path} err={cls.label} (rc={cls.rc})",
         )
 
     # 2. head_commit via inner `git rev-parse HEAD`
@@ -241,9 +243,10 @@ def _collect_submodule_entry(
         if rc2 == 0 and out2.strip():
             entry["head_commit"] = out2.strip()[:40]
         else:
+            cls = classify_git_error(rc2, err2, "git rev-parse")
             r.soft_error(
                 "submodule_head_failed",
-                f"path={path} err={err2.strip() or f'rc={rc2}'}",
+                f"path={path} err={cls.label} (rc={cls.rc})",
             )
     # else: not checked out — head_commit stays null (uninitialized submodule)
 

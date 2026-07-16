@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.58.0] - 2026-07-16
+
+### Security (Rule #7)
+- **Git-command stderr typed channel** (Spec B `state-scanner-snapshot-stderr-secret-leak`): git stderr can echo a credential URL (a failed `git fetch` prints the remote, whose userinfo may hold a token — Layer-2 aria-runner containers use exactly such URLs); `snapshot["errors"][].detail` is read into the AI conversation, so raw stderr must never reach it. `_common.py` adds `GitErrorClass(label, rc, cmd)` — a frozen dataclass with **no stderr field** — plus `classify_git_error(rc, stderr, cmd)` which consumes stderr into a bounded label (`{network, auth_403, non_ff, git_missing, other}`) and drops it. Once inside a `GitErrorClass` raw stderr is type-level incapable of surviving.
+- All 5 direct passthrough callsites (git.py ×2, sync.py ×3) route through `classify_git_error`; the 4 stderr-baking helpers (handoff_multibranch ×3 — `_list_handoff_files` benign-skip preserved — / handoff_worktrees ×1) classify **internally** so stderr never crosses a function boundary. `coordination_fetch._classify_error` DELEGATES to the shared classifier (byte-identical wording, no third copy).
+- Secondary leak capped: `_run`'s timeout/FileNotFound branches put the argv (fetch's credential URL) into the returned stderr — that string dies in the classifier.
+
+### Added
+- `§3b` signal-table expansion in `_map_git_error_signal`: network + `unable to access` / `failed to connect` / `couldn't connect` / `tls`; auth + `permission denied (publickey)` ONLY (R6-m1 guard: bare local-FS "permission denied" stays `other`, not mislabelled auth).
+- `scripts/lint_stderr_typed_channel.py`: AC-2 best-effort AST lint tracking `_run`'s third return value (denylist: JoinedStr / soft_error / Return). **best-effort, not sound** (option B) — code-review is the authoritative completeness gate; single-level tracer, intermediate-var-transit gaps documented.
+
+### Notes
+- Delivered via two dynamic workflows (blueprint backend-architect+qa-engineer → core main-loop implementation → adversarial review code-reviewer+silent-failure-hunter); 1047 real-green + 1 AC-5-exempt flaky. Landing order C→B→main (C = v1.57.0 shipped); B precedes the main false-parity spec's F3′. SKILL/Agents unchanged (35+7=42, 11 Agents).
+
 ## [1.57.0] - 2026-07-16
 
 ### Added

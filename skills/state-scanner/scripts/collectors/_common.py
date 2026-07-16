@@ -373,3 +373,115 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
         # if the reader thread races and surfaces here, soften to a non-fatal
         # rc rather than letting it propagate to scan.py exit 30.
         return 125, "", f"decode error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Rule #7 typed error classification channel (stderr choke point)
+# ---------------------------------------------------------------------------
+# Spec B (state-scanner-snapshot-stderr-secret-leak, v5 option B): git command
+# stderr can carry secrets (a failed `git fetch` echoes the remote URL, whose
+# userinfo segment may hold an access token — Layer-2 aria-runner containers use
+# exactly such HTTPS-with-embedded-token URLs). snapshot["errors"][].detail is read
+# into the AI conversation, so raw stderr must NEVER reach it (Rule #7).
+#
+# The STRUCTURAL guarantee is narrow and precise: once a stderr string is passed to
+# classify_git_error it CANNOT survive — _map_git_error_signal reads it only to pick a
+# bounded label, then it is dropped, and the returned GitErrorClass has NO stderr field
+# (TYPE-LEVEL incapable of carrying raw stderr). This also caps the secondary leak where
+# _run's TimeoutExpired/FileNotFoundError branches put the argv (which for fetch includes
+# the credential URL) into the returned stderr string: that string dies in
+# classify_git_error; only the hardcoded `cmd` literal (e.g. "git log") and rc survive.
+#
+# What is NOT structurally forced: that every site ACTUALLY routes stderr through this
+# channel. A future author could still write `soft_error(k, err.strip())` and bypass it.
+# That routing invariant is enforced by best-effort means — the AC-2 lint
+# (scripts/lint_stderr_typed_channel.py) plus the Task 3.1b code-review of the site list
+# (Spec B v5 option B: AC-2 is explicitly best-effort, code-review is the authoritative
+# completeness gate). So: "raw stderr cannot live inside a GitErrorClass" is structural;
+# "every site uses a GitErrorClass" is lint + review, not structure.
+#
+# The git CLI-domain signal map lives here as the single SOT. issue_scan.py has its
+# own independent CLI-domain _classify_error for forgejo/gh failures (OQ-B2:
+# intentionally NOT merged — different failure domain, already returns enums, and
+# issue_status.fetch_error is a published schema field). coordination_fetch's
+# _classify_error DELEGATES to classify_git_error(...).label (keeping only its own
+# "git fetch ..." wording layer) so the signal map is not duplicated.
+
+_RC_COMMAND_NOT_FOUND = 127
+
+# Network-level signals (DNS / TCP / TLS / timeout). v5 §3b expansion adds
+# "unable to access" / "failed to connect" / "couldn't connect" / "tls".
+_NETWORK_SIGNALS = (
+    "could not resolve",
+    "connection refused",
+    "timed out",
+    "ssl",
+    "tls",
+    "network",
+    "unable to connect",
+    "unable to access",
+    "failed to connect",
+    "couldn't connect",
+    "fatal: repository",
+)
+
+
+@dataclass(frozen=True)
+class GitErrorClass:
+    """Typed, secret-free classification of a git command failure.
+
+    Deliberately has NO stderr/detail field: once a raw stderr string is passed to
+    classify_git_error it cannot survive into this object, so a GitErrorClass can be
+    safely embedded in snapshot errors / detail strings (Rule #7).
+    """
+
+    label: str
+    rc: int
+    cmd: str
+
+
+def _map_git_error_signal(rc: int, stderr: str) -> str:
+    """(rc, stderr) → bounded label. The ONLY consumer of raw git stderr in the
+    typed channel; the label set is closed to {git_missing, auth_403, non_ff,
+    network, other}. This is a DETERMINISTIC TOTAL FUNCTION, not a mutually-exclusive
+    partition: branches are evaluated in a FIXED first-match order (git_missing → auth
+    → non_ff → network), so a stderr that happens to contain signals for two branches
+    (e.g. a crafted "403 ... could not resolve") is resolved by that order (→ auth_403,
+    R6-m4). The catch-all `other` covers the complement (fail-closed). Order is thus
+    load-bearing on overlapping inputs and must not be reshuffled — locked by
+    test_r6m4_auth_before_network_when_both (memory
+    feedback_predicate_tiers_need_total_partition_proof)."""
+    if rc == _RC_COMMAND_NOT_FOUND:
+        return "git_missing"
+
+    stderr_lower = stderr.lower()
+
+    # Authentication failures (HTTP 401/403 or SSH publickey rejection). R6-m1
+    # guard: match "permission denied (publickey)" ONLY, never bare "permission
+    # denied" (a local FS permission error must not be mislabelled auth_403).
+    if (
+        "403" in stderr
+        or "401" in stderr
+        or "authentication failed" in stderr_lower
+        or "permission denied (publickey)" in stderr_lower
+    ):
+        return "auth_403"
+
+    # Non-fast-forward (force-push / orphan ref rewound)
+    if "non-fast-forward" in stderr_lower or "rejected" in stderr_lower:
+        return "non_ff"
+
+    # Network-level failures
+    if any(sig in stderr_lower for sig in _NETWORK_SIGNALS):
+        return "network"
+
+    # Fail-closed catch-all (covers the complement; consumers treat "other" as a
+    # non-benign / unreachable-remote signal).
+    return "other"
+
+
+def classify_git_error(rc: int, stderr: str, cmd: str) -> GitErrorClass:
+    """Consume (rc, stderr, cmd) → secret-free GitErrorClass. `stderr` is read only
+    to derive the label and is NOT retained; `cmd` MUST be a hardcoded command-name
+    literal (e.g. "git log"), never argv (which could carry a credential URL)."""
+    return GitErrorClass(label=_map_git_error_signal(rc, stderr), rc=rc, cmd=cmd)
