@@ -51,6 +51,11 @@ class TestScanPyDirectInvocation(unittest.TestCase):
             snap = json.loads(out.read_text(encoding="utf-8"))
             self.assertEqual(snap["snapshot_schema_version"], "1.0")
             self.assertEqual(snap["generated_by"], "scan.py")
+            # Spec C: top-level generated_at present, ISO 8601 UTC 'Z' form, and
+            # its addition does NOT bump the schema version (additive field).
+            self.assertRegex(
+                snap["generated_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
+            )
 
     def test_non_git_repo_exit_20(self):
         """Hard precondition: not a git repo → exit 20 (SKILL.md §Exit code contract)."""

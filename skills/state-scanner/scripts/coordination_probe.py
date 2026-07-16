@@ -48,11 +48,16 @@ sentinel into the "normal" branch's format string, producing an
 FALSE GREEN (#95 audit-Critical finding). It now maps to a STALE-class warn
 message + exit 1 — see the ``outcome == "warn"`` branch in ``main()``.
 
-Exit codes (custom-check contract, same as issue-cache-freshness):
+Exit codes (custom-check contract):
   0 — OK  (gate disabled, or ≥1 RECENT production invocation recorded)
   1 — FAIL/WARN (gate enabled but no recent production record → dead-code
       risk; OR the partition exists but could not be read — no longer a
       silent false green)
+
+  This probe uses only the 0/1 subset. The sibling issue-cache-freshness check
+  (Spec C: state-scanner-issue-cache-freshness-assertion) additionally uses
+  exit 2 → "skip" (insufficient data / migration state). custom_checks.py maps
+  rc==2 to a distinct "skip" status; this probe never emits it.
 """
 
 from __future__ import annotations

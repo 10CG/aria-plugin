@@ -21,10 +21,22 @@ Security model (from SKILL.md §1.11):
 - Check failure never aborts the scan.
 
 Exit code mapping (SKILL.md §1.11 step 3):
-- rc == 0              → pass
+- rc == 0, stdout 1st line starts with "##SKIP##" → skip (see below)
+- rc == 0 (otherwise) → pass
 - rc == 124 (timeout)  → timeout
 - rc == 127            → error (command not found)
 - rc otherwise non-zero → fail
+
+Skip status (Spec C AC-5b): a check signals "insufficient data / not-applicable"
+(visible, counted as NEITHER pass NOR fail) by exiting 0 AND making its first
+NON-BLANK stdout line begin with the sentinel "##SKIP##" (leading blank lines and
+leading whitespace are tolerated). A STDOUT MARKER — not an exit
+code — is used deliberately: exit code 2 collides with grep (file not found),
+diff (trouble), and argparse (usage error), so an rc==2→skip mapping would
+silently downgrade an adopter's genuinely-failing check from fail to skip
+(review B-finding). No tool naturally prints "##SKIP##", so the marker cannot be
+triggered by accident. (Distinct from the collector-level "skipped" budget-
+exhaust status below, which a check command cannot itself emit.)
 """
 
 from __future__ import annotations
@@ -39,6 +51,11 @@ from ._common import CollectorResult
 DEFAULT_TIMEOUT_SECONDS = 15
 MAX_TIMEOUT_SECONDS = 60
 TOTAL_BUDGET_SECONDS = 60
+
+# A check signals "skip" (visible, not pass/fail — Spec C AC-5b) by exiting 0 with
+# a first stdout line beginning with this sentinel. Collision-free stdout marker
+# rather than exit code 2 (which grep/diff/argparse use for real errors).
+SKIP_MARKER = "##SKIP##"
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +344,12 @@ def _run_check(
             check=False,
         )
         rc = p.returncode
-        first_line = (p.stdout or "").splitlines()[0] if p.stdout.strip() else ""
+        # First NON-BLANK stdout line (not literally line[0]): a leading blank line
+        # is a common shell-output habit and must not hide the ##SKIP## marker,
+        # which would silently upgrade a skip to pass (review B1-confirm Major).
+        first_line = next(
+            (ln for ln in (p.stdout or "").splitlines() if ln.strip()), ""
+        )
     except subprocess.TimeoutExpired:
         elapsed = time.monotonic() - start
         entry = {
@@ -345,7 +367,8 @@ def _run_check(
     if rc == 127:
         status = "error"
     elif rc == 0:
-        status = "pass"
+        # lstrip so leading whitespace on the marker line still matches.
+        status = "skip" if first_line.lstrip().startswith(SKIP_MARKER) else "pass"
     else:
         status = "fail"
 
@@ -401,6 +424,7 @@ def collect_custom_checks(project_root: Path) -> CollectorResult:
     results: list[dict[str, Any]] = []
     passed = 0
     failed = 0
+    skipped = 0
     budget_remaining = float(TOTAL_BUDGET_SECONDS)
 
     for cdef in check_defs:
@@ -423,8 +447,16 @@ def collect_custom_checks(project_root: Path) -> CollectorResult:
         entry, elapsed = _run_check(cdef, project_root, budget_remaining)
         budget_remaining -= elapsed
         results.append(entry)
-        if entry["status"] == "pass":
+        # Three-branch tally (Spec C AC-5b): "skip" is visible but counted as
+        # neither pass nor fail — a not-applicable / insufficient-data verdict must
+        # not depress the pass rate the way "fail" does. "error"/"timeout" remain in
+        # the failed bucket (unchanged). Consumers must not assume passed+failed==total
+        # (already untrue for collector-level budget "skipped" entries above).
+        status = entry["status"]
+        if status == "pass":
             passed += 1
+        elif status == "skip":
+            skipped += 1
         else:
             failed += 1
 
@@ -433,6 +465,7 @@ def collect_custom_checks(project_root: Path) -> CollectorResult:
         "total": len(results),
         "passed": passed,
         "failed": failed,
+        "skipped": skipped,
         "results": results,
     }
     return r

@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.57.0] - 2026-07-16
+
+### Added
+- **`generated_at` snapshot 顶层字段** (Spec C `state-scanner-issue-cache-freshness-assertion`): scan.py `build_snapshot` 入口捕获 ISO 8601 UTC scan-start 时刻。Additive — `snapshot_schema_version` 仍 `"1.0"`。已在 `normalize_snapshot.TIMESTAMP_KEYS` 打码。
+- **custom_checks `skip` 状态 + `skipped` 计数** (AC-5b): check 打印首个非空 stdout 行以 `##SKIP##` 开头 + exit 0 → status=`skip`（可见，计入 `skipped`，不计入 `failed`）。用 stdout marker 而非 exit 2（避免与 grep/diff/argparse 的错误码撞车，静默把真故障降级 skip）。
+- **`issue_cache_freshness_probe.py`** 可复用探针（仿 `coordination_probe.py`）：`evaluate()` 纯函数可测。
+
+### Changed
+- **`issue-cache-freshness` check 重定义**: 从跨 scan 文件 mtime（Phase 1.11 早于 1.13 重写缓存 → 结构性恒红）改为 lag-1 读上一份 snapshot 内 issue-fetch 健康。**B.2 Phase B review-driven A1 精修**: 原 Δ=generated_at−fetched_at 上界 2×TTL 机制对真实数据近乎无用（collector 1×TTL 门控缓存使 STALE 不可达；fetch 失败 fetched_at=None → 绿真空）；主信号改为「`fetched_at` 缺失（持续 fetch 失败）→ STALE 暴露」，保 AC-2 正交性（瞬时 `fetch_error` + 新鲜 `fetched_at` → OK），Δ 降为次要防御守卫。
+- `m7-fleet-aggregation` CAVEAT-age 文档更新：`snapshot_age` 优先用 `generated_at`，mtime 仅旧 schema fallback。
+
+### Notes
+- 双动态工作流交付（蓝图 backend-architect+qa-engineer → 核心主 loop 亲实现 → 对抗 review code-reviewer+silent-failure-hunter+knowledge-manager → post_impl 确认 review）；1032 tests（1031 real-green + 1 AC-5 豁免 flaky `test_two_consecutive_runs_diff_zero`，非本 cycle 引入）。SKILL/Agents 数不变（35+7=42, 11 Agents）。
+
 ## [1.56.1] - 2026-07-12
 
 ### Fixed: 小票并批 — #158 aria-report 版本抽取 + #101 agent-router 摘要表漂移 (agent team recon + release train)

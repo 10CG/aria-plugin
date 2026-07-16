@@ -16,6 +16,7 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 |---|---|---|---|
 | `snapshot_schema_version` | scan.py constant | required | equality check in SKILL.md |
 | `generated_by` | scan.py `"scan.py"` | required | informational |
+| `generated_at` | scan.py `build_snapshot` entry | required (v-additive) | ISO 8601 UTC `Z` scan-start time; additive → schema stays `"1.0"`. Spec C: issue-cache-freshness lag-1 asserts `generated_at − issue_status.fetched_at ≤ 2×TTL`. Consumers built before this ship use `snap.get("generated_at")` defensive access. |
 | `project_root` | CLI `--project-root` | required | informational |
 | `interrupt` | Phase 0 | required | additive keys OK |
 | `git` | Phase 1 | required | additive keys OK |
@@ -432,14 +433,27 @@ parse_error: str|null           # only when configured=false due to YAML error
 total: int                      # enabled checks actually run
 passed: int
 failed: int
+skipped: int                    # Spec C: count of checks with status=="skip" (below)
 results: list[{
   name: str,
-  status: str,                  # "pass" | "fail" | "timeout" | "error" | "skipped"
+  status: str,                  # "pass" | "fail" | "timeout" | "error" | "skip" | "skipped"
   severity: str,                # "info" | "warning" | "error"
   output: str,                  # stdout first line OR "timeout after Ns" / "rc=N"
   fix: str                      # only present when config provided fix text
 }]
 ```
+
+**Status tokens** (Spec C `state-scanner-issue-cache-freshness-assertion` added `skip`):
+- `pass` (rc 0, no marker) / `fail` (rc non-zero, not 124/127) / `timeout` (124) / `error` (127).
+- `skip` — a check declared insufficient data / not-applicable by printing a first
+  stdout line beginning with `##SKIP##` and exiting 0. **Visible but counted as
+  neither pass nor fail** (AC-5b): tallied in the top-level `skipped` count, kept out
+  of `failed`. A stdout marker (not exit code 2) is used so a real tool error
+  (grep/diff/argparse exit 2) is NOT silently downgraded from `fail` to `skip`.
+- `skipped` (past tense — DISTINCT) — collector-level: a check dropped because the
+  total time budget was exhausted before it ran. Counted in NEITHER `passed`,
+  `failed`, nor `skipped`; appears in `results` with output "total budget exhausted".
+  A check command cannot itself emit `skipped`.
 
 ## `sync_status` (Phase 1.12, T3.2 + T3.3)
 

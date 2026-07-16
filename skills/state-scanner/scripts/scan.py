@@ -52,6 +52,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,13 @@ LOG_LEVEL_CHOICES = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     """Run all collectors and return (snapshot, exit_code)."""
+    # Top-level scan-start timestamp (Spec C: issue-cache-freshness lag-1 assertion).
+    # Captured at entry so it reflects "when this scan started"; issue_status.fetched_at
+    # is stamped later during collect_issue_scan, so a live fetch yields fetched_at >=
+    # generated_at (negative Δ = healthiest signal). ISO 8601 UTC 'Z' form matches
+    # issue_scan._now_iso() for same-format subtraction. Additive field; does NOT bump
+    # snapshot_schema_version (references/state-snapshot-schema.md §Versioning).
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     errors: list[dict[str, Any]] = []
 
     phase0 = collect_interrupt_state(project_root)
@@ -153,6 +161,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     snapshot = {
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
         "generated_by": "scan.py",
+        "generated_at": generated_at,
         "project_root": str(project_root),
         "interrupt": phase0.data,
         "git": phase1_git.data,

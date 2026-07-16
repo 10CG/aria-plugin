@@ -189,5 +189,87 @@ checks:
             self.assertEqual(r.data["results"][0]["status"], "error")
 
 
+class TestSkipStatus(unittest.TestCase):
+    """Spec C AC-5b + B1: a check signals skip via a '##SKIP##' first stdout line
+    (exit 0), NOT exit code 2 (which collides with grep/diff/argparse errors)."""
+
+    def test_skip_marker_maps_to_skip(self):
+        with tmp_project() as root:
+            make_state_checks(
+                root,
+                """version: "1"
+checks:
+  - name: "skips"
+    description: "signals insufficient data"
+    command: "echo '##SKIP## reason'"
+    severity: warning
+""",
+            )
+            r = collect_custom_checks(root)
+            self.assertEqual(r.data["results"][0]["status"], "skip")
+
+    def test_skip_marker_after_leading_blank_line(self):
+        # B1-confirm Major: a leading blank line must NOT hide the marker (which
+        # would silently upgrade skip → pass).
+        with tmp_project() as root:
+            make_state_checks(
+                root,
+                """version: "1"
+checks:
+  - name: "skip-blank-first"
+    description: "blank line then marker"
+    command: "printf '\\n##SKIP## no data\\n'"
+    severity: info
+""",
+            )
+            r = collect_custom_checks(root)
+            self.assertEqual(r.data["results"][0]["status"], "skip")
+
+    def test_exit_2_is_still_fail_not_skip(self):
+        # B1 regression guard: exit 2 (grep/diff/argparse error) must remain FAIL,
+        # NOT be silently downgraded to skip.
+        with tmp_project() as root:
+            make_state_checks(
+                root,
+                """version: "1"
+checks:
+  - name: "tool-error"
+    description: "a real tool error (grep file-not-found style)"
+    command: "exit 2"
+    severity: warning
+""",
+            )
+            r = collect_custom_checks(root)
+            self.assertEqual(r.data["results"][0]["status"], "fail")
+
+    def test_skip_not_counted_as_failed_or_passed(self):
+        with tmp_project() as root:
+            make_state_checks(
+                root,
+                """version: "1"
+checks:
+  - name: "p"
+    description: "pass"
+    command: "echo ok"
+    severity: info
+  - name: "s"
+    description: "skip"
+    command: "echo '##SKIP## no data'"
+    severity: info
+  - name: "f"
+    description: "fail"
+    command: "exit 1"
+    severity: info
+""",
+            )
+            r = collect_custom_checks(root)
+            self.assertEqual(r.data["total"], 3)
+            self.assertEqual(r.data["passed"], 1)
+            self.assertEqual(r.data["failed"], 1)
+            self.assertEqual(r.data["skipped"], 1)
+            statuses = {e["name"]: e["status"] for e in r.data["results"]}
+            self.assertEqual(statuses, {"p": "pass", "s": "skip", "f": "fail"})
+
+
 if __name__ == "__main__":
     unittest.main()
