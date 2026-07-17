@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.59.0] - 2026-07-17
+
+### Added
+- **Main-spec Phase 0 (prereq)** for `state-scanner-stale-refs-false-parity` (v10, Approved): lands the zero-behavior-change foundations for the false-parity fix, shipped independently ahead of the Level-3 core (Phase 1+). No production code path changes yet.
+  - **F5′ `resolve_enforced_remotes`** (`collectors/multi_remote.py`): pure function resolving the enforced-remote set, with the `enforced_remotes: []` → auto-discover-all-remotes trap guard. **INERT** — no call site until Phase 1 F4′.
+  - **`sync_freshness.*` config keys** (`config-loader/DEFAULTS.json`): defaults for the forthcoming freshness window / generation logic.
+  - **D16 predicate-domain-table skeleton** (`state-scanner/references/predicate-domain-table.md`): the mechanized predicate-domain sweep table that turns "同类修复" from discipline into mechanism.
+  - 8 tests pin the foundations (`tests/test_mainspec_phase0.py`); full suite 1072 green. F5′ inertness confirmed (zero call sites) → Rule #6 benchmark N/A (no behavior change to AB-test).
+- SKILL/Agents counts unchanged (35 user-facing + 7 internal = 42, 11 Agents).
+
 ## [1.58.0] - 2026-07-16
 
 ### Security (Rule #7)
