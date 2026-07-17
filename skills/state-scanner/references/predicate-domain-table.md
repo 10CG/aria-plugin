@@ -42,7 +42,10 @@ domain fully partitioned. **Complement default**: value on the unregistered/else
 | `benign_unknown(r)` | 1 (F4′) | two buckets: ① fetch-independent (detached_head/shallow/remote_branch_missing) ② fetch-dependent (`no_local_tracking_ref ∧ 证据资格`) | ✅ | — (it is the allowlist) |
 | `blocking_unknown(r)` | 1 (F4′) | `parity=="unknown" ∧ ¬benign_unknown(r)` | ✅ (complement) | 阻断 (fail-CLOSED) |
 | `has_unpublished_branch(r)` | 1 (F4′) | `parity=="unknown" ∧ reason=="no_local_tracking_ref" ∧ 证据资格(r)` (per-remote) | ✅ | `false` |
+| `_should_stop_admitting(dispatched_count, elapsed, deadline, budget)` | 1 (F3′, scheduling) | `budget is not None` (test seam) ⇒ `dispatched_count ≥ budget`; else (production) ⇒ `elapsed ≥ deadline_seconds` — the SOLE "stop admitting new legs" gate, checked leg-by-leg immediately before `submit()` (sequential admission gate, not post-hoc `cancel_futures`); shared byte-for-byte by both trigger sources (`remote_refresh.py:_should_stop_admitting`) | ✅ (two-branch total: `budget` present/absent) | — (not a fail-open/closed predicate; governs dispatch only, never freshness verdicts) |
 | `gitlink_orphaned(R)` | 2A (F10″/D14) | 8-branch cross-repo reachability; `true ⇒ blocking`; `orphan_unverified` visible + D18 time-escalation | ✅ (8 branches each with a home) | visible + escalate (fail toward visible, then red) |
+
+> **Phase 1 gitlink 占位说明**: `gitlink_orphaned(R)` / `_gitlink_blocking(g)` 的**判定逻辑** (8-branch 横扫) 是 Phase 2A 交付物, **尚未实施**。Phase 1 已落地的是**接线占位**: `multi_remote.py` 的 `_overall_parity` 无条件读取 `gitlink_integrity` 列表并对其中每项调用 `_gitlink_blocking`, 但 Phase 1 生产路径下 `gitlink_integrity` 恒为 `[]` (`collect_multi_remote` 从未填充它) ⇒ `any(_gitlink_blocking(g) for g in [])` 恒为 `False` (空迭代 vacuously true 的裁决安全默认, 符合 F4′ clause 3 "universal-negation, empty-safe" 设计, 与 clause 1 的 positive-evidence 空集陷阱不同)。`_gitlink_blocking` 函数体 (`g.get("status") == "orphaned"`) 已就位, 是 Phase 2A 要消费的**契约接口**, 不是本表新增谓词的完整定义 — 保持登记在上一行, 待 Phase 2A 补全 8-branch 定义后本行状态字段同步更新。
 
 ## Retired predicates (must have zero live references — lock test #4)
 

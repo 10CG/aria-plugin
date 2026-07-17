@@ -113,15 +113,25 @@ AI 负责: 根据 `interrupt.status` 值:
 
 ### 阶段 1: 状态采集 (scan.py 机械产出)
 
-scan.py 按顺序执行 15 个 collector 子阶段, 每个产出 snapshot 一个固定顶层字段 (`git` / `upm` / `changes` / `requirements` / `openspec` / `architecture` / `readme` / `standards` / `audit` / `custom_checks` / `sync_status` / `issue_status` (opt-in) / `forgejo_config` / `handoff` / `handoff_worktrees` (Step 1.15b, #139 cross-worktree discovery) / `coordination_fetch` (Step 1.16, multi-terminal) / `tracks_multibranch` (Step 1.17, multi-terminal) + `errors[]` 聚合)。
+scan.py 按顺序执行 **Phase 0.5 + 15 个 collector 子阶段**, 每个产出 snapshot 一个固定顶层字段
+(`remote_refresh` (**Phase 0.5, F3′, main spec `state-scanner-stale-refs-false-parity`** — 跑在最前面, 新鲜度信号唯一生产者) / `git` / `upm` / `changes` / `requirements` / `openspec` / `architecture` / `readme` / `standards` / `audit` / `custom_checks` / `sync_status` / `issue_status` (opt-in) / `forgejo_config` / `handoff` / `handoff_worktrees` (Step 1.15b, #139 cross-worktree discovery) / `coordination_fetch` (Step 1.16, multi-terminal — **F6′ 起为纯派生 shim, 零独立 I/O, 读 `remote_refresh` 的 `(".", "origin")` leg**) / `tracks_multibranch` (Step 1.17, multi-terminal) + `errors[]` 聚合)。
 
 **Opt-in 子阶段**: 1.11 custom_checks (需 `.aria/state-checks.yaml`) / 1.13 issue_scan (config flag) / 1.12 sync_check (可关闭)。
 
-**AI 职责**: 仅验证 scan.py 退出码, 读 snapshot 传入阶段 2。**不得**手动逐字段解析或补齐。
+**F6′ 可关闭性契约 (`remote_refresh`, D16 registered)**: `remote_refresh` 目前**没有独立的
+enable/disable 配置门** (与 `sync_check`/`issue_scan` 不同) —— 它由 `state_scanner.multi_remote.enforced_remotes`
+间接控制覆盖范围, `enforced_remotes` 解析为空集合 (无 remote 可 fetch, 或全部 `no_matching_remote`)
+时 `remote_refresh.legs == []`。**若采用者未来加装独立开关关闭它** (或 legs 为空), 下游**必须**
+遵守这条不变量: **`remote_refresh` 关闭/无 leg ⇒ 所有 remote 的 `evidence_grade` 落 `expired`
+(fail-CLOSED 默认, `_leg_evidence_grade` 在 `leg=None` 时的语义) ⇒ 所有 `parity=="equal"` 被
+`_apply_freshness_downgrade` 降级为 `unknown/not_refreshed` ⇒ `overall_parity` 恒为 `false`**
+—— 绝不允许"关掉新鲜度信号生产者"反而让下游因为"零输入"而误判为已同步 (QA-C1 不变量: 零证据不得
+当正证据)。该不变量已在 `multi_remote.py::_read_remote_refresh_cache` docstring 写死
+("we have no cache" 与 "we have a cache saying never-fetched" 必须产出同一判决)。
 
-**完整 collector 子阶段表 + opt-in 配置 + Step 1.16/1.17 multi-terminal detail + 子阶段深度参考链接 + TASK-005/006 design decision notes**: 见 [references/phase-1-collectors.md](./references/phase-1-collectors.md)。
+**完整 collector 子阶段表 + opt-in 配置 + Step 0.5/1.16/1.17 detail + 子阶段深度参考链接 + TASK-005/006 design decision notes**: 见 [references/phase-1-collectors.md](./references/phase-1-collectors.md)。
 
-**字段定义 source-of-truth**: [references/state-snapshot-schema.md](./references/state-snapshot-schema.md)。
+**字段定义 source-of-truth**: [references/state-snapshot-schema.md](./references/state-snapshot-schema.md) (`remote_refresh` 为真 SOT; `evidence_grade`/`overall_parity` F4′ 精确定义见该文档 §`multi_remote`)。
 
 ---
 

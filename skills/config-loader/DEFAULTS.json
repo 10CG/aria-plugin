@@ -57,7 +57,10 @@
       "enabled": true,
       "verify_mode": "local_refs",
       "timeout_seconds": 15,
-      "enforced_remotes": null
+      "enforced_remotes": null,
+      "refresh_deadline_seconds": 15,
+      "per_host_fetch_limit": 4,
+      "fetch_timeout_seconds": 30
     },
 
     "sync_freshness": {

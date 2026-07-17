@@ -455,6 +455,59 @@ results: list[{
   `failed`, nor `skipped`; appears in `results` with output "total budget exhausted".
   A check command cannot itself emit `skipped`.
 
+## `remote_refresh` (Phase 0.5, F3′ — main spec `state-scanner-stale-refs-false-parity`)
+
+**真 SOT**: 本区块是新鲜度信号的唯一生产者 — "新鲜度靠获取, 不靠测量" (proposal §核心洞察)。
+`multi_remote.evidence_grade` / `coordination_fetch` 均是**本区块的派生消费者**, 不独立生产
+新鲜度判断 (F6′, 见下 `coordination_fetch` 段落标注)。Phase 0.5 跑在 `collect_git_state` 之前
+(`scan.py`), 保证同一份 snapshot 内 `git.upstream.behind` 与 `sync_status.current_branch`
+不会互相矛盾 (tasks 3.9)。
+
+```yaml
+remote_refresh:
+  legs: list[{
+    repo: str,                    # "." for main repo, relative path for submodule
+    remote: str,
+    host: str | null,             # resolved hostname (Rule #7: never a credential URL)
+    fetched_at: str | null,       # ISO 8601 UTC, seconds precision; null = never fetched
+    fetch_ok: str,                # three-state: "true" | "false" | "not_attempted"
+    error_kind: str | null,       # Rule #7 typed label (network|auth_403|non_ff|git_missing|other); never raw stderr
+    scan_generation: int | null,  # this scan's monotonic generation counter
+    generation_fetched: int | null,  # generation at which THIS leg last truly succeeded (Fetch 1)
+    consecutive_unverified: int,  # pass-through cache counter; increment/reset owned by F1′/F4′ (multi_remote.py), not this collector
+    coordination_ref_present: bool | null  # non-null ONLY for the (".", "origin") leg
+  }]
+  skipped_count: int              # legs cut by refresh_deadline_seconds this scan
+  skipped_remotes: list[{repo: str, remote: str, reason: "deadline"}]
+  no_matching_remotes: list[{repo: str, remote: str}]   # only present when non-empty (RM-3/F5′: configured-but-absent remote NAMES, never a ghost fetch leg)
+```
+
+**`fetch_ok` 三态语义**: `"true"` = Fetch 1 (branch heads, `--prune`) 本轮真成功;
+`"false"` = 真的试了但失败 (`has_unreachable_remote` 只看这个值, 与 `error_kind`
+取值无关 — 零枚举 fail-CLOSED); `"not_attempted"` = 被 `refresh_deadline_seconds`
+砍掉, **不等于** `"false"` ("我们没去问" ≠ "对方不可达") —— 该 leg 的 `fetched_at`
+不推进, 但也不触发 `has_unreachable_remote`。
+
+**调度模型** (`remote_refresh.py` 模块 docstring): 每 host 一个
+`ThreadPoolExecutor`, host 桶按**解析后的 hostname** 去重 (`_common.resolve_remote_host`),
+不按 remote 名字个数; 派发用**顺序准入闸门** (`_should_stop_admitting`, 见
+predicate-domain-table.md), 已准入的 leg 保证跑完, 从不被事后 `cancel_futures` 砍;
+派发顺序按 `fetched_at` 升序 (never-fetched 最优先), 防止固定 deadline 每次饿死
+同一批 leg (3.5b 防饥饿)。
+
+**缓存** (`.aria/cache/remote-refresh.json`): 顶层 `{scan_generation: int, legs: {"<repo>::<remote>": {...}}}`,
+主线程 read-merge-atomic-write (tmp+rename), `scan_generation` 用 `max(disk, mine)` 单调钳位
+(RM-6b, 防并发写者互相倒退)。
+
+**config** (`.aria/config.json` → `state_scanner.multi_remote`, 与 `multi_remote` collector
+共用同一命名空间, 无独立配置门): `refresh_deadline_seconds` (默认 15) /
+`per_host_fetch_limit` (默认 4, 非法值 clamp 到 ≥1) / `fetch_timeout_seconds` (默认 30)。
+
+**offline / test seams**: `ARIA_SCAN_OFFLINE` → 每条 leg 报 `not_attempted`,
+`fetched_at` 不推进, `scan_generation` 不递增 (9.7 offline 冻结, 跨次 offline scan 字节稳定),
+无缓存写入。`ARIA_SCAN_FETCH_BUDGET` → 用 `dispatched_count` 门槛替代墙钟 deadline
+(测试专用, 走与生产同一 `_should_stop_admitting` 代码路径)。
+
 ## `sync_status` (Phase 1.12, T3.2 + T3.3)
 
 ```yaml
@@ -498,10 +551,14 @@ multi_remote:
     branch: str|null,
     remotes: list[RemoteEntry]
   }]
-  overall_parity: bool          # see 精确定义 below
+  overall_parity: bool          # see 精确定义 below (F4′ v8, 已取代下方 post-QA-C1 旧定义)
   has_unreachable_remote: bool
   has_pending_push: bool
-  local_refs_stale: bool        # only emitted when FETCH_HEAD age > warn_after_hours
+  local_refs_stale: bool        # RETIRED (F2′, Phase 1) — FETCH_HEAD mtime is repo-global,
+                                 #   structurally unusable as a per-remote signal; field kept
+                                 #   for backward-compat readers but collector no longer emits
+                                 #   a meaningful value (superseded by `evidence_grade` below)
+  gitlink_integrity: list[{...}]  # Phase 2A (F10″/D14) — always [] in Phase 1 (vacuous)
 
 RemoteEntry:
   name: str
@@ -510,17 +567,51 @@ RemoteEntry:
   behind_count: int|null
   ahead_count: int|null
   reachable: bool
-  reason: str|null              # enum: null | "auth_failed" | "not_found" | "network_timeout" | "no_local_tracking_ref" | "remote_branch_missing" | "parse_error" | "shallow_clone" | "detached_head"
+  reason: str|null              # enum: null | "auth_failed" | "not_found" | "network_timeout" | "no_local_tracking_ref" | "remote_branch_missing" | "parse_error" | "shallow_clone" | "detached_head" | "not_refreshed"
   method: str                   # enum: "local_refs" | "ls_remote"
+  evidence_grade: str            # D20 三值 "fresh" | "stale_unverified" | "expired" — F1′/F4′ 从
+                                  #   `remote_refresh` (Phase 0.5) 的 fetched_at/generation_fetched/
+                                  #   consecutive_unverified 联接而来 (multi_remote.py `_leg_evidence_grade`)。
+                                  #   独立字段, 从不折进 `reason` (折进去会被 blocking_unknown 补集误判)
+  fetch_ok: str                  # "true" | "false" | "not_attempted" — F3′ leg 直接透传
 ```
 
-### `overall_parity` 精确定义 (post-QA-C1 + BA-R1-C1)
+### `evidence_grade` 三值定义 (D20, Phase 1 — 取代旧单谓词 `可信(r)`)
 
-- `true`: **至少一个** remote 的 `parity == equal` AND no remote has `parity ∈ {behind, diverged}`
-- `false`: zero `equal` evidence OR any `parity ∈ {behind, diverged}`
-- **zero-info inputs** (all unknown / empty list / not-a-git-repo) → `false`
-- `parity: ahead` 不计入 `overall_parity` (→ `has_pending_push`)
-- `parity: unknown` 不计入 `equal` 证据 (→ `has_unreachable_remote` when network-class)
+`evidence_grade` 是每个 `RemoteEntry` 的**独立字段** (不进 `reason` 枚举), 由
+`multi_remote.py::_evidence_grade(evidence_eligible, exemption_eligible)` 计算, 双谓词
+均消费 `remote_refresh` (Phase 0.5) 的联接数据 (registered in predicate-domain-table.md D16):
+
+- `fresh` — **证据资格 (E)** 成立: `fetched_at ≠ null ∧ (now − fetched_at) ≤ evidence_window (默认 1h)`。
+  可作为 `overall_parity` ∃-子句的正证据。
+- `stale_unverified` — `¬E ∧` **豁免资格 (X)** 成立: 代际/墙钟/连续未验证次数均在允许范围内
+  (`generation_age ≤ k_eff ∧ wall ≤ hard_cap[默认7d] ∧ consecutive_unverified < k_eff`)。
+  诊断性中间态: 可见, **不作证, 不阻断** —— `parity` 仍显示 `equal` 但不满足 ∃-子句。
+- `expired` — `¬E ∧ ¬X`: **阻断态** (fail-CLOSED)。若原 `parity == "equal"`, 会被
+  `_apply_freshness_downgrade` 改写为 `parity: "unknown"` + `reason: "not_refreshed"` —
+  绝不允许一个双重陈旧的 `equal` 冒充正证据 (本 Spec 要修的 14h 事故的根)。
+
+三档**全分割** (D16 lock test 3: 两两互斥 ∪ 全覆盖 E×X 定义域), `evidence_eligible`
+优先 (`if E: fresh` 结构本身即互斥性证明, 见 `_evidence_grade` docstring)。
+
+### `overall_parity` 精确定义 (F4′ v8, D15′+D20 — main spec `state-scanner-stale-refs-false-parity`, SUPERSEDES 下方 post-QA-C1 旧 4 条)
+
+四子句, **全部满足才为 `true`** (`multi_remote.py::_overall_parity`):
+
+1. `enforced_set ≠ ∅` (守卫 `all([])` 的 vacuous-true 陷阱)
+2. `∃ r: parity == equal ∧ evidence_grade == "fresh"` — **两者都要** (仅 `parity == equal`
+   不够: `stale_unverified` 的 `equal` 不算正证据, 否则复活 14h 事故)
+3. `∀ R ∈ gitlink_integrity: ¬gitlink_blocking(R)` (Phase 1 恒 `gitlink_integrity=[]`,
+   全称否定对空集天然为真, 与子句 1 的正向存在性空集陷阱不同; Phase 2A 补全)
+4. `∀ r: parity ∉ {behind, diverged} ∧ ¬blocking_unknown(r)`
+
+- `false`: 上述任一子句不满足
+- `parity: ahead` 不计入 `overall_parity` (→ `has_pending_push`, 无变更)
+- `parity: unknown` 不计入证据 (`has_unreachable_remote` 现在**只**看 `fetch_ok == "false"`
+  三态, 不再按 `reason` 正向枚举 "network 类" — 零枚举 fail-CLOSED, F1′ v6 修正)
+
+> **旧 post-QA-C1 定义已被 F4′ 取代** (保留于下方仅供历史对照, worked examples 中
+> `has_unreachable_remote` 列的 "network-class" 措辞已过时 — 现行判据见上)。
 
 **Worked examples** (closes BA-R2-M2):
 
@@ -722,7 +813,18 @@ global_latest_elsewhere: dict | null  # non-null ONLY when the global latest liv
 
 **Single-worktree no-op**: one worktree → `enumerated=true, worktree_count=1, others=[], global_latest_elsewhere=null` (zero behavioural change).
 
-## `coordination_fetch` (Phase 1.16, multi-terminal-coordination)
+## `coordination_fetch` (Phase 1.16, multi-terminal-coordination) — **派生, SOT 见 `remote_refresh`**
+
+> **F6′ (Phase 1 增量 5) 起, 本区块不再独立发起网络 I/O。** 所有 fetch 调度已迁移到
+> Phase 0.5 `remote_refresh` (见上); 本区块现在是一个**纯派生函数**
+> (`coordination_fetch.py::derive_legacy_coordination_fetch_block`) 的输出 — 只读取
+> `remote_refresh` 的 `(".", "origin")` leg 记录, 按下方字段映射重算出 byte-compatible
+> 的旧 schema, 供 `track_board.py` / `normalize_snapshot.py` 等既有消费者不改代码继续读。
+> **"新鲜与否"完全继承自 `remote_refresh` 的 per-leg `fetched_at`/`fetch_ok`** — 不再有
+> 「两个独立 TTL 缓存互相打架」的可能 (F6′ 存在的理由)。字段映射公式 (SOT, 勿在别处重发明):
+> `success := fetch_ok=="true"`; `degraded := served_stale_cache := (fetch_ok=="false" ∧ 有旧 fetched_at)`;
+> `cached := served_stale_cache ∨ (fetch_ok=="not_attempted" ∧ 有旧 fetched_at)` (被 deadline 砍掉
+> 但仍有可用旧值 ⇒ "cached 但不 degraded", 不会显红)。
 
 ```yaml
 success: bool                   # Reflects FETCH 1 (branch heads, load-bearing);
