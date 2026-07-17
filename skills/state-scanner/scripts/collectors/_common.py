@@ -15,8 +15,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
+import urllib.parse
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -485,3 +488,115 @@ def classify_git_error(rc: int, stderr: str, cmd: str) -> GitErrorClass:
     to derive the label and is NOT retained; `cmd` MUST be a hardcoded command-name
     literal (e.g. "git log"), never argv (which could carry a credential URL)."""
     return GitErrorClass(label=_map_git_error_signal(rc, stderr), rc=rc, cmd=cmd)
+
+
+# ---------------------------------------------------------------------------
+# F3′ (main spec stale-refs-false-parity, Phase 1) — deterministic test seams
+# ---------------------------------------------------------------------------
+# remote_refresh's concurrency / deadline / freshness logic needs deterministic
+# injection points because under mock `_run` every fetch returns instantly, so
+# the real wall-clock deadline and the real UTC clock cannot reproduce the states
+# these fixtures must construct (a deadline-cut leg, a 14h-stale fetched_at, a
+# sparse rotation rhythm). Three env seams (v9 8M-13) + one Rule #7 safe host
+# resolver. These are READ-ONLY probes of os.environ — deliberately NOT part of
+# the .aria/config.json layered resolvers above (they are test/CI seams, not user
+# knobs, so they must not be silently settable via a committed config file).
+
+ARIA_SCAN_NOW_ENV = "ARIA_SCAN_NOW"
+ARIA_SCAN_OFFLINE_ENV = "ARIA_SCAN_OFFLINE"
+ARIA_SCAN_FETCH_BUDGET_ENV = "ARIA_SCAN_FETCH_BUDGET"
+
+_OFFLINE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def scan_now() -> datetime:
+    """Return 'now' as a tz-aware UTC datetime, honoring ``ARIA_SCAN_NOW``.
+
+    Every freshness / generation-age / priority-ordering computation MUST read the
+    current time through this single injection point (never a bare
+    ``datetime.now()`` / ``time.time()``) so tests can pin a deterministic 'now'
+    via ``ARIA_SCAN_NOW=<ISO 8601>``. Fail-soft: an unset, empty, or unparseable
+    override falls back to the real UTC clock — a malformed override never crashes
+    a scan. A naive (offset-less) override is interpreted as UTC.
+    """
+    raw = os.environ.get(ARIA_SCAN_NOW_ENV, "")
+    if raw.strip():
+        try:
+            dt = datetime.fromisoformat(raw.strip())
+        except (ValueError, TypeError):
+            dt = None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+    return datetime.now(timezone.utc)
+
+
+def is_scan_offline() -> bool:
+    """True when ``ARIA_SCAN_OFFLINE`` is set to a truthy value (1/true/yes/on).
+
+    Offline mode short-circuits every network fetch (remote_refresh legs emit
+    ``fetch_ok="not_attempted"`` without advancing ``fetched_at``; issue_scan
+    forces its cache path) so two consecutive scans over a frozen environment
+    produce byte-identical snapshots (9.7 stability freeze). Any other value
+    (unset / 0 / false) → online. Case-insensitive, surrounding whitespace ignored.
+    """
+    return os.environ.get(ARIA_SCAN_OFFLINE_ENV, "").strip().lower() in _OFFLINE_TRUTHY
+
+
+def fetch_budget_override() -> int | None:
+    """Return the ``ARIA_SCAN_FETCH_BUDGET`` leg cap, or None when unset/invalid.
+
+    Test seam ONLY (not a production knob). Under mock ``_run`` every leg returns
+    instantly, so the production wall-clock deadline never fires and the
+    "deadline cut some legs" state is unconstructable. This override caps how many
+    legs the scheduler admits (stop-admitting after N dispatched) through the SAME
+    stop → cancel → cache-writeback path the production deadline drives — never a
+    parallel path (memory
+    feedback_noop_in_test_env_hardening_needs_mechanism_assertion). Unset, empty,
+    non-numeric, or ``<= 0`` → None (no override; the production deadline governs).
+    ``bool`` is rejected (``True`` must not read as budget 1).
+    """
+    raw = os.environ.get(ARIA_SCAN_FETCH_BUDGET_ENV, "")
+    if not raw.strip():
+        return None
+    try:
+        val = int(raw.strip())
+    except (ValueError, TypeError):
+        return None
+    return val if val > 0 else None
+
+
+def resolve_remote_host(repo_dir: Path, remote: str, timeout: int = 5) -> str | None:
+    """Resolve a remote's hostname via ``git remote get-url``. Rule #7 SAFE.
+
+    Returns ONLY the bare hostname (e.g. ``"github.com"``), NEVER the full URL — an
+    HTTPS remote URL can embed credentials (``https://user:TOKEN@host/...``; Layer-2
+    aria-runner containers use exactly such URLs) and this function's output flows
+    into snapshot fields, per-host concurrency bucketing, and logs. On any failure
+    (rc != 0, empty output, unparseable URL) returns None; the raw URL — and thus any
+    embedded credential — is never returned, logged, or surfaced.
+
+    Handles three URL forms:
+      - ``scheme://[user[:pw]@]host[:port]/path``  (https / ssh / git — urlsplit)
+      - ``[user@]host:org/repo.git``               (scp-like, no scheme — regex)
+    """
+    rc, out, _ = _run(
+        ["git", "remote", "get-url", remote], cwd=repo_dir, timeout=timeout
+    )
+    if rc != 0:
+        return None
+    first = out.strip().splitlines()[0].strip() if out.strip() else ""
+    if not first:
+        return None
+    if "://" in first:
+        try:
+            host = urllib.parse.urlsplit(first).hostname
+        except (ValueError, TypeError):
+            return None
+        return host or None
+    # scp-like: [user@]host:path — host is between optional 'user@' and the ':'
+    m = re.match(r"^(?:[^@/]+@)?([^:/]+):", first)
+    if m:
+        return m.group(1) or None
+    return None
