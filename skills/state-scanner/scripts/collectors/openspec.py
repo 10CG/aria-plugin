@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import re
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult
+from ._common import CollectorResult, scan_now
 from ._status import (
     _STATUS_HEAD_MAX_CHARS,
     _extract_status,
@@ -153,7 +152,11 @@ def _staleness_days(proposal: Path, proposal_text: str) -> int:
             ts = proposal.stat().st_mtime
         except OSError:
             return 0
-    return max(0, int((time.time() - ts) / 86400))
+    # 9.7 wall-clock face: scan_now() honors ARIA_SCAN_NOW instead of the real
+    # system clock (day-granularity, so this only matters at a day-boundary edge —
+    # but that edge is exactly the kind of environment-dependent flake 9.7 exists
+    # to close for a frozen offline scan).
+    return max(0, int((scan_now().timestamp() - ts) / 86400))
 
 
 def collect_openspec(project_root: Path) -> CollectorResult:

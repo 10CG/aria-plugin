@@ -11,7 +11,7 @@ Invariants (do not break without a snapshot_schema_version bump):
 - All public collector functions are re-exported here for a single import point.
 """
 
-from ._common import CollectorResult, log
+from ._common import CollectorResult, log, scan_now
 from .architecture import collect_architecture
 from .audit import collect_audit
 from .changes import collect_changes_analysis
@@ -36,6 +36,7 @@ from .upm import collect_upm_state
 __all__ = [
     "CollectorResult",
     "log",
+    "scan_now",
     "collect_architecture",
     "collect_audit",
     "collect_changes_analysis",

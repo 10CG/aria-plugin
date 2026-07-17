@@ -66,7 +66,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +93,7 @@ from collectors import (
     collect_upm_state,
     derive_legacy_coordination_fetch_block,
     log,
+    scan_now,
 )
 
 SNAPSHOT_SCHEMA_VERSION = "1.0"
@@ -113,7 +114,13 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     # generated_at (negative Δ = healthiest signal). ISO 8601 UTC 'Z' form matches
     # issue_scan._now_iso() for same-format subtraction. Additive field; does NOT bump
     # snapshot_schema_version (references/state-snapshot-schema.md §Versioning).
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Routed through scan_now() (9.7 wall-clock face) — honors ARIA_SCAN_NOW so a
+    # frozen-clock scan never derives a timestamp from the real system clock.
+    # astimezone(utc) first: scan_now() honors an ARIA_SCAN_NOW override that may
+    # carry a non-UTC offset (naive overrides are already coerced to UTC, but an
+    # explicit-offset override is returned verbatim) — the 'Z' suffix below is only
+    # honest once the instant is normalized to UTC.
+    generated_at = scan_now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     errors: list[dict[str, Any]] = []
 
     phase0 = collect_interrupt_state(project_root)

@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import collectors.issue_scan as issue_scan_mod
 from _helpers import tmp_project, tmp_repo, write_file
 from collectors.issue_scan import (
     DEFAULT_CONFIG,
@@ -667,6 +668,176 @@ class TestCollectorEndToEnd(unittest.TestCase):
         # Submodule's owner/repo can be extracted but platform unknown
         self.assertIn("foo/sub", repos)
         self.assertEqual(repos["foo/sub"]["fetch_error"], ERR_PLATFORM_UNKNOWN)
+
+
+class TestOfflineFreeze(unittest.TestCase):
+    """Increment 6 — 9.7 offline freeze: network face + cache-state face for
+    issue_scan (`ARIA_SCAN_OFFLINE`), mirroring `test_remote_refresh.py`'s
+    `TestOfflineFreeze` pattern (`mock.patch.object(<module>, "is_scan_offline",
+    return_value=True)`)."""
+
+    def _enable_config(self, root: Path, **overrides) -> None:
+        cfg = {
+            "state_scanner": {
+                "issue_scan": {
+                    "enabled": True,
+                    "platform": "forgejo",
+                    "scan_submodules": False,
+                    **overrides,
+                }
+            }
+        }
+        write_file(root / ".aria" / "config.json", json.dumps(cfg))
+
+    def test_offline_cold_cache_never_attempts_live_fetch(self):
+        """Cache miss (cold cache) + offline ⇒ fail-soft `unavailable`/
+        `network_unavailable`, never a live fetch — even though the mocked `_run`
+        table WOULD have served a successful live response if called (proves the
+        offline gate short-circuits before the fetch site, not that the fetch
+        happens to fail)."""
+        body = json.dumps([{"number": 1, "title": "x", "labels": [], "html_url": "/1"}])
+        with tmp_repo() as repo:
+            self._enable_config(repo)
+            run_table = {
+                ("git", "remote", "get-url", "origin"): (
+                    0, "https://forgejo.10cg.pub/foo/bar.git\n", ""
+                ),
+                ("forgejo", "GET", "/repos/foo/bar/issues?state=open&type=issues&limit=20"): (
+                    0, body, ""
+                ),
+            }
+            with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
+                with mock.patch(
+                    "collectors.issue_scan.shutil.which", return_value="/usr/bin/forgejo"
+                ):
+                    with mock.patch.object(
+                        issue_scan_mod, "is_scan_offline", return_value=True
+                    ):
+                        r = collect_issue_scan(repo)
+            cache_file = repo / ".aria" / "cache" / "issues.json"
+            self.assertFalse(cache_file.exists(), "offline scan must not write cache")
+        st = r.data["issue_status"]
+        self.assertEqual(st["source"], "unavailable")
+        self.assertEqual(st["fetch_error"], ERR_NETWORK_UNAVAILABLE)
+        self.assertEqual(st["open_count"], 0)
+
+    def test_offline_fresh_cache_hit_still_served(self):
+        """A cache HIT is still served offline — offline disables LIVE fetches,
+        not reads of an already-fresh cache."""
+        with tmp_repo() as repo:
+            self._enable_config(repo)
+            cache_file = repo / ".aria" / "cache" / "issues.json"
+            write_file(cache_file, json.dumps({
+                "schema_version": "1.1",
+                "fetched_at": _now_iso(),
+                "ttl_seconds": 900,
+                "scan_submodules": False,
+                "platform": "forgejo",
+                "open_count": 1,
+                "items": [{"number": 99, "title": "cached", "labels": [], "url": "x"}],
+                "open_issues": [],
+                "label_summary": {},
+                "repos": {
+                    "foo/bar": {
+                        "platform": "forgejo",
+                        "source": "live",
+                        "fetch_error": None,
+                        "fetched_at": _now_iso(),
+                        "open_count": 1,
+                        "items": [{"number": 99, "title": "cached", "labels": [], "url": "x"}],
+                    }
+                },
+            }))
+            run_table = {
+                ("git", "remote", "get-url", "origin"): (
+                    0, "https://forgejo.10cg.pub/foo/bar.git\n", ""
+                ),
+            }
+            with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
+                with mock.patch(
+                    "collectors.issue_scan.shutil.which", return_value="/usr/bin/forgejo"
+                ):
+                    with mock.patch.object(
+                        issue_scan_mod, "is_scan_offline", return_value=True
+                    ):
+                        r = collect_issue_scan(repo)
+        st = r.data["issue_status"]
+        self.assertEqual(st["source"], "cache")
+        self.assertEqual(st["items"][0]["number"], 99)
+
+    def test_offline_submodule_cold_cache_same_treatment(self):
+        with tmp_repo() as repo:
+            (repo / "sub").mkdir()
+            (repo / "sub" / ".git").write_text("gitdir: ../.git/modules/sub\n")
+            self._enable_config(repo, scan_submodules=True)
+
+            def fake_run(cmd, cwd, timeout=5):
+                cmd_t = tuple(cmd)
+                if cmd_t == ("git", "remote", "get-url", "origin"):
+                    if str(cwd).endswith("/sub"):
+                        return (0, "https://forgejo.10cg.pub/foo/sub.git\n", "")
+                    return (0, "https://forgejo.10cg.pub/foo/bar.git\n", "")
+                # The API endpoints below are deliberately mocked to SUCCEED —
+                # asserting the offline gate short-circuits before either is
+                # ever reached, not that the fetch happens to fail.
+                if cmd_t == ("forgejo", "GET", "/repos/foo/bar/issues?state=open&type=issues&limit=20"):
+                    return (0, "[]", "")
+                if cmd_t == ("forgejo", "GET", "/repos/foo/sub/issues?state=open&type=issues&limit=20"):
+                    return (0, "[]", "")
+                return (1, "", f"unmocked: {' '.join(cmd)}")
+
+            with mock.patch("collectors.issue_scan._run", side_effect=fake_run):
+                with mock.patch(
+                    "collectors.issue_scan.shutil.which", return_value="/usr/bin/forgejo"
+                ):
+                    with mock.patch(
+                        "collectors.issue_scan._enumerate_submodule_paths",
+                        return_value=["sub"],
+                    ):
+                        with mock.patch.object(
+                            issue_scan_mod, "is_scan_offline", return_value=True
+                        ):
+                            r = collect_issue_scan(repo)
+        repos = r.data["issue_status"]["repos"]
+        self.assertEqual(repos["foo/bar"]["source"], "unavailable")
+        self.assertEqual(repos["foo/bar"]["fetch_error"], ERR_NETWORK_UNAVAILABLE)
+        self.assertEqual(repos["foo/sub"]["source"], "unavailable")
+        self.assertEqual(repos["foo/sub"]["fetch_error"], ERR_NETWORK_UNAVAILABLE)
+
+    def test_now_iso_honors_aria_scan_now(self):
+        with mock.patch.dict(
+            issue_scan_mod.os.environ,
+            {"ARIA_SCAN_NOW": "2026-07-17T15:00:00+00:00"},
+        ):
+            self.assertEqual(_now_iso(), "2026-07-17T15:00:00Z")
+
+    def test_lookup_cached_repo_ttl_honors_aria_scan_now(self):
+        """TTL freshness must be decided against `ARIA_SCAN_NOW`, not the real
+        wall clock — the same cache entry is fresh at one pinned instant and
+        expired at another, purely by moving the injected clock (9.7 wall-clock
+        face)."""
+        cache = {
+            "repos": {
+                "foo/bar": {
+                    "platform": "forgejo",
+                    "source": "cache",
+                    "fetch_error": None,
+                    "fetched_at": "2026-07-17T15:00:00+00:00",
+                    "open_count": 0,
+                    "items": [],
+                }
+            }
+        }
+        with mock.patch.dict(
+            issue_scan_mod.os.environ,
+            {"ARIA_SCAN_NOW": "2026-07-17T15:05:00+00:00"},  # +5min, well inside 900s TTL
+        ):
+            self.assertIsNotNone(_lookup_cached_repo(cache, "foo/bar", 900))
+        with mock.patch.dict(
+            issue_scan_mod.os.environ,
+            {"ARIA_SCAN_NOW": "2026-07-17T15:30:00+00:00"},  # +30min, past 900s TTL
+        ):
+            self.assertIsNone(_lookup_cached_repo(cache, "foo/bar", 900))
 
 
 if __name__ == "__main__":

@@ -39,7 +39,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _parse_env_forgejo_hosts, _run, log
+from ._common import (
+    CollectorResult,
+    _parse_env_forgejo_hosts,
+    _run,
+    is_scan_offline,
+    log,
+    scan_now,
+)
 from .git import _enumerate_submodule_paths
 
 # ----- Constants ------------------------------------------------------------
@@ -251,7 +258,11 @@ def _parse_iso8601(ts: str) -> float | None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # 9.7 wall-clock face: routed through scan_now() so ARIA_SCAN_NOW pins this
+    # collector's "now" instead of the real system clock. astimezone(utc) first —
+    # scan_now() may return a non-UTC-offset override verbatim (only a naive
+    # override is coerced to UTC) and the 'Z' suffix is only honest post-normalize.
+    return scan_now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _read_cache(path: Path) -> dict[str, Any] | None:
@@ -583,6 +594,17 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
     enabled: full `issue_status` dict matching SKILL.md §阶段 1.13 schema.
 
     Never raises; all failures surface as `fetch_error` + `soft_error`.
+
+    Test seams (`_common.py`, 9.7 offline stability freeze, honored here):
+      - `ARIA_SCAN_OFFLINE` — every cache miss (cold cache / expired TTL) is
+        fail-soft (`source="unavailable"`, `fetch_error="network_unavailable"`)
+        instead of attempting a live fetch; a cache HIT is still served (offline
+        does not disable reading an already-fresh cache). No cache write follows
+        an offline scan (`did_live_work` is never true when every live-fetch site
+        is gated).
+      - `ARIA_SCAN_NOW` — every `fetched_at` stamp (`_now_iso()`) and every TTL
+        freshness decision (`_lookup_cached_repo`) reads "now" through
+        `scan_now()`, never the real system clock.
     """
     r = CollectorResult()
     cfg = _load_config(project_root)
@@ -633,6 +655,13 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
             if cached_entry is not None:
                 main_entry = cached_entry
                 main_entry["source"] = "cache"
+            elif is_scan_offline():
+                # 9.7 network face: offline never attempts a live fetch, even on a
+                # cache miss/cold cache — fail-soft the same shape as any other
+                # network-unavailable outcome. No cache write follows (see
+                # `did_live_work` below, gated on source=="live").
+                r.soft_error(ERR_NETWORK_UNAVAILABLE, f"repo={main_key} (offline)")
+                main_entry = _build_empty_repo_entry(main_platform, ERR_NETWORK_UNAVAILABLE)
             else:
                 per_call_timeout = max(1, min(api_timeout, int(_budget_left()) or 1))
                 items, ferr, source = _fetch_repo(
@@ -694,6 +723,13 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
             if cached_entry is not None:
                 cached_entry["source"] = "cache"
                 repos[sub_owner_repo] = cached_entry
+                continue
+            if is_scan_offline():
+                # 9.7 network face — see main-repo pass comment above.
+                repos[sub_owner_repo] = _build_empty_repo_entry(
+                    sub_platform, ERR_NETWORK_UNAVAILABLE
+                )
+                r.soft_error(ERR_NETWORK_UNAVAILABLE, f"repo={sub_owner_repo} (offline)")
                 continue
             per_call_timeout = max(1, min(api_timeout, int(_budget_left()) or 1))
             items, ferr, source = _fetch_repo(
@@ -760,7 +796,11 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
     did_live_work = any(
         e.get("source") == "live" for e in repos.values()
     )
-    if did_live_work:
+    # 9.7 cache-state face: offline scans never persist a cache write, even in the
+    # (currently unreachable, since `is_scan_offline()` gates every fetch site
+    # above) case did_live_work were somehow true — defense in depth so a future
+    # fetch site added without the offline gate cannot silently start writing.
+    if not is_scan_offline() and did_live_work:
         cache_payload = {
             "schema_version": SCHEMA_VERSION,
             "fetched_at": aggregate_fetched_at,
@@ -792,7 +832,10 @@ def _lookup_cached_repo(
     """
     if not cache:
         return None
-    now = time.time()
+    # 9.7 wall-clock face: scan_now() honors ARIA_SCAN_NOW instead of the real
+    # system clock, so TTL freshness decisions are reproducible across a
+    # frozen-clock double-scan (offline stability test).
+    now = scan_now().timestamp()
     repos = cache.get("repos")
     if isinstance(repos, dict) and owner_repo in repos:
         entry = repos[owner_repo]

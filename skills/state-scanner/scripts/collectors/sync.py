@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run, classify_git_error
+from ._common import CollectorResult, _run, classify_git_error, scan_now
 from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 
@@ -70,9 +70,11 @@ def _fetch_head_age(project_root: Path, r: CollectorResult) -> str:
         r.soft_error("fetch_head_stat_failed", str(e))
         return "never"
 
-    import time
-
-    age_sec = max(0, int(time.time() - mtime))
+    # 9.7 wall-clock face: "now" is scan_now() (honors ARIA_SCAN_NOW), never the
+    # real system clock — otherwise this age bucket can tick a minute boundary
+    # between two offline-frozen scans that never touch FETCH_HEAD (remote_refresh
+    # skips the fetch entirely offline), breaking the stability-freeze invariant.
+    age_sec = max(0, int(scan_now().timestamp() - mtime))
     if age_sec < 3600:
         minutes = max(1, age_sec // 60)
         return f"{minutes}m"
