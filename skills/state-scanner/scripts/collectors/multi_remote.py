@@ -14,18 +14,34 @@ Design invariants (do not break without a snapshot_schema_version bump):
   `state_scanner.multi_remote.timeout_seconds`).
 - Disabled mode (`state_scanner.multi_remote.enabled: false`) emits
   `{"enabled": false}` and nothing else.
-- `overall_parity` semantics (explicit, post-QA-C1 + BA-R1-C1):
-    * true  = at least one remote has `parity == equal` AND no remote has
-              `parity ∈ {behind, diverged}`. Positive-evidence + no-blockers
-              rule — zero-info inputs (all unknown, empty list, not-a-git-repo)
-              yield `False`.
-    * false = zero `equal` evidence OR any `parity ∈ {behind, diverged}`
+- `overall_parity` semantics (F4′, main spec stale-refs-false-parity, Phase 1 —
+  SUPERSEDES the pre-Phase-1 QA-C1 + BA-R1-C1 wording; see `_overall_parity`
+  docstring for the authoritative 4-clause decision table):
+    * true  = enforced_set ≠ ∅ AND at least one remote has `parity == equal`
+              AND `evidence_grade == "fresh"` for that same remote (⚠️ BOTH —
+              a stale_unverified `equal` is NOT positive evidence, see D20) AND
+              no remote has `parity ∈ {behind, diverged}` AND no remote is
+              `blocking_unknown` AND no gitlink is `gitlink_blocking`
+              (Phase 1: `gitlink_integrity` is always `[]`, vacuously satisfied).
+    * false = zero fresh-`equal` evidence OR any blocker above.
     * `parity: ahead`   does NOT count (→ `has_pending_push`)
     * `parity: unknown` does NOT contribute evidence (→ `has_unreachable_remote`
-                         when the reason is network-class)
+                         is now driven ONLY by `fetch_ok=="false"`, see
+                         `_has_unreachable_remote` — no longer by `reason`
+                         enumeration or the `reachable` field)
     SKILL.md §1.12 spec text is kept in sync with this definition.
+  `_aggregate_flags` (below) is the PRE-Phase-1 pure helper — retained verbatim
+  (and still directly unit-tested) for `has_pending_push`'s historical
+  computation, but `collect_multi_remote` no longer sources
+  `overall_parity`/`has_unreachable_remote` from it; those two flags now flow
+  through `_overall_parity`/`_has_unreachable_remote` after the F1′/F4′
+  freshness join (see `collect_multi_remote`).
 
-Output shape (conformant to SKILL.md §1.12 schema):
+Output shape (conformant to SKILL.md §1.12 schema; F2′ retired
+`local_refs_stale` — FETCH_HEAD-mtime is a repo-global single value that any
+remote's fetch resets, structurally unusable as a per-remote freshness signal;
+replaced by the per-remote `evidence_grade` field below, joined from the F3′
+`remote_refresh` collector's per-leg `fetched_at`/`fetch_ok` map):
 
     multi_remote:
       enabled: bool
@@ -34,7 +50,6 @@ Output shape (conformant to SKILL.md §1.12 schema):
       overall_parity: bool
       has_unreachable_remote: bool
       has_pending_push: bool
-      local_refs_stale: bool          # optional, set when FETCH_HEAD > warn_after_hours
 
     RepoParity:
       path: str                       # "." for main_repo, relative path for submodules
@@ -48,23 +63,43 @@ Output shape (conformant to SKILL.md §1.12 schema):
           ahead_count: int | null
           reachable: bool             # false only when verify_mode=ls_remote and call fails
           reason: null | no_local_tracking_ref | shallow_clone | detached_head
-                  | auth_failed | not_found | network_timeout
+                  | auth_failed | not_found | network_timeout | not_refreshed
+                  | rev_list_failed | rev_list_parse_failed | parse_error
+                  | remote_branch_missing
           method: local_refs | ls_remote
+          evidence_grade: fresh | stale_unverified | expired   # D20, F1′/F4′ join
+          fetch_ok: "true" | "false" | "not_attempted"          # F3′ leg join
 """
 
 from __future__ import annotations
 
 import json
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run
+from ._common import CollectorResult, _run, scan_now
 from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 _DEFAULT_TIMEOUT = 5
-_DEFAULT_WARN_AFTER_HOURS = 24
+
+# F1′/F4′ freshness join defaults (main spec stale-refs-false-parity, Phase 1) —
+# mirror `state_scanner.sync_freshness.*` in config-loader/DEFAULTS.json +
+# .aria/config.template.json (Phase 0 landed). Hardcoded here per this
+# collector-package's existing pattern (`_load_config` never reads
+# DEFAULTS.json at runtime; DEFAULTS.json is adopter-facing documentation, the
+# Python constant is the runtime default — same split as
+# `_DEFAULT_REFRESH_DEADLINE_SECONDS` et al. in remote_refresh.py).
+_DEFAULT_EVIDENCE_WINDOW_SECONDS = 3600
+_DEFAULT_HARD_CAP_DAYS = 7
+_DEFAULT_K_MIN = 3
+
+# F3′ remote_refresh (Phase 0.5) cache — same relative path as
+# `remote_refresh._CACHE_RELATIVE`. Duplicated (not imported): remote_refresh.py
+# imports FROM this module (`_list_remotes` / `_load_config` /
+# `resolve_enforced_remotes`), so importing back would be circular. Any change
+# to the cache path/key format must be mirrored in both modules.
+_REMOTE_REFRESH_CACHE_RELATIVE = ".aria/cache/remote-refresh.json"
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +110,13 @@ def _load_config(project_root: Path) -> dict[str, Any]:
 
     Missing file / missing block → defaults (enabled=true, verify_mode=local_refs).
     Malformed JSON → defaults + soft error logged by caller if it cares.
+
+    F2′ retirement note (main spec stale-refs-false-parity, Phase 1): this used
+    to inherit `warn_after_hours` from the sibling `sync_check` block when
+    `multi_remote` omitted it. That inheritance is REMOVED — `warn_after_hours` /
+    FETCH_HEAD-mtime staleness is retired wholesale (see module docstring);
+    `sync_check.warn_after_hours` remains in the config schema for `sync.py`'s
+    own (unrelated, F9′/Phase-2) consumption only, never read here.
     """
     cfg_path = project_root / ".aria" / "config.json"
     if not cfg_path.exists():
@@ -84,12 +126,26 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     ss = raw.get("state_scanner") or {}
-    mr = ss.get("multi_remote") or {}
-    # warn_after_hours inherits from sync_check block if not set on multi_remote
-    sync_cfg = ss.get("sync_check") or {}
-    if "warn_after_hours" not in mr and "warn_after_hours" in sync_cfg:
-        mr["warn_after_hours"] = sync_cfg["warn_after_hours"]
-    return mr
+    return ss.get("multi_remote") or {}
+
+
+def _load_sync_freshness_config(project_root: Path) -> dict[str, Any]:
+    """Read `.aria/config.json` → `state_scanner.sync_freshness` block (Phase 0
+    landed keys: `evidence_window_seconds` / `hard_cap_days` / `k_min` — D15′/D18
+    thresholds for the F1′ dual-role predicates). Deliberately a SEPARATE read
+    from `_load_config`: `sync_freshness` is a sibling block, unrelated to
+    `multi_remote`'s own enabled/verify_mode/timeout_seconds keys. Same
+    fail-soft contract: missing file/block or malformed JSON → `{}` (callers
+    apply hardcoded defaults)."""
+    cfg_path = project_root / ".aria" / "config.json"
+    if not cfg_path.exists():
+        return {}
+    try:
+        raw = json.loads(cfg_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    ss = raw.get("state_scanner") or {}
+    return ss.get("sync_freshness") or {}
 
 
 def resolve_enforced_remotes(
@@ -162,19 +218,13 @@ def _gitdir_for(repo_dir: Path, timeout: int) -> Path | None:
     return p
 
 
-def _fetch_head_age_hours(repo_dir: Path, timeout: int) -> float | None:
-    """Return hours since FETCH_HEAD last modified, or None if file missing."""
-    gitdir = _gitdir_for(repo_dir, timeout)
-    if gitdir is None:
-        return None
-    fh = gitdir / "FETCH_HEAD"
-    if not fh.exists():
-        return None
-    try:
-        mtime = fh.stat().st_mtime
-    except OSError:
-        return None
-    return max(0.0, (time.time() - mtime) / 3600.0)
+# F2′ retirement note: `_fetch_head_age_hours` (repo-global FETCH_HEAD mtime)
+# used to live here. Removed wholesale (main spec stale-refs-false-parity,
+# Phase 1) — any remote's fetch resets the single FETCH_HEAD file, so it could
+# never distinguish "this remote was just refreshed" from "a sibling remote
+# was refreshed 3 days ago"; see module docstring + proposal §现状 item 4/6.
+# `_gitdir_for` (above) is retained — it is a generic git-dir resolver with its
+# own direct test coverage, independent of the retired staleness computation.
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +420,17 @@ def _scan_repo(
     path_label: str,
     verify_mode: str,
     timeout: int,
-) -> tuple[dict[str, Any], bool]:
-    """Scan one repo (main or submodule). Returns (repo_block, stale_flag)."""
+) -> dict[str, Any]:
+    """Scan one repo (main or submodule). Returns repo_block.
+
+    F2′ retirement note: this used to return `(repo_block, stale_flag)` — the
+    second element was a dead `False` constant (`_scan_repo` never actually
+    computed per-repo staleness; the real, always-broken staleness path lived
+    in `collect_multi_remote` via `_fetch_head_age_hours`, also retired). Now
+    returns the block alone; per-remote freshness (`evidence_grade`) is
+    computed by `collect_multi_remote` AFTER this function returns, via the
+    F1′/F4′ join against the F3′ `remote_refresh` cache.
+    """
     shallow = _is_shallow(repo_dir, timeout)
     branch = _current_branch(repo_dir, timeout)
     local_head = _head_commit(repo_dir, timeout)
@@ -389,15 +448,12 @@ def _scan_repo(
             )
         remote_results.append(r)
 
-    repo_block: dict[str, Any] = {
+    return {
         "path": path_label,
         "local_head": local_head,
         "branch": branch,
         "remotes": remote_results,
     }
-    # Staleness only meaningful for local_refs mode.
-    stale = False
-    return repo_block, stale
 
 
 # ---------------------------------------------------------------------------
@@ -406,10 +462,12 @@ def _scan_repo(
 # SOT = proposal F4′ v8 formula block (D15′ dual-role predicates + D20 evidence_grade
 # full partition). These are PURE functions consuming the per-leg fetch signals that
 # remote_refresh (F3′, Phase 0.5) produces (fetched_at / fetch_ok / generation /
-# consecutive_unverified). They are additive here; collect_multi_remote wires them to
-# real remote_refresh data in a later increment. Registered in the D16 predicate-domain
-# table (references/predicate-domain-table.md). Retired single-role predicate 可信(r) is
-# forbidden (its single-role conflation was the R7 three-Critical root).
+# consecutive_unverified). `collect_multi_remote` wires them to real remote_refresh
+# data (the join helpers further below: `_remote_refresh_leg_key` /
+# `_read_remote_refresh_cache` / `_leg_evidence_grade`). Registered in the D16
+# predicate-domain table (references/predicate-domain-table.md). Retired
+# single-role predicate 可信(r) is forbidden (its single-role conflation was the
+# R7 three-Critical root).
 
 
 def _evidence_eligible(
@@ -477,6 +535,114 @@ def _evidence_grade(evidence_eligible: bool, exemption_eligible: bool) -> str:
     if exemption_eligible:
         return "stale_unverified"
     return "expired"
+
+
+def _apply_freshness_downgrade(remote_entry: dict[str, Any], evidence_grade: str) -> None:
+    """Writes the per-remote `evidence_grade` field onto `remote_entry` IN PLACE
+    (independent field, never folded into `reason` — `reason` stays a
+    fetch-mechanism enum, `evidence_grade` is the orthogonal freshness-of-that-
+    answer axis; folding them was the R7-flagged trap).
+
+    Downgrade only applies to `parity == "equal"` entries: `"expired"` (¬E∧¬X)
+    rewrites `parity` → `"unknown"` + `reason` → `"not_refreshed"` — never let a
+    doubly-stale `equal` masquerade as positive evidence (the founding 14h-stale
+    accident this Spec exists to kill). `"fresh"` / `"stale_unverified"` leave
+    `parity` untouched: `stale_unverified` is F1′'s designed diagnostic middle
+    tier — still literally `"equal"`, but `_overall_parity`'s ∃-clause gates on
+    `evidence_grade == "fresh"`, NOT on `parity == "equal"` alone, so it does not
+    resurrect the accident (see `_overall_parity` docstring clause 2).
+    """
+    remote_entry["evidence_grade"] = evidence_grade
+    if remote_entry.get("parity") != "equal":
+        return
+    if evidence_grade == "expired":
+        remote_entry["parity"] = "unknown"
+        remote_entry["reason"] = "not_refreshed"
+
+
+# ---------------------------------------------------------------------------
+# F3′↔F1′ join (Phase 1, increment 4b) — reads the remote_refresh cache and
+# turns each remote entry's raw fetch signals into an evidence_grade.
+# ---------------------------------------------------------------------------
+def _remote_refresh_leg_key(repo: str, remote: str) -> str:
+    """Cache-key format for a (repo, remote) leg — MUST byte-for-byte match
+    `remote_refresh._leg_key` (duplicated here, not imported, to avoid a
+    circular import: remote_refresh.py imports FROM this module). Main repo
+    `repo == "."` — the SAME label `_scan_repo` already stamps onto
+    `repo_block["path"]`, so a submodule's `origin` can never alias the main
+    repo's `origin` cache entry (top_risks: keying by remote-name alone would
+    let a never-fetched submodule leg borrow the main repo's `fetched_at`)."""
+    return f"{repo}::{remote}"
+
+
+def _read_remote_refresh_cache(project_root: Path) -> dict[str, Any]:
+    """Read the F3′ `remote_refresh` (Phase 0.5) cache
+    (`.aria/cache/remote-refresh.json`). Fail-soft: missing file / malformed
+    JSON / non-dict payload → `{}` — every leg then joins as `leg=None` below,
+    which `_leg_evidence_grade` treats identically to `fetched_at=null`
+    (evidence_grade="expired", the fail-CLOSED default). "We have no cache" and
+    "we have a cache saying this leg was never fetched" must produce the SAME
+    verdict — never a friendlier one for the missing-cache case."""
+    cache_file = project_root / _REMOTE_REFRESH_CACHE_RELATIVE
+    if not cache_file.is_file():
+        return {}
+    try:
+        raw = cache_file.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _parse_leg_fetched_at(raw: Any) -> datetime | None:
+    """Parse a cached leg's `fetched_at` ISO string (mirrors
+    `remote_refresh._parse_iso`, duplicated for the same circular-import
+    reason as `_remote_refresh_leg_key`). Non-string / empty / unparseable →
+    None. A naive (offset-less) timestamp is treated as UTC."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.strip())
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _leg_evidence_grade(
+    leg: dict[str, Any] | None,
+    now: datetime,
+    scan_generation: int,
+    evidence_window_seconds: int,
+    hard_cap_seconds: int,
+    k_eff: int,
+) -> str:
+    """Join one remote_refresh (F3′) leg record into a D20 `evidence_grade`.
+    `leg` is None when this remote has no matching cache entry — never fetched
+    by remote_refresh (e.g. outside `enforced_remotes`, or the cache/scan
+    hasn't run yet) — and is treated identically to `fetched_at=null`
+    (fail-CLOSED ⇒ eventually "expired", never silently "fresh"). Malformed
+    cache field types (non-int generation/consecutive counters) fail-soft to
+    the same values `_exemption_eligible` already treats as absent."""
+    fetched_at = _parse_leg_fetched_at(leg.get("fetched_at")) if leg else None
+    generation_fetched = leg.get("generation_fetched") if leg else None
+    if not isinstance(generation_fetched, int) or isinstance(generation_fetched, bool):
+        generation_fetched = None
+    consecutive_unverified = leg.get("consecutive_unverified", 0) if leg else 0
+    if not isinstance(consecutive_unverified, int) or isinstance(consecutive_unverified, bool):
+        consecutive_unverified = 0
+    e = _evidence_eligible(fetched_at, now, evidence_window_seconds)
+    x = _exemption_eligible(
+        fetched_at,
+        now,
+        generation_fetched,
+        scan_generation,
+        k_eff,
+        hard_cap_seconds,
+        consecutive_unverified,
+    )
+    return _evidence_grade(e, x)
 
 
 _BENIGN_UNCONDITIONAL_REASONS = frozenset(
@@ -566,6 +732,15 @@ def _overall_parity(
 def _aggregate_flags(all_remote_entries: list[dict[str, Any]]) -> dict[str, bool]:
     """Compute overall_parity / has_unreachable_remote / has_pending_push.
 
+    Phase 1 (F1′/F4′) note: `collect_multi_remote` no longer sources its
+    `overall_parity`/`has_unreachable_remote` output from this function — those
+    now flow through `_overall_parity`/`_has_unreachable_remote` after the
+    freshness join (see module docstring "Design invariants"). This function is
+    RETAINED VERBATIM (pre-Phase-1 pure logic, still directly unit-tested in
+    `test_multi_remote.py`) as a legacy reference implementation; it is dead
+    code from `collect_multi_remote`'s perspective, not deleted because its own
+    tests still exercise its documented QA-C1 behavior directly.
+
     QA-C1 fix (post_implementation audit R1): `overall_parity=True` requires at
     LEAST ONE remote with confirmed `parity=equal`. When every remote returns
     `unknown` (no_local_tracking_ref / shallow_clone / detached_head / network
@@ -623,7 +798,38 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
       - enabled (default true)
       - verify_mode: "local_refs" (default) | "ls_remote"
       - timeout_seconds (default 5)
-      - warn_after_hours (default 24; falls back to sync_check.warn_after_hours)
+    (F2′ retired `warn_after_hours` — see `_load_config` docstring.)
+
+    F1′/F4′ freshness join (Phase 1, increment 4b): after scanning parity for
+    every remote (unchanged git-side logic), this function reads the F3′
+    `remote_refresh` (Phase 0.5) cache (`.aria/cache/remote-refresh.json`,
+    `_read_remote_refresh_cache`) and joins each remote entry to its
+    (repo_path, remote_name) leg — main repo path is `"."`, NEVER a bare remote
+    name (top_risks: a bare-remote-name key would let a submodule's `origin`
+    borrow the main repo's `fetched_at`). Each entry is annotated in place with
+    `evidence_grade` (D20) via `_apply_freshness_downgrade`, which also
+    rewrites `parity`/`reason` for "expired" `equal` entries
+    (`not_refreshed`). `overall_parity` and `has_unreachable_remote` are then
+    computed from the ANNOTATED entries via `_overall_parity` /
+    `_has_unreachable_remote` (no longer via `_aggregate_flags`, which is
+    retained only for its own direct tests — see its docstring).
+
+    A missing/stale/absent remote_refresh cache degrades EVERY leg to
+    `leg=None` → `evidence_grade="expired"` (fail-CLOSED, never silently
+    "fresh") — this collector never re-implements fetching itself; that is
+    exclusively `remote_refresh`'s job (module boundary, remote_refresh.py
+    docstring "Keeping this boundary sharp is deliberate").
+
+    `sync_freshness.{evidence_window_seconds,hard_cap_days,k_min}` (Phase 0
+    landed config keys, `_load_sync_freshness_config`) supply the D15′/D18
+    thresholds. `k_eff` (豁免资格's generation-age ceiling) is set to `k_min`
+    unconditionally in this increment: `remote_refresh` (F3′) does not yet
+    persist a per-host `observed_rotation` statistic (see its module notes),
+    so this collector is permanently in the proposal's documented "cold start"
+    state, whose defined fallback IS `k_eff = k_min` (fail-CLOSED, biased red
+    rather than silently green) — NOT an ad-hoc simplification. A future
+    increment that adds `observed_rotation` persistence must replace this
+    constant with `min(K_CAP, max(k_min, observed_rotation))` per proposal §F3′.
     """
     r = CollectorResult()
     cfg = _load_config(project_root)
@@ -637,9 +843,6 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     if verify_mode not in ("local_refs", "ls_remote"):
         verify_mode = "local_refs"
     timeout = int(cfg.get("timeout_seconds", _DEFAULT_TIMEOUT) or _DEFAULT_TIMEOUT)
-    warn_after_hours = float(
-        cfg.get("warn_after_hours", _DEFAULT_WARN_AFTER_HOURS) or _DEFAULT_WARN_AFTER_HOURS
-    )
 
     # Guard: must be inside a git working tree; otherwise emit enabled=true + empty blocks.
     rc, _, _ = _run(
@@ -651,7 +854,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         # emit overall_parity=False for the not-a-git-repo fallback. The prior
         # value True reinstated the pre-QA-C1 behaviour on this error path
         # because _aggregate_flags is never reached. Zero remotes = zero positive
-        # evidence = overall_parity must be False (matches `_aggregate_flags([])`).
+        # evidence = overall_parity must be False (matches `_overall_parity([], [])`).
         r.data = {
             "enabled": True,
             "main_repo": None,
@@ -663,7 +866,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         return r
 
     # --- Main repo
-    main_block, _ = _scan_repo(project_root, ".", verify_mode, timeout)
+    main_block = _scan_repo(project_root, ".", verify_mode, timeout)
 
     # --- Submodules
     submodule_blocks: list[dict[str, Any]] = []
@@ -673,33 +876,74 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
             # Uninitialized submodule — skip (SKILL.md §1.12 fail-soft philosophy).
             continue
         try:
-            block, _ = _scan_repo(sm_dir, rel_path, verify_mode, timeout)
+            block = _scan_repo(sm_dir, rel_path, verify_mode, timeout)
         except Exception as e:  # pragma: no cover — defensive
             r.soft_error("multi_remote_submodule_failed", f"{rel_path}: {e}")
             continue
         submodule_blocks.append(block)
 
-    # --- Aggregate flags across all remote entries (main + submodules)
+    # --- F1′/F4′ freshness join: annotate every remote entry with evidence_grade
+    # (and fetch_ok) by joining against the F3′ remote_refresh cache.
+    freshness_cfg = _load_sync_freshness_config(project_root)
+    evidence_window_seconds = int(
+        freshness_cfg.get("evidence_window_seconds", _DEFAULT_EVIDENCE_WINDOW_SECONDS)
+        or _DEFAULT_EVIDENCE_WINDOW_SECONDS
+    )
+    hard_cap_days = int(
+        freshness_cfg.get("hard_cap_days", _DEFAULT_HARD_CAP_DAYS) or _DEFAULT_HARD_CAP_DAYS
+    )
+    hard_cap_seconds = hard_cap_days * 86400
+    k_min = int(freshness_cfg.get("k_min", _DEFAULT_K_MIN) or _DEFAULT_K_MIN)
+    k_eff = k_min  # cold-start fallback — see docstring above.
+
+    refresh_cache = _read_remote_refresh_cache(project_root)
+    raw_legs = refresh_cache.get("legs")
+    legs_by_key: dict[str, Any] = raw_legs if isinstance(raw_legs, dict) else {}
+    scan_generation = refresh_cache.get("scan_generation")
+    if not isinstance(scan_generation, int) or isinstance(scan_generation, bool):
+        scan_generation = 0
+    now = scan_now()
+
+    for block in [main_block, *submodule_blocks]:
+        for remote_entry in block["remotes"]:
+            leg = legs_by_key.get(
+                _remote_refresh_leg_key(block["path"], remote_entry["name"])
+            )
+            leg = leg if isinstance(leg, dict) else None
+            grade = _leg_evidence_grade(
+                leg, now, scan_generation, evidence_window_seconds, hard_cap_seconds, k_eff
+            )
+            _apply_freshness_downgrade(remote_entry, grade)
+            remote_entry["fetch_ok"] = (leg or {}).get("fetch_ok", "not_attempted")
+
+    # --- Aggregate flags across all ANNOTATED remote entries (main + submodules)
     all_remote_entries: list[dict[str, Any]] = list(main_block["remotes"])
     for sb in submodule_blocks:
         all_remote_entries.extend(sb["remotes"])
-    flags = _aggregate_flags(all_remote_entries)
 
-    # --- FETCH_HEAD staleness (main repo only; submodules handled implicitly)
-    local_refs_stale = False
-    if verify_mode == "local_refs":
-        age = _fetch_head_age_hours(project_root, timeout)
-        if age is not None and age > warn_after_hours:
-            local_refs_stale = True
+    # ahead-detection is UNCHANGED (task 5.3 preserved decision) — computed
+    # directly rather than via `_aggregate_flags` (see that function's Phase 1
+    # docstring note for why it is bypassed here).
+    has_pending_push = any(e.get("parity") == "ahead" for e in all_remote_entries)
+    has_unreachable_remote = any(
+        _has_unreachable_remote(e.get("fetch_ok", "not_attempted"))
+        for e in all_remote_entries
+    )
+    # Phase 1: F5′ enforced-remote filtering is NOT yet wired here — every
+    # discovered remote (unfiltered by `enforced_remotes`/`read_only_remotes`)
+    # is passed as `enforced_entries` (task 6 scope, a later increment).
+    # gitlink_integrity is the Phase 1 placeholder (always `[]` — Phase 2A/F10″
+    # wires real data without changing this call site, see `_overall_parity`).
+    overall_parity = _overall_parity(all_remote_entries, gitlink_integrity=[])
 
     data: dict[str, Any] = {
         "enabled": True,
         "main_repo": main_block,
         "submodules": submodule_blocks,
-        **flags,
+        "overall_parity": overall_parity,
+        "has_unreachable_remote": has_unreachable_remote,
+        "has_pending_push": has_pending_push,
     }
-    if local_refs_stale:
-        data["local_refs_stale"] = True
 
     r.data = data
     return r

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 from _helpers import tmp_project, tmp_repo, write_file
 from collectors.multi_remote import (
     _aggregate_flags,
-    _fetch_head_age_hours,
     _gitdir_for,
     _head_commit,
     _list_remotes,
@@ -33,6 +33,37 @@ def _make_run(table):
             return table[key]
         return (1, "", f"unmocked: {' '.join(cmd)}")
     return fake
+
+
+def _write_fresh_remote_refresh_cache(
+    repo: Path, leg_keys: list[str], scan_generation: int = 1
+) -> None:
+    """Write a `.aria/cache/remote-refresh.json` (F3′ cache) with a JUST-NOW
+    `fetched_at` for each `"<repo_path>::<remote>"` key in `leg_keys` — gives
+    the F1′/F4′ join in `collect_multi_remote` a `证据资格`-satisfying (evidence
+    window default 3600s) leg, since Phase 1's `_overall_parity` now requires
+    `evidence_grade=="fresh"` (not just `parity=="equal"`) for positive
+    evidence (see multi_remote.py `_apply_freshness_downgrade` docstring)."""
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    write_file(
+        repo / ".aria" / "cache" / "remote-refresh.json",
+        json.dumps(
+            {
+                "scan_generation": scan_generation,
+                "legs": {
+                    key: {
+                        "fetched_at": now_iso,
+                        "fetch_ok": "true",
+                        "error_kind": None,
+                        "generation_fetched": scan_generation,
+                        "consecutive_unverified": 0,
+                        "coordination_ref_present": None,
+                    }
+                    for key in leg_keys
+                },
+            }
+        ),
+    )
 
 
 class TestPureHelpers(unittest.TestCase):
@@ -79,34 +110,13 @@ class TestPureHelpers(unittest.TestCase):
             self.assertIsNone(_gitdir_for(Path("/x"), 5))
 
 
-class TestFetchHeadAgeHours(unittest.TestCase):
-    def test_no_gitdir(self):
-        run_table = {("git", "rev-parse", "--git-dir"): (1, "", "no")}
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            self.assertIsNone(_fetch_head_age_hours(Path("/x"), 5))
-
-    def test_no_fetch_head_file(self):
-        with tmp_repo() as repo:
-            run_table = {("git", "rev-parse", "--git-dir"): (0, ".git\n", "")}
-            with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-                # FETCH_HEAD doesn't exist in a fresh tmp_repo
-                self.assertIsNone(_fetch_head_age_hours(repo, 5))
-
-    def test_with_fetch_head(self):
-        import os
-        import time as _t
-
-        with tmp_repo() as repo:
-            fh = repo / ".git" / "FETCH_HEAD"
-            fh.write_text("stub")
-            old = _t.time() - 7200  # 2h ago
-            os.utime(fh, (old, old))
-            run_table = {("git", "rev-parse", "--git-dir"): (0, ".git\n", "")}
-            with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-                age = _fetch_head_age_hours(repo, 5)
-            self.assertIsNotNone(age)
-            self.assertGreater(age, 1.5)
-            self.assertLess(age, 3.0)
+# F2′ retirement note (main spec stale-refs-false-parity, Phase 1):
+# `TestFetchHeadAgeHours` used to live here, exercising `_fetch_head_age_hours`
+# (repo-global FETCH_HEAD-mtime staleness). The function is deleted wholesale
+# (see collectors/multi_remote.py module docstring) — freshness is now a
+# per-remote F1′/F4′ join against the F3′ remote_refresh cache, not a
+# repo-global mtime read. `_gitdir_for` (tested in `TestPureHelpers` above) is
+# unaffected — it is a generic git-dir resolver retained independently.
 
 
 class TestParityLocalRefs(unittest.TestCase):
@@ -524,12 +534,14 @@ class TestScanRepo(unittest.TestCase):
             ), mock.patch(
                 "collectors.multi_remote._current_branch", return_value="master"
             ):
-                block, stale = _scan_repo(
+                # F2′ retirement: _scan_repo now returns the block alone (the
+                # `stale` tuple element was a dead `False` constant — see
+                # collectors/multi_remote.py `_scan_repo` docstring).
+                block = _scan_repo(
                     Path("/x"), ".", verify_mode="local_refs", timeout=5
                 )
         self.assertEqual(block["branch"], "master")
         self.assertEqual(len(block["remotes"]), 2)
-        self.assertFalse(stale)
         parities = [r["parity"] for r in block["remotes"]]
         self.assertEqual(set(parities), {"equal", "ahead"})
 
@@ -551,7 +563,7 @@ class TestScanRepo(unittest.TestCase):
             ), mock.patch(
                 "collectors.multi_remote._current_branch", return_value="master"
             ):
-                block, _ = _scan_repo(
+                block = _scan_repo(
                     Path("/x"), ".", verify_mode="ls_remote", timeout=5
                 )
         self.assertEqual(block["remotes"][0]["method"], "ls_remote")
@@ -569,11 +581,15 @@ class TestCollectorFullFlow(unittest.TestCase):
                             "enabled": True,
                             "verify_mode": "local_refs",
                             "timeout_seconds": 3,
-                            "warn_after_hours": 24,
                         }
                     }
                 }),
             )
+            # F1′/F4′ (Phase 1): the ∃-evidence clause now requires
+            # evidence_grade=="fresh", not just parity=="equal" — inject a
+            # just-fetched remote_refresh leg for (".", "origin") so this
+            # fixture's `equal` remains positive evidence.
+            _write_fresh_remote_refresh_cache(repo, [".::origin"])
             run_table = {
                 ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
                 ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
@@ -682,63 +698,15 @@ class TestCollectorFullFlow(unittest.TestCase):
                     r = collect_multi_remote(repo)
         self.assertEqual(r.data["submodules"], [])
 
-    def test_local_refs_stale_flag(self):
-        """FETCH_HEAD older than warn_after_hours → local_refs_stale=True."""
-        import os
-        import time as _t
-
-        with tmp_repo() as repo:
-            fh = repo / ".git" / "FETCH_HEAD"
-            fh.write_text("stub")
-            old = _t.time() - 86400 * 3  # 3 days ago, > 24h default
-            os.utime(fh, (old, old))
-            write_file(
-                repo / ".aria" / "config.json",
-                json.dumps({
-                    "state_scanner": {
-                        "multi_remote": {"enabled": True, "warn_after_hours": 24}
-                    }
-                }),
-            )
-            run_table = {
-                ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
-                ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
-                ("git", "remote"): (0, "origin\n", ""),
-                ("git", "rev-parse", "--short=7", "refs/remotes/origin/master"): (
-                    0, "abc1234\n", ""
-                ),
-                ("git", "rev-list", "--left-right", "--count", "HEAD...refs/remotes/origin/master"): (
-                    0, "0\t0\n", ""
-                ),
-                ("git", "rev-parse", "--git-dir"): (0, ".git\n", ""),
-            }
-            with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-                with mock.patch(
-                    "collectors.multi_remote._is_shallow", return_value=False
-                ), mock.patch(
-                    "collectors.multi_remote._current_branch", return_value="master"
-                ), mock.patch(
-                    "collectors.multi_remote._enumerate_submodule_paths", return_value=[]
-                ):
-                    r = collect_multi_remote(repo)
-        self.assertTrue(r.data.get("local_refs_stale"))
-
-    def test_warn_after_hours_inherits_from_sync_check(self):
-        """When multi_remote block omits warn_after_hours, falls through sync_check."""
-        from collectors.multi_remote import _load_config
-
-        with tmp_repo() as repo:
-            write_file(
-                repo / ".aria" / "config.json",
-                json.dumps({
-                    "state_scanner": {
-                        "multi_remote": {"enabled": True},
-                        "sync_check": {"warn_after_hours": 12},
-                    }
-                }),
-            )
-            cfg = _load_config(repo)
-            self.assertEqual(cfg["warn_after_hours"], 12)
+    # F2′ retirement note (main spec stale-refs-false-parity, Phase 1, task
+    # 12.3): `test_local_refs_stale_flag` and
+    # `test_warn_after_hours_inherits_from_sync_check` used to live here,
+    # asserting the now-deleted `local_refs_stale` output field and
+    # `warn_after_hours` sync_check-inheritance behavior. Both are DELETED
+    # (not rewritten — the feature they pinned is retired wholesale, nothing
+    # meaningful to reassert). See collectors/multi_remote.py module docstring
+    # + `_load_config` docstring for the replacement (per-remote
+    # `evidence_grade`, F1′/F4′ join against the F3′ remote_refresh cache).
 
     def test_malformed_config_falls_back(self):
         from collectors.multi_remote import _load_config
@@ -776,11 +744,6 @@ class TestCollectorFullFlow(unittest.TestCase):
         ])
         self.assertTrue(flags["has_unreachable_remote"])
         self.assertTrue(flags["overall_parity"])  # equal evidence + no blockers
-
-
-# Note: OSError branch in `_fetch_head_age_hours` is defensive — exercising it
-# reliably requires sandbox-permission tricks that interact poorly with
-# tempfile cleanup. Left uncovered intentionally (1 line).
 
 
 if __name__ == "__main__":
