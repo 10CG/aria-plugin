@@ -336,6 +336,64 @@ class TestExpiredHonesty(unittest.TestCase):
         self.assertEqual(leg["generation_fetched"], 3)  # unchanged too
 
 
+class TestConsecutiveUnverified(unittest.TestCase):
+    """D18 counter is owned HERE (fetch_ok-driven), not F1′/F4′: reset to 0 on a
+    leg's own true fetch, +1 on any non-true ONLINE outcome (failed / deadline-cut),
+    frozen offline. Regression guard: it used to be a dead pass-through, so the D18
+    exemption-expiry guard in _exemption_eligible silently never fired."""
+
+    def _preseed(self, repo, prior_cu, gen=3):
+        write_file(
+            repo / ".aria" / "cache" / "remote-refresh.json",
+            json.dumps({"scan_generation": gen, "legs": {
+                _leg_key(".", "origin"): {
+                    "fetched_at": "2026-07-16T00:00:00+00:00",
+                    "fetch_ok": "true", "error_kind": None,
+                    "generation_fetched": gen, "consecutive_unverified": prior_cu,
+                    "coordination_ref_present": True,
+                }}}),
+        )
+
+    def _cfg(self, repo):
+        make_config(repo, {"state_scanner": {"multi_remote": {"enforced_remotes": ["origin"]}}})
+
+    def test_true_fetch_resets_to_zero(self):
+        with tmp_repo() as repo:
+            self._cfg(repo)
+            self._preseed(repo, prior_cu=2)
+            with _AllRunPatched(_build_table_for_remotes(["origin"], {"origin": "example.com"})):
+                result = collect_remote_refresh(repo)
+        leg = result.data["legs"][0]
+        self.assertEqual(leg["fetch_ok"], "true")
+        self.assertEqual(leg["consecutive_unverified"], 0)
+
+    def test_failed_fetch_increments(self):
+        with tmp_repo() as repo:
+            self._cfg(repo)
+            self._preseed(repo, prior_cu=2)
+            table = _build_table_for_remotes(["origin"], {"origin": "example.com"}, fetch1_ok=False)
+            with _AllRunPatched(table):
+                result = collect_remote_refresh(repo)
+        leg = result.data["legs"][0]
+        self.assertEqual(leg["fetch_ok"], "false")
+        self.assertEqual(leg["consecutive_unverified"], 3)  # 2 + 1
+
+    def test_offline_freezes_counter(self):
+        with tmp_repo() as repo:
+            self._cfg(repo)
+            self._preseed(repo, prior_cu=2)
+            # offline skips the network FETCH but still enumerates remotes + resolves
+            # hosts locally (git remote / get-url), so those local calls still need
+            # the mock table; the fetch entries in it are simply never invoked.
+            table = _build_table_for_remotes(["origin"], {"origin": "example.com"})
+            with mock.patch.object(remote_refresh, "is_scan_offline", return_value=True):
+                with _AllRunPatched(table):
+                    result = collect_remote_refresh(repo)
+        leg = result.data["legs"][0]
+        self.assertEqual(leg["fetch_ok"], "not_attempted")
+        self.assertEqual(leg["consecutive_unverified"], 2)  # frozen, NOT incremented
+
+
 class TestAntiStarvation(unittest.TestCase):
     """Fault fixture (b2): across N sequential scan rounds with a tight per-round
     budget, every leg is fetched at least once within ⌈total/budget⌉ rounds. A

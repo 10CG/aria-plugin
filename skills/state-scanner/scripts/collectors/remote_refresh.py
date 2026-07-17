@@ -88,6 +88,7 @@ from ._common import (
     classify_git_error,
     fetch_budget_override,
     is_scan_offline,
+    log,
     resolve_remote_host,
     scan_now,
 )
@@ -143,6 +144,8 @@ class _LegOutcome:
     consecutive_unverified: int
     coordination_ref_present: bool | None
     coordination_soft_error: str | None = None
+    worker_error: str | None = None  # a leg worker thread crash — distinct from a
+    # coordination Fetch-2 failure, so it surfaces under its own error kind (#4)
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +167,28 @@ def _clamp_per_host_fetch_limit(raw: Any) -> int:
     except (TypeError, ValueError):
         return _DEFAULT_PER_HOST_FETCH_LIMIT
     return val if val >= 1 else 1
+
+
+def _clamp_deadline_seconds(raw: Any) -> float:
+    """A non-positive `refresh_deadline_seconds` (e.g. -5) would make
+    `_should_stop_admitting(0, ~0, deadline, None)` return True on the very first
+    iteration → EVERY leg cut to `not_attempted` before any submit, silently
+    disabling all fetching with no config-error signal. Clamp to the default on a
+    non-positive / non-numeric value (fail-soft, mirrors _clamp_per_host_fetch_limit;
+    silent-failure review Minor)."""
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_REFRESH_DEADLINE_SECONDS
+    if val <= 0:
+        log.warning(
+            "remote_refresh: refresh_deadline_seconds=%r is non-positive; falling "
+            "back to default %ss (a non-positive deadline would cut every leg)",
+            raw,
+            _DEFAULT_REFRESH_DEADLINE_SECONDS,
+        )
+        return _DEFAULT_REFRESH_DEADLINE_SECONDS
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +262,18 @@ def _write_cache_atomic(
         tmp = cache_file.with_name(cache_file.name + f".tmp{os.getpid()}")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp, cache_file)
-    except OSError:
-        pass  # fail-soft: a write failure just means next scan re-derives state
+    except OSError as exc:
+        # fail-soft (never crash the collector) but NOT silent: this cache is the
+        # SOLE freshness source multi_remote joins against (_read_remote_refresh_cache),
+        # so a persistent write failure (disk full / read-only mount / perms) pins
+        # every leg to stale → evidence_grade=expired → overall_parity permanently
+        # False with zero diagnostic. Master's coordination_fetch logged this; keep
+        # the warning (silent-failure review Important — this was a regression).
+        log.warning(
+            "remote_refresh: cache write failed (%s); freshness will not advance "
+            "until this succeeds",
+            exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +389,7 @@ def _do_fetch_leg(leg: _Leg, fetch_timeout: int) -> _LegOutcome:
     or every non-origin remote would be permanently unreachable)."""
     branch_refspec = _branch_heads_refspec(leg.remote)
     cmd1 = ["git", "fetch", leg.remote, "--no-tags", "--prune", branch_refspec]
-    rc1, _out1, err1 = _run(cmd1, cwd=leg.repo_dir, timeout=fetch_timeout)
+    rc1, _, err1 = _run(cmd1, cwd=leg.repo_dir, timeout=fetch_timeout)
 
     if rc1 != 0:
         # Fetch 1 failed: fetched_at is NOT advanced (3.7) — this leg honestly
@@ -376,7 +411,7 @@ def _do_fetch_leg(leg: _Leg, fetch_timeout: int) -> _LegOutcome:
 
     if leg.run_coordination_fetch:
         cmd2 = ["git", "fetch", leg.remote, "--no-tags", COORDINATION_REF]
-        rc2, _out2, err2 = _run(cmd2, cwd=leg.repo_dir, timeout=fetch_timeout)
+        rc2, _, err2 = _run(cmd2, cwd=leg.repo_dir, timeout=fetch_timeout)
         if rc2 == 0:
             coordination_ref_present = True
         elif _is_benign_coordination_absent(rc2, err2):
@@ -495,7 +530,7 @@ def _run_schedule(
                     generation_fetched=leg.prior_generation_fetched,
                     consecutive_unverified=leg.prior_consecutive_unverified,
                     coordination_ref_present=None,
-                    coordination_soft_error=f"leg worker raised: {e}",
+                    worker_error=f"leg worker raised: {e}",
                 )
             )
 
@@ -547,8 +582,9 @@ def collect_remote_refresh(project_root: Path) -> CollectorResult:
              "scan_generation": int | null,         # this scan's generation counter
              "generation_fetched": int | null,      # generation at which THIS leg last
                                                       # truly succeeded (Fetch 1)
-             "consecutive_unverified": int,          # pass-through cache counter — F1′/F4′
-                                                      # owns increment/reset semantics
+             "consecutive_unverified": int,          # D18 counter, owned HERE: reset to 0
+                                                      # on this leg's true fetch, +1 on any
+                                                      # non-true online outcome, frozen offline
              "coordination_ref_present": bool | null},  # non-null ONLY for (".", "origin")
             ...
           ],
@@ -576,9 +612,8 @@ def collect_remote_refresh(project_root: Path) -> CollectorResult:
     r = CollectorResult()
     cfg = _load_config(project_root)
     local_timeout = int(cfg.get("timeout_seconds", _DEFAULT_TIMEOUT) or _DEFAULT_TIMEOUT)
-    refresh_deadline_seconds = float(
+    refresh_deadline_seconds = _clamp_deadline_seconds(
         cfg.get("refresh_deadline_seconds", _DEFAULT_REFRESH_DEADLINE_SECONDS)
-        or _DEFAULT_REFRESH_DEADLINE_SECONDS
     )
     fetch_timeout_seconds = int(
         cfg.get("fetch_timeout_seconds", _DEFAULT_FETCH_TIMEOUT_SECONDS)
@@ -625,12 +660,32 @@ def collect_remote_refresh(project_root: Path) -> CollectorResult:
         # success this round; every other outcome (failed / not_attempted) keeps
         # whatever generation it last succeeded at (already the default from
         # `_do_fetch_leg` / `_not_attempted_outcome`).
+        #
+        # consecutive_unverified (D18) — R9-M6′ priority: fetch-success reset >
+        # freeze > stale increment. The "freeze" arm is the offline early-return
+        # above (counters never reach here); on this ONLINE path a true fetch resets
+        # to 0, and any non-true outcome (failed / deadline-cut) is one more
+        # unverified generation for this leg. This is determinable from fetch_ok
+        # ALONE — it does NOT need evidence_grade — so it lives here in the collector
+        # that persists the cache, not in F1′/F4′ (which only READ it). Without this,
+        # the counter was pinned at 0 forever and the D18 guard in
+        # _exemption_eligible was dead code (code-review + silent-failure Important).
         if o.fetch_ok == "true":
             o.generation_fetched = new_scan_generation
+            o.consecutive_unverified = 0
+        else:
+            o.consecutive_unverified = o.leg.prior_consecutive_unverified + 1
         if o.coordination_soft_error:
             r.soft_error(
                 "coordination_ref_fetch_failed",
                 f"{o.leg.repo}/{o.leg.remote}: {o.coordination_soft_error}",
+            )
+        if o.worker_error:
+            # distinct kind so a general leg-worker crash is not misattributed to the
+            # coordination ref (which only the (".","origin") leg ever fetches) (#4)
+            r.soft_error(
+                "remote_refresh_leg_failed",
+                f"{o.leg.repo}/{o.leg.remote}: {o.worker_error}",
             )
 
     _write_cache_atomic(cache_file, outcomes, new_scan_generation)
