@@ -58,6 +58,12 @@
       "verify_mode": "local_refs",
       "timeout_seconds": 15,
       "enforced_remotes": null
+    },
+
+    "sync_freshness": {
+      "evidence_window_seconds": 3600,
+      "hard_cap_days": 7,
+      "k_min": 3
     }
   },
 

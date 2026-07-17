@@ -91,6 +91,40 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     return mr
 
 
+def resolve_enforced_remotes(
+    configured: "list[str] | None",
+    actual_remotes: list[str],
+    read_only: tuple[str, ...] = (),
+) -> tuple[list[str], list[str]]:
+    """F5′ (main spec stale-refs-false-parity, Phase 0) — resolve which remotes to
+    enforce parity on. Pure function; INERT until F4′ (Phase 1) wires it into
+    overall_parity.
+
+    Returns ``(enforced, no_matching)``:
+    - ``enforced``: remotes to actually check, in ``actual_remotes`` order, minus
+      ``read_only``.
+    - ``no_matching``: configured names absent from ``actual_remotes`` — recorded as
+      ``no_matching_remote`` observability, NEVER fetched as ghost fail legs.
+
+    🔴 **The F5′ trap** (published cross-skill contract, phase-c-integrator/SKILL.md +
+    config-loader DEFAULTS): a NON-EMPTY ``configured`` list is an explicit allowlist →
+    intersect with ``actual``. An EMPTY list ``[]`` OR ``None`` means **AUTO-DISCOVER
+    all remotes**, NOT the empty set. Coding ``[]`` as "check nothing" makes every
+    default adopter's ``overall_parity`` go false — a louder regression than the bug
+    this spec fixes. `if configured:` is falsy for both `[]` and `None`, so both route
+    to auto-discover; only a truthy (non-empty) list is treated as an allowlist.
+    """
+    actual = list(actual_remotes)
+    ro = set(read_only)
+    if configured:  # truthy = non-empty explicit allowlist
+        want = set(configured)
+        enforced = [r for r in actual if r in want and r not in ro]
+        no_matching = [r for r in configured if r not in actual]
+        return enforced, no_matching
+    # [] or None → auto-discover all remotes (the trap: NOT an empty set)
+    return [r for r in actual if r not in ro], []
+
+
 # ---------------------------------------------------------------------------
 # Git helpers (repo-local only — shared helpers live in .git)
 # ---------------------------------------------------------------------------
