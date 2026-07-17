@@ -1,99 +1,81 @@
-"""Phase 1 (multi-terminal-coordination) — coordination fetch collector.
+"""Phase 1 — legacy `coordination_fetch` schema shim (F6′, Phase 1 increment 5).
 
-Runs TWO independent fetches (v1.46.0, Forgejo Aria #141 / aria-plugin #75):
+Pre-increment-5 this module RAN its own two-fetch network I/O with an
+independent 30-second TTL cache (`.aria/cache/coordination-fetch.json`). That
+implementation is RETIRED (F6′ "read法(a)": retire + shim, never run two
+independent fetchers in parallel — see `remote_refresh.py` module docstring
+and proposal §F6′). All network I/O + scheduling now lives in
+`remote_refresh.py` (Phase 0.5), which fetches every (repo, remote) leg,
+including a special Fetch 2 (`refs/aria/coordination`) for exactly the
+(".", "origin") leg.
 
-  1. Fetch 1 (load-bearing): `git fetch <remote> --no-tags +refs/heads/*:refs/remotes/<remote>/*`
-  2. Fetch 2 (coordination):  `git fetch <remote> --no-tags refs/aria/coordination`
+This module now does exactly ONE thing: a PURE function,
+`derive_legacy_coordination_fetch_block`, that reads that one leg's record out
+of the `remote_refresh` collector's output and re-derives the OLD
+`coordination_fetch` schema (byte-compatible keys) so downstream consumers —
+`track_board.py`, `normalize_snapshot.py`'s TIMESTAMP_KEYS/DROP_KEYS, any
+future reader — keep working unmodified (F6′ backward-compat shim, tasks
+3.14). There is no cache here anymore: "fresh or not" is entirely inherited
+from `remote_refresh`'s own per-leg `fetched_at`/`fetch_ok`, killing the "two
+independent TTL caches disagreeing about the same origin" failure mode F6′
+exists to retire.
 
-Splitting them fixes a confirmed bug: bundling both into ONE atomic fetch made the
-whole fetch fail rc=128 on any remote that never published `refs/aria/coordination`
-(most non-multi-terminal projects), dropping the branch heads with it.  Now a
-benign-absent coordination ref (Fetch 2) no longer breaks the branch-head refresh
-(Fetch 1).  The fetch timestamp is cached in `.aria/cache/coordination-fetch.json`
-with a 30-second TTL so rapid successive scans skip redundant network I/O.
+Retained from the pre-increment-5 implementation (still load-bearing,
+imported by `remote_refresh.py` and directly unit-tested):
+  - `COORDINATION_REF` / `_branch_heads_refspec` — refspec builders.
+  - `_is_benign_coordination_absent` — the Fetch-2 benign-absent triple-AND
+    gate (a missing `refs/aria/coordination` on the remote is NORMAL, not a
+    failure).
+  - `_classify_error` — kept BYTE-IDENTICAL (delegates to
+    `_common.classify_git_error`, see its own docstring) purely because
+    `test_stderr_typed_channel.py::TestCoordinationFetchDelegation` pins its
+    wording directly. `derive_legacy_coordination_fetch_block` does NOT call
+    it — the leg record only carries a `error_kind` LABEL (already classified
+    inside `remote_refresh.py`'s `_do_fetch_leg`, Rule #7 typed channel), not
+    a raw `(rc, stderr)` pair, so a fresh, rc-free wording table
+    (`_LABEL_ERROR_MESSAGES`) is used instead.
 
-Return schema (top-level key: `coordination_fetch`):
+Task 3.14 mapping (SOT — the derivation formula, do not reinvent elsewhere):
 
-    {
-        "success": bool,              # Reflects Fetch 1 (branch heads); True when it
-                                      # ran successfully or the cache was fresh
-        "cached": bool,               # True when TTL not expired — no fetch ran;
-                                      # also True when fetch fails but stale cache
-                                      # is returned (degraded mode, TASK-007)
-        "last_fetch_at": str,         # ISO 8601 UTC of the last successful fetch
-        "age_seconds": int,           # Seconds since last_fetch_at (0 if never fetched)
-        "refs_fetched": list[str],    # Refspecs attempted; empty on error or cache hit
-        "error_kind": str | None,     # "network" | "auth_403" | "non_ff" | "git_missing"
-                                      # | "other" | None (success path)
-        "error_msg": str | None,      # Human-readable detail; None on success
-        "degraded": bool,             # TASK-007: True when fetch failed but stale cache
-                                      # data is being served in its place.
-                                      # Renderer consumer should display a top-bar:
-                                      # "⚠ 离线: 看板可能陈旧, 重复劳动风险升高"
-        "degradation_reason": str | None,  # TASK-007: "fetch_failed_using_stale_cache"
-                                           # when degraded=True, else None
-        "coordination_ref_present": bool | None,  # v1.46.0 (#141): Fetch 2 outcome.
-                                           # True  = coordination ref fetched
-                                           # False = benign absent (not published)
-                                           # None  = unknown (Fetch 1 failed → Fetch 2
-                                           #         short-circuited, OR Fetch 2 failed
-                                           #         non-benign).  Persisted in cache so
-                                           #         cache-hit / stale-serve stay stable.
-    }
+    success            := (fetch_ok == "true")            # "not_attempted" → False (conservative)
+    served_stale_cache := (fetch_ok == "false") AND a prior `fetched_at` exists
+                           (remote_refresh does NOT advance `fetched_at` on a
+                           failed Fetch 1 — the leg's `fetched_at` field IS the
+                           stale value being "served")
+    degraded           := served_stale_cache
+    cached             := served_stale_cache
+                           OR (fetch_ok == "not_attempted" AND a prior
+                               `fetched_at` exists)   # the hidden 3rd cell
+                           (blueprint top_risks: `not_attempted` can NEVER
+                           satisfy `degraded`'s `fetch_ok=="false"` clause —
+                           a deadline-cut leg with a usable prior value is
+                           "cached but not degraded", never a red bar)
+    degradation_reason := "fetch_failed_using_stale_cache" iff degraded, else None
+    coordination_ref_present := passed through verbatim from the leg (only
+                           the (".", "origin") leg ever has a non-null value —
+                           see `remote_refresh.py`'s `run_coordination_fetch`)
 
-Design notes:
-- Deliberately does NOT raise on any error — all errors surface via `success=False`
-  and/or `degraded=True` fields.  The board renderer (TASK-005) reads the
-  `degraded` signal and renders the offline red-bar; this collector only provides
-  the signal.
-- Cache path is `.aria/cache/coordination-fetch.json` relative to project_root.
-  The `.aria/cache/` directory is created silently if absent.
-- A corrupt or non-JSON cache file is treated as absent → normal fetch.
-- Rule #7 compliance: subprocess uses `capture_output=True`; stdout/stderr are
-  never printed. Error details are coerced to short, non-secret strings.
-- Two-fetch semantics (v1.46.0, #141) — success/degraded anchor to Fetch 1:
-    * Fetch 1 fail + stale cache        → success=False, cached=True, degraded=True,
-                                          degradation_reason="fetch_failed_using_stale_cache",
-                                          coordination_ref_present=<stale cache value>
-                                          (Fetch 2 short-circuited — remote unusable)
-    * Fetch 1 fail + no cache at all     → success=False, cached=False, degraded=False,
-                                          coordination_ref_present=None
-    * cache fresh (TTL not expired)      → success=True,  cached=True, degraded=False,
-                                          coordination_ref_present=<cache value>
-    * Fetch 1 ok + Fetch 2 ok            → success=True,  coordination_ref_present=True
-    * Fetch 1 ok + Fetch 2 benign-absent → success=True,  coordination_ref_present=False,
-                                          NO soft_error (coordination simply not published)
-    * Fetch 1 ok + Fetch 2 non-benign    → success=True,  coordination_ref_present=None,
-                                          soft_error("coordination_ref_fetch_failed", ...)
-- benign-absent gate (Fetch 2): `_is_benign_coordination_absent` — rc==128 AND
-  "couldn't find remote ref" AND "refs/aria/coordination" in stderr (all three),
-  evaluated BEFORE `_classify_error`.  A missing coordination ref is NORMAL, not a
-  fetch failure — the root cause of #141.
-
-Example (for TASK-008 test authoring):
-    # fetch fail + stale cache → degraded
-    # subprocess returns rc=128, cache exists with last_fetch_at=10 min ago
-    # → success=False, cached=True, degraded=True,
-    #   degradation_reason="fetch_failed_using_stale_cache"
-
-Spec: openspec/changes/multi-terminal-coordination/tasks.md §1.3, §1.7
-Tasks: TASK-003 (backend-architect), TASK-007 (backend-architect)
+`track_board.py` (Phase 1 increment 5) additionally reads `fetch_ok` THREE-
+STATE directly off the `remote_refresh` top-level block (not through this
+shim) to render a THIRD, non-red "未刷新" (not-refreshed) advisory for
+`not_attempted` — `degraded`/`cached` alone cannot distinguish "we tried and
+failed" from "we never tried this scan" (see `track_board.py` for the
+rationale this module's docstring above already spells out).
 """
 
 from __future__ import annotations
 
-import json
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import Any
 
-from ._common import CollectorResult, _run, classify_git_error, log
+from ._common import classify_git_error, scan_now
 
-# ── Constants ────────────────────────────────────────────────────────────────
-
-FETCH_CACHE_TTL: int = 30  # seconds — skip fetch if last fetch was < TTL ago
+# ── Constants (retained — consumed by remote_refresh.py) ──────────────────
 
 COORDINATION_REF: str = "refs/aria/coordination"
+
+_MAIN_REPO_LABEL: str = "."
+_MAIN_REPO_REMOTE: str = "origin"
 
 
 def _branch_heads_refspec(remote: str) -> str:
@@ -148,85 +130,8 @@ def _is_benign_coordination_absent(rc: int, stderr: str) -> bool:
         and COORDINATION_REF.lower() in stderr_lower
     )
 
-# Cache file location relative to project_root
-_CACHE_RELATIVE: str = ".aria/cache/coordination-fetch.json"
 
-# Cache file schema key names (kept compact for readability)
-_CACHE_KEY_LAST_FETCH_AT: str = "last_fetch_at"
-_CACHE_KEY_REFS: str = "refs"
-# v1.46.0 (#141): persisted so the cache-hit / stale-serve paths return a STABLE
-# coordination_ref_present (else it would appear only on fetch-runs and disappear
-# on cache-hits → normalize_snapshot two-consecutive-runs drift).
-_CACHE_KEY_COORD_PRESENT: str = "coordination_ref_present"
-
-
-# ── Cache helpers ─────────────────────────────────────────────────────────────
-
-
-def _cache_path(project_root: Path) -> Path:
-    return project_root / _CACHE_RELATIVE
-
-
-def _read_cache(cache_file: Path) -> dict | None:
-    """Read and parse the fetch cache file.
-
-    Returns the parsed dict on success, or None if:
-    - file does not exist
-    - file cannot be read (permission error)
-    - file content is not valid JSON (corrupt)
-    """
-    if not cache_file.is_file():
-        return None
-    try:
-        raw = cache_file.read_text(encoding="utf-8", errors="replace")
-        return json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
-        log.debug("coordination_fetch: cache unreadable or corrupt (%s), treating as absent", exc)
-        return None
-
-
-def _write_cache(
-    cache_file: Path,
-    last_fetch_at_iso: str,
-    refs: list[str],
-    coordination_ref_present: bool | None,
-) -> None:
-    """Write fetch timestamp + refs + coordination-ref presence to cache file.
-
-    Creates `.aria/cache/` silently if absent.  Errors are swallowed (OSError
-    fail-soft) — a write failure means the next call will re-run fetch, which is
-    safe.  ``coordination_ref_present`` is persisted (v1.46.0, #141) so cache-hit
-    and stale-serve paths return a stable value.
-    """
-    try:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            _CACHE_KEY_LAST_FETCH_AT: last_fetch_at_iso,
-            _CACHE_KEY_REFS: refs,
-            _CACHE_KEY_COORD_PRESENT: coordination_ref_present,
-        }
-        cache_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    except OSError as exc:
-        log.warning("coordination_fetch: failed to write cache (%s); next call will re-fetch", exc)
-
-
-def _iso_now_utc() -> str:
-    return datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
-
-
-def _parse_iso_utc(iso: str) -> float | None:
-    """Parse an ISO 8601 UTC string to a POSIX timestamp float, or None."""
-    try:
-        dt = datetime.fromisoformat(iso)
-        if dt.tzinfo is None:
-            # Treat naive timestamps as UTC (defensive)
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-    except (ValueError, TypeError):
-        return None
-
-
-# ── Error classification ──────────────────────────────────────────────────────
+# ── Error classification (retained verbatim — pinned by test_stderr_typed_channel.py) ──
 
 
 def _classify_error(rc: int, stderr: str) -> tuple[str, str]:
@@ -240,6 +145,13 @@ def _classify_error(rc: int, stderr: str) -> tuple[str, str]:
     for the label and keeps ONLY its own "git fetch ..." wording layer here (so the
     signal map is not duplicated into a third copy — R7 M-2). The wording strings are
     byte-identical to the pre-delegation implementation, so existing tests are green.
+
+    NOT called by `derive_legacy_coordination_fetch_block` (Phase 1 increment 5) —
+    that function only has an already-classified `error_kind` LABEL to work with
+    (no raw `(rc, stderr)` pair survives past `remote_refresh.py`'s Rule #7 typed
+    channel). Retained here solely because
+    `test_stderr_typed_channel.py::TestCoordinationFetchDelegation` pins this exact
+    delegation + wording directly.
     """
     label = classify_git_error(rc, stderr, "git fetch").label
     if label == "git_missing":
@@ -253,192 +165,122 @@ def _classify_error(rc: int, stderr: str) -> tuple[str, str]:
     return "other", f"git fetch failed with rc={rc}"
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# ── Legacy-schema derivation (F6′ shim, task 3.14) ─────────────────────────
+
+# rc-free wording — the leg record only carries an already-classified LABEL
+# (see module docstring), never a raw stderr string, so this is intentionally
+# NOT the same table as `_classify_error`'s (which needs `rc` for its wording).
+_LABEL_ERROR_MESSAGES: dict[str, str] = {
+    "git_missing": "git command not found in PATH",
+    "auth_403": "git fetch authentication error",
+    "non_ff": "git fetch rejected / non-fast-forward",
+    "network": "git fetch network error",
+    "other": "git fetch failed",
+}
+
+_EMPTY_BLOCK: dict[str, Any] = {
+    "success": False,
+    "cached": False,
+    "last_fetch_at": "",
+    "age_seconds": 0,
+    "refs_fetched": [],
+    "error_kind": None,
+    "error_msg": None,
+    "degraded": False,
+    "degradation_reason": None,
+    "coordination_ref_present": None,
+}
 
 
-def collect_coordination_fetch(
-    project_root: Path,
-    remote: str = "origin",
-) -> CollectorResult:
-    """Fetch coordination refs with 30-second TTL cache.
+def _find_origin_leg(remote_refresh_data: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Find the (".", "origin") leg inside `remote_refresh`'s `legs` list.
 
-    Args:
-        project_root: Absolute path to the project root (passed by scan.py).
-        remote:       git remote name (default: "origin"; injectable for tests).
-
-    Returns a CollectorResult whose `.data` dict matches the schema documented
-    in the module docstring.  Never raises — all errors are surfaced via
-    `r.soft_error` and the returned `success=False` / `error_kind` fields.
+    Fail-soft: a missing/malformed `remote_refresh_data` or an absent/non-list
+    `legs` key returns None (the caller degrades to `_EMPTY_BLOCK`) — this is
+    NOT an error, just "the origin leg has no data yet" (e.g. `origin` is not
+    in `enforced_remotes`, or the very first scan of a fresh clone).
     """
-    r = CollectorResult()
-    now_ts = time.time()
-    cache_file = _cache_path(project_root)
-    cache = _read_cache(cache_file)
+    legs = (remote_refresh_data or {}).get("legs")
+    if not isinstance(legs, list):
+        return None
+    for leg in legs:
+        if (
+            isinstance(leg, dict)
+            and leg.get("repo") == _MAIN_REPO_LABEL
+            and leg.get("remote") == _MAIN_REPO_REMOTE
+        ):
+            return leg
+    return None
 
-    # ── TTL check: skip fetch if cache is fresh ───────────────────────────────
-    if cache is not None:
-        last_fetch_iso: str | None = cache.get(_CACHE_KEY_LAST_FETCH_AT)
-        if last_fetch_iso:
-            last_ts = _parse_iso_utc(last_fetch_iso)
-            if last_ts is not None:
-                age = int(now_ts - last_ts)
-                if age < FETCH_CACHE_TTL:
-                    log.debug(
-                        "coordination_fetch: cache fresh (%ds < %ds TTL), skipping fetch",
-                        age,
-                        FETCH_CACHE_TTL,
-                    )
-                    r.data = {
-                        "success": True,
-                        "cached": True,
-                        "last_fetch_at": last_fetch_iso,
-                        "age_seconds": age,
-                        "refs_fetched": [],
-                        "error_kind": None,
-                        "error_msg": None,
-                        "degraded": False,
-                        "degradation_reason": None,
-                        # Read back from cache so consecutive scans stay stable
-                        # (None for legacy caches written before v1.46.0).
-                        "coordination_ref_present": cache.get(_CACHE_KEY_COORD_PRESENT),
-                    }
-                    return r
 
-    # ── Fetch 1: branch heads (load-bearing, runs first) ──────────────────────
-    # Split from the coordination ref (#141 / aria-plugin #75): a single atomic
-    # fetch bundling both failed rc=128 whenever refs/aria/coordination was absent
-    # on the remote (most non-multi-terminal projects), dropping the branch heads
-    # with it.  Fetch 1 must succeed independently to keep the branch view fresh.
-    branch_refspec = _branch_heads_refspec(remote)
-    cmd1 = ["git", "fetch", remote, "--no-tags", branch_refspec]
-    log.debug("coordination_fetch: Fetch 1 (branch heads) %s (cwd=%s)", " ".join(cmd1), project_root)
+def _parse_iso_utc(iso: str):
+    """Parse an ISO 8601 string to a tz-aware UTC datetime, or None."""
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
-    rc1, _stdout1, stderr1 = _run(cmd1, cwd=project_root, timeout=30)
 
-    fetch_at_iso = _iso_now_utc()
+def _age_seconds(fetched_at_iso: Any) -> int:
+    """`scan_now() - fetched_at`, clamped to >=0. Any unparseable/missing input
+    (including a future timestamp — clock rollback) → 0, never negative."""
+    if not isinstance(fetched_at_iso, str) or not fetched_at_iso.strip():
+        return 0
+    dt = _parse_iso_utc(fetched_at_iso)
+    if dt is None:
+        return 0
+    age = (scan_now() - dt).total_seconds()
+    return int(age) if age > 0 else 0
 
-    if rc1 != 0:
-        # Fetch 1 failed → genuine failure.  Short-circuit: do NOT run Fetch 2 —
-        # when the remote is unreachable the coordination ref state is unknowable.
-        # Apply TASK-007 degraded semantics (anchored to the load-bearing fetch).
-        # rc=124 = timeout (from _run); classify alongside other errors.
-        error_kind, error_msg = (
-            ("network", "git fetch timed out after 30s (rc=124)")
-            if rc1 == 124
-            else _classify_error(rc1, stderr1)
-        )
-        log.warning(
-            "coordination_fetch: Fetch 1 (branch heads) failed — kind=%s msg=%s",
-            error_kind,
-            error_msg,
-        )
-        r.soft_error("coordination_fetch_failed", f"{error_kind}: {error_msg}")
 
-        # Offline degradation: serve stale cache if available (incl. its last-known
-        # coordination_ref_present); else pure failure with coordination unknown.
-        # _write_cache is NOT called here — never overwrite a valid stale entry.
-        stale_last_fetch_iso: str = ""
-        stale_age: int = 0
-        has_usable_stale_cache: bool = False
-        stale_coord_present: bool | None = None
+def derive_legacy_coordination_fetch_block(
+    remote_refresh_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Derive the legacy `coordination_fetch` schema from `remote_refresh`'s
+    (".", "origin") leg. Pure function — no I/O, cannot raise, cannot soft-error
+    (there is nothing left for it to get wrong: the leg record it reads was
+    already produced fail-soft by `remote_refresh.py`).
 
-        if cache is not None:
-            cached_iso = cache.get(_CACHE_KEY_LAST_FETCH_AT, "")
-            if cached_iso:
-                stale_ts = _parse_iso_utc(cached_iso)
-                if stale_ts is not None:
-                    stale_last_fetch_iso = cached_iso
-                    stale_age = int(now_ts - stale_ts)
-                    has_usable_stale_cache = True
-                    stale_coord_present = cache.get(_CACHE_KEY_COORD_PRESENT)
+    Returns a dict matching the PRE-increment-5 `coordination_fetch` schema
+    (see this module's docstring for the exact field-by-field mapping and
+    module docstring header for the "why" — F6′ backward-compat shim).
+    """
+    leg = _find_origin_leg(remote_refresh_data)
+    if leg is None:
+        return dict(_EMPTY_BLOCK)
 
-        if has_usable_stale_cache:
-            log.warning(
-                "coordination_fetch: serving stale cache (age=%ds) in degraded mode",
-                stale_age,
-            )
-            r.soft_error(
-                "coordination_fetch_degraded",
-                f"fetch failed ({error_kind}); serving stale cache aged {stale_age}s",
-            )
-            r.data = {
-                "success": False,
-                "cached": True,
-                "last_fetch_at": stale_last_fetch_iso,
-                "age_seconds": stale_age,
-                "refs_fetched": [],
-                "error_kind": error_kind,
-                "error_msg": error_msg,
-                "degraded": True,
-                "degradation_reason": "fetch_failed_using_stale_cache",
-                "coordination_ref_present": stale_coord_present,
-            }
-        else:
-            # No cache at all — pure failure, no data to serve.
-            r.data = {
-                "success": False,
-                "cached": False,
-                "last_fetch_at": stale_last_fetch_iso,
-                "age_seconds": stale_age,
-                "refs_fetched": [],
-                "error_kind": error_kind,
-                "error_msg": error_msg,
-                "degraded": False,
-                "degradation_reason": None,
-                "coordination_ref_present": None,
-            }
-        return r
+    fetch_ok = leg.get("fetch_ok")
+    fetched_at = leg.get("fetched_at")
+    has_stale_value = isinstance(fetched_at, str) and bool(fetched_at.strip())
 
-    # ── Fetch 2: coordination ref (only after Fetch 1 succeeds) ───────────────
-    cmd2 = ["git", "fetch", remote, "--no-tags", COORDINATION_REF]
-    log.debug("coordination_fetch: Fetch 2 (coordination ref) %s", " ".join(cmd2))
+    success = fetch_ok == "true"
+    served_stale_cache = fetch_ok == "false" and has_stale_value
+    degraded = served_stale_cache
+    cached = served_stale_cache or (fetch_ok == "not_attempted" and has_stale_value)
 
-    rc2, _stdout2, stderr2 = _run(cmd2, cwd=project_root, timeout=30)
+    error_kind: str | None = leg.get("error_kind") if fetch_ok == "false" else None
+    error_msg: str | None = _LABEL_ERROR_MESSAGES.get(error_kind) if error_kind else None
+    degradation_reason: str | None = "fetch_failed_using_stale_cache" if degraded else None
 
-    refs_fetched: list[str] = [branch_refspec]
-    coordination_ref_present: bool | None
+    refs_fetched: list[str] = []
+    if fetch_ok == "true":
+        remote = leg.get("remote") or _MAIN_REPO_REMOTE
+        refs_fetched.append(_branch_heads_refspec(remote))
+        if leg.get("coordination_ref_present") is True:
+            refs_fetched.append(COORDINATION_REF)
 
-    if rc2 == 0:
-        coordination_ref_present = True
-        refs_fetched.append(COORDINATION_REF)
-    elif _is_benign_coordination_absent(rc2, stderr2):
-        # Benign: coordination data simply not published — NORMAL, not an error.
-        # No soft_error, no degraded, no kind=other.  (Evaluated BEFORE
-        # _classify_error, which would otherwise map rc=128 to "other".)
-        coordination_ref_present = False
-        # info (not debug): "absent" is benign but, due to the git absent-vs-hidden
-        # ambiguity (see _is_benign_coordination_absent), keep it traceable in logs.
-        log.info("coordination_fetch: coordination ref absent (benign — not published)")
-    else:
-        # Genuine Fetch 2 failure (rc=124 timeout / rc=127 git-missing / network,
-        # or rc=128 with other wording).  Fetch 1 already refreshed the branch
-        # view, so success stays True; surface the coordination failure separately.
-        coordination_ref_present = None
-        f2_kind, f2_msg = (
-            ("network", "git fetch timed out after 30s (rc=124)")
-            if rc2 == 124
-            else _classify_error(rc2, stderr2)
-        )
-        log.warning(
-            "coordination_fetch: Fetch 2 (coordination ref) failed (non-benign) — kind=%s msg=%s",
-            f2_kind,
-            f2_msg,
-        )
-        r.soft_error("coordination_ref_fetch_failed", f"{f2_kind}: {f2_msg}")
-
-    # Fetch 1 succeeded → branch view refreshed.  Persist cache (incl.
-    # coordination_ref_present for stable cache-hit reads) and return success.
-    _write_cache(cache_file, fetch_at_iso, refs_fetched, coordination_ref_present)
-    r.data = {
-        "success": True,
-        "cached": False,
-        "last_fetch_at": fetch_at_iso,
-        "age_seconds": 0,
+    return {
+        "success": success,
+        "cached": cached,
+        "last_fetch_at": fetched_at if has_stale_value else "",
+        "age_seconds": _age_seconds(fetched_at),
         "refs_fetched": refs_fetched,
-        "error_kind": None,
-        "error_msg": None,
-        "degraded": False,
-        "degradation_reason": None,
-        "coordination_ref_present": coordination_ref_present,
+        "error_kind": error_kind,
+        "error_msg": error_msg,
+        "degraded": degraded,
+        "degradation_reason": degradation_reason,
+        "coordination_ref_present": leg.get("coordination_ref_present"),
     }
-    return r

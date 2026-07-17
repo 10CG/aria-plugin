@@ -1,8 +1,10 @@
 """Multi-track coordination board renderer (TASK-005, extended in TASK-017).
 
-Consumes the ``tracks_multibranch`` and ``coordination_fetch`` snapshot keys
-produced by TASK-004 (handoff_multibranch.py) and TASK-007 (coordination_fetch.py)
-and renders an ASCII table for display in the state-scanner Phase 1 output.
+Consumes the ``tracks_multibranch``, ``coordination_fetch``, and (Phase 1
+increment 5, F3′) ``remote_refresh`` snapshot keys — produced by TASK-004
+(handoff_multibranch.py), TASK-007 (coordination_fetch.py, now a pure legacy-
+schema derivation), and Phase 0.5 (remote_refresh.py) respectively — and
+renders an ASCII table for display in the state-scanner Phase 1 output.
 
 Public API:
     render_track_board(snapshot: dict, now: datetime | None = None) -> str
@@ -36,6 +38,9 @@ Offline/cache indicators:
     errors[] has "coordination_ref_fetch_failed" + not degraded → yellow advisory
       "⚠ 协调 ref 未取到 ..." (F5 #144: Fetch 2 failed non-benign while branch view
       fresh — half-silent failure the all-green board would otherwise hide)
+    remote_refresh (".", "origin") leg fetch_ok == "not_attempted" + not degraded
+      → "⚠ 未刷新 ..." advisory (Phase 1 increment 5, task 3.14 hidden cell: a
+      deadline/backoff-cut leg is neither a failure (red) nor silently fresh)
 
 Collision detection (TASK-017 upgrade — reconcile-based):
     Primary path (P2): reconcile_all() from lib/reconcile.py drives detection.
@@ -544,6 +549,28 @@ def render_track_board(
         lines.append(
             "⚠ 协调 ref 未取到 (网络/超时), 队友协调数据可能陈旧 (分支视图仍新鲜)"
         )
+
+    # ── Not-refreshed advisory (F3′ Phase 1 increment 5, task 3.14 hidden cell) ──
+    # `coordination_fetch.degraded`/`cached` (derived from the legacy 2-state
+    # success/fail shim) CANNOT distinguish "this scan tried to fetch and
+    # failed" from "this scan never got around to fetching this leg" (deadline
+    # cut / backoff) — `fetch_ok=="not_attempted"` never satisfies `degraded`'s
+    # `fetch_ok=="false"` clause (blueprint top_risks). Read the THREE-STATE
+    # `fetch_ok` straight off the `remote_refresh` (Phase 0.5) top-level block
+    # for the (".", "origin") leg to surface a third, non-red advisory.
+    # Additive: `remote_refresh` is absent from pre-increment-5 snapshots/test
+    # fixtures, so `rr.get("legs")` is `[]`/missing and this never fires there.
+    if not degraded:
+        rr: dict = snapshot.get("remote_refresh") or {}
+        origin_fetch_ok: str | None = None
+        for leg in rr.get("legs") or []:
+            if isinstance(leg, dict) and leg.get("repo") == "." and leg.get("remote") == "origin":
+                origin_fetch_ok = leg.get("fetch_ok")
+                break
+        if origin_fetch_ok == "not_attempted":
+            lines.append(
+                "⚠ 未刷新: 本次 scan 未及时 fetch 协调数据 (deadline/backoff 跳过), 数据可能不是最新"
+            )
 
     # ── Board header ──────────────────────────────────────────────────────────
     fetch_ts = last_fetch_at[:16] + "Z" if last_fetch_at else "未知"

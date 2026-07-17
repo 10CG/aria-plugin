@@ -15,7 +15,7 @@ from ._common import CollectorResult, log
 from .architecture import collect_architecture
 from .audit import collect_audit
 from .changes import collect_changes_analysis
-from .coordination_fetch import collect_coordination_fetch
+from .coordination_fetch import derive_legacy_coordination_fetch_block
 from .custom_checks import collect_custom_checks
 from .forgejo_config import collect_forgejo_config
 from .git import collect_git_state
@@ -27,6 +27,7 @@ from .issue_scan import collect_issue_scan
 from .multi_remote import collect_multi_remote
 from .openspec import collect_openspec
 from .readme import collect_readme_sync
+from .remote_refresh import collect_remote_refresh
 from .requirements import collect_requirements
 from .standards import collect_standards
 from .sync import collect_sync_state
@@ -38,7 +39,7 @@ __all__ = [
     "collect_architecture",
     "collect_audit",
     "collect_changes_analysis",
-    "collect_coordination_fetch",
+    "derive_legacy_coordination_fetch_block",
     "collect_custom_checks",
     "collect_forgejo_config",
     "collect_git_state",
@@ -50,6 +51,7 @@ __all__ = [
     "collect_multi_remote",
     "collect_openspec",
     "collect_readme_sync",
+    "collect_remote_refresh",
     "collect_requirements",
     "collect_standards",
     "collect_sync_state",

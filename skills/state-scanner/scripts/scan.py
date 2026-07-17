@@ -10,6 +10,15 @@ for the exported surface.
 
 Coverage (schema v1.0):
 - Phase 0:    interrupt recovery (workflow-state.json)
+- Phase 0.5:  remote_refresh (F3′, main spec state-scanner-stale-refs-false-parity,
+              Phase 1 increment 5) — fetches every enforced (repo, remote) leg
+              (main repo + every INITIALIZED submodule) BEFORE any other Phase-1
+              collector reads local git state, so `git.upstream.behind` /
+              `sync_status.current_branch` / `multi_remote` never disagree about
+              freshness inside the same snapshot (tasks 3.9). Additive top-level
+              `remote_refresh` field. Also runs the special (".", "origin")
+              coordination-ref fetch (Fetch 2) formerly owned by Phase 1.16 —
+              see below.
 - Phase 1:    git state (branch, status, upstream, recent_commits)
 - Phase 1.4:  UPM phase_cycle + active_module (fail-soft if UPM absent)
 - Phase 1.5:  changes analysis (file_types, complexity L1-L3, skill_changes)
@@ -30,8 +39,13 @@ Coverage (schema v1.0):
               arbitrates the global-latest handoff, flags when it lives in a
               worktree other than the current one; additive top-level
               `handoff_worktrees` field)
-- Phase 1.16: Coordination fetch (git fetch with 30s TTL cache; prerequisite for
-              Phase 1.17; additive top-level `coordination_fetch` field)
+- Phase 1.16: Coordination fetch — RETIRED as an independent network fetch
+              (F6′, Phase 1 increment 5). `coordination_fetch` is now a PURE
+              derivation (`derive_legacy_coordination_fetch_block`) off Phase
+              0.5's `remote_refresh` (".", "origin") leg — same additive
+              top-level `coordination_fetch` field, byte-compatible schema, no
+              second TTL cache. Still a prerequisite for Phase 1.17 (the
+              underlying fetch now happens even earlier, at Phase 0.5).
 - Phase 1.17: Cross-branch handoff track rebuild (scans all origin/* branches for
               docs/handoff/*.md, parses frontmatter, legacy fallback for pre-v1.1.0
               docs; additive top-level `tracks_multibranch` field)
@@ -57,10 +71,10 @@ from pathlib import Path
 from typing import Any
 
 from collectors import (
+    CollectorResult,
     collect_architecture,
     collect_audit,
     collect_changes_analysis,
-    collect_coordination_fetch,
     collect_custom_checks,
     collect_forgejo_config,
     collect_git_state,
@@ -72,10 +86,12 @@ from collectors import (
     collect_multi_remote,
     collect_openspec,
     collect_readme_sync,
+    collect_remote_refresh,
     collect_requirements,
     collect_standards,
     collect_sync_state,
     collect_upm_state,
+    derive_legacy_coordination_fetch_block,
     log,
 )
 
@@ -101,6 +117,13 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     errors: list[dict[str, Any]] = []
 
     phase0 = collect_interrupt_state(project_root)
+    # Phase 0.5 (F3′, main spec state-scanner-stale-refs-false-parity): fetch
+    # every enforced (repo, remote) leg BEFORE any Phase-1 collector reads local
+    # git state — must run first so `git.upstream.behind` (Phase 1) and
+    # `sync_status`/`multi_remote` (Phase 1.12) never disagree about freshness
+    # inside the same snapshot (tasks 3.9). Also owns the (".", "origin")
+    # coordination-ref fetch formerly run independently at Phase 1.16.
+    phase0_5_remote_refresh = collect_remote_refresh(project_root)
     phase1_git = collect_git_state(project_root)
     phase1_4_upm = collect_upm_state(project_root)
     phase1_5_changes = collect_changes_analysis(phase1_git.data)
@@ -121,12 +144,16 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_15b_worktrees = collect_handoff_worktrees(
         project_root, phase1_15_handoff.data
     )
-    # Phase 1.16: coordination fetch (TASK-003) — must run before multibranch scan.
-    # collect_coordination_fetch is idempotent with a 30s TTL cache; running it here
-    # ensures all remote refs are available even if the caller did not pre-fetch.
-    phase1_16_coord_fetch = collect_coordination_fetch(project_root)
+    # Phase 1.16: coordination fetch (TASK-003) — RETIRED as an independent
+    # network fetch (F6′, Phase 1 increment 5). The (".", "origin") fetch
+    # already ran at Phase 0.5; this is now a PURE re-derivation of the legacy
+    # schema off that leg's record — no I/O, cannot soft-error on its own.
+    phase1_16_coord_fetch = CollectorResult(
+        data=derive_legacy_coordination_fetch_block(phase0_5_remote_refresh.data)
+    )
     # Phase 1.17: cross-branch handoff track rebuild (TASK-004).
-    # Depends on phase1_16_coord_fetch having populated refs/remotes/origin/*.
+    # Depends on Phase 0.5 having populated refs/remotes/origin/* (fetched even
+    # earlier now than the retired Phase 1.16 independent fetch did).
     phase1_17_handoff_mb = collect_handoff_multibranch(project_root)
 
     # T3.3 contract: multi_remote.data returns the inner block; nest under
@@ -136,6 +163,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
 
     for collector_name, result in [
         ("interrupt", phase0),
+        ("remote_refresh", phase0_5_remote_refresh),
         ("git", phase1_git),
         ("upm", phase1_4_upm),
         ("changes", phase1_5_changes),
@@ -164,6 +192,7 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
         "generated_at": generated_at,
         "project_root": str(project_root),
         "interrupt": phase0.data,
+        "remote_refresh": phase0_5_remote_refresh.data,
         "git": phase1_git.data,
         "upm": phase1_4_upm.data,
         "changes": phase1_5_changes.data,
