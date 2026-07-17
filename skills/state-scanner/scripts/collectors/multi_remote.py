@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -397,6 +398,166 @@ def _scan_repo(
     # Staleness only meaningful for local_refs mode.
     stale = False
     return repo_block, stale
+
+
+# ---------------------------------------------------------------------------
+# F1′/F4′ predicates (main spec stale-refs-false-parity, Phase 1)
+# ---------------------------------------------------------------------------
+# SOT = proposal F4′ v8 formula block (D15′ dual-role predicates + D20 evidence_grade
+# full partition). These are PURE functions consuming the per-leg fetch signals that
+# remote_refresh (F3′, Phase 0.5) produces (fetched_at / fetch_ok / generation /
+# consecutive_unverified). They are additive here; collect_multi_remote wires them to
+# real remote_refresh data in a later increment. Registered in the D16 predicate-domain
+# table (references/predicate-domain-table.md). Retired single-role predicate 可信(r) is
+# forbidden (its single-role conflation was the R7 three-Critical root).
+
+
+def _evidence_eligible(
+    fetched_at: datetime | None, now: datetime, window_seconds: int
+) -> bool:
+    """证据资格(r) — D15′ ∃ side: world-time fresh positive evidence.
+
+    fetched_at is None ⇒ False. A negative wall-clock age (fetched_at in the future
+    — clock rollback / NTP jump, R9-M3) is treated as null ⇒ False (fail-CLOSED): a
+    rollback could otherwise make a 14h-stale fetch present a false-fresh age.
+    """
+    if fetched_at is None:
+        return False
+    age = (now - fetched_at).total_seconds()
+    if age < 0:
+        return False
+    return age <= window_seconds
+
+
+def _exemption_eligible(
+    fetched_at: datetime | None,
+    now: datetime,
+    generation_fetched: int | None,
+    scan_generation: int,
+    k_eff: int,
+    hard_cap_seconds: int,
+    consecutive_unverified: int,
+) -> bool:
+    """豁免资格(r) — D15′+D18 downgrade side: attention-rhythm fresh.
+
+    Any missing / out-of-range input ⇒ False (fail-CLOSED). Guards: fetched_at
+    present ∧ 0 ≤ wall-age ≤ hard_cap ∧ generation present ∧ 0 ≤ generation_age ≤
+    k_eff ∧ consecutive_unverified < k_eff (D18). Negative generation_age (lost-update
+    rollback, RM-6b) is clamped to null.
+    """
+    if fetched_at is None:
+        return False
+    age = (now - fetched_at).total_seconds()
+    if age < 0 or age > hard_cap_seconds:
+        return False
+    if generation_fetched is None:
+        return False
+    generation_age = scan_generation - generation_fetched
+    if generation_age < 0:
+        return False
+    if generation_age > k_eff:
+        return False
+    if consecutive_unverified >= k_eff:
+        return False
+    return True
+
+
+def _evidence_grade(evidence_eligible: bool, exemption_eligible: bool) -> str:
+    """D20 three-tier FULL PARTITION — the single definition point (D16 lock rule #2).
+
+    E-first (owner R9-m1). The if/elif/else structure IS the mutual-exclusion +
+    exhaustiveness proof: exactly one branch executes per call, so the E∧¬X cell
+    (True, False) lands unambiguously in ``fresh`` and can never be simultaneously
+    claimed by the stale_unverified branch — this is the structural cure for the R8
+    11th-recurrence overlap cell (two agents independently wrote three
+    independently-evaluated flags that could both fire on E∧¬X).
+    """
+    if evidence_eligible:
+        return "fresh"
+    if exemption_eligible:
+        return "stale_unverified"
+    return "expired"
+
+
+_BENIGN_UNCONDITIONAL_REASONS = frozenset(
+    {"detached_head", "shallow_clone", "remote_branch_missing"}
+)
+
+
+def _benign_unknown(parity: str | None, reason: str | None, evidence_eligible: bool) -> bool:
+    """parity==unknown that is benign (does NOT block overall_parity).
+
+    ① fetch-independent reasons (detached_head / shallow_clone / remote_branch_missing
+    — ls-remote answers authoritatively) are unconditionally benign. ② the
+    no_local_tracking_ref assertion ("really never published") is benign ONLY when the
+    evidence is world-time fresh. Everything else (incl. None / parse_error / Spec B
+    catch-all values) is NOT benign.
+    """
+    if parity != "unknown":
+        return False
+    if reason in _BENIGN_UNCONDITIONAL_REASONS:
+        return True
+    if reason == "no_local_tracking_ref":
+        return evidence_eligible
+    return False
+
+
+def _blocking_unknown(parity: str | None, reason: str | None, evidence_eligible: bool) -> bool:
+    """fail-CLOSED: any unknown parity that is NOT benign blocks. Defined as the strict
+    complement of _benign_unknown — NEVER a positive enumeration of blocking reasons
+    (a positive enum fails OPEN on any unlisted / future / classifier catch-all value:
+    the invariant's 5th recurrence). Do not rewrite as ``reason in {...}``."""
+    return parity == "unknown" and not _benign_unknown(parity, reason, evidence_eligible)
+
+
+def _has_unreachable_remote(fetch_ok: str) -> bool:
+    """Reads the fetch_ok three-state ONLY (zero reason-enumeration). ``not_attempted``
+    (deadline-cut / backoff — "we didn't ask") is NOT unreachable ("we can't reach");
+    only an actual failed fetch (``"false"``) is. The 6th recurrence was a positive
+    reason-enumeration here that missed Spec B classifier catch-all values."""
+    return fetch_ok == "false"
+
+
+def _gitlink_blocking(g: dict[str, Any]) -> bool:
+    """F10″ gitlink-layer blocking predicate (interface for Phase 2A). In Phase 1
+    gitlink_integrity is always [] so this is never invoked with data; the
+    orphan_unverified + consecutive≥k_eff (D18) branch lands in Phase 2A (tasks 13.4)."""
+    return g.get("status") == "orphaned"
+
+
+def _overall_parity(
+    enforced_entries: list[dict[str, Any]], gitlink_integrity: list[dict[str, Any]]
+) -> bool:
+    """F4′ v8 decision table (SOT = proposal L459-506). Four clauses:
+
+      1. enforced_set ≠ ∅            (guard the ``all([])`` vacuous-true)
+      2. ∃ r: parity==equal ∧ evidence_grade=="fresh"   (⚠️ BOTH — a stale_unverified
+         equal keeps parity==equal so a parity-only ∃ check resurrects the 14h accident)
+      3. ∀ R: ¬gitlink_blocking(R)   (Phase 1 placeholder — gitlink_integrity=[] ⇒
+         vacuously true; a UNIVERSAL-NEGATION clause, so empty input is safe, unlike
+         clause 1's positive-evidence empty set)
+      4. ∀ r: parity ∉ {behind, diverged} ∧ ¬blocking_unknown(r)
+    """
+    if not enforced_entries:
+        return False
+    has_fresh_equal = any(
+        e.get("parity") == "equal" and e.get("evidence_grade") == "fresh"
+        for e in enforced_entries
+    )
+    if not has_fresh_equal:
+        return False
+    if any(_gitlink_blocking(g) for g in gitlink_integrity):
+        return False
+    for e in enforced_entries:
+        if e.get("parity") in ("behind", "diverged"):
+            return False
+        # evidence_grade=="fresh" ⟺ 证据资格(r) (E) by _evidence_grade's definition,
+        # so it is the correct gate for _benign_unknown's ② no_local_tracking_ref branch.
+        if _blocking_unknown(
+            e.get("parity"), e.get("reason"), e.get("evidence_grade") == "fresh"
+        ):
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
