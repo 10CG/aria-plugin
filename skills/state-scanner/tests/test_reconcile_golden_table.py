@@ -957,5 +957,90 @@ class TestEdgeCases(unittest.TestCase):
         self.assertEqual(v.verdict_reason, "no_active_candidates")
 
 
+# ===========================================================================
+# Rule 5.1b — clock-skew detection excludes STALE candidates (aria-plugin #111)
+# ===========================================================================
+
+class TestRule5_1b_ClockSkewExcludesStale(unittest.TestCase):
+    """#111: clock-skew detection must ignore STALE candidates (yielded OR
+    active). A stale claim's claimed_at reflects historical work, not a
+    concurrent clock reading, so pairing it against another claim
+    false-positives clock-skew on a normal time span.
+
+    Reproduces the 2026-07-14 dogfood: a fresh active claim was reconciled
+    against two 3-day-stale yielded claims whose claimed_at were 5h44m apart
+    (a normal workday span). The stale span was read as a 20663s "clock skew".
+    `yielded` itself stays an active candidate (concurrent_tracks.py:30 — a
+    voluntarily paused session that can be reconciled back); the fix is scoped
+    to the skew calculation, not the candidate set.
+    """
+
+    def test_5_1b_stale_claim_not_counted_in_skew(self):
+        """2 fresh actives 29s apart + 1 stale claim 6h away → skew reflects
+        ONLY the fresh pair (29s, no conflict), not the 6h stale span."""
+        fresh_a = _claim(
+            container="A", session="s-a", status="active",
+            claimed_at=_FIXED_NOW, heartbeat_at=_FIXED_NOW,
+        )
+        fresh_b = _claim(
+            container="B", session="s-b", status="active",
+            claimed_at=_FIXED_NOW - timedelta(seconds=29),
+            heartbeat_at=_FIXED_NOW,
+        )
+        stale = _claim(
+            container="C", session="s-stale", status="yielded",
+            claimed_at=_FIXED_NOW - timedelta(hours=6),
+            heartbeat_at=_FIXED_NOW - timedelta(hours=2),  # >30min STALE_TTL
+        )
+
+        v = reconcile("t", [fresh_a, fresh_b, stale], now=_FIXED_NOW)
+
+        self.assertFalse(v.conflict)
+        self.assertEqual(v.max_clock_skew_seconds, 29)  # only the fresh pair
+
+    def test_5_1b_single_fresh_amid_stale_yielded_no_false_skew(self):
+        """Reproduces #111: 1 fresh active + 2 stale yielded (claimed_at 6h
+        apart) → NO clock_skew_conflict; skew undefined (< 2 fresh)."""
+        fresh = _claim(
+            container="mine", session="s-now", status="active",
+            claimed_at=_FIXED_NOW, heartbeat_at=_FIXED_NOW,
+        )
+        stale_early = _claim(
+            container="twin", session="s-early", status="yielded",
+            claimed_at=_FIXED_NOW - timedelta(hours=8),
+            heartbeat_at=_FIXED_NOW - timedelta(hours=2),  # stale
+        )
+        stale_late = _claim(
+            container="twin", session="s-late", status="yielded",
+            claimed_at=_FIXED_NOW - timedelta(hours=2),
+            heartbeat_at=_FIXED_NOW - timedelta(hours=2),  # stale
+        )
+
+        v = reconcile("t", [fresh, stale_early, stale_late], now=_FIXED_NOW)
+
+        self.assertFalse(v.conflict)
+        self.assertIsNone(v.max_clock_skew_seconds)
+        self.assertNotEqual(v.verdict_reason, "clock_skew_conflict")
+
+    def test_5_1b_two_fresh_real_skew_still_detected(self):
+        """Guard: the fix must NOT suppress a genuine clock skew between two
+        FRESH claims (2 fresh actives 5min apart → conflict)."""
+        fresh_a = _claim(
+            container="A", session="s-a", status="active",
+            claimed_at=_FIXED_NOW, heartbeat_at=_FIXED_NOW,
+        )
+        fresh_b = _claim(
+            container="B", session="s-b", status="active",
+            claimed_at=_FIXED_NOW - timedelta(minutes=5),
+            heartbeat_at=_FIXED_NOW,
+        )
+
+        v = reconcile("t", [fresh_a, fresh_b], now=_FIXED_NOW)
+
+        self.assertTrue(v.conflict)
+        self.assertEqual(v.max_clock_skew_seconds, 300)
+        self.assertEqual(v.verdict_reason, "clock_skew_conflict")
+
+
 if __name__ == "__main__":
     unittest.main()

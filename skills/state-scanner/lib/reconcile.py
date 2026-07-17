@@ -18,9 +18,11 @@ Reconcile rules (first-match, applied in order):
   3. No candidates left → verdict "no_active_candidates".
   4. Exactly one active candidate → it wins ("sole_active").
   5. Multiple active candidates (race scenario):
-     5.1 Clock-skew detection: max diff of claimed_at > CLOCK_SKEW_WARN_THRESHOLD
-         → conflict=True, verdict_reason="clock_skew_conflict" (winner still
-         selected by rule 5.2 for advisory purposes).
+     5.1 Clock-skew detection (fresh candidates only): max diff of claimed_at
+         among non-stale candidates > CLOCK_SKEW_WARN_THRESHOLD → conflict=True,
+         verdict_reason="clock_skew_conflict" (winner still selected by rule 5.2
+         for advisory purposes). Stale candidates are excluded — their
+         claimed_at is historical, not a concurrent clock reading (#111).
      5.2 Earliest claimed_at wins (ISO string lexicographic order == temporal
          order for UTC ISO 8601 at seconds precision).
      5.3 Tie in claimed_at → lex tiebreak on "container/session" composite key.
@@ -52,6 +54,10 @@ logger = logging.getLogger(__name__)
 # "abandoned" is not in STATUS_ENUM (claim_schema.py SCHEMA_VERSION_CURRENT=1)
 # but may appear in future schema versions; we treat it as terminal here for
 # forward compatibility.
+# NB: "yielded" is NOT terminal — it is a voluntarily PAUSED session that can
+# still be reconciled back into ownership (concurrent_tracks.py:30), so it
+# remains an active candidate. See Rule 5.1 for why stale candidates (yielded or
+# active) are excluded from clock-skew detection (aria-plugin #111).
 # ---------------------------------------------------------------------------
 _TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "abandoned"})
 
@@ -92,8 +98,9 @@ class ReconcileVerdict:
         "no_active_candidates", "empty_claims",
         "sole_active+stale_takeover_eligible".
     max_clock_skew_seconds : int | None
-        Populated (>= 0) when there are >= 2 active candidates and the
-        clock-skew check fires.  None in all other cases.
+        Populated (>= 0) when there are >= 2 FRESH (non-stale) candidates and
+        the clock-skew check runs.  None in all other cases (incl. < 2 fresh
+        candidates — skew is undefined without a concurrent clock reading).
     """
 
     track_id: str
@@ -262,21 +269,33 @@ def reconcile(
 
     # ---- Rule 5: multiple active candidates (race scenario) --------------
 
-    # Rule 5.1: clock-skew detection
-    # Compare all pairs of parsed claimed_at values; find max absolute diff.
+    # Rule 5.1: clock-skew detection — ONLY among fresh (non-stale) candidates.
+    # A stale claim's claimed_at reflects historical work, not a concurrent
+    # clock reading, so pairing it against a fresh claim (or another stale one)
+    # false-positives clock-skew on normal time spans. aria-plugin #111: two
+    # 3-day-old yielded claims 5h44m apart (a normal workday span) were read as
+    # a 20663s "clock skew". Winner selection (Rule 5.2 below) still ranks ALL
+    # candidates; a stale winner is caught by Rule 6 stale-takeover.
     parsed_times: list[tuple[ClaimRecord, datetime]] = [
         (c, _parse_claimed_at(c))  # type: ignore[arg-type]  # None already filtered above
         for c in candidates
     ]
-    timestamps = [dt for _, dt in parsed_times]
-    max_skew_seconds: int = int(
-        max(
-            abs((t1 - t2).total_seconds())
-            for i, t1 in enumerate(timestamps)
-            for t2 in timestamps[i + 1 :]
+    fresh_timestamps = [dt for c, dt in parsed_times if not _is_stale(c, now)]
+    max_skew_seconds: Optional[int]
+    if len(fresh_timestamps) >= 2:
+        max_skew_seconds = int(
+            max(
+                abs((t1 - t2).total_seconds())
+                for i, t1 in enumerate(fresh_timestamps)
+                for t2 in fresh_timestamps[i + 1 :]
+            )
         )
-    )
-    conflict = max_skew_seconds > CLOCK_SKEW_WARN_THRESHOLD
+        conflict = max_skew_seconds > CLOCK_SKEW_WARN_THRESHOLD
+    else:
+        # < 2 fresh candidates → no concurrent clock reading to compare; skew
+        # is undefined (None), not zero. Never a clock-skew conflict.
+        max_skew_seconds = None
+        conflict = False
 
     # Rule 5.2: earliest claimed_at wins (ISO lex order == temporal order for
     # UTC ISO 8601 with seconds precision and consistent offset notation).
