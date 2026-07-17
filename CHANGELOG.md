@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.59.1] - 2026-07-17
+
+### Fixed
+- **False `clock_skew_conflict` in Layer-L reconcile** (aria-plugin #111): `reconcile()` Rule 5.1 compared `claimed_at` across ALL candidates including stale historical claims. A stale claim's `claimed_at` reflects past work, not a concurrent clock reading, so pairing it against a fresh claim false-positived clock-skew on normal time spans (two 3-day-stale `yielded` claims 5h44m apart were read as a 20663s "clock skew", misdirecting diagnosis toward NTP). Skew is now computed only among **fresh (non-stale, heartbeat < STALE_TTL) candidates**; `< 2` fresh → skew undefined (`None`), never a conflict. Winner selection (Rule 5.2) is unchanged — a stale winner is still caught by Rule 6 stale-takeover.
+  - `yielded` **remains an active candidate** (a voluntarily-paused session reconcilable back to ownership, `concurrent_tracks.py:30`); the fix is scoped to the skew calculation, not the candidate set. `worktree_manager`'s separate `_TERMINAL_STATUSES` (which preserves a yielded session's worktree) is deliberately unrelated and unchanged.
+  - 3 new regression tests (stale-excluded / single-fresh-amid-stale #111 repro / genuine-fresh-pair-skew-still-detected guard); reconcile suite 58 pass, full state-scanner 1074 pass. code-review PASS (0 Critical / 0 Important).
+- SKILL/Agents counts unchanged (35 user-facing + 7 internal = 42, 11 Agents).
+
 ## [1.59.0] - 2026-07-17
 
 ### Added
