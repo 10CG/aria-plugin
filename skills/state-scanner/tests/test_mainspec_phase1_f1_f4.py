@@ -14,7 +14,10 @@ Predicate contracts fixed here (so implementation + test agree):
   _benign_unknown(parity, reason, evidence_eligible: bool) -> bool
   _blocking_unknown(parity, reason, evidence_eligible: bool) -> bool
   _has_unreachable_remote(fetch_ok: str) -> bool
-  _overall_parity(enforced_entries: list[dict], gitlink_integrity: list[dict]) -> bool
+  _overall_parity(enforced_entries: list[dict], gitlink_integrity: list[dict], k_eff: int) -> bool
+    (k_eff added Phase 2A/F10″ for _gitlink_blocking's D18 threshold; these
+    tests pass gitlink_integrity=[] throughout so k_eff's value is a no-op
+    here — a literal placeholder int is passed to satisfy the signature.)
 
 fetched_at / now are tz-aware UTC datetimes (produced by _common.scan_now()).
 """
@@ -173,42 +176,42 @@ class TestOverallParityFreshEvidence(unittest.TestCase):
 
     def test_stale_unverified_equal_is_not_positive_evidence(self):
         entries = [{"parity": "equal", "evidence_grade": "stale_unverified", "reason": None}]
-        self.assertFalse(mr._overall_parity(entries, []))
+        self.assertFalse(mr._overall_parity(entries, [], 3))
 
     def test_fresh_equal_is_positive_evidence(self):
         entries = [{"parity": "equal", "evidence_grade": "fresh", "reason": None}]
-        self.assertTrue(mr._overall_parity(entries, []))
+        self.assertTrue(mr._overall_parity(entries, [], 3))
 
     def test_empty_enforced_set_is_false_not_vacuous_true(self):
-        self.assertFalse(mr._overall_parity([], []))
+        self.assertFalse(mr._overall_parity([], [], 3))
 
     def test_behind_leg_blocks_even_with_fresh_equal_elsewhere(self):
         entries = [
             {"parity": "equal", "evidence_grade": "fresh", "reason": None},
             {"parity": "behind", "evidence_grade": "fresh", "reason": None},
         ]
-        self.assertFalse(mr._overall_parity(entries, []))
+        self.assertFalse(mr._overall_parity(entries, [], 3))
 
     def test_ahead_leg_does_not_block(self):
         entries = [
             {"parity": "equal", "evidence_grade": "fresh", "reason": None},
             {"parity": "ahead", "evidence_grade": "fresh", "reason": None},
         ]
-        self.assertTrue(mr._overall_parity(entries, []))
+        self.assertTrue(mr._overall_parity(entries, [], 3))
 
     def test_blocking_unknown_leg_blocks(self):
         entries = [
             {"parity": "equal", "evidence_grade": "fresh", "reason": None},
             {"parity": "unknown", "evidence_grade": "expired", "reason": "parse_error"},
         ]
-        self.assertFalse(mr._overall_parity(entries, []))
+        self.assertFalse(mr._overall_parity(entries, [], 3))
 
     def test_benign_unknown_leg_does_not_block(self):
         entries = [
             {"parity": "equal", "evidence_grade": "fresh", "reason": None},
             {"parity": "unknown", "evidence_grade": "expired", "reason": "detached_head"},
         ]
-        self.assertTrue(mr._overall_parity(entries, []))
+        self.assertTrue(mr._overall_parity(entries, [], 3))
 
 
 if __name__ == "__main__":

@@ -22,7 +22,9 @@ Design invariants (do not break without a snapshot_schema_version bump):
               a stale_unverified `equal` is NOT positive evidence, see D20) AND
               no remote has `parity ∈ {behind, diverged}` AND no remote is
               `blocking_unknown` AND no gitlink is `gitlink_blocking`
-              (Phase 1: `gitlink_integrity` is always `[]`, vacuously satisfied).
+              (Phase 2A/F10″: `gitlink_integrity` now carries real per-(R,S)
+              verdicts — see `_classify_gitlink_pair`; repos with zero declared
+              submodules still produce `[]`, vacuously satisfied).
     * false = zero fresh-`equal` evidence OR any blocker above.
     * `parity: ahead`   does NOT count (→ `has_pending_push`)
     * `parity: unknown` does NOT contribute evidence (→ `has_unreachable_remote`
@@ -50,6 +52,16 @@ replaced by the per-remote `evidence_grade` field below, joined from the F3′
       overall_parity: bool
       has_unreachable_remote: bool
       has_pending_push: bool
+      gitlink_integrity: [GitlinkPair, ...]   # Phase 2A/F10″ — see _classify_gitlink_pair
+
+    GitlinkPair:
+      remote: str                     # R — main repo's remote name
+      submodule: str                  # S — declared submodule relative path
+      status: ok|orphaned|orphan_unverified|no_published_ref|not_a_gitlink
+              |uninitialized|shallow_unverifiable|no_matching_remote|soft_error
+      consecutive_unverified: int      # gitlink-layer D18 counter, keyed (R,S)
+                                        # — NOT the same counter as the
+                                        # per-(repo,remote) leg counter below
 
     RepoParity:
       path: str                       # "." for main_repo, relative path for submodules
@@ -74,11 +86,12 @@ replaced by the per-remote `evidence_grade` field below, joined from the F3′
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run, scan_now
+from ._common import CollectorResult, _run, log, scan_now
 from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 _DEFAULT_TIMEOUT = 5
@@ -100,6 +113,31 @@ _DEFAULT_K_MIN = 3
 # `resolve_enforced_remotes`), so importing back would be circular. Any change
 # to the cache path/key format must be mirrored in both modules.
 _REMOTE_REFRESH_CACHE_RELATIVE = ".aria/cache/remote-refresh.json"
+
+# F10″/Phase 2A gitlink-layer (R,S) D18 counter cache — a SEPARATE physical
+# file from `_REMOTE_REFRESH_CACHE_RELATIVE` above (blueprint
+# `orphan_unverified_counter`: two independent per-scan writers sharing one
+# physical file would make "who writes last" ambiguous; remote_refresh.py
+# already owns that file's `legs`/`scan_generation` shape exclusively). Owned
+# entirely by THIS module — the gitlink reachability check itself runs here,
+# so its own D18 counter is written here too (`_write_gitlink_cache_atomic`),
+# never by remote_refresh.py.
+_GITLINK_CACHE_RELATIVE = ".aria/cache/gitlink-integrity.json"
+
+_GITLINK_MODE_SUBMODULE = "160000"
+
+# D18 (gitlink layer) counter reset states (tasks 13.4 — "清零绑「本 scan 该对
+# 完成裁决 (status ∈ {ok, orphaned})」", a DIFFERENT clearing condition from the
+# parity-layer per-leg counter, which clears on fetch success). The remaining
+# six statuses (no_published_ref / not_a_gitlink / uninitialized /
+# no_matching_remote / shallow_unverifiable / soft_error) are structural
+# skip/soft-error states, not "was this pair verified or not" questions — the
+# counter FREEZES on all of them (neither increments nor resets). This freeze
+# reading is the blueprint's own INFERENCE, not spec-verbatim text (tasks 13.4
+# only states the orphan_unverified/+1 and ok-or-orphaned/clear rules) — locked
+# by a dedicated test per the blueprint's explicit request
+# (`test_gitlink_integrity.py`), not left to implementer discretion silently.
+_GITLINK_COUNTER_RESET_STATUSES = frozenset({"ok", "orphaned"})
 
 
 # ---------------------------------------------------------------------------
@@ -684,24 +722,424 @@ def _has_unreachable_remote(fetch_ok: str) -> bool:
     return fetch_ok == "false"
 
 
-def _gitlink_blocking(g: dict[str, Any]) -> bool:
-    """F10″ gitlink-layer blocking predicate (interface for Phase 2A). In Phase 1
-    gitlink_integrity is always [] so this is never invoked with data; the
-    orphan_unverified + consecutive≥k_eff (D18) branch lands in Phase 2A (tasks 13.4)."""
-    return g.get("status") == "orphaned"
+def _gitlink_blocking(g: dict[str, Any], k_eff: int) -> bool:
+    """F10″ gitlink-layer blocking predicate. `orphaned` always blocks (G is
+    provably unreachable AND both legs are exemption-eligible AND generations
+    are correctly ordered — see `_gitlink_reachability_verdict`).
+    `orphan_unverified` blocks only once its OWN (R,S) D18 counter reaches
+    `k_eff` (mirrors the parity-layer D18 escalation, tasks 13.4's F4′
+    "gitlink 层裁决" sub-clause) — below that it is a benign-visible diagnostic
+    (staleness/time-order ambiguity), not yet a confirmed breakage. Every other
+    status (no_published_ref / not_a_gitlink / uninitialized /
+    no_matching_remote / shallow_unverifiable / soft_error / ok) is
+    benign-visible and never blocks."""
+    status = g.get("status")
+    if status == "orphaned":
+        return True
+    if status == "orphan_unverified":
+        c = g.get("consecutive_unverified", 0)
+        if not isinstance(c, int) or isinstance(c, bool):
+            c = 0
+        return c >= k_eff
+    return False
+
+
+# ---------------------------------------------------------------------------
+# F10″/Phase 2A — orphaned-gitlink cross-repo reachability (multi_remote.py:
+# blueprint p2_f10 — R5-C-A accident remedy). Five functions:
+#   _resolve_published_gitlink_sha / _gitlink_unreachable /
+#   _looks_like_no_such_commit / _gitlink_reachability_verdict /
+#   _classify_gitlink_pair — orchestrating the nine-branch domain (tasks 13.2's
+# eight non-ok exits + the implicit "ok" healthy exit) for one (remote,
+# submodule) pair. Wired into `collect_multi_remote`'s R×S double loop below.
+# ---------------------------------------------------------------------------
+
+
+def _parse_ls_tree_gitlink_entry(ls_tree_output: str) -> str | None:
+    """Parse ONE `git ls-tree <C> -- <path>` line into a gitlink sha, or None
+    when the path is not currently a gitlink at C.
+
+    Two distinct git-level facts both collapse into this single None outcome
+    (blueprint `eight_branch_domain` gap-fill decision): (a) the path does not
+    exist in C's tree at all (`ls-tree` exits 0 with EMPTY stdout — NOT a
+    non-zero rc, tasks 13.2#2's "不能按 rc 探" — R7 backend M-1 verified this
+    against a real repo), and (b) the path exists but is not a gitlink entry
+    (`mode != 160000`, e.g. an ordinary directory). Both are byte-indistinguishable
+    from "there is currently no gitlink at this path" without further
+    disambiguation the blueprint declined to add a tenth branch for — both
+    route callers to the same `not_a_gitlink` status.
+
+    Anchors on the FIRST tab via `partition("\\t")`, never a bare `.split()` —
+    a submodule path may itself contain spaces, which would misparse under a
+    whitespace-only split. Malformed lines (no tab, <3 prefix fields) are
+    treated the same as "not a gitlink" (fail-soft, never raises)."""
+    text = ls_tree_output.strip()
+    if not text:
+        return None
+    line = text.splitlines()[0]
+    prefix, sep, _path = line.partition("\t")
+    if not sep:
+        return None
+    fields = prefix.split()
+    if len(fields) < 3 or fields[0] != _GITLINK_MODE_SUBMODULE:
+        return None
+    sha = fields[2].strip()
+    return sha or None
+
+
+def _resolve_published_gitlink_sha(
+    main_repo_dir: Path,
+    main_branch: str | None,
+    remote: str,
+    submodule_path: str,
+    timeout: int,
+) -> tuple[str | None, str | None]:
+    """F10″ steps 1-2 — resolve `(C, G)` for ONE (remote, submodule) pair,
+    self-contained (runs its OWN rev-parse). Kept as a standalone, directly
+    unit-testable primitive.
+
+    ⚠️ Production callers do NOT invoke this function from inside the
+    `collect_multi_remote` R×S double loop — that would re-run the IDENTICAL
+    rev-parse `|submodules|` times for the same R (top_risks: blows the
+    O(|R|) call count up to O(|R|×|S|), pure waste since C does not depend on
+    S). Instead `collect_multi_remote` resolves C ONCE per R with the same
+    rev-parse this function performs (small deliberate duplication — same
+    accepted pattern as `_remote_refresh_leg_key`/`_parse_leg_fetched_at`
+    mirroring `remote_refresh._leg_key`/`_parse_iso` elsewhere in this module),
+    and `_classify_gitlink_pair` receives that pre-resolved C directly (its
+    `c`/`main_leg_ok` parameters) — doing ONLY the per-S ls-tree step, via the
+    SAME `_parse_ls_tree_gitlink_entry` helper this function uses, so the
+    parsing logic itself is never duplicated.
+
+    C = `git rev-parse refs/remotes/{remote}/{main_branch}` — `main_branch is
+    None`, OR rc != 0, OR empty stdout ⇒ `(None, None)` (caller routes to
+    `no_published_ref`). G = the gitlink sha `git ls-tree {C} -- {submodule_path}`
+    records (mode == 160000 only; see `_parse_ls_tree_gitlink_entry`) — `None`
+    when the ls-tree call itself fails (rc != 0) or the path isn't a gitlink.
+    """
+    if main_branch is None:
+        return None, None
+    rc, out, _ = _run(
+        ["git", "rev-parse", f"refs/remotes/{remote}/{main_branch}"],
+        main_repo_dir,
+        timeout=timeout,
+    )
+    if rc != 0:
+        return None, None
+    c = out.strip()
+    if not c:
+        return None, None
+
+    rc, out, _ = _run(
+        ["git", "ls-tree", c, "--", submodule_path], main_repo_dir, timeout=timeout
+    )
+    if rc != 0:
+        return c, None
+    return c, _parse_ls_tree_gitlink_entry(out)
+
+
+def _looks_like_no_such_commit(stderr: str) -> bool:
+    """Read-once stderr substring probe for git's rc=129 "object does not exist
+    in this repo's local odb at all" failure mode. Deliberately NOT routed
+    through `classify_git_error`/`GitErrorClass` — `gitlink_integrity`'s schema
+    has no detail/stderr-carrying field whatsoever, so Rule #7's "never
+    persisted" guarantee is satisfied STRUCTURALLY (there is nowhere for the
+    string to go), a stronger guarantee than a typed channel with a bounded
+    label field. `stderr` is read here ONLY to compute this bool and is then
+    discarded — nothing derived from it is retained by the caller.
+
+    ⚠️ Pattern-matches current git CLI wording (owner-verified on one git
+    version only, per blueprint top_risks) — `rc == 129` itself is the PRIMARY
+    signal (`_gitlink_unreachable` checks it first); this substring match is a
+    secondary corroboration, not the sole gate, precisely so a future git
+    version's slightly different wording degrades to `soft_error` (safe
+    direction) rather than silently stops firing."""
+    low = stderr.lower()
+    return any(
+        sig in low for sig in ("no such commit", "bad object", "not a valid object name")
+    )
+
+
+def _gitlink_unreachable(
+    submodule_dir: Path, remote: str, g: str, timeout: int
+) -> tuple[bool, bool]:
+    """F10″ step — `(unreachable, is_soft_error)`. Runs
+    `git -C {submodule_dir} branch -r --contains {G} --list "{remote}/*"`
+    (branch-reachability ONLY — RM-11's deliberate tag-space exclusion).
+
+    rc == 0 ∧ empty stdout ⇒ `(True, False)` — G genuinely exists in S's local
+    object database but no `R/*` remote-tracking branch's ancestry contains it
+    ("mirror lag": the more common, less severe unreachable case).
+
+    rc == 129 ∧ `_looks_like_no_such_commit(stderr)` ⇒ `(True, False)` — G does
+    not exist in S's local odb AT ALL ("nowhere to be found": the MORE severe
+    case). tasks 13.2#6 / R7 backend C-4 explicitly forbid downgrading this to
+    `soft_error` — a severity INVERSION (treating "G doesn't exist anywhere" as
+    a lighter finding than "G exists but isn't mirrored yet") is exactly the
+    bug this branch exists to prevent. Order matters: rc is checked BEFORE
+    inspecting whether stdout happened to be empty, so a 129 can never fall
+    through to the softer "other rc≠0" branch below.
+
+    Any OTHER non-zero rc (repo corruption, permission errors, etc.) ⇒
+    `(False, True)` — we genuinely could not run the check, so we say so
+    honestly rather than guessing either "reachable" or "orphaned"."""
+    rc, out, err = _run(
+        [
+            "git",
+            "-C",
+            str(submodule_dir),
+            "branch",
+            "-r",
+            "--contains",
+            g,
+            "--list",
+            f"{remote}/*",
+        ],
+        submodule_dir,
+        timeout=timeout,
+    )
+    if rc == 0:
+        return out.strip() == "", False
+    if rc == 129 and _looks_like_no_such_commit(err):
+        return True, False
+    return False, True
+
+
+def _gitlink_reachability_verdict(
+    main_leg: dict[str, Any] | None,
+    sub_leg: dict[str, Any] | None,
+    now: datetime,
+    scan_generation: int,
+    evidence_window_seconds: int,
+    hard_cap_seconds: int,
+    k_eff: int,
+) -> str:
+    """Called ONLY when `_gitlink_unreachable` returned `unreachable=True`.
+    Reuses the already-landed `_exemption_eligible` (豁免资格) TWICE — once for
+    the main repo's `(".", R)` leg, once for the submodule's `(S, R)` leg — NOT
+    the gitlink-layer `orphan_unverified` (R,S)-keyed counter (a DIFFERENT
+    counter with a different key space, see `_GITLINK_COUNTER_RESET_STATUSES`
+    and the cache functions below).
+
+    `main_leg`/`sub_leg` are `remote_refresh` per-leg cache RECORDS (the same
+    shape `_leg_evidence_grade` consumes) — `None` (never fetched / no cache
+    entry) is treated identically to a present-but-null `fetched_at`
+    (fail-CLOSED, same convention `_leg_evidence_grade` already uses).
+
+    `main_exempt ∧ sub_exempt ∧ gen(S,R) ≥ gen(主仓,R)` (all three, RM-1/RM-2)
+    ⇒ `"orphaned"` (a confirmed, non-stale, non-time-order-ambiguous breakage).
+    Otherwise ⇒ `"orphan_unverified"` (staleness or cross-leg generation skew
+    means we cannot yet rule out a time-order illusion — D18 escalates it to
+    blocking only after `k_eff` consecutive unresolved scans, see
+    `_gitlink_blocking`).
+
+    `evidence_window_seconds` is accepted for parameter-list symmetry with the
+    other F1′/F4′ join call sites this function's sibling functions share
+    (e.g. `_leg_evidence_grade`) but is NOT itself consumed here — gitlink
+    verdicts gate exclusively on 豁免资格 (`_exemption_eligible`), never on
+    证据资格 (`_evidence_eligible`); see the proposal's `gitlink_orphaned(R)`
+    predicate-table row, which lists only 豁免资格 conjuncts."""
+
+    def _exempt(leg: dict[str, Any] | None) -> bool:
+        fetched_at = _parse_leg_fetched_at(leg.get("fetched_at")) if leg else None
+        generation_fetched = leg.get("generation_fetched") if leg else None
+        if not isinstance(generation_fetched, int) or isinstance(generation_fetched, bool):
+            generation_fetched = None
+        consecutive_unverified = leg.get("consecutive_unverified", 0) if leg else 0
+        if (
+            not isinstance(consecutive_unverified, int)
+            or isinstance(consecutive_unverified, bool)
+        ):
+            consecutive_unverified = 0
+        return _exemption_eligible(
+            fetched_at,
+            now,
+            generation_fetched,
+            scan_generation,
+            k_eff,
+            hard_cap_seconds,
+            consecutive_unverified,
+        )
+
+    def _generation_of(leg: dict[str, Any] | None) -> int | None:
+        gen = leg.get("generation_fetched") if leg else None
+        return gen if isinstance(gen, int) and not isinstance(gen, bool) else None
+
+    main_exempt = _exempt(main_leg)
+    sub_exempt = _exempt(sub_leg)
+    main_gen = _generation_of(main_leg)
+    sub_gen = _generation_of(sub_leg)
+    gen_ok = main_gen is not None and sub_gen is not None and sub_gen >= main_gen
+
+    if main_exempt and sub_exempt and gen_ok:
+        return "orphaned"
+    return "orphan_unverified"
+
+
+def _classify_gitlink_pair(
+    main_repo_dir: Path,
+    main_branch: str | None,
+    sub_dir: Path,
+    sub_path: str,
+    remote: str,
+    main_leg: dict[str, Any] | None,
+    sub_leg: dict[str, Any] | None,
+    timeout: int,
+    now: datetime,
+    scan_generation: int,
+    evidence_window_seconds: int,
+    hard_cap_seconds: int,
+    k_eff: int,
+    c: str | None,
+    main_leg_ok: bool,
+) -> str:
+    """Orchestrates the F10″ nine-branch domain (tasks 13.2's eight non-ok
+    exits + the implicit "ok" healthy exit) for ONE (remote, submodule_path)
+    pair, in the FIXED order the blueprint derives (`eight_branch_domain` —
+    load-bearing; reordering can change which branch a given fixture lands in):
+
+      1. `no_published_ref`    — `main_leg_ok` is False (caller could not
+         resolve C for this R at all — resolved ONCE per R by the caller, see
+         below; main-repo detached HEAD routes here for every S, tasks 13.6)
+      2. `not_a_gitlink`       — ls-tree(C, S) is empty OR mode != 160000
+         (`_parse_ls_tree_gitlink_entry`'s gap-fill; this step only reads the
+         MAIN repo's object database, so it is safe even when S itself is not
+         yet initialized — "此步只读主仓对象库, 不require S 已 init")
+      3. `uninitialized`       — S has no on-disk `.git`
+      4. `no_matching_remote`  — S has no remote literally named `remote`
+         (checked BEFORE the `contains` call — R7 RM-3: `rc=0` empty output is
+         BYTE-IDENTICAL between "no matching remote" and "genuine orphan"; the
+         distinction can only be made at the leg-enumeration layer, never by
+         inspecting `contains`'s own result)
+      5. `shallow_unverifiable` — S is a shallow clone (reachability is
+         undecidable, not merely inconvenient — an honest, non-blocking
+         "unknown", not a "no")
+      6. contains-based verdict — `ok` (branch-reachable) /
+         `soft_error` (the check itself could not run) /
+         `orphaned` / `orphan_unverified` (via `_gitlink_reachability_verdict`)
+
+    `c` / `main_leg_ok`: the CALLER (`collect_multi_remote`) resolves the main
+    repo's published commit on `remote` ONCE per R (outer loop, mirroring the
+    rev-parse `_resolve_published_gitlink_sha` performs) and passes the result
+    here. `main_leg_ok=False` short-circuits to branch 1 without this function
+    touching git at all — it never re-derives C itself."""
+    if not main_leg_ok:
+        return "no_published_ref"
+
+    rc, out, _ = _run(["git", "ls-tree", c, "--", sub_path], main_repo_dir, timeout=timeout)
+    g = _parse_ls_tree_gitlink_entry(out) if rc == 0 else None
+    if g is None:
+        return "not_a_gitlink"
+
+    if not sub_dir.exists() or not (sub_dir / ".git").exists():
+        return "uninitialized"
+
+    if remote not in _list_remotes(sub_dir, timeout):
+        return "no_matching_remote"
+
+    if _is_shallow(sub_dir, timeout):
+        return "shallow_unverifiable"
+
+    unreachable, is_soft_error = _gitlink_unreachable(sub_dir, remote, g, timeout)
+    if is_soft_error:
+        return "soft_error"
+    if not unreachable:
+        return "ok"
+    return _gitlink_reachability_verdict(
+        main_leg,
+        sub_leg,
+        now,
+        scan_generation,
+        evidence_window_seconds,
+        hard_cap_seconds,
+        k_eff,
+    )
+
+
+# ---------------------------------------------------------------------------
+# F10″/Phase 2A — gitlink-layer (R,S) D18 counter cache. A SEPARATE physical
+# file from the F3′ remote_refresh cache (see `_GITLINK_CACHE_RELATIVE`'s
+# module-level docstring above) — owned entirely by this module.
+# ---------------------------------------------------------------------------
+def _gitlink_pair_key(remote: str, submodule: str) -> str:
+    """Cache key for a (R, S) gitlink pair — SAME `"{a}::{b}"` textual
+    convention as `_remote_refresh_leg_key`/`remote_refresh._leg_key`, but a
+    DIFFERENT key space in a DIFFERENT physical file — never confused with a
+    (repo, remote) leg key even when a remote name and a submodule path happen
+    to collide as strings, because they never share a cache file."""
+    return f"{remote}::{submodule}"
+
+
+def _read_gitlink_cache(project_root: Path) -> dict[str, Any]:
+    """Fail-soft read of the gitlink-layer (R,S) counter cache. Missing file /
+    malformed JSON / non-dict payload → `{}` — every pair then starts this
+    scan's counter arithmetic from a prior count of 0 (same fail-soft
+    convention as `_read_remote_refresh_cache`)."""
+    cache_file = project_root / _GITLINK_CACHE_RELATIVE
+    if not cache_file.is_file():
+        return {}
+    try:
+        raw = cache_file.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_gitlink_cache_atomic(project_root: Path, pairs: dict[str, dict[str, Any]]) -> None:
+    """Single-thread, ONE-TIME read-merge-atomic-write (tmp+rename), mirroring
+    `remote_refresh._write_cache_atomic`'s pattern at small scale (this cache
+    has one flat `pairs` map, not `legs`+`scan_generation` — generalizing that
+    function's merge logic was judged not worth the coupling; blueprint
+    `orphan_unverified_counter` persistence note — this module already accepts
+    this class of small duplication for `_leg_key`/`_parse_iso`, for the same
+    circular-import reason).
+
+    Re-reads whatever is CURRENTLY on disk and merges `pairs` on top before the
+    atomic write, so a concurrent scan's write is never silently clobbered into
+    data loss (RM-6a's accepted "stale but never corrupt" degradation
+    direction, mirrored here for this cache too)."""
+    cache_file = project_root / _GITLINK_CACHE_RELATIVE
+    try:
+        current_on_disk = _read_gitlink_cache(project_root)
+    except Exception:  # pragma: no cover — defensive
+        current_on_disk = {}
+    raw_pairs = current_on_disk.get("pairs")
+    merged: dict[str, Any] = dict(raw_pairs) if isinstance(raw_pairs, dict) else {}
+    merged.update(pairs)
+    payload = {"pairs": merged}
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_name(cache_file.name + f".tmp{os.getpid()}")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, cache_file)
+    except OSError as exc:
+        # fail-soft (never crash the collector) but NOT silent — mirrors
+        # remote_refresh._write_cache_atomic's same tradeoff: a persistent
+        # write failure here pins every (R,S) pair's D18 counter at its prior
+        # value, which can delay (never falsely trigger) the orphan_unverified
+        # → blocking escalation.
+        log.warning(
+            "gitlink_integrity: cache write failed (%s); D18 (R,S) counters "
+            "will not advance until this succeeds",
+            exc,
+        )
 
 
 def _overall_parity(
-    enforced_entries: list[dict[str, Any]], gitlink_integrity: list[dict[str, Any]]
+    enforced_entries: list[dict[str, Any]],
+    gitlink_integrity: list[dict[str, Any]],
+    k_eff: int,
 ) -> bool:
     """F4′ v8 decision table (SOT = proposal L459-506). Four clauses:
 
       1. enforced_set ≠ ∅            (guard the ``all([])`` vacuous-true)
       2. ∃ r: parity==equal ∧ evidence_grade=="fresh"   (⚠️ BOTH — a stale_unverified
          equal keeps parity==equal so a parity-only ∃ check resurrects the 14h accident)
-      3. ∀ R: ¬gitlink_blocking(R)   (Phase 1 placeholder — gitlink_integrity=[] ⇒
-         vacuously true; a UNIVERSAL-NEGATION clause, so empty input is safe, unlike
-         clause 1's positive-evidence empty set)
+      3. ∀ R: ¬gitlink_blocking(R, k_eff)   (Phase 2A/F10″: `gitlink_integrity` now
+         carries real per-(R,S) verdicts; a UNIVERSAL-NEGATION clause, so empty input
+         is safe, unlike clause 1's positive-evidence empty set — repos with zero
+         declared submodules always pass this clause vacuously)
       4. ∀ r: parity ∉ {behind, diverged} ∧ ¬blocking_unknown(r)
     """
     if not enforced_entries:
@@ -712,7 +1150,7 @@ def _overall_parity(
     )
     if not has_fresh_equal:
         return False
-    if any(_gitlink_blocking(g) for g in gitlink_integrity):
+    if any(_gitlink_blocking(g, k_eff) for g in gitlink_integrity):
         return False
     for e in enforced_entries:
         if e.get("parity") in ("behind", "diverged"):
@@ -854,7 +1292,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         # emit overall_parity=False for the not-a-git-repo fallback. The prior
         # value True reinstated the pre-QA-C1 behaviour on this error path
         # because _aggregate_flags is never reached. Zero remotes = zero positive
-        # evidence = overall_parity must be False (matches `_overall_parity([], [])`).
+        # evidence = overall_parity must be False (matches `_overall_parity([], [], 0)`).
         r.data = {
             "enabled": True,
             "main_repo": None,
@@ -862,6 +1300,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
             "overall_parity": False,
             "has_unreachable_remote": False,
             "has_pending_push": False,
+            "gitlink_integrity": [],
         }
         return r
 
@@ -869,8 +1308,13 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     main_block = _scan_repo(project_root, ".", verify_mode, timeout)
 
     # --- Submodules
+    # `submodule_paths` (ALL declared paths, incl. UNINITIALIZED ones) is
+    # captured once here and reused by the F10″ gitlink loop below — that loop
+    # needs to see uninitialized submodules too (`uninitialized` is one of its
+    # own status values), unlike `submodule_blocks` here, which skips them.
+    submodule_paths = _enumerate_submodule_paths(project_root, timeout=timeout)
     submodule_blocks: list[dict[str, Any]] = []
-    for rel_path in _enumerate_submodule_paths(project_root, timeout=timeout):
+    for rel_path in submodule_paths:
         sm_dir = project_root / rel_path
         if not sm_dir.exists() or not (sm_dir / ".git").exists():
             # Uninitialized submodule — skip (SKILL.md §1.12 fail-soft philosophy).
@@ -916,6 +1360,108 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
             _apply_freshness_downgrade(remote_entry, grade)
             remote_entry["fetch_ok"] = (leg or {}).get("fetch_ok", "not_attempted")
 
+    # --- F10″/Phase 2A: gitlink cross-repo reachability check. Produces
+    # `gitlink_integrity[]`, one entry per (R, S) pair, R ranging over the main
+    # repo's ENFORCED remotes and S ranging over ALL declared submodule paths
+    # (`submodule_paths`, captured above — includes uninitialized ones, unlike
+    # `submodule_blocks`). Skipped entirely when there are no declared
+    # submodules at all (no (R,S) pairs possible ⇒ zero git calls paid for a
+    # check that can never fire — also keeps every pre-existing submodule-less
+    # test fixture from needing new mocked commands).
+    main_branch = main_block["branch"]
+    gitlink_integrity_list: list[dict[str, Any]] = []
+    if submodule_paths:
+        enforced_main_remotes, _ = resolve_enforced_remotes(
+            cfg.get("enforced_remotes"),
+            [rr["name"] for rr in main_block["remotes"]],
+            tuple(cfg.get("read_only_remotes") or ()),
+        )
+        gitlink_cache = _read_gitlink_cache(project_root)
+        raw_gitlink_pairs = gitlink_cache.get("pairs")
+        gitlink_pairs_on_disk: dict[str, Any] = (
+            raw_gitlink_pairs if isinstance(raw_gitlink_pairs, dict) else {}
+        )
+        gitlink_pairs_out: dict[str, dict[str, Any]] = {}
+
+        for remote in enforced_main_remotes:
+            # C is resolved ONCE per R here (NOT inside the S loop below) —
+            # the O(|R|) vs O(|R|×|S|) discipline `_resolve_published_gitlink_sha`'s
+            # docstring calls out. main_branch is None (main repo detached HEAD,
+            # a CI-checkout state) ⇒ c stays None / main_leg_ok stays False for
+            # EVERY S under this R (tasks 13.6: routes every (R,S) pair to
+            # `no_published_ref`, never touching git for the S side at all).
+            c: str | None = None
+            main_leg_ok = False
+            if main_branch is not None:
+                rc, out, _ = _run(
+                    ["git", "rev-parse", f"refs/remotes/{remote}/{main_branch}"],
+                    project_root,
+                    timeout=timeout,
+                )
+                if rc == 0 and out.strip():
+                    c = out.strip()
+                    main_leg_ok = True
+
+            main_leg = legs_by_key.get(_remote_refresh_leg_key(".", remote))
+            main_leg = main_leg if isinstance(main_leg, dict) else None
+
+            for sub_path in submodule_paths:
+                sub_dir = project_root / sub_path
+                sub_leg = legs_by_key.get(_remote_refresh_leg_key(sub_path, remote))
+                sub_leg = sub_leg if isinstance(sub_leg, dict) else None
+
+                status = _classify_gitlink_pair(
+                    project_root,
+                    main_branch,
+                    sub_dir,
+                    sub_path,
+                    remote,
+                    main_leg,
+                    sub_leg,
+                    timeout,
+                    now,
+                    scan_generation,
+                    evidence_window_seconds,
+                    hard_cap_seconds,
+                    k_eff,
+                    c,
+                    main_leg_ok,
+                )
+
+                pair_key = _gitlink_pair_key(remote, sub_path)
+                prior_pair = gitlink_pairs_on_disk.get(pair_key)
+                prior_count = (
+                    prior_pair.get("consecutive_unverified", 0)
+                    if isinstance(prior_pair, dict)
+                    else 0
+                )
+                if (
+                    not isinstance(prior_count, int)
+                    or isinstance(prior_count, bool)
+                    or prior_count < 0
+                ):
+                    prior_count = 0
+                if status in _GITLINK_COUNTER_RESET_STATUSES:
+                    new_count = 0
+                elif status == "orphan_unverified":
+                    new_count = prior_count + 1
+                else:
+                    # frozen: structural skip/soft_error states are neither a
+                    # "new evidence" nor a "confirmed unverified" event.
+                    new_count = prior_count
+
+                gitlink_pairs_out[pair_key] = {"consecutive_unverified": new_count}
+                gitlink_integrity_list.append(
+                    {
+                        "remote": remote,
+                        "submodule": sub_path,
+                        "status": status,
+                        "consecutive_unverified": new_count,
+                    }
+                )
+
+        _write_gitlink_cache_atomic(project_root, gitlink_pairs_out)
+
     # --- Aggregate flags across all ANNOTATED remote entries (main + submodules)
     all_remote_entries: list[dict[str, Any]] = list(main_block["remotes"])
     for sb in submodule_blocks:
@@ -932,9 +1478,11 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     # Phase 1: F5′ enforced-remote filtering is NOT yet wired here — every
     # discovered remote (unfiltered by `enforced_remotes`/`read_only_remotes`)
     # is passed as `enforced_entries` (task 6 scope, a later increment).
-    # gitlink_integrity is the Phase 1 placeholder (always `[]` — Phase 2A/F10″
-    # wires real data without changing this call site, see `_overall_parity`).
-    overall_parity = _overall_parity(all_remote_entries, gitlink_integrity=[])
+    # gitlink_integrity now carries REAL per-(R,S) verdicts (Phase 2A/F10″,
+    # computed above) — repos with zero declared submodules still pass `[]`.
+    overall_parity = _overall_parity(
+        all_remote_entries, gitlink_integrity=gitlink_integrity_list, k_eff=k_eff
+    )
 
     data: dict[str, Any] = {
         "enabled": True,
@@ -943,6 +1491,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         "overall_parity": overall_parity,
         "has_unreachable_remote": has_unreachable_remote,
         "has_pending_push": has_pending_push,
+        "gitlink_integrity": gitlink_integrity_list,
     }
 
     r.data = data
