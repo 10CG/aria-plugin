@@ -141,8 +141,18 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     phase1_9_standards = collect_standards(project_root)
     phase1_10_audit = collect_audit(project_root)
     phase1_11_custom = collect_custom_checks(project_root)
-    phase1_12_sync = collect_sync_state(project_root)
+    # F9′ (main spec state-scanner-stale-refs-false-parity, OQ-E=(a)) — ordering
+    # anchor: collect_multi_remote MUST run before collect_sync_state. sync.py's
+    # current_branch/submodule evidence_grade join (8.1) consumes
+    # collect_multi_remote(...).data directly (not a re-read of any cache) — if this
+    # order is ever reversed, multi_remote_data stays the caller-omitted default
+    # (None) and every evidence_grade in sync_status silently resolves "expired"
+    # (fail-CLOSED, see collect_sync_state's own docstring) — that is the observable
+    # symptom to grep for if this invariant regresses.
     phase1_12_multi = collect_multi_remote(project_root)
+    phase1_12_sync = collect_sync_state(
+        project_root, multi_remote_data=phase1_12_multi.data
+    )
     phase1_13_issue = collect_issue_scan(project_root)
     phase1_14_forgejo = collect_forgejo_config(project_root)
     phase1_15_handoff = collect_handoff(project_root)

@@ -21,6 +21,8 @@ from collectors._common import CollectorResult
 from collectors.sync import (
     _collect_current_branch,
     _collect_submodule_entry,
+    _submodule_evidence_grade,
+    _upstream_evidence_grade,
     collect_sync_state,
 )
 
@@ -435,6 +437,373 @@ class TestCollectSyncStateEndToEnd(unittest.TestCase):
             sub = r.data["submodules"][0]
             self.assertEqual(sub["path"], "lib")
             self.assertEqual(sub["drift"]["hint_type"], "update")
+
+
+# --- F9′ 8.1 — evidence_grade join (main spec state-scanner-stale-refs-false-parity) ---
+
+
+class TestUpstreamEvidenceGradeHelper(unittest.TestCase):
+    """Pure-function tests for `_upstream_evidence_grade` (no git needed)."""
+
+    def test_no_upstream_is_expired(self):
+        self.assertEqual(_upstream_evidence_grade(None, [{"name": "origin", "evidence_grade": "fresh"}]), "expired")
+
+    def test_no_remote_entries_is_expired(self):
+        """F9′ top_risks #3: caller didn't pass multi_remote_data → fail-CLOSED."""
+        self.assertEqual(_upstream_evidence_grade("origin/master", None), "expired")
+        self.assertEqual(_upstream_evidence_grade("origin/master", []), "expired")
+
+    def test_matching_remote_name_joins_grade(self):
+        entries = [
+            {"name": "github", "evidence_grade": "stale_unverified"},
+            {"name": "origin", "evidence_grade": "fresh"},
+        ]
+        self.assertEqual(_upstream_evidence_grade("origin/master", entries), "fresh")
+        self.assertEqual(_upstream_evidence_grade("github/master", entries), "stale_unverified")
+
+    def test_no_matching_remote_name_is_expired(self):
+        entries = [{"name": "github", "evidence_grade": "fresh"}]
+        self.assertEqual(_upstream_evidence_grade("origin/master", entries), "expired")
+
+    def test_missing_or_non_string_grade_field_is_expired(self):
+        self.assertEqual(_upstream_evidence_grade("origin/master", [{"name": "origin"}]), "expired")
+        self.assertEqual(
+            _upstream_evidence_grade("origin/master", [{"name": "origin", "evidence_grade": None}]),
+            "expired",
+        )
+
+    def test_branch_name_containing_slashes_still_resolves_remote(self):
+        """F9′ top_risks #2: `upstream.partition("/")[0]` must not mis-truncate when
+        the BRANCH portion itself contains `/` — remote names never contain `/`, so
+        the first-segment split is always correct regardless of branch depth."""
+        entries = [{"name": "origin", "evidence_grade": "fresh"}]
+        self.assertEqual(
+            _upstream_evidence_grade("origin/feature/sub/branch", entries), "fresh"
+        )
+        self.assertEqual(
+            _upstream_evidence_grade("origin/a/b/c/d/e", entries), "fresh"
+        )
+
+
+class TestSubmoduleEvidenceGradeHelper(unittest.TestCase):
+    """Pure-function tests for `_submodule_evidence_grade` (no git needed)."""
+
+    def test_none_remote_entries_is_expired(self):
+        self.assertEqual(_submodule_evidence_grade(None), "expired")
+
+    def test_empty_remote_entries_is_expired(self):
+        self.assertEqual(_submodule_evidence_grade([]), "expired")
+
+    def test_origin_entry_grade_is_joined(self):
+        entries = [
+            {"name": "github", "evidence_grade": "expired"},
+            {"name": "origin", "evidence_grade": "stale_unverified"},
+        ]
+        self.assertEqual(_submodule_evidence_grade(entries), "stale_unverified")
+
+    def test_non_origin_only_entries_is_expired(self):
+        """`_ORIGIN_HEAD_REFS` fallback chain is origin-only — a non-origin remote's
+        freshness must never be misattributed to `remote_commit`."""
+        entries = [{"name": "github", "evidence_grade": "fresh"}]
+        self.assertEqual(_submodule_evidence_grade(entries), "expired")
+
+
+class TestCurrentBranchEvidenceGradeIntegration(unittest.TestCase):
+    """`_collect_current_branch(..., remote_entries=...)` — every return path carries
+    `evidence_grade`."""
+
+    def test_detached_head_evidence_grade_expired(self):
+        r = CollectorResult()
+        entries = [{"name": "origin", "evidence_grade": "fresh"}]
+        out = _collect_current_branch(
+            Path("/x"), branch=None, shallow=False, has_remote=True, r=r, remote_entries=entries
+        )
+        # detached HEAD has no upstream regardless of what remote_entries says.
+        self.assertEqual(out["evidence_grade"], "expired")
+
+    def test_no_upstream_evidence_grade_expired(self):
+        r = CollectorResult()
+        entries = [{"name": "origin", "evidence_grade": "fresh"}]
+        out = _collect_current_branch(
+            Path("/x"), branch="master", shallow=False, has_remote=False, r=r, remote_entries=entries
+        )
+        self.assertEqual(out["evidence_grade"], "expired")
+
+    def test_shallow_joins_evidence_grade(self):
+        r = CollectorResult()
+        run_table = {
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): (
+                0, "origin/master\n", ""
+            ),
+        }
+        entries = [{"name": "origin", "evidence_grade": "stale_unverified"}]
+        with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+            out = _collect_current_branch(
+                Path("/x"), branch="master", shallow=True, has_remote=True, r=r, remote_entries=entries
+            )
+        self.assertEqual(out["reason"], "shallow_clone")
+        self.assertEqual(out["evidence_grade"], "stale_unverified")
+
+    def test_normal_path_joins_evidence_grade(self):
+        r = CollectorResult()
+        run_table = {
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): (
+                0, "origin/master\n", ""
+            ),
+            ("git", "rev-list", "--left-right", "--count", "HEAD...origin/master"): (
+                0, "0\t0\n", ""
+            ),
+        }
+        entries = [{"name": "origin", "evidence_grade": "fresh"}]
+        with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+            out = _collect_current_branch(
+                Path("/x"), branch="master", shallow=False, has_remote=True, r=r, remote_entries=entries
+            )
+        self.assertEqual(out["evidence_grade"], "fresh")
+        # US-008 fields untouched by the additive evidence_grade join.
+        self.assertEqual(out["ahead"], 0)
+        self.assertEqual(out["behind"], 0)
+
+    def test_remote_entries_omitted_defaults_expired(self):
+        """Back-compat: any caller that still calls without `remote_entries` gets
+        the fail-CLOSED default on every path (F9′ back-compat contract)."""
+        r = CollectorResult()
+        run_table = {
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): (
+                0, "origin/master\n", ""
+            ),
+            ("git", "rev-list", "--left-right", "--count", "HEAD...origin/master"): (
+                0, "0\t0\n", ""
+            ),
+        }
+        with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+            out = _collect_current_branch(
+                Path("/x"), branch="master", shallow=False, has_remote=True, r=r
+            )
+        self.assertEqual(out["evidence_grade"], "expired")
+
+
+class TestSubmoduleEntryEvidenceGradeIntegration(unittest.TestCase):
+    """`_collect_submodule_entry(..., remote_entries=...)` — evidence_grade is
+    additive and joined from the "origin" leg, written after the US-008
+    directional guard, and never suppresses/rewrites `hint`/`hint_type`."""
+
+    def _setup(self, repo: Path, sub_path: str = "vendor/lib") -> Path:
+        sub_dir = repo / sub_path
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        return sub_dir
+
+    def test_evidence_grade_present_on_aligned_entry(self):
+        with tmp_repo() as repo:
+            self._setup(repo)
+            same_sha = "a" * 40
+            run_table = {
+                ("git", "ls-tree", "HEAD", "--", "vendor/lib"): (
+                    0, f"160000 commit {same_sha}\tvendor/lib\n", ""
+                ),
+                ("git", "rev-parse", "HEAD"): (0, f"{same_sha}\n", ""),
+                ("git", "rev-parse", "refs/remotes/origin/HEAD"): (0, f"{same_sha}\n", ""),
+            }
+            entries = [{"name": "origin", "evidence_grade": "fresh"}]
+            with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+                r = CollectorResult()
+                entry = _collect_submodule_entry(repo, "vendor/lib", r, remote_entries=entries)
+            self.assertEqual(entry["drift"]["evidence_grade"], "fresh")
+
+    def test_evidence_grade_omitted_defaults_expired(self):
+        """Back-compat: caller not yet updated (no remote_entries) → expired."""
+        with tmp_repo() as repo:
+            self._setup(repo)
+            same_sha = "a" * 40
+            run_table = {
+                ("git", "ls-tree", "HEAD", "--", "vendor/lib"): (
+                    0, f"160000 commit {same_sha}\tvendor/lib\n", ""
+                ),
+                ("git", "rev-parse", "HEAD"): (0, f"{same_sha}\n", ""),
+                ("git", "rev-parse", "refs/remotes/origin/HEAD"): (0, f"{same_sha}\n", ""),
+            }
+            with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+                r = CollectorResult()
+                entry = _collect_submodule_entry(repo, "vendor/lib", r)
+            self.assertEqual(entry["drift"]["evidence_grade"], "expired")
+
+    def test_risk1_stale_evidence_does_not_suppress_behind_directional_guard(self):
+        """F9′ top_risks #1 falsification: `fetch_ok=false` (evidence_grade="expired")
+        + `behind_count=5` → the submodule_drift-triggering fields (`tree_vs_remote`,
+        `behind_count`, `hint_type="update"`) still fire — evidence_grade must NEVER
+        globally suppress the directional guard/drift signal (that would be the
+        mirror-image false-green bug: mistaking "unverified" for "fine")."""
+        with tmp_repo() as repo:
+            self._setup(repo)
+            tree = "a" * 40
+            remote = "b" * 40
+            run_table = {
+                ("git", "ls-tree", "HEAD", "--", "vendor/lib"): (
+                    0, f"160000 commit {tree}\tvendor/lib\n", ""
+                ),
+                ("git", "rev-parse", "HEAD"): (0, f"{tree}\n", ""),
+                ("git", "rev-parse", "refs/remotes/origin/HEAD"): (0, f"{remote}\n", ""),
+                ("git", "rev-list", "--count", f"{tree}..{remote}"): (0, "5\n", ""),
+                ("git", "rev-list", "--count", f"{remote}..{tree}"): (0, "0\n", ""),
+            }
+            # fetch_ok=false leg ⇒ evidence_grade resolves "expired" upstream in
+            # multi_remote (simulated directly here as the joined slice).
+            entries = [{"name": "origin", "evidence_grade": "expired", "fetch_ok": "false"}]
+            with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+                r = CollectorResult()
+                entry = _collect_submodule_entry(repo, "vendor/lib", r, remote_entries=entries)
+            # Assert TRIGGERED (not suppressed) — this is the falsification, not a
+            # tautology: a wrong implementation that gated `tree_vs_remote`/`hint`
+            # on evidence_grade=="fresh" would make this assertion fail.
+            self.assertTrue(entry["drift"]["tree_vs_remote"])
+            self.assertEqual(entry["drift"]["behind_count"], 5)
+            self.assertEqual(entry["drift"]["hint_type"], "update")
+            self.assertEqual(entry["drift"]["evidence_grade"], "expired")
+
+    def test_ahead_directional_guard_unaffected_by_evidence_grade(self):
+        """US-008 regression guard: passing remote_entries must not perturb the
+        ahead→push (never update) directional decision."""
+        with tmp_repo() as repo:
+            self._setup(repo)
+            tree = "a" * 40
+            remote = "b" * 40
+            run_table = {
+                ("git", "ls-tree", "HEAD", "--", "vendor/lib"): (
+                    0, f"160000 commit {tree}\tvendor/lib\n", ""
+                ),
+                ("git", "rev-parse", "HEAD"): (0, f"{tree}\n", ""),
+                ("git", "rev-parse", "refs/remotes/origin/HEAD"): (0, f"{remote}\n", ""),
+                ("git", "rev-list", "--count", f"{tree}..{remote}"): (0, "0\n", ""),
+                ("git", "rev-list", "--count", f"{remote}..{tree}"): (0, "2\n", ""),
+            }
+            entries = [{"name": "origin", "evidence_grade": "fresh"}]
+            with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+                r = CollectorResult()
+                entry = _collect_submodule_entry(repo, "vendor/lib", r, remote_entries=entries)
+            self.assertEqual(entry["drift"]["hint_type"], "push")
+            self.assertEqual(entry["drift"]["ahead_count"], 2)
+            self.assertEqual(entry["drift"]["evidence_grade"], "fresh")
+
+
+class TestCollectSyncStateMultiRemoteDataJoin(unittest.TestCase):
+    """`collect_sync_state(project_root, multi_remote_data=...)` end-to-end join,
+    including the AC-10 structural assertion + the None back-compat default +
+    the scan.py-ordering observable-symptom contract (F9′ top_risks #3)."""
+
+    def _base_run_table(self, upstream_rc_out=(0, "origin/master\n", "")):
+        return {
+            ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
+            ("git", "remote"): (0, "origin\n", ""),
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): upstream_rc_out,
+            ("git", "rev-list", "--left-right", "--count", "HEAD...origin/master"): (
+                0, "0\t0\n", ""
+            ),
+        }
+
+    def test_multi_remote_data_none_yields_expired_everywhere(self):
+        """F9′ top_risks #3 — the DIRECTLY OBSERVABLE fingerprint of an ordering
+        regression: omitting multi_remote_data (as if scan.py's collect_multi_remote
+        call were skipped/reordered after collect_sync_state) must make every
+        evidence_grade resolve "expired", never silently "fresh". Real tmp_repo()
+        used so the branch genuinely reaches the normal (non-detached) path — see
+        `test_ac10_structural_join_main_repo` docstring for why a fake cwd would
+        make this pass for the wrong reason."""
+        with tmp_repo() as repo:
+            with mock.patch(
+                "collectors.sync._run", side_effect=_make_run(self._base_run_table())
+            ):
+                r = collect_sync_state(repo, multi_remote_data=None)
+        self.assertEqual(r.data["current_branch"]["name"], "master")
+        self.assertEqual(r.data["current_branch"]["evidence_grade"], "expired")
+
+    def test_multi_remote_disabled_yields_expired(self):
+        with tmp_repo() as repo:
+            with mock.patch(
+                "collectors.sync._run", side_effect=_make_run(self._base_run_table())
+            ):
+                r = collect_sync_state(repo, multi_remote_data={"enabled": False})
+        self.assertEqual(r.data["current_branch"]["name"], "master")
+        self.assertEqual(r.data["current_branch"]["evidence_grade"], "expired")
+
+    def test_ac10_structural_join_main_repo(self):
+        """AC-10: `current_branch.evidence_grade` equals (same value, sourced from
+        the same join path as) `multi_remote.main_repo.remotes[].evidence_grade`
+        for the matching remote — not an independently-recomputed value.
+
+        Uses a REAL tmp_repo() (not a bare `Path("/x")`): `_current_branch`/
+        `_is_shallow` are imported from `collectors.git` and call THAT module's own
+        `_run` (module-global lookup at the DEFINING module, not the caller) — so
+        patching `collectors.sync._run` does not intercept them. A fake nonexistent
+        cwd would silently degenerate `_current_branch` to `None` (detached_head),
+        making this test pass for the wrong reason (coincidentally landing on
+        "expired" via the detached-head path rather than via the real join)."""
+        multi_remote_data = {
+            "enabled": True,
+            "main_repo": {
+                "path": ".",
+                "remotes": [
+                    {"name": "github", "evidence_grade": "expired"},
+                    {"name": "origin", "evidence_grade": "fresh"},
+                ],
+            },
+            "submodules": [],
+        }
+        with tmp_repo() as repo:
+            with mock.patch(
+                "collectors.sync._run", side_effect=_make_run(self._base_run_table())
+            ):
+                r = collect_sync_state(repo, multi_remote_data=multi_remote_data)
+        self.assertEqual(r.data["current_branch"]["name"], "master")
+        self.assertEqual(r.data["current_branch"]["upstream"], "origin/master")
+        origin_entry = next(
+            e for e in multi_remote_data["main_repo"]["remotes"] if e["name"] == "origin"
+        )
+        self.assertEqual(
+            r.data["current_branch"]["evidence_grade"], origin_entry["evidence_grade"]
+        )
+        self.assertEqual(r.data["current_branch"]["evidence_grade"], "fresh")
+
+    def test_ac10_structural_join_submodule(self):
+        with tmp_repo() as repo:
+            write_file(
+                repo / ".gitmodules",
+                '[submodule "lib"]\n\tpath = lib\n\turl = https://example.com/lib.git\n',
+            )
+            (repo / "lib").mkdir()
+            tree = "1" * 40
+            multi_remote_data = {
+                "enabled": True,
+                "main_repo": {"path": ".", "remotes": []},
+                "submodules": [
+                    {
+                        "path": "lib",
+                        "remotes": [{"name": "origin", "evidence_grade": "stale_unverified"}],
+                    }
+                ],
+            }
+            run_table = dict(self._base_run_table(upstream_rc_out=(1, "", "no upstream")))
+            run_table.update(
+                {
+                    ("git", "rev-parse", "--git-dir"): (0, ".git\n", ""),
+                    ("git", "ls-tree", "HEAD", "--", "lib"): (
+                        0, f"160000 commit {tree}\tlib\n", ""
+                    ),
+                    ("git", "rev-parse", "HEAD"): (0, f"{tree}\n", ""),
+                    ("git", "rev-parse", "refs/remotes/origin/HEAD"): (0, f"{tree}\n", ""),
+                }
+            )
+            with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+                r = collect_sync_state(repo, multi_remote_data=multi_remote_data)
+            self.assertEqual(len(r.data["submodules"]), 1)
+            self.assertEqual(
+                r.data["submodules"][0]["drift"]["evidence_grade"], "stale_unverified"
+            )
+
+    def test_not_a_git_repo_path_still_carries_evidence_grade_field(self):
+        run_table = {("git", "rev-parse", "--is-inside-work-tree"): (128, "", "not a repo")}
+        with mock.patch("collectors.sync._run", side_effect=_make_run(run_table)):
+            r = collect_sync_state(Path("/no/such/path"), multi_remote_data={"enabled": True})
+        self.assertEqual(r.data["current_branch"]["evidence_grade"], "expired")
 
 
 class TestFetchHeadAgeBuckets(unittest.TestCase):

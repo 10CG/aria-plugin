@@ -9,7 +9,8 @@
 | `git_operation_in_progress` | 0.5 | (阻断提示) resolve-git-operation | `git.git_operation_in_progress.operation != "none"` | 90% | No — 须先 `git <op> --continue`/`--abort`,降级/阻止含 checkout·分支操作的常规推荐;`has_conflicts=true` 措辞升级 (Aria #135) |
 | `commit_only` | 1 | C.1 only | 已暂存 + 无未暂存 | 95% | Yes — 已暂存 + 无未暂存信号明确 |
 | `readme_outdated` | 1.3 | doc-update | README 版本/日期不一致 | 85% | No — 用户可能有意延后 |
-| `multi_remote_drift` | 1.35 | (降级提示) | `multi_remote.overall_parity=false` | 75% | No — 非阻塞，附加 push 建议 |
+| `multi_remote_drift` | 1.35 | (降级提示) | `multi_remote.overall_parity=false`, 按 (parity,reason,evidence_grade) 六路分派 (v9) | 75% | No — 非阻塞，behind/diverged→pull；ahead 不重复(见 has_pending_push)；benign unknown 不触发；no_local_tracking_ref 非 fresh→改路由 1.36；not_refreshed/network/auth/其他→查网络凭据，不建议方向性操作 |
+| `has_unpublished_branch` | 1.36 | (降级提示) | 某 remote `parity=unknown, reason=no_local_tracking_ref, evidence_grade!=fresh` (v9 新增) | 60% | No — 非阻塞，附加 `push -u` 建议 |
 | `standards_missing` | 1.4 | (建议性提示) | standards 子模块未初始化 | 80% | No — 非阻塞，仅提醒 |
 | `requirements_issues` | 1.5 | requirements-check | 需求文档验证有错误 | 85% | No — 用户可能希望延后处理 |
 | `architecture_missing` | 1.6 | create-architecture | PRD 存在但无 Architecture | 80% | No |

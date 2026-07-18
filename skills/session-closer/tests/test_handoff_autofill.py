@@ -14,6 +14,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from handoff_autofill import (  # noqa: E402
+    _benign_unconditional_reasons,
+    _unknown_is_benign,
     assemble_from_snapshot,
     assemble_unfinished,
     carry_forward_from_inventory,
@@ -32,8 +34,15 @@ def _repo(label_branch, head, *remotes):
     return {"branch": label_branch, "local_head": head, "remotes": list(remotes)}
 
 
-def _rem(name, parity, ahead=0, reachable=True):
-    return {"name": name, "parity": parity, "ahead_count": ahead, "reachable": reachable}
+def _rem(name, parity, ahead=0, reachable=True, reason=None, evidence_grade=None):
+    return {
+        "name": name,
+        "parity": parity,
+        "ahead_count": ahead,
+        "reachable": reachable,
+        "reason": reason,
+        "evidence_grade": evidence_grade,
+    }
 
 
 class TestSyncSectionAC2(unittest.TestCase):
@@ -67,6 +76,95 @@ class TestSyncSectionAC2(unittest.TestCase):
 
     def test_empty_no_crash(self):
         self.assertEqual(fill_sync_section(None), {"lines": [], "warnings": []})
+
+    # --- F9′ 9.1 reason 分诊 (取代旧版「parity=unknown 一律静默」) -----------------
+
+    def test_unknown_benign_detached_head_no_warning(self):
+        mr = {"main_repo": _repo("master", "aaa0000",
+                                  _rem("origin", "unknown", reason="detached_head"))}
+        r = fill_sync_section(mr)
+        self.assertEqual(r["warnings"], [])
+
+    def test_unknown_benign_no_local_tracking_ref_fresh_no_warning(self):
+        mr = {"main_repo": _repo("master", "aaa0001", _rem(
+            "origin", "unknown", reason="no_local_tracking_ref", evidence_grade="fresh"
+        ))}
+        r = fill_sync_section(mr)
+        self.assertEqual(r["warnings"], [])
+
+    def test_unknown_no_local_tracking_ref_not_fresh_warns(self):
+        """9.1 病根: 旧版无条件吞掉这类 unknown — 现在必须升 warning (F9′ 假绿通道)。"""
+        mr = {"main_repo": _repo("master", "aaa0002", _rem(
+            "origin", "unknown", reason="no_local_tracking_ref", evidence_grade="stale_unverified"
+        ))}
+        r = fill_sync_section(mr)
+        self.assertTrue(any("no_local_tracking_ref" in w for w in r["warnings"]))
+
+    def test_unknown_not_refreshed_warns(self):
+        mr = {"main_repo": _repo("master", "aaa0003", _rem(
+            "origin", "unknown", reason="not_refreshed", evidence_grade="expired"
+        ))}
+        r = fill_sync_section(mr)
+        self.assertTrue(any("not_refreshed" in w for w in r["warnings"]))
+
+    def test_unknown_network_timeout_warns(self):
+        mr = {"main_repo": _repo("master", "aaa0004", _rem(
+            "origin", "unknown", reason="network_timeout"
+        ))}
+        r = fill_sync_section(mr)
+        self.assertTrue(any("network_timeout" in w for w in r["warnings"]))
+
+    def test_unknown_unrecognized_reason_fail_closed_warns(self):
+        """fail-CLOSED 补集: 未识别的 reason 也必须升 warning, 不能因"不在已知列表"
+        就当成安全默认静默 (与本 Spec「零证据不得当正证据」同一哲学)。"""
+        mr = {"main_repo": _repo("master", "aaa0005", _rem(
+            "origin", "unknown", reason="some_future_reason_not_yet_enumerated"
+        ))}
+        r = fill_sync_section(mr)
+        self.assertTrue(any("some_future_reason_not_yet_enumerated" in w for w in r["warnings"]))
+
+    def test_unknown_benign_shallow_clone_no_warning(self):
+        mr = {"main_repo": _repo("master", "aaa0006",
+                                  _rem("origin", "unknown", reason="shallow_clone"))}
+        r = fill_sync_section(mr)
+        self.assertEqual(r["warnings"], [])
+
+    def test_unknown_benign_remote_branch_missing_no_warning(self):
+        mr = {"main_repo": _repo("master", "aaa0007",
+                                  _rem("origin", "unknown", reason="remote_branch_missing"))}
+        r = fill_sync_section(mr)
+        self.assertEqual(r["warnings"], [])
+
+
+class TestUnknownReasonTriageHelpers(unittest.TestCase):
+    """F9′ 9.1 — `_benign_unconditional_reasons` (multi_remote sibling-skill import,
+    「不重造」) + `_unknown_is_benign` 判据本身。"""
+
+    def test_benign_unconditional_reasons_importable_and_nonempty(self):
+        """best-effort 导入应在本仓正常布局下成功 (兄弟 skill 都在同一 aria/skills/ 下)。"""
+        reasons = _benign_unconditional_reasons()
+        self.assertIn("detached_head", reasons)
+        self.assertIn("shallow_clone", reasons)
+        self.assertIn("remote_branch_missing", reasons)
+
+    def test_unknown_is_benign_matches_unconditional_set(self):
+        reasons = frozenset({"detached_head", "shallow_clone", "remote_branch_missing"})
+        self.assertTrue(_unknown_is_benign("detached_head", None, reasons))
+        self.assertTrue(_unknown_is_benign("shallow_clone", "expired", reasons))
+        self.assertFalse(_unknown_is_benign("not_refreshed", "fresh", reasons))
+
+    def test_unknown_is_benign_no_local_tracking_ref_requires_fresh(self):
+        reasons = frozenset({"detached_head", "shallow_clone", "remote_branch_missing"})
+        self.assertTrue(_unknown_is_benign("no_local_tracking_ref", "fresh", reasons))
+        self.assertFalse(_unknown_is_benign("no_local_tracking_ref", "stale_unverified", reasons))
+        self.assertFalse(_unknown_is_benign("no_local_tracking_ref", "expired", reasons))
+        self.assertFalse(_unknown_is_benign("no_local_tracking_ref", None, reasons))
+
+    def test_unknown_is_benign_empty_benign_set_fails_safe_to_warn(self):
+        """导入失败(空集)时, 所有非 fresh-no_local_tracking_ref 的 unknown 都不得被判 benign
+        — 宁可多报, 不可静默吞。"""
+        self.assertFalse(_unknown_is_benign("detached_head", None, frozenset()))
+        self.assertFalse(_unknown_is_benign("shallow_clone", None, frozenset()))
 
 
 class TestAssembleUnfinishedAC3(unittest.TestCase):

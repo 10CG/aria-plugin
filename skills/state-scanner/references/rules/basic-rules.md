@@ -1,6 +1,6 @@
 # State Scanner — 基础工作流规则
 
-> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含基础工作流 (commit_only / quick_fix / feature_with_spec 等) + 架构相关 + 需求相关规则。Total: 13 + 3 + 5 = 21 规则。
+> 从 [RECOMMENDATION_RULES.md](../../RECOMMENDATION_RULES.md) 拆出。包含基础工作流 (commit_only / quick_fix / feature_with_spec 等) + 架构相关 + 需求相关规则。Total: 14 + 3 + 5 = 22 规则 (v9 新增 `has_unpublished_branch` 1.36, F9′ 9.2)。
 
 ---
 
@@ -68,25 +68,86 @@ recommendation:
 
 ### 1.35 multi_remote_drift
 
+> **v9 (state-scanner-stale-refs-false-parity F9′ 9.2) 改写**: 旧版把 `overall_parity: false`
+> 的所有成因一律建议 `git push` —— 这本身就是一个方向性 bug (behind 场景下 push 毫无意义,
+> 甚至可能诱导用户在落后状态下强推)。v9 起**按 (parity, reason, evidence_grade) 六路分派**,
+> 不再对整块 `overall_parity: false` 发单一建议。**不是一律 fetch/pull** (US-008 directional
+> guard 在 multi_remote 层的对应物)。
+
 ```yaml
 id: multi_remote_drift
 priority: 1.35
-description: 检测到多远程 HEAD 不一致, 存在推送遗漏风险
+description: 检测到多远程 HEAD 不一致 (按成因分派, 不再单一 push 建议)
 
 conditions:
   any:
-    - multi_remote.overall_parity: false   # 排除 ahead (has_pending_push) 和 unknown (has_unreachable_remote)
+    - multi_remote.overall_parity: false   # 触发分诊, 具体建议由下方六路 dispatch 决定
 
   detection:
-    method: "per-remote SHA comparison across main + submodules"
+    method: "per-remote (parity, reason, evidence_grade) 分诊, 遍历 main + submodules"
     source:
-      - sync_status.multi_remote.main_repo.remotes[*].parity
-      - sync_status.multi_remote.submodules[*].remotes[*].parity
+      - sync_status.multi_remote.main_repo.remotes[*]  # {parity, reason, evidence_grade, behind_count, ahead_count}
+      - sync_status.multi_remote.submodules[*].remotes[*]
+
+  dispatch:  # 六路成因分派 (v9, 按 remote 逐条判定, 一个 remote 只落一路)
+    - cause: "behind / diverged"
+      match: "parity in (behind, diverged)"
+      action: "建议 pull: git -C <path> pull <remote> <branch> (diverged 需人工 merge/rebase 决策)"
+      triggers_rule: true
+    - cause: "ahead"
+      match: "parity == ahead"
+      action: "不重复 — 已由 has_pending_push 覆盖, 本规则不再对 ahead 发建议"
+      triggers_rule: false
+    - cause: "benign unknown"
+      match: |
+        parity == unknown AND reason in (detached_head, shallow_clone, remote_branch_missing)
+        OR (parity == unknown AND reason == no_local_tracking_ref AND evidence_grade == fresh)
+      action: "不触发 — 复用 multi_remote._BENIGN_UNCONDITIONAL_REASONS 同源判据, 零证据不当负证据"
+      triggers_rule: false
+    - cause: "no_local_tracking_ref (非 benign, 即 evidence_grade != fresh)"
+      match: "parity == unknown AND reason == no_local_tracking_ref AND evidence_grade != fresh"
+      action: "改路由到新规则 has_unpublished_branch (见 1.36) — 不在本规则内重复建议"
+      triggers_rule: false
+    - cause: "not_refreshed / network_timeout / auth_failed"
+      match: "parity == unknown AND reason in (not_refreshed, network_timeout, auth_failed)"
+      action: "「无法验证, 请检查网络或凭据」— 不建议 pull/push (方向未知, 盲建议有害)"
+      triggers_rule: true
+    - cause: "其他 reason (fail-CLOSED 补集, 非正列举)"
+      match: "parity == unknown AND reason not in 以上任何枚举 (含 rev_list_failed / parse_error / 未来新增枚举)"
+      action: "同「网络凭据」档处理 (fail-CLOSED — 未识别的 reason 保守当作不可验证, 不建议方向性操作)"
+      triggers_rule: true
 
 recommendation:
   workflow: null
   steps: []
-  reason: "检测到 HEAD 未同步到部分远程, 建议: git -C <path> push <remote> <branch>"
+  reason: "检测到多远程 HEAD 不同步 — 具体建议按上方 dispatch 表逐 remote 生成 (pull / 查网络凭据 / 无), 不再笼统建议 push"
+  non_blocking: true
+```
+
+### 1.36 has_unpublished_branch (v9 新增, F9′ 9.2 第四路成因)
+
+```yaml
+id: has_unpublished_branch
+priority: 1.36
+description: 某 remote 上从未见过本地分支的 tracking ref (非「暂时未验证」, 是「大概率真的没推过」)
+
+conditions:
+  any:
+    - multi_remote_remote_entry:
+        parity: unknown
+        reason: no_local_tracking_ref
+        evidence_grade: "!= fresh"   # v9 9.2: fresh 时归 1.35 的 benign unknown 分支, 不重复触发本规则
+
+  detection:
+    source:
+      - sync_status.multi_remote.main_repo.remotes[*]
+      - sync_status.multi_remote.submodules[*].remotes[*]
+    field_check: "parity == unknown AND reason == no_local_tracking_ref AND evidence_grade != fresh"
+
+recommendation:
+  workflow: null
+  steps: []
+  reason: "⚠️ {path} 在 remote {name} 上未见到本地分支的 tracking ref, 可能从未推送过 — 建议: git -C <path> push -u {name} <branch> (先确认分支名, 不要盲目假设已存在)"
   non_blocking: true
 ```
 

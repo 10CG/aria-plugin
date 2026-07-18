@@ -116,10 +116,13 @@ AI 负责: 根据 `interrupt.status` 值:
 scan.py 按顺序执行 **Phase 0.5 + 15 个 collector 子阶段**, 每个产出 snapshot 一个固定顶层字段
 (`remote_refresh` (**Phase 0.5, F3′, main spec `state-scanner-stale-refs-false-parity`** — 跑在最前面, 新鲜度信号唯一生产者) / `git` / `upm` / `changes` / `requirements` / `openspec` / `architecture` / `readme` / `standards` / `audit` / `custom_checks` / `sync_status` / `issue_status` (opt-in) / `forgejo_config` / `handoff` / `handoff_worktrees` (Step 1.15b, #139 cross-worktree discovery) / `coordination_fetch` (Step 1.16, multi-terminal — **F6′ 起为纯派生 shim, 零独立 I/O, 读 `remote_refresh` 的 `(".", "origin")` leg**) / `tracks_multibranch` (Step 1.17, multi-terminal) + `errors[]` 聚合)。
 
-**Opt-in 子阶段**: 1.11 custom_checks (需 `.aria/state-checks.yaml`) / 1.13 issue_scan (config flag) / 1.12 sync_check (可关闭)。
+**Opt-in 子阶段**: 1.11 custom_checks (需 `.aria/state-checks.yaml`) / 1.13 issue_scan (config flag)。
+1.12 sync_check **不是** opt-in — 恒开启不可关闭 (F9′ 9.2 修正: `sync.py` 从未读取
+`state_scanner.sync_check.*`, 历史文档"可关闭"的说法与代码不符; 该 collector 承载 US-008
+方向性数据丢失护栏, 设计上不允许关闭)。
 
 **F6′ 可关闭性契约 (`remote_refresh`, D16 registered)**: `remote_refresh` 目前**没有独立的
-enable/disable 配置门** (与 `sync_check`/`issue_scan` 不同) —— 它由 `state_scanner.multi_remote.enforced_remotes`
+enable/disable 配置门** (与 `issue_scan` 不同; `sync_check` 同样无真实开关, 见上) —— 它由 `state_scanner.multi_remote.enforced_remotes`
 间接控制覆盖范围, `enforced_remotes` 解析为空集合 (无 remote 可 fetch, 或全部 `no_matching_remote`)
 时 `remote_refresh.legs == []`。**若采用者未来加装独立开关关闭它** (或 legs 为空), 下游**必须**
 遵守这条不变量: **`remote_refresh` 关闭/无 leg ⇒ 所有 remote 的 `evidence_grade` 落 `expired`

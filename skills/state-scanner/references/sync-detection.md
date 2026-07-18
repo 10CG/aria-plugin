@@ -68,7 +68,13 @@ sync_status:
 | `submodules[].remote_commit` | 四级 fallback 全部失败 |
 | `submodules[].drift.behind_count` | `remote_commit` 为 null |
 
-### `remote_refs_age` 格式
+### `remote_refs_age` 格式 (DEPRECATED — F9′ 8.4, 字段保留不删)
+
+> ⚠️ Phase 0.5 `remote_refresh` (F3′) 落地后, `scan.py` 自身的 Phase 0.5 fetch 会改写
+> `.git/FETCH_HEAD`, 使 `remote_refs_age` 在每次 scan 后恒近似 `"1m"` —— 它测量的是"本次 scan
+> 自己刚做的 fetch 多久前发生", 不再是任何有意义的陈旧度信号。**新鲜度判据请改读
+> `sync_status.multi_remote.*.remotes[].evidence_grade`** (真 SOT, F1′/F3′/F4′ join)。字段本身
+> **不删除**(向后兼容既有消费者), 但视为 DEPRECATED, 新代码不应再依赖它做陈旧度判断。
 
 | 值 | 含义 |
 |----|------|
@@ -345,29 +351,35 @@ fi
 
 ---
 
-## 7. 配置项
+## 7. 配置项 (DEPRECATED — 本节所述配置块从未被代码消费, F9′ 9.2 勘误)
 
-由 `config-loader` 加载，配置块 `state_scanner.sync_check`：
-
-```json
-{
-  "state_scanner": {
-    "sync_check": {
-      "enabled": true,
-      "check_submodules": true,
-      "warn_after_hours": 24
-    }
-  }
-}
-```
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | boolean | `true` | Phase 1.12 主开关（本地 git 操作，默认开启） |
-| `check_submodules` | boolean | `true` | 是否检测子模块偏差 |
-| `warn_after_hours` | number | `24` | FETCH_HEAD 陈旧度告警阈值（小时） |
-
-配置分层原则（Decision D12）：单阶段子配置使用嵌套 object（`state_scanner.sync_check.*`）；全局开关使用扁平字段（`state_scanner.confidence_threshold`）。
+> ⚠️ **勘误 (state-scanner-stale-refs-false-parity F9′ 9.2)**: 下方 `state_scanner.sync_check.*`
+> 配置块是**历史文档虚构** —— `collectors/sync.py` 全文 `grep sync_check` 零命中, `collect_sync_state`
+> 从不读取 `.aria/config.json`, `enabled`/`check_submodules`/`warn_after_hours` 三个字段从未被
+> 任何代码路径消费。**Phase 1.12 `sync_check` 恒开启, 无法关闭** —— 它承载 US-008 方向性数据丢失
+> 护栏 (`sync.py:317-333`, behind→update / ahead→push 的强制方向判据), 关闭它等同关闭护栏,
+> 设计上不允许存在开关。`warn_after_hours` 语义已被 F3′ `remote_refresh` 的 `evidence_grade`
+> (fresh/stale_unverified/expired, 真实由 `sync_freshness.evidence_window_seconds`/`hard_cap_days`
+> 驱动) 取代 —— 后者才是真 SOT, 见 `references/state-snapshot-schema.md` §`remote_refresh`。
+> 本节保留仅供历史溯源, **不要**据此为项目写 `.aria/config.json` 的 `sync_check` 键 (写了也不生效)。
+>
+> 旧文档原文 (存档):
+>
+> ```json
+> {
+>   "state_scanner": {
+>     "sync_check": {
+>       "enabled": true,
+>       "check_submodules": true,
+>       "warn_after_hours": 24
+>     }
+>   }
+> }
+> ```
+>
+> 三字段均**从未接线**。真实可配置的新鲜度阈值见 `state_scanner.sync_freshness.*`
+> (`evidence_window_seconds` / `hard_cap_days` / `k_min`, `config-loader/DEFAULTS.json` +
+> `.aria/config.template.json` Phase 0 landed)。
 
 ---
 

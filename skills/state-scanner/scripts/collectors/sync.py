@@ -1,7 +1,14 @@
 """Phase 1.12 — local/remote sync status collector.
 
 Detects the sync state between the local git repository and its remote(s):
-- FETCH_HEAD freshness (remote_refs_age)
+- FETCH_HEAD freshness (remote_refs_age) — **DEPRECATED** (F9′ 8.4, main spec
+  state-scanner-stale-refs-false-parity): Phase 0.5 `remote_refresh` (F3′) now
+  runs its own fetches BEFORE this collector, rewriting `.git/FETCH_HEAD` every
+  scan — so this field degenerates to "how long ago did *this same scan's own
+  fetch* happen", never a real staleness signal. Field is KEPT (not removed,
+  backward-compat for existing consumers) but callers should read
+  `sync_status.multi_remote.*.remotes[].evidence_grade` instead (the real F1′/
+  F3′/F4′-joined freshness SOT — see multi_remote.py).
 - Current branch upstream divergence (ahead/behind) with four-state fail-soft
 - Per-submodule drift between tree_commit / head_commit / remote_commit
 
@@ -50,6 +57,12 @@ def _has_remote(project_root: Path) -> bool:
 def _fetch_head_age(project_root: Path, r: CollectorResult) -> str:
     """Return FETCH_HEAD age in compact form: Nm / Nh / Nd / 'never'.
 
+    **DEPRECATED** (F9′ 8.4) — see module docstring. Kept for the
+    `remote_refs_age` field's backward-compat, but since Phase 0.5
+    `remote_refresh` fetches (and rewrites FETCH_HEAD) before this collector
+    runs, the value is now near-constantly "1m" post-scan and carries no
+    staleness signal. Use `evidence_grade` (multi_remote.py) instead.
+
     Strategy: read .git/FETCH_HEAD mtime (portable, no `stat -c` vs `stat -f` split).
     Bucket: <1h → minutes; <1d → hours; >=1d → days.
     Missing file → 'never'.
@@ -85,8 +98,45 @@ def _fetch_head_age(project_root: Path, r: CollectorResult) -> str:
     return f"{days}d"
 
 
+def _upstream_evidence_grade(
+    upstream: str | None, remote_entries: list[dict[str, Any]] | None
+) -> str:
+    """F9′ 8.1 — join `current_branch.upstream` to its `multi_remote.main_repo.remotes[]`
+    entry's `evidence_grade` (D20, F1′/F3′/F4′ freshness SOT).
+
+    `remote_entries` is the MAIN repo's `remotes[]` list (from `collect_multi_remote`'s
+    `main_repo` block) — the caller (`collect_sync_state`) is responsible for passing
+    the right slice; this helper never re-scopes by path.
+
+    Remote-name extraction: `upstream` has shape `"<remote>/<branch...>"`. Git remote
+    NAMES never contain `/` (git itself forbids it), so `upstream.partition("/")[0]`
+    always yields the correct remote name regardless of how many `/` the BRANCH name
+    itself contains (e.g. `"origin/feature/sub/branch"` → `"origin"`, not truncated
+    early) — no need for the heavier `git config branch.<b>.remote` lookup.
+
+    Fail-CLOSED default `"expired"` covers: `upstream is None` (detached_head /
+    no_upstream paths), `remote_entries is None` (caller didn't pass `multi_remote_data`
+    — F9′ back-compat default), and "no entry named that remote" (multi_remote disabled,
+    or the remote isn't one multi_remote enumerated). Zero evidence must never resolve
+    to `"fresh"`.
+    """
+    if not upstream or not remote_entries:
+        return "expired"
+    remote_name = upstream.partition("/")[0]
+    for entry in remote_entries:
+        if entry.get("name") == remote_name:
+            grade = entry.get("evidence_grade")
+            return grade if isinstance(grade, str) else "expired"
+    return "expired"
+
+
 def _collect_current_branch(
-    project_root: Path, branch: str | None, shallow: bool, has_remote: bool, r: CollectorResult
+    project_root: Path,
+    branch: str | None,
+    shallow: bool,
+    has_remote: bool,
+    r: CollectorResult,
+    remote_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Collect current-branch sync state with four-state fail-soft.
 
@@ -95,6 +145,16 @@ def _collect_current_branch(
       - shallow_clone:  shallow=true → ahead/behind=null, reason="shallow_clone"
       - no_upstream:    upstream=null → ahead/behind=null, reason="no_upstream"
       - detached_head:  name=null → ahead/behind=null, reason="detached_head"
+
+    F9′ 8.1 (main spec state-scanner-stale-refs-false-parity, additive): every return
+    also carries `evidence_grade` (D20), joined from `remote_entries` (the caller's
+    `multi_remote.main_repo.remotes[]` slice) via `_upstream_evidence_grade`. This is
+    PURELY additive — the US-008 directional guard below (behind/ahead/diverged
+    computation) is untouched byte-for-byte; `evidence_grade` never gates or rewrites
+    `ahead`/`behind`/`reason` here (unlike `multi_remote._apply_freshness_downgrade`,
+    which DOES rewrite `parity` — that rewrite stays scoped to the `multi_remote` block
+    and is deliberately NOT mirrored onto `sync_status.current_branch`, which keeps its
+    own local-git-only measurement semantics per this collector's module docstring).
     """
     # Detached HEAD check first — overrides other states
     if branch is None:
@@ -106,6 +166,7 @@ def _collect_current_branch(
             "behind": None,
             "diverged": None,
             "reason": "detached_head",
+            "evidence_grade": _upstream_evidence_grade(None, remote_entries),
         }
 
     # Probe upstream name
@@ -129,6 +190,7 @@ def _collect_current_branch(
             "behind": None,
             "diverged": None,
             "reason": "no_upstream",
+            "evidence_grade": _upstream_evidence_grade(None, remote_entries),
         }
 
     # Shallow clone: cannot compute ahead/behind reliably
@@ -141,6 +203,7 @@ def _collect_current_branch(
             "behind": None,
             "diverged": None,
             "reason": "shallow_clone",
+            "evidence_grade": _upstream_evidence_grade(upstream, remote_entries),
         }
 
     # Normal path: compute ahead/behind via --left-right --count
@@ -159,6 +222,7 @@ def _collect_current_branch(
             "behind": None,
             "diverged": None,
             "reason": "rev_list_failed",
+            "evidence_grade": _upstream_evidence_grade(upstream, remote_entries),
         }
     parts = out.strip().split()
     if len(parts) != 2:
@@ -171,6 +235,7 @@ def _collect_current_branch(
             "behind": None,
             "diverged": None,
             "reason": "parse_failed",
+            "evidence_grade": _upstream_evidence_grade(upstream, remote_entries),
         }
 
     try:
@@ -186,6 +251,7 @@ def _collect_current_branch(
             "behind": None,
             "diverged": None,
             "reason": "parse_failed",
+            "evidence_grade": _upstream_evidence_grade(upstream, remote_entries),
         }
 
     diverged = ahead > 0 and behind > 0
@@ -197,16 +263,54 @@ def _collect_current_branch(
         "behind": behind,
         "diverged": diverged,
         "reason": None,
+        "evidence_grade": _upstream_evidence_grade(upstream, remote_entries),
     }
 
 
+def _submodule_evidence_grade(remote_entries: list[dict[str, Any]] | None) -> str:
+    """F9′ 8.1 — join a submodule's `drift` block to its `multi_remote` submodule
+    block's "origin" remote entry's `evidence_grade`.
+
+    Why "origin" specifically (not "first entry" / not all entries merged): this
+    module's `remote_commit` fallback chain (`_ORIGIN_HEAD_REFS`, module-top constant)
+    is origin-only by construction — `entry["remote_commit"]` here NEVER reflects any
+    other remote, so joining a non-origin remote's freshness would attach a freshness
+    grade to a measurement that remote never produced. `remote_entries` is the
+    caller-supplied slice of THIS submodule's `multi_remote.submodules[].remotes[]`
+    (never the main repo's — a bare "origin" name collision across repos is exactly
+    the top_risks trap `multi_remote._remote_refresh_leg_key` already guards against
+    by keying on `(repo_path, remote_name)`, not `remote_name` alone; this helper
+    relies on the CALLER having already scoped `remote_entries` to the right repo).
+
+    Fail-CLOSED default `"expired"`: `remote_entries is None` (F9′ back-compat —
+    caller didn't pass `multi_remote_data`) or no "origin" entry present (multi_remote
+    disabled / origin not enumerated) both mean zero evidence, never "fresh".
+    """
+    if not remote_entries:
+        return "expired"
+    for entry in remote_entries:
+        if entry.get("name") == "origin":
+            grade = entry.get("evidence_grade")
+            return grade if isinstance(grade, str) else "expired"
+    return "expired"
+
+
 def _collect_submodule_entry(
-    project_root: Path, path: str, r: CollectorResult
+    project_root: Path,
+    path: str,
+    r: CollectorResult,
+    remote_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Collect one submodule's sync state.
 
     Returns entry with drift hints. Fail-soft: missing submodule dir / uninitialized
     submodule → tree_commit captured, head_commit/remote_commit may be null.
+
+    F9′ 8.1 (additive): `entry["drift"]["evidence_grade"]` is joined from
+    `remote_entries` (caller's `multi_remote.submodules[path].remotes[]` slice) via
+    `_submodule_evidence_grade`, written AFTER the US-008 directional guard below —
+    that guard (behind→update / ahead→push / directional_guard) is read-only here,
+    unchanged byte-for-byte; `evidence_grade` never influences `hint`/`hint_type`.
     """
     entry: dict[str, Any] = {
         "path": path,
@@ -332,15 +436,36 @@ def _collect_submodule_entry(
             )
             entry["drift"]["hint_type"] = "manual_check"
 
+    # F9′ 8.1 — evidence_grade join, unconditional (fires for every branch above,
+    # including the "no drift at all" / "workdir_vs_tree only" paths, not just the
+    # tree_vs_remote directional-guard branch) — see docstring.
+    entry["drift"]["evidence_grade"] = _submodule_evidence_grade(remote_entries)
+
     return entry
 
 
-def collect_sync_state(project_root: Path) -> CollectorResult:
+def collect_sync_state(
+    project_root: Path, multi_remote_data: dict[str, Any] | None = None
+) -> CollectorResult:
     """Collect Phase 1.12 sync_status snapshot (single-remote scope).
+
+    F9′ (main spec state-scanner-stale-refs-false-parity, OQ-E=(a)) — `multi_remote_data`
+    is the ALREADY-COLLECTED `collect_multi_remote(project_root).data` block, passed in
+    by the caller. **`scan.py` MUST call `collect_multi_remote` BEFORE `collect_sync_state`
+    and pass its `.data` here** — this collector never re-collects or re-fetches
+    multi_remote itself (module boundary: this file stays network-free per its own
+    top-of-file docstring). `multi_remote_data=None` (the default — back-compat for any
+    other caller that hasn't been updated, and the historical/direct-call shape) makes
+    every `evidence_grade` resolve to `"expired"` (fail-CLOSED: "caller didn't tell me"
+    must never silently mean "fresh") — this is the DIRECTLY OBSERVABLE fingerprint of
+    the ordering dependency if it's ever violated (see `_upstream_evidence_grade` /
+    `_submodule_evidence_grade` docstrings, and top_risks #3 in the F9′ blueprint).
 
     Output shape (sync_status):
       {
-        "remote_refs_age": str,          # "Nm"|"Nh"|"Nd"|"never"
+        "remote_refs_age": str,          # "Nm"|"Nh"|"Nd"|"never" — DEPRECATED (F9′ 8.4),
+                                          # see _fetch_head_age docstring; use
+                                          # multi_remote.*.remotes[].evidence_grade instead
         "has_remote": bool,
         "shallow": bool,
         "current_branch": {
@@ -351,6 +476,7 @@ def collect_sync_state(project_root: Path) -> CollectorResult:
           "behind": int | null,
           "diverged": bool | null,
           "reason": str | null,          # "no_upstream"|"shallow_clone"|"detached_head"|"rev_list_failed"|"parse_failed"|null
+          "evidence_grade": str,         # "fresh"|"stale_unverified"|"expired" — F9′ 8.1, joined from multi_remote
         },
         "submodules": [
           { "path": str,
@@ -365,13 +491,33 @@ def collect_sync_state(project_root: Path) -> CollectorResult:
               "ahead_count": int | null,
               "hint": str | null,
               "hint_type": str | null,    # "update"|"push"|"manual_check"|null
+              "evidence_grade": str,      # "fresh"|"stale_unverified"|"expired" — F9′ 8.1, joined from multi_remote (origin leg)
             }
           }
         ],
-        "multi_remote": {"enabled": false}   # T3.3 extension point
+        "multi_remote": {"enabled": false}   # T3.3 extension point; overwritten by scan.py
       }
     """
     r = CollectorResult()
+
+    # F9′ 8.1 — pre-parse the caller-supplied multi_remote block into the two slices
+    # `_collect_current_branch`/`_collect_submodule_entry` need. Any shape surprise
+    # (disabled / missing / malformed) degrades to `None` per-slice → downstream
+    # `evidence_grade` resolves "expired" via the helpers' own fail-CLOSED default;
+    # never raises.
+    main_repo_remotes: list[dict[str, Any]] | None = None
+    submodules_by_path: dict[str, list[dict[str, Any]]] = {}
+    if isinstance(multi_remote_data, dict) and multi_remote_data.get("enabled"):
+        main_repo = multi_remote_data.get("main_repo")
+        if isinstance(main_repo, dict):
+            remotes = main_repo.get("remotes")
+            if isinstance(remotes, list):
+                main_repo_remotes = remotes
+        for sm in multi_remote_data.get("submodules") or []:
+            if isinstance(sm, dict) and isinstance(sm.get("path"), str):
+                remotes = sm.get("remotes")
+                if isinstance(remotes, list):
+                    submodules_by_path[sm["path"]] = remotes
 
     # Precondition: must be inside a git worktree; otherwise return minimal default
     rc, _out, _err = _run(["git", "rev-parse", "--is-inside-work-tree"], project_root)
@@ -389,6 +535,7 @@ def collect_sync_state(project_root: Path) -> CollectorResult:
                 "behind": None,
                 "diverged": None,
                 "reason": "not_a_git_repo",
+                "evidence_grade": "expired",
             },
             "submodules": [],
             "multi_remote": {"enabled": False},
@@ -400,11 +547,17 @@ def collect_sync_state(project_root: Path) -> CollectorResult:
     branch = _current_branch(project_root)
     remote_refs_age = _fetch_head_age(project_root, r)
 
-    current_branch = _collect_current_branch(project_root, branch, shallow, has_remote, r)
+    current_branch = _collect_current_branch(
+        project_root, branch, shallow, has_remote, r, remote_entries=main_repo_remotes
+    )
 
     submodules: list[dict[str, Any]] = []
     for sub_path in _enumerate_submodule_paths(project_root, r=r):
-        submodules.append(_collect_submodule_entry(project_root, sub_path, r))
+        submodules.append(
+            _collect_submodule_entry(
+                project_root, sub_path, r, remote_entries=submodules_by_path.get(sub_path)
+            )
+        )
 
     r.data = {
         "remote_refs_age": remote_refs_age,

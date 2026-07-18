@@ -687,6 +687,14 @@ _BENIGN_UNCONDITIONAL_REASONS = frozenset(
     {"detached_head", "shallow_clone", "remote_branch_missing"}
 )
 
+# Public alias (F9′ 9.1, main spec state-scanner-stale-refs-false-parity): the
+# session-closer `handoff_autofill.py` sibling-skill consumer needs this same
+# reason set to triage `parity==unknown` (benign vs must-warn) without silently
+# re-deriving/duplicating the literal set — "不重造". The leading-underscore
+# name above stays the internal spelling used throughout this module; this is
+# the only symbol other skills should import.
+BENIGN_UNCONDITIONAL_REASONS = _BENIGN_UNCONDITIONAL_REASONS
+
 
 def _benign_unknown(parity: str | None, reason: str | None, evidence_eligible: bool) -> bool:
     """parity==unknown that is benign (does NOT block overall_parity).

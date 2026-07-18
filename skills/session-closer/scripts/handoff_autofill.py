@@ -30,14 +30,61 @@ _UNCHECKED_RE = re.compile(r"^\s*[-*]\s+\[ \]\s+(.*\S)", re.MULTILINE)
 
 # --- §7 提交清单 ---------------------------------------------------------------
 
+def _benign_unconditional_reasons():
+    """从 state-scanner `multi_remote` collector 导入权威 benign-reason 集合 (F9′ 9.1:
+    「不重造」— 不在本文件重复字面量, 避免两处漂移)。
+
+    兄弟 skill 跨包导入, 仿 `owner_container()` 下方对 `lib.identity` 的既有 sys.path
+    模式。best-effort: 任何失败(如布局变化)→ 返回空集, 使调用方把**所有**
+    `parity=unknown` 都保守地升级为 warning —— 宁可多报一条噪音, 也不可回到「静默吞掉」
+    的假绿通道 (本函数存在的原因)。
+    """
+    try:
+        import sys
+        from pathlib import Path
+
+        # state-scanner/scripts 是兄弟 skill 的 collectors 包根; 加入 sys.path 使
+        # `collectors.multi_remote` 可解析 (与 scan.py 自身的相对导入拓扑一致)。
+        _ss_scripts = str(Path(__file__).resolve().parents[2] / "state-scanner" / "scripts")
+        if _ss_scripts not in sys.path:
+            sys.path.insert(0, _ss_scripts)
+        from collectors.multi_remote import BENIGN_UNCONDITIONAL_REASONS
+
+        return BENIGN_UNCONDITIONAL_REASONS
+    except Exception:
+        return frozenset()
+
+
+def _unknown_is_benign(reason, evidence_grade, benign_reasons):
+    """`parity=="unknown"` 是否可安全静默 (F9′ 9.1 reason 分诊, 取代旧版「一律吞掉」)。
+
+    与 `multi_remote._benign_unknown` 同源判据, 用 `evidence_grade=="fresh"` 替代其
+    `evidence_eligible` 参数 (session-closer 侧只拿得到 snapshot 里的 evidence_grade
+    字符串, 不是 collector 内部的中间布尔量, 语义等价: `evidence_grade=="fresh"` 正是
+    `_evidence_grade` 判定 `evidence_eligible=True` 的那一档)。
+    """
+    if reason in benign_reasons:
+        return True
+    if reason == "no_local_tracking_ref" and evidence_grade == "fresh":
+        return True
+    return False
+
+
 def fill_sync_section(multi_remote):
     """返回 {'lines': [...], 'warnings': [...]}。
 
-    每 repo(主仓 + 各 submodule)一行 parity 摘要; ahead>0 / parity≠equal /
-    has_pending_push / 不可达 → 告警行。
+    每 repo(主仓 + 各 submodule)一行 parity 摘要; ahead>0 / parity≠equal(非 benign
+    unknown) / has_pending_push / 不可达 → 告警行。
+
+    F9′ 9.1: `parity=="unknown"` 不再无条件静默 —— 只有 benign reason (detached_head/
+    shallow_clone/remote_branch_missing, 或 no_local_tracking_ref 且 evidence_grade
+    =="fresh") 才不告警; 其余 unknown (not_refreshed/network_timeout/auth_failed/
+    no_local_tracking_ref 非 fresh/未识别 reason) 一律升级为 warning — 否则 F1′ 的
+    `unknown` 会被 session-closer 静默吞掉, 变成新的假绿通道。
     """
     mr = multi_remote or {}
     lines, warnings = [], []
+    benign_reasons = _benign_unconditional_reasons()
 
     def _one(label, repo):
         if not repo:
@@ -49,8 +96,17 @@ def fill_sync_section(multi_remote):
             parts.append(f"{r.get('name')}={r.get('parity')}")
             if (r.get("ahead_count") or 0) > 0:
                 warnings.append(f"[{label}] ahead {r['ahead_count']} vs {r.get('name')} — 需 push")
-            if r.get("parity") not in ("equal", None) and r.get("parity") != "unknown":
-                warnings.append(f"[{label}] parity={r.get('parity')} vs {r.get('name')}")
+            parity = r.get("parity")
+            if parity == "unknown":
+                reason = r.get("reason")
+                evidence_grade = r.get("evidence_grade")
+                if not _unknown_is_benign(reason, evidence_grade, benign_reasons):
+                    warnings.append(
+                        f"[{label}] parity=unknown reason={reason} "
+                        f"(evidence_grade={evidence_grade}) vs {r.get('name')} — 未验证, 需人工核实"
+                    )
+            elif parity not in ("equal", None):
+                warnings.append(f"[{label}] parity={parity} vs {r.get('name')}")
             if r.get("reachable") is False:
                 warnings.append(f"[{label}] remote {r.get('name')} 不可达")
         lines.append(f"[{label}] {branch} = {head} | " + " ".join(parts))
