@@ -91,7 +91,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run, log, scan_now
+from ._common import CollectorResult, _run, is_scan_offline, log, scan_now
 from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 _DEFAULT_TIMEOUT = 5
@@ -921,8 +921,11 @@ def _gitlink_reachability_verdict(
     evidence_window_seconds: int,
     hard_cap_seconds: int,
     k_eff: int,
+    unreachable: bool,
 ) -> str:
-    """Called ONLY when `_gitlink_unreachable` returned `unreachable=True`.
+    """The final (R,S) verdict once the contains check ran (called for BOTH the
+    reachable and unreachable outcomes — the 豁免资格 gate below applies to each,
+    since a conclusion drawn off stale refs is unverified whichever way it points).
     Reuses the already-landed `_exemption_eligible` (豁免资格) TWICE — once for
     the main repo's `(".", R)` leg, once for the submodule's `(S, R)` leg — NOT
     the gitlink-layer `orphan_unverified` (R,S)-keyed counter (a DIFFERENT
@@ -979,9 +982,14 @@ def _gitlink_reachability_verdict(
     sub_gen = _generation_of(sub_leg)
     gen_ok = main_gen is not None and sub_gen is not None and sub_gen >= main_gen
 
-    if main_exempt and sub_exempt and gen_ok:
-        return "orphaned"
-    return "orphan_unverified"
+    if not (main_exempt and sub_exempt and gen_ok):
+        # ¬豁免 / cross-leg generation skew ⇒ we cannot verify the pair THIS scan,
+        # regardless of what the (possibly stale) contains check said. Both a stale
+        # "reachable" and a stale "unreachable" collapse to orphan_unverified —
+        # D18 escalates it to blocking only after k_eff consecutive unresolved scans.
+        return "orphan_unverified"
+    # 豁免 holds ⇒ the contains result is trustworthy (fresh-enough refs):
+    return "orphaned" if unreachable else "ok"
 
 
 def _classify_gitlink_pair(
@@ -1035,7 +1043,14 @@ def _classify_gitlink_pair(
         return "no_published_ref"
 
     rc, out, _ = _run(["git", "ls-tree", c, "--", sub_path], main_repo_dir, timeout=timeout)
-    g = _parse_ls_tree_gitlink_entry(out) if rc == 0 else None
+    if rc != 0:
+        # ls-tree COMMAND failed (GC race that made the just-resolved C unreachable,
+        # disk I/O error) — a distinct event from "the path is genuinely not a gitlink
+        # in C". Fold the two together and a transient command failure masquerades as
+        # a structural not_a_gitlink verdict (review Important). Only rc==0 empty
+        # output / mode≠160000 is the honest not_a_gitlink.
+        return "soft_error"
+    g = _parse_ls_tree_gitlink_entry(out)
     if g is None:
         return "not_a_gitlink"
 
@@ -1051,8 +1066,11 @@ def _classify_gitlink_pair(
     unreachable, is_soft_error = _gitlink_unreachable(sub_dir, remote, g, timeout)
     if is_soft_error:
         return "soft_error"
-    if not unreachable:
-        return "ok"
+    # The 豁免资格 gate applies to BOTH conclusions (branch 5: ¬豁免 ⇒ orphan_unverified
+    # regardless of reachability). A reachable verdict computed off STALE remote-tracking
+    # refs is no more trustworthy than an unreachable one — reporting "ok" on unverified
+    # refs is the same stale-evidence-as-positive-proof false-green this Spec exists to
+    # kill (review BLOCKER). So route reachable through the same freshness gate.
     return _gitlink_reachability_verdict(
         main_leg,
         sub_leg,
@@ -1061,6 +1079,7 @@ def _classify_gitlink_pair(
         evidence_window_seconds,
         hard_cap_seconds,
         k_eff,
+        unreachable,
     )
 
 
@@ -1449,7 +1468,14 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
                     or prior_count < 0
                 ):
                     prior_count = 0
-                if status in _GITLINK_COUNTER_RESET_STATUSES:
+                if is_scan_offline():
+                    # 9.7 counter face: an offline scan verified nothing this round,
+                    # so it must NOT advance the D18 counter (parity-layer
+                    # consecutive_unverified freezes offline in remote_refresh for the
+                    # same reason). Keeping prior_count keeps repeated offline scans
+                    # byte-stable (test_channel7_8 / test_two_consecutive_runs_diff_zero).
+                    new_count = prior_count
+                elif status in _GITLINK_COUNTER_RESET_STATUSES:
                     new_count = 0
                 elif status == "orphan_unverified":
                     new_count = prior_count + 1

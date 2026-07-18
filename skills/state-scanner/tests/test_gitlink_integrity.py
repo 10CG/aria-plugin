@@ -238,25 +238,25 @@ class TestGitlinkReachabilityVerdict(unittest.TestCase):
         main_leg = _exempt_leg(scan_generation=5)
         sub_leg = _exempt_leg(scan_generation=5)
         status = mr._gitlink_reachability_verdict(
-            main_leg, sub_leg, NOW, 6, WIN, HARD, K_EFF
+            main_leg, sub_leg, NOW, 6, WIN, HARD, K_EFF, True
         )
         self.assertEqual(status, "orphaned")
 
     def test_main_not_exempt_is_orphan_unverified(self):
         status = mr._gitlink_reachability_verdict(
-            _stale_leg(), _exempt_leg(scan_generation=5), NOW, 6, WIN, HARD, K_EFF
+            _stale_leg(), _exempt_leg(scan_generation=5), NOW, 6, WIN, HARD, K_EFF, True
         )
         self.assertEqual(status, "orphan_unverified")
 
     def test_sub_not_exempt_is_orphan_unverified(self):
         status = mr._gitlink_reachability_verdict(
-            _exempt_leg(scan_generation=5), _stale_leg(), NOW, 6, WIN, HARD, K_EFF
+            _exempt_leg(scan_generation=5), _stale_leg(), NOW, 6, WIN, HARD, K_EFF, True
         )
         self.assertEqual(status, "orphan_unverified")
 
     def test_neither_exempt_is_orphan_unverified(self):
         status = mr._gitlink_reachability_verdict(
-            _stale_leg(), _stale_leg(), NOW, 6, WIN, HARD, K_EFF
+            _stale_leg(), _stale_leg(), NOW, 6, WIN, HARD, K_EFF, True
         )
         self.assertEqual(status, "orphan_unverified")
 
@@ -267,7 +267,7 @@ class TestGitlinkReachabilityVerdict(unittest.TestCase):
         main_leg = _exempt_leg(scan_generation=6)
         sub_leg = _exempt_leg(scan_generation=5)
         status = mr._gitlink_reachability_verdict(
-            main_leg, sub_leg, NOW, 7, WIN, HARD, K_EFF
+            main_leg, sub_leg, NOW, 7, WIN, HARD, K_EFF, True
         )
         self.assertEqual(status, "orphan_unverified")
 
@@ -276,7 +276,7 @@ class TestGitlinkReachabilityVerdict(unittest.TestCase):
         main_leg = _exempt_leg(scan_generation=5)
         sub_leg = _exempt_leg(scan_generation=6)
         status = mr._gitlink_reachability_verdict(
-            main_leg, sub_leg, NOW, 6, WIN, HARD, K_EFF
+            main_leg, sub_leg, NOW, 6, WIN, HARD, K_EFF, True
         )
         self.assertEqual(status, "orphaned")
 
@@ -414,8 +414,39 @@ class TestClassifyGitlinkPairDomains(unittest.TestCase):
             with mock.patch(
                 "collectors.multi_remote._run", side_effect=_make_run(table)
             ), mock.patch("collectors.multi_remote._is_shallow", return_value=False):
-                status = mr._classify_gitlink_pair(**self._base_kwargs(sub_dir))
+                # ok requires BOTH legs exempt (豁免) — a reachable verdict off stale
+                # refs is unverified, so fresh legs must be supplied for an ok verdict.
+                status = mr._classify_gitlink_pair(
+                    **self._base_kwargs(
+                        sub_dir,
+                        main_leg=_exempt_leg(scan_generation=6),
+                        sub_leg=_exempt_leg(scan_generation=6),
+                    )
+                )
         self.assertEqual(status, "ok")
+
+    def test_branch6_reachable_but_stale_leg_is_orphan_unverified(self):
+        """BLOCKER regression: a reachable pair whose legs are NOT exempt (stale /
+        never-fetched) must NOT report `ok` — a reachable verdict off stale refs is
+        as unverified as an unreachable one (the same stale-evidence-as-proof
+        false-green this Spec exists to kill). It collapses to orphan_unverified."""
+        with tmp_project() as root:
+            sub_dir = root / "standards"
+            (sub_dir / ".git").mkdir(parents=True)
+            table = {
+                ("git", "ls-tree", C_SHA, "--", "standards"): (
+                    0, f"160000 commit {G_SHA}\tstandards\n", ""
+                ),
+                ("git", "remote"): (0, "github\n", ""),
+                self._contains_cmd(sub_dir): (0, "github/master\n", ""),  # REACHABLE
+            }
+            with mock.patch(
+                "collectors.multi_remote._run", side_effect=_make_run(table)
+            ), mock.patch("collectors.multi_remote._is_shallow", return_value=False):
+                status = mr._classify_gitlink_pair(
+                    **self._base_kwargs(sub_dir)  # main_leg=None, sub_leg=None → ¬豁免
+                )
+        self.assertEqual(status, "orphan_unverified")
 
     def test_branch6_orphaned_via_exempt_legs(self):
         with tmp_project() as root:
@@ -692,6 +723,12 @@ class TestCollectMultiRemoteGitlinkWiring(unittest.TestCase):
                         "generation_fetched": 6,
                         "consecutive_unverified": 0,
                     },
+                    "standards::github": {
+                        "fetched_at": NOW.isoformat(timespec="seconds"),
+                        "fetch_ok": "true",
+                        "generation_fetched": 6,
+                        "consecutive_unverified": 0,
+                    },
                 },
                 scan_generation=6,
             )
@@ -737,6 +774,12 @@ class TestCollectMultiRemoteGitlinkWiring(unittest.TestCase):
                 repo,
                 {
                     ".::github": {
+                        "fetched_at": NOW.isoformat(timespec="seconds"),
+                        "fetch_ok": "true",
+                        "generation_fetched": 6,
+                        "consecutive_unverified": 0,
+                    },
+                    "standards::github": {
                         "fetched_at": NOW.isoformat(timespec="seconds"),
                         "fetch_ok": "true",
                         "generation_fetched": 6,
