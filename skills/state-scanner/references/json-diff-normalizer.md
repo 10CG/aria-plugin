@@ -201,6 +201,52 @@ T7 landing date?" can run the CLI diff snippet above. Future `test_live_scan
 _matches_committed_baseline` wiring is deferred (requires periodic baseline
 refresh on intentional schema changes).
 
+**Resampled 2026-07-18** (main spec `state-scanner-stale-refs-false-parity`
+Phase 3, task 9.5/13.8): the pre-resample file predated 6 whole top-level
+blocks (`coordination_fetch` / `generated_at` / `handoff` /
+`handoff_worktrees` / `remote_refresh` / `tracks_multibranch`) and still used
+the retired `reachable`-only remote-parity shape (no `evidence_grade` /
+`fetch_ok` / `gitlink_integrity[]`) — captured well before F1′–F10″ landed.
+The new file is a REAL `scan.py` (`ARIA_SCAN_OFFLINE=0`) dogfood capture
+against this repo, normalized, with two deliberate, documented departures
+from the literal live output (both restoring the file's original "everything
+is pushed and synced" convention — the pre-resample file also assumed a
+clean tree: `staged_files: []`, `uncommitted_count: 0`):
+
+1. **Healthy-sync overlay** (main repo + `aria` submodule only): at capture
+   time the main repo's `master` was 3 commits behind `origin`/`github`
+   (pre-existing, unrelated to this Spec) and `aria` was checked out on this
+   Spec's own WIP feature branch, 12 commits ahead of its last-published
+   pointer. Both were reset to their real, independently-verified
+   `origin/master == github/master` SHAs (`dc4568d` / `19dad0b`) rather than
+   left showing transient session drift. `standards` / `aria-orchestrator`
+   needed no such overlay — real capture already showed them clean.
+   `overall_parity` / `has_pending_push` / `has_unreachable_remote` were
+   **recomputed via the real `_overall_parity`/`_has_unreachable_remote`
+   functions** against the overlaid entry set, not hand-asserted.
+   `gitlink_integrity[]` was left **untouched** — it was already real and
+   healthy (`status: "ok"` for every pair except `(github, aria-orchestrator)
+   = "no_matching_remote"`, which is a permanent, correct, non-blocking
+   fact: `aria-orchestrator` has carried no public GitHub mirror since the
+   2026-04-09 divestiture archived Spec, confirmed via `git -C
+   aria-orchestrator remote -v`. The pre-resample file's claim of a healthy
+   `github` remote for that submodule was itself stale — a real, now-fixed
+   drift this resample corrects).
+2. **`tracks_multibranch.tracks[]` truncation** (fixture-hygiene only, not a
+   `normalize_snapshot.py` rule change): the real capture carried 482
+   historical handoff-derived track-board rows (148KB, 60% of the raw
+   normalized file) that grow every session and are unrelated to this
+   Spec's `multi_remote`/gitlink concern. Truncated to the first 5 entries
+   (sorted by `track_id`) so the surrounding real fields
+   (`branches_scanned` / `legacy_count` / `collision` / `errors` / `exists`)
+   stay inspectable without baking megabytes of unrelated session metadata
+   into a git-committed "reference" file that would otherwise be
+   permanently and pathologically stale on every future diff.
+
+Everything else (`issue_status`, `remote_refresh`, `coordination_fetch`,
+`custom_checks`, `openspec`, `requirements`, ...) is the literal real
+capture — reviewed field-by-field, not blindly dumped.
+
 ### Future: T10.2 AB benchmark
 
 When `/skill-creator benchmark` runs, normalized snapshots from the

@@ -30,12 +30,31 @@ Usage:
                                 # scan.py exits rc=20 otherwise and the
                                 # validator aborts with a setup error)
         [--quiet]               # only print on failure
+        [--offline]             # 9.6 (main spec state-scanner-stale-refs-
+                                # false-parity, Phase 3): run scan.py with
+                                # ARIA_SCAN_OFFLINE=1. Without this flag,
+                                # every invocation of this validator (CI or
+                                # manual, pre-commit or ad hoc) pays a full
+                                # network fetch across every enforced remote
+                                # (F3′ remote_refresh) plus a live issue-scan
+                                # API call — this validator only checks
+                                # TOP-LEVEL key presence (see module
+                                # docstring "Scope limitation"), which is
+                                # 100% determined by which top-level blocks
+                                # scan.py emits, not by any live network
+                                # value. `--offline` gets the same key-
+                                # presence guarantee (remote_refresh /
+                                # coordination_fetch / issue_status still
+                                # emit their top-level block, just with
+                                # `not_attempted`/cache-sourced leaves) at
+                                # zero network cost and zero flakiness.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -94,14 +113,27 @@ def _read_schema_doc_top_keys(schema_doc: Path) -> set[str]:
     return keys
 
 
-def _run_scan(project_root: Path) -> dict:
-    """Run scan.py and return the parsed JSON snapshot."""
+def _run_scan(project_root: Path, offline: bool = False) -> dict:
+    """Run scan.py and return the parsed JSON snapshot.
+
+    9.6: `offline=True` sets `ARIA_SCAN_OFFLINE=1` in the child's environment
+    (scan.py / remote_refresh.py / issue_scan.py all gate their network calls
+    on this — see `collectors/_common.py:is_scan_offline`). This validator
+    only checks top-level KEY PRESENCE (module docstring "Scope limitation"),
+    which offline mode does not change: every collector still emits its
+    top-level block, just with `not_attempted`/cached leaves instead of live
+    network values.
+    """
+    env = dict(os.environ)
+    if offline:
+        env["ARIA_SCAN_OFFLINE"] = "1"
     p = subprocess.run(
         [sys.executable, str(SCAN_SCRIPT), "--project-root", str(project_root)],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
+        env=env,
     )
     if p.returncode not in (0, 10):  # 10 = partial, still usable
         raise RuntimeError(
@@ -119,18 +151,25 @@ def _check(label: str, ok: bool, detail: str, quiet: bool) -> bool:
     return ok
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--project-root", type=Path, default=Path.cwd())
     ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--offline",
+        action="store_true",
+        help="run scan.py with ARIA_SCAN_OFFLINE=1 (9.6): avoids a full "
+        "network fetch on every validation run — this validator only checks "
+        "top-level key presence, which offline mode does not affect.",
+    )
+    args = ap.parse_args(argv)
 
     try:
         schema_doc = _find_schema_doc()
         doc_version = _read_schema_doc_version(schema_doc)
         scan_version = _read_scan_constant()
         doc_keys = _read_schema_doc_top_keys(schema_doc)
-        snapshot = _run_scan(args.project_root.resolve())
+        snapshot = _run_scan(args.project_root.resolve(), offline=args.offline)
     except RuntimeError as e:
         print(f"validator setup error: {e}", file=sys.stderr)
         return 1

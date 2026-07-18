@@ -306,6 +306,138 @@ class TestStabilityIntegration(unittest.TestCase):
             )
 
 
+class Test1210ChannelStabilityUnderOffline(unittest.TestCase):
+    """12.10 (main spec state-scanner-stale-refs-false-parity, Phase 3 QA):
+    per-channel LOCK tests, narrower than `TestStabilityIntegration`'s coarse
+    whole-snapshot diff.
+
+    `test_two_consecutive_runs_diff_zero` above already proves "given a
+    frozen environment, nothing drifts" at whole-snapshot granularity — but
+    a broken freeze on any ONE channel would just make that one test fail
+    with a giant opaque diff, and (per team memory
+    `feedback_telemetry_verify_records_in_prod_not_just_code_exists`) a
+    channel's "should be stable" docstring claim is not itself evidence the
+    claim holds. These tests read the SAME two-offline-run mechanism but
+    assert per-channel, per-field, so a future regression on any one channel
+    fails with a direct, attributable message instead of a multi-hundred-
+    line diff.
+
+    Channels covered (12.10 table + v9 #7/#8 extension):
+      - #1 `sync_status.remote_refs_age` (F9′ 8.4 deprecated-but-kept field)
+      - #3 `coordination_fetch.degraded` / `degradation_reason`
+      - #4 `errors[]` (including the Phase 2A gitlink soft_error source)
+      - #7/#8 `multi_remote.gitlink_integrity[]` + its `consecutive_unverified`
+        counters — the newest, highest-priority channel per QA blueprint
+        top_risks (must land in the SAME PR as the 9.7 freeze, or it would
+        re-break `test_two_consecutive_runs_diff_zero`, per team memory
+        `feedback_freeze_task_must_coland_with_volatile_state_phase`).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # One shared two-run capture for the whole class — same subprocess
+        # cost as TestStabilityIntegration, avoids re-paying it 4x.
+        env = dict(os.environ)
+        env["ARIA_SCAN_OFFLINE"] = "1"
+        env["ARIA_SCAN_NOW"] = _FROZEN_NOW
+
+        project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+        cls._tmp = tempfile.TemporaryDirectory(prefix="ss-1210-")
+        tmp_dir = Path(cls._tmp.name)
+        snaps = []
+        for i in (1, 2):
+            snap = tmp_dir / f"snap{i}.json"
+            r = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCAN_PY),
+                    "--project-root",
+                    str(project_root),
+                    "--output",
+                    str(snap),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            assert r.returncode in (0, 10), f"scan.py failed: {r.stderr}"
+            snaps.append(json.loads(snap.read_text(encoding="utf-8")))
+        cls.snap1, cls.snap2 = snaps
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_channel1_remote_refs_age_present_and_stable(self):
+        """F9′ 8.4: field is DEPRECATED but deliberately KEPT for back-compat
+        (sync.py module docstring) — it must NOT silently disappear, and its
+        value (FETCH_HEAD-mtime bucket, read via `scan_now()` per sync.py's
+        own 9.7 comment) must be identical across two offline+frozen-clock
+        runs. Asserting presence (not absence) matches the real, current
+        code contract — task 8.4 itself ("标注废弃或删除") remains open;
+        this test does not presume its resolution."""
+        age1 = self.snap1["sync_status"].get("remote_refs_age")
+        age2 = self.snap2["sync_status"].get("remote_refs_age")
+        self.assertIsNotNone(age1, "remote_refs_age unexpectedly absent — F9′ 8.4 backward-compat field dropped?")
+        self.assertEqual(age1, age2, "remote_refs_age drifted between two offline+frozen-clock runs")
+
+    def test_channel3_coordination_fetch_degraded_stable(self):
+        cf1 = self.snap1.get("coordination_fetch", {})
+        cf2 = self.snap2.get("coordination_fetch", {})
+        self.assertEqual(
+            cf1.get("degraded"), cf2.get("degraded"),
+            "coordination_fetch.degraded drifted between two offline runs",
+        )
+        self.assertEqual(
+            cf1.get("degradation_reason"), cf2.get("degradation_reason"),
+            "coordination_fetch.degradation_reason drifted between two offline runs",
+        )
+        # Offline ⇒ Fetch 1/2 never attempted ⇒ served_stale_cache is the only
+        # way `degraded` could be True; not_attempted must not read as failure.
+        self.assertFalse(cf1.get("degraded"), "coordination_fetch.degraded=True while fully offline (not_attempted != fetch failure)")
+
+    def test_channel4_errors_array_stable(self):
+        e1 = self.snap1.get("errors", [])
+        e2 = self.snap2.get("errors", [])
+        self.assertEqual(
+            sorted((e.get("error", ""), e.get("detail", "")) for e in e1),
+            sorted((e.get("error", ""), e.get("detail", "")) for e in e2),
+            "errors[] drifted between two offline runs (includes Phase 2A gitlink soft_error sources)",
+        )
+
+    def test_channel7_8_gitlink_integrity_stable_under_offline(self):
+        """Top-priority 12.10 gap (QA blueprint top_risks #1): Phase 2A's
+        (R,S) gitlink layer — contains-check is pure local git (no network),
+        so it runs even offline; its own `consecutive_unverified` counter
+        must NOT advance across two offline runs of an unchanged repo
+        (would silently corrupt D18 accounting), and `status` must be
+        byte-stable. This is the direct, attributable version of what
+        `test_two_consecutive_runs_diff_zero` already proves indirectly."""
+        gi1 = self.snap1["sync_status"]["multi_remote"].get("gitlink_integrity", [])
+        gi2 = self.snap2["sync_status"]["multi_remote"].get("gitlink_integrity", [])
+
+        def key(g):
+            return (g.get("remote"), g.get("submodule"))
+
+        self.assertEqual(
+            sorted(key(g) for g in gi1), sorted(key(g) for g in gi2),
+            "gitlink_integrity[] pair set changed between two offline runs",
+        )
+        by_pair1 = {key(g): g for g in gi1}
+        by_pair2 = {key(g): g for g in gi2}
+        for k, g1 in by_pair1.items():
+            g2 = by_pair2[k]
+            self.assertEqual(
+                g1.get("status"), g2.get("status"),
+                f"gitlink_integrity status drifted for {k} between two offline runs",
+            )
+            self.assertEqual(
+                g1.get("consecutive_unverified"), g2.get("consecutive_unverified"),
+                f"gitlink_integrity consecutive_unverified drifted for {k} between two offline runs "
+                "(counter must not advance while offline — D18 accounting corruption)",
+            )
+
+
 class TestOfflineFreezeFaultFixture(unittest.TestCase):
     """P5 fault fixture (blueprint `P5_baseline_drift_offline_closure`):
     reproduces channel #2 of the 6-channel drift catalogue (task 12.10) —

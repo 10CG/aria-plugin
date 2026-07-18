@@ -1,31 +1,26 @@
 {
   "architecture": {
-    "chain_valid": true,
+    "chain_valid": false,
     "exists": true,
     "last_updated": "<timestamp>",
-    "parent_prd": "[prd-aria-v1.md](../requirements/prd-aria-v1.md)",
     "path": "docs/architecture/system-architecture.md",
     "status": "Active"
   },
   "audit": {
     "enabled": true,
     "last_audit": {
-      "checkpoint": "pre_merge",
-      "converged": true,
-      "path": ".aria/audit-reports/pre_merge-R1-2026-04-24T2330Z-state-scanner-mechanical-t9.md",
-      "timestamp": "<timestamp>",
-      "verdict": "MERGE_NOW"
+      "path": ".aria/audit-reports/post_spec-R7-R8-2026-07-15-state-scanner-snapshot-stderr-secret-leak-trail.md"
     }
   },
   "changes": {
     "architecture_impact": false,
-    "change_count": 0,
+    "change_count": 2,
     "complexity": "Level 1",
     "file_types": {
       "code": 0,
-      "config": 0,
+      "config": 1,
       "docs": 0,
-      "other": 0,
+      "other": 1,
       "test": 0
     },
     "skill_changes": {
@@ -38,20 +33,76 @@
     },
     "test_coverage": false
   },
+  "coordination_fetch": {
+    "coordination_ref_present": true,
+    "degraded": false,
+    "last_fetch_at": "<timestamp>",
+    "success": true
+  },
   "custom_checks": {
     "configured": true,
     "failed": 0,
-    "passed": 1,
+    "passed": 7,
     "results": [
       {
-        "fix": "rm .aria/cache/issues.json && 重跑 /state-scanner 触发 Phase 1.13 live fetch",
+        "fix": "重跑 /state-scanner 触发 Phase 1.13 live fetch 刷新 issue_status.fetched_at; 持续 STALE 则核查 issue_scan 是否被跳过",
         "name": "issue-cache-freshness",
-        "output": "OK",
+        "output": "##SKIP## SKIP (previous snapshot missing generated_at — pre-Spec-C schema)",
+        "severity": "warning",
+        "status": "skip"
+      },
+      {
+        "fix": "1. Read .aria/decisions/2026-05-07-silknode-contract-archive-with-deferred-acceptance.md §重新评估时 SOP\n2. Check deferred acceptance items (c) US-025 status + (d) US-026/PRD anchor status\n3. Decide: close waiver (all MET) / renew waiver (new file, new expires_at) / upgrade to standards/governance/silknode-no-storage.md\n",
+        "name": "silknode-contract-deferral-expiry",
+        "output": "OK (17d until waiver expiry 2026-08-05)",
+        "severity": "warning",
+        "status": "pass"
+      },
+      {
+        "fix": "Update README.md Plugin badge to match aria/.claude-plugin/plugin.json version",
+        "name": "m6-version-badge-match",
+        "output": "OK badge=1.59.0",
+        "severity": "warning",
+        "status": "pass"
+      },
+      {
+        "fix": "Apply CLAUDE.md Diff 9 version bump: **版本**: 1.0.4 -> **版本**: 2.0.0",
+        "name": "m6-claude-md-version",
+        "output": "OK version=2.0.0",
+        "severity": "warning",
+        "status": "pass"
+      },
+      {
+        "fix": "Update docs/architecture/system-architecture.md **Last Updated** header and review content",
+        "name": "m6-arch-doc-stale",
+        "output": "OK age=52d",
+        "severity": "warning",
+        "status": "pass"
+      },
+      {
+        "fix": "root i18n README 正文滞后于 plugin 版本。以当前 README.md 为源重新同步滞后语种,\n并把各文件顶部 <!-- translated-from: vX.Y.Z --> 标记更新到当前版本。\n参考 openspec/archive/*-aria-i18n-readme-full-resync。\n",
+        "name": "i18n-readme-translation-currency",
+        "output": "OK (3 i18n READMEs current @ 1.59.0)",
+        "severity": "warning",
+        "status": "pass"
+      },
+      {
+        "fix": "把 footer 滚动条目 / 内联版本 changelog 移交 docs/handoff/ (Rule #9) + CHANGELOG.md (SOT);\n项目状态段原地覆写非 append。见 standards/conventions/claude-md-hygiene.md (Option A)。\n",
+        "name": "claude-md-changelog-free",
+        "output": "OK (no rolling changelog; 565 lines)",
+        "severity": "warning",
+        "status": "pass"
+      },
+      {
+        "fix": "确认 coordination.enabled=true 后, dogfood 一次 (TASK-019) 或在近 14d 内\n经 CLI 生产入口真调 run_gate(); STALE 意味机制虽接线但近期未被调用 (退化风险)。\n",
+        "name": "coordination-gate-invocation",
+        "output": "OK (12 recent production run_gate invocation(s) recorded)",
         "severity": "warning",
         "status": "pass"
       }
     ],
-    "total": 1
+    "skipped": 1,
+    "total": 8
   },
   "errors": [],
   "forgejo_config": {
@@ -60,13 +111,19 @@
     "instance": "forgejo.10cg.pub",
     "suggestion": "运行 /forgejo-sync 可引导创建配置 (需确认)"
   },
+  "generated_at": "<timestamp>",
   "generated_by": "scan.py",
   "git": {
     "current_branch": "master",
     "detached_head": false,
+    "git_operation_in_progress": {
+      "has_conflicts": false,
+      "operation": "none"
+    },
     "is_git_repo": true,
     "shallow": false,
     "staged_files": [],
+    "status_clean": true,
     "uncommitted_count": 0,
     "unstaged_files": [],
     "untracked_files": [],
@@ -77,49 +134,444 @@
       "name": "origin/master"
     }
   },
+  "handoff": {
+    "canonical_dir": "docs/handoff/",
+    "exists": true,
+    "last_modified_iso": "2026-07-17T14:40:03+00:00",
+    "latest_filename": "2026-07-17-mainspec-phase0-v1.59.0-ship.md",
+    "latest_frontmatter_missing": false,
+    "latest_path": "docs/handoff/2026-07-17-mainspec-phase0-v1.59.0-ship.md",
+    "latest_source": "mtime",
+    "misplaced_files": []
+  },
+  "handoff_worktrees": {
+    "enabled": true,
+    "enumerated": true,
+    "others": [],
+    "worktree_count": 1
+  },
   "interrupt": {
     "present": false,
     "status": "none"
   },
   "issue_status": {
     "fetched_at": "<timestamp>",
-    "items": [],
+    "items": [
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 166,
+        "repo": "10CG/Aria",
+        "title": "[reliability] state-scanner collect_openspec 布局不符时静默全零 — 消费方 OpenSpec 维度假绿 8 周 (+2 个连带盲区)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/166"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 165,
+        "repo": "10CG/Aria",
+        "title": "[reliability] GitHub 镜像漏推第三次复发 — 子模块服务端合并 + gitlink bump 无序 → orphaned gitlink (clone --recursive 断裂)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/165"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 164,
+        "repo": "10CG/Aria",
+        "title": "aria 初始化: 第三方项目指令文件加入'aria 工具问题优先上报而非自解决'约定 (advisory 建议)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/164"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 151,
+        "repo": "10CG/Aria",
+        "title": "[credentials] 确认 aria-runner-bot / aria-runner-bot-prod-20260523-v2-full-scope 两个 10cg-ci-bot token 是否 Aria 项目所有",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/151"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 147,
+        "repo": "10CG/Aria",
+        "title": "[M6-blocker] Layer 1 runtime 降级: 主 tick processed:0 + gateway LLM 打 z.ai 死账户(应走 Luxeno) + Feishu 凭据失效 + 多处 stale deploy",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/147"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 136,
+        "repo": "10CG/Aria",
+        "title": "[security] cost-sentinel 在 INFO 日志打印完整 Feishu webhook URL (secret-in-logs) — 轮换 + 脱敏",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/136"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "linked_us": "US-027",
+        "number": 128,
+        "repo": "10CG/Aria",
+        "title": "M7: aria-fleet implementation tracker (deferred from 2026-05-27 brainstorm DEC)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/128"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 120,
+        "repo": "10CG/Aria",
+        "title": "[adoption] Switch aria-runner build: aria-build container workaround → aether-build-container skill (v1.10.9 GA)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/120"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 59,
+        "repo": "10CG/Aria",
+        "title": "propose: 三档 dispatch payload 作为 aria-orchestrator v2.0 (Phase 3c) reference 实现",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/59"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 5,
+        "repo": "10CG/Aria",
+        "title": "[Feature] Pulse 项目集成 — AI-native 通讯层 (Matrix + Conduit + Element)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/5"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "linked_openspec": "state-scanner-stale-refs-false-parity",
+        "number": 110,
+        "repo": "10CG/aria-plugin",
+        "title": "[state-scanner] sync_status 撒谎: 陈旧 remote-tracking ref 下报 parity=equal / overall_parity=true (十步循环统一入口的假绿)",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/110"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 109,
+        "repo": "10CG/aria-plugin",
+        "title": "[coordination follow-up] claim 强制点 (Phase B) 在重复成本点 (issue-pick/Phase A) 下游 — 双子星撞车亲历者反馈",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/109"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 107,
+        "repo": "10CG/aria-plugin",
+        "title": "[coordination follow-up] heartbeat 生产接线 — heartbeat_at 冻结在 acquire, SWEEP_TTL 被迫 24h",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/107"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 92,
+        "repo": "10CG/aria-plugin",
+        "title": "[feature] secret-scan 防御反馈闭环 — 泄露事件记录 → aria-report 人工闸门 issue → 升级 PreToolUse (B, split from #91)",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/92"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 31,
+        "repo": "10CG/aria-orchestrator",
+        "title": "[coordination] 自主 bot dispatch 时强制 claim — defect a 的 Layer 2 维度 (插件管不到)",
+        "url": "https://forgejo.10cg.pub/10CG/aria-orchestrator/issues/31"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 5,
+        "repo": "10CG/aria-orchestrator",
+        "title": "feat: abstract reusable \"Hermes on Aether\" deployment template",
+        "url": "https://forgejo.10cg.pub/10CG/aria-orchestrator/issues/5"
+      }
+    ],
     "label_summary": {},
-    "open_count": 0,
-    "open_issues": [],
+    "open_count": 16,
+    "open_issues": [
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 166,
+        "repo": "10CG/Aria",
+        "title": "[reliability] state-scanner collect_openspec 布局不符时静默全零 — 消费方 OpenSpec 维度假绿 8 周 (+2 个连带盲区)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/166"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 165,
+        "repo": "10CG/Aria",
+        "title": "[reliability] GitHub 镜像漏推第三次复发 — 子模块服务端合并 + gitlink bump 无序 → orphaned gitlink (clone --recursive 断裂)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/165"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 164,
+        "repo": "10CG/Aria",
+        "title": "aria 初始化: 第三方项目指令文件加入'aria 工具问题优先上报而非自解决'约定 (advisory 建议)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/164"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 151,
+        "repo": "10CG/Aria",
+        "title": "[credentials] 确认 aria-runner-bot / aria-runner-bot-prod-20260523-v2-full-scope 两个 10cg-ci-bot token 是否 Aria 项目所有",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/151"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 147,
+        "repo": "10CG/Aria",
+        "title": "[M6-blocker] Layer 1 runtime 降级: 主 tick processed:0 + gateway LLM 打 z.ai 死账户(应走 Luxeno) + Feishu 凭据失效 + 多处 stale deploy",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/147"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 136,
+        "repo": "10CG/Aria",
+        "title": "[security] cost-sentinel 在 INFO 日志打印完整 Feishu webhook URL (secret-in-logs) — 轮换 + 脱敏",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/136"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "linked_us": "US-027",
+        "number": 128,
+        "repo": "10CG/Aria",
+        "title": "M7: aria-fleet implementation tracker (deferred from 2026-05-27 brainstorm DEC)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/128"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 120,
+        "repo": "10CG/Aria",
+        "title": "[adoption] Switch aria-runner build: aria-build container workaround → aether-build-container skill (v1.10.9 GA)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/120"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 59,
+        "repo": "10CG/Aria",
+        "title": "propose: 三档 dispatch payload 作为 aria-orchestrator v2.0 (Phase 3c) reference 实现",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/59"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 5,
+        "repo": "10CG/Aria",
+        "title": "[Feature] Pulse 项目集成 — AI-native 通讯层 (Matrix + Conduit + Element)",
+        "url": "https://forgejo.10cg.pub/10CG/Aria/issues/5"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "linked_openspec": "state-scanner-stale-refs-false-parity",
+        "number": 110,
+        "repo": "10CG/aria-plugin",
+        "title": "[state-scanner] sync_status 撒谎: 陈旧 remote-tracking ref 下报 parity=equal / overall_parity=true (十步循环统一入口的假绿)",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/110"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 109,
+        "repo": "10CG/aria-plugin",
+        "title": "[coordination follow-up] claim 强制点 (Phase B) 在重复成本点 (issue-pick/Phase A) 下游 — 双子星撞车亲历者反馈",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/109"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 107,
+        "repo": "10CG/aria-plugin",
+        "title": "[coordination follow-up] heartbeat 生产接线 — heartbeat_at 冻结在 acquire, SWEEP_TTL 被迫 24h",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/107"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 92,
+        "repo": "10CG/aria-plugin",
+        "title": "[feature] secret-scan 防御反馈闭环 — 泄露事件记录 → aria-report 人工闸门 issue → 升级 PreToolUse (B, split from #91)",
+        "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/92"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 31,
+        "repo": "10CG/aria-orchestrator",
+        "title": "[coordination] 自主 bot dispatch 时强制 claim — defect a 的 Layer 2 维度 (插件管不到)",
+        "url": "https://forgejo.10cg.pub/10CG/aria-orchestrator/issues/31"
+      },
+      {
+        "heuristic": true,
+        "labels": [],
+        "number": 5,
+        "repo": "10CG/aria-orchestrator",
+        "title": "feat: abstract reusable \"Hermes on Aether\" deployment template",
+        "url": "https://forgejo.10cg.pub/10CG/aria-orchestrator/issues/5"
+      }
+    ],
     "platform": "forgejo",
     "repos": {
       "10CG/Aria": {
         "fetched_at": "<timestamp>",
-        "items": [],
-        "open_count": 0,
+        "items": [
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 166,
+            "title": "[reliability] state-scanner collect_openspec 布局不符时静默全零 — 消费方 OpenSpec 维度假绿 8 周 (+2 个连带盲区)",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/166"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 165,
+            "title": "[reliability] GitHub 镜像漏推第三次复发 — 子模块服务端合并 + gitlink bump 无序 → orphaned gitlink (clone --recursive 断裂)",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/165"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 164,
+            "title": "aria 初始化: 第三方项目指令文件加入'aria 工具问题优先上报而非自解决'约定 (advisory 建议)",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/164"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 151,
+            "title": "[credentials] 确认 aria-runner-bot / aria-runner-bot-prod-20260523-v2-full-scope 两个 10cg-ci-bot token 是否 Aria 项目所有",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/151"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 147,
+            "title": "[M6-blocker] Layer 1 runtime 降级: 主 tick processed:0 + gateway LLM 打 z.ai 死账户(应走 Luxeno) + Feishu 凭据失效 + 多处 stale deploy",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/147"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 136,
+            "title": "[security] cost-sentinel 在 INFO 日志打印完整 Feishu webhook URL (secret-in-logs) — 轮换 + 脱敏",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/136"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "linked_us": "US-027",
+            "number": 128,
+            "title": "M7: aria-fleet implementation tracker (deferred from 2026-05-27 brainstorm DEC)",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/128"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 120,
+            "title": "[adoption] Switch aria-runner build: aria-build container workaround → aether-build-container skill (v1.10.9 GA)",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/120"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 59,
+            "title": "propose: 三档 dispatch payload 作为 aria-orchestrator v2.0 (Phase 3c) reference 实现",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/59"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 5,
+            "title": "[Feature] Pulse 项目集成 — AI-native 通讯层 (Matrix + Conduit + Element)",
+            "url": "https://forgejo.10cg.pub/10CG/Aria/issues/5"
+          }
+        ],
+        "open_count": 10,
         "platform": "forgejo",
-        "source": "cache"
+        "source": "live"
       },
       "10CG/aria-orchestrator": {
         "fetched_at": "<timestamp>",
-        "items": [],
-        "open_count": 0,
+        "items": [
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 31,
+            "title": "[coordination] 自主 bot dispatch 时强制 claim — defect a 的 Layer 2 维度 (插件管不到)",
+            "url": "https://forgejo.10cg.pub/10CG/aria-orchestrator/issues/31"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 5,
+            "title": "feat: abstract reusable \"Hermes on Aether\" deployment template",
+            "url": "https://forgejo.10cg.pub/10CG/aria-orchestrator/issues/5"
+          }
+        ],
+        "open_count": 2,
         "platform": "forgejo",
-        "source": "cache"
+        "source": "live"
       },
       "10CG/aria-plugin": {
         "fetched_at": "<timestamp>",
-        "items": [],
-        "open_count": 0,
+        "items": [
+          {
+            "heuristic": true,
+            "labels": [],
+            "linked_openspec": "state-scanner-stale-refs-false-parity",
+            "number": 110,
+            "title": "[state-scanner] sync_status 撒谎: 陈旧 remote-tracking ref 下报 parity=equal / overall_parity=true (十步循环统一入口的假绿)",
+            "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/110"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 109,
+            "title": "[coordination follow-up] claim 强制点 (Phase B) 在重复成本点 (issue-pick/Phase A) 下游 — 双子星撞车亲历者反馈",
+            "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/109"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 107,
+            "title": "[coordination follow-up] heartbeat 生产接线 — heartbeat_at 冻结在 acquire, SWEEP_TTL 被迫 24h",
+            "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/107"
+          },
+          {
+            "heuristic": true,
+            "labels": [],
+            "number": 92,
+            "title": "[feature] secret-scan 防御反馈闭环 — 泄露事件记录 → aria-report 人工闸门 issue → 升级 PreToolUse (B, split from #91)",
+            "url": "https://forgejo.10cg.pub/10CG/aria-plugin/issues/92"
+          }
+        ],
+        "open_count": 4,
         "platform": "forgejo",
-        "source": "cache"
+        "source": "live"
       },
       "10CG/aria-standards": {
         "fetched_at": "<timestamp>",
         "items": [],
         "open_count": 0,
         "platform": "forgejo",
-        "source": "cache"
+        "source": "live"
       }
     },
     "schema_version": "1.1",
-    "source": "cache"
+    "source": "live"
   },
   "openspec": {
     "archive": {
@@ -398,28 +850,426 @@
           "date": "2026-04-23",
           "feature": "aria-2.0-m1-mvp",
           "path": "openspec/archive/2026-04-23-aria-2.0-m1-mvp"
+        },
+        {
+          "date": "2026-04-25",
+          "feature": "round-2-latent-bug-audit-findings",
+          "path": "openspec/archive/2026-04-25-round-2-latent-bug-audit-findings"
+        },
+        {
+          "date": "2026-04-25",
+          "feature": "state-scanner-collector-regex-hardening",
+          "path": "openspec/archive/2026-04-25-state-scanner-collector-regex-hardening"
+        },
+        {
+          "date": "2026-04-25",
+          "feature": "state-scanner-i18n-status-regex",
+          "path": "openspec/archive/2026-04-25-state-scanner-i18n-status-regex"
+        },
+        {
+          "date": "2026-04-25",
+          "feature": "state-scanner-mechanical",
+          "path": "openspec/archive/2026-04-25-state-scanner-mechanical"
+        },
+        {
+          "date": "2026-04-26",
+          "feature": "audit-engine-finding-id-determinism",
+          "path": "openspec/archive/2026-04-26-audit-engine-finding-id-determinism"
+        },
+        {
+          "date": "2026-04-26",
+          "feature": "audit-engine-report-filename-uniqueness",
+          "path": "openspec/archive/2026-04-26-audit-engine-report-filename-uniqueness"
+        },
+        {
+          "date": "2026-04-26",
+          "feature": "audit-engine-zero-finding-stability-gate",
+          "path": "openspec/archive/2026-04-26-audit-engine-zero-finding-stability-gate"
+        },
+        {
+          "date": "2026-04-26",
+          "feature": "requirements-validator-status-i18n-alignment",
+          "path": "openspec/archive/2026-04-26-requirements-validator-status-i18n-alignment"
+        },
+        {
+          "date": "2026-04-26",
+          "feature": "verify-post-push-sha-prefix-match",
+          "path": "openspec/archive/2026-04-26-verify-post-push-sha-prefix-match"
+        },
+        {
+          "date": "2026-05-03",
+          "feature": "aria-2.0-m2-layer1-state-machine",
+          "path": "openspec/archive/2026-05-03-aria-2.0-m2-layer1-state-machine"
+        },
+        {
+          "date": "2026-05-06",
+          "feature": "aria-2.0-m3-cycle-close-glm-routing-recovery",
+          "path": "openspec/archive/2026-05-06-aria-2.0-m3-cycle-close-glm-routing-recovery"
+        },
+        {
+          "date": "2026-05-07",
+          "feature": "aria-2.0-silknode-integration-contract",
+          "path": "openspec/archive/2026-05-07-aria-2.0-silknode-integration-contract"
+        },
+        {
+          "date": "2026-05-07",
+          "feature": "aria-secret-hygiene-rule",
+          "path": "openspec/archive/2026-05-07-aria-secret-hygiene-rule"
+        },
+        {
+          "date": "2026-05-07",
+          "feature": "m3-carryover-hcl-crons-sweep",
+          "path": "openspec/archive/2026-05-07-m3-carryover-hcl-crons-sweep"
+        },
+        {
+          "date": "2026-05-07",
+          "feature": "m3-carryover-result-path-derivation",
+          "path": "openspec/archive/2026-05-07-m3-carryover-result-path-derivation"
+        },
+        {
+          "date": "2026-05-07",
+          "feature": "m3-handoff-validator-spillover",
+          "path": "openspec/archive/2026-05-07-m3-handoff-validator-spillover"
+        },
+        {
+          "date": "2026-05-09",
+          "feature": "aria-2.0-m4-human-gate-feishu-approval",
+          "path": "openspec/archive/2026-05-09-aria-2.0-m4-human-gate-feishu-approval"
+        },
+        {
+          "date": "2026-05-09",
+          "feature": "state-scanner-inter-cycle-surfacing",
+          "path": "openspec/archive/2026-05-09-state-scanner-inter-cycle-surfacing"
+        },
+        {
+          "date": "2026-05-10",
+          "feature": "phase-c-integrator-pre-merge-gate",
+          "path": "openspec/archive/2026-05-10-phase-c-integrator-pre-merge-gate"
+        },
+        {
+          "date": "2026-05-13",
+          "feature": "aria-issue-101-status-normalize",
+          "path": "openspec/archive/2026-05-13-aria-issue-101-status-normalize"
+        },
+        {
+          "date": "2026-05-13",
+          "feature": "aria-issue-triage-sop",
+          "path": "openspec/archive/2026-05-13-aria-issue-triage-sop"
+        },
+        {
+          "date": "2026-05-15",
+          "feature": "aria-ten-step-session-handoff-stage",
+          "path": "openspec/archive/2026-05-15-aria-ten-step-session-handoff-stage"
+        },
+        {
+          "date": "2026-05-16",
+          "feature": "aria-2.0-m5-carryover-layer2-changes-mode",
+          "path": "openspec/archive/2026-05-16-aria-2.0-m5-carryover-layer2-changes-mode"
+        },
+        {
+          "date": "2026-05-19",
+          "feature": "aria-2.0-m5-carryover-layer2-redo-mode-aux",
+          "path": "openspec/archive/2026-05-19-aria-2.0-m5-carryover-layer2-redo-mode-aux"
+        },
+        {
+          "date": "2026-05-20",
+          "feature": "multi-terminal-coordination",
+          "path": "openspec/archive/2026-05-20-multi-terminal-coordination"
+        },
+        {
+          "date": "2026-05-20",
+          "feature": "state-scanner-bugfix-locale-and-transitional-status",
+          "path": "openspec/archive/2026-05-20-state-scanner-bugfix-locale-and-transitional-status"
+        },
+        {
+          "date": "2026-05-20",
+          "feature": "state-scanner-inline-carry-forward-surfacing",
+          "path": "openspec/archive/2026-05-20-state-scanner-inline-carry-forward-surfacing"
+        },
+        {
+          "date": "2026-05-22",
+          "feature": "state-scanner-status-extraction-range",
+          "path": "openspec/archive/2026-05-22-state-scanner-status-extraction-range"
+        },
+        {
+          "date": "2026-05-23",
+          "feature": "aria-2.0-m5-replay-reconciler-drift-review-loop-audit",
+          "path": "openspec/archive/2026-05-23-aria-2.0-m5-replay-reconciler-drift-review-loop-audit"
+        },
+        {
+          "date": "2026-05-23",
+          "feature": "aria-layer2-docker-auth-cold-pull-fix",
+          "path": "openspec/archive/2026-05-23-aria-layer2-docker-auth-cold-pull-fix"
+        },
+        {
+          "date": "2026-05-23",
+          "feature": "aria-secret-guard-plugin-default",
+          "path": "openspec/archive/2026-05-23-aria-secret-guard-plugin-default"
+        },
+        {
+          "date": "2026-05-24",
+          "feature": "aria-submodule-pointer-regression-gate",
+          "path": "openspec/archive/2026-05-24-aria-submodule-pointer-regression-gate"
+        },
+        {
+          "date": "2026-05-27",
+          "feature": "aria-forgejo-hosts-parameterization",
+          "path": "openspec/archive/2026-05-27-aria-forgejo-hosts-parameterization"
+        },
+        {
+          "date": "2026-05-28",
+          "feature": "aria-2.0-m6-cost-acceptance",
+          "path": "openspec/archive/2026-05-28-aria-2.0-m6-cost-acceptance"
+        },
+        {
+          "date": "2026-05-28",
+          "feature": "aria-2.0-m6-docs",
+          "path": "openspec/archive/2026-05-28-aria-2.0-m6-docs"
+        },
+        {
+          "date": "2026-05-28",
+          "feature": "aria-ci-backend-abstraction",
+          "path": "openspec/archive/2026-05-28-aria-ci-backend-abstraction"
+        },
+        {
+          "date": "2026-05-29",
+          "feature": "aria-context-monitor",
+          "path": "openspec/archive/2026-05-29-aria-context-monitor"
+        },
+        {
+          "date": "2026-05-30",
+          "feature": "ai-native-estimator",
+          "path": "openspec/archive/2026-05-30-ai-native-estimator"
+        },
+        {
+          "date": "2026-05-30",
+          "feature": "emergency-hotfix-and-audit-file-scope",
+          "path": "openspec/archive/2026-05-30-emergency-hotfix-and-audit-file-scope"
+        },
+        {
+          "date": "2026-05-30",
+          "feature": "shell-jq-crlf-hardening",
+          "path": "openspec/archive/2026-05-30-shell-jq-crlf-hardening"
+        },
+        {
+          "date": "2026-05-31",
+          "feature": "concurrent-session-upm-safety",
+          "path": "openspec/archive/2026-05-31-concurrent-session-upm-safety"
+        },
+        {
+          "date": "2026-05-31",
+          "feature": "m6-cost-snapshot-durable-volume",
+          "path": "openspec/archive/2026-05-31-m6-cost-snapshot-durable-volume"
+        },
+        {
+          "date": "2026-06-03",
+          "feature": "state-scanner-output-cap-hardening",
+          "path": "openspec/archive/2026-06-03-state-scanner-output-cap-hardening"
+        },
+        {
+          "date": "2026-06-05",
+          "feature": "state-scanner-git-operation-awareness",
+          "path": "openspec/archive/2026-06-05-state-scanner-git-operation-awareness"
+        },
+        {
+          "date": "2026-06-08",
+          "feature": "aria-submodule-gate-operationalize",
+          "path": "openspec/archive/2026-06-08-aria-submodule-gate-operationalize"
+        },
+        {
+          "date": "2026-06-10",
+          "feature": "aria-archive-completeness-gate",
+          "path": "openspec/archive/2026-06-10-aria-archive-completeness-gate"
+        },
+        {
+          "date": "2026-06-10",
+          "feature": "handoff-frontmatter-enforcement",
+          "path": "openspec/archive/2026-06-10-handoff-frontmatter-enforcement"
+        },
+        {
+          "date": "2026-06-11",
+          "feature": "audit-drift-guard",
+          "path": "openspec/archive/2026-06-11-audit-drift-guard"
+        },
+        {
+          "date": "2026-06-11",
+          "feature": "cross-worktree-handoff-discovery",
+          "path": "openspec/archive/2026-06-11-cross-worktree-handoff-discovery"
+        },
+        {
+          "date": "2026-06-12",
+          "feature": "state-scanner-coordination-fetch-resilience",
+          "path": "openspec/archive/2026-06-12-state-scanner-coordination-fetch-resilience"
+        },
+        {
+          "date": "2026-06-13",
+          "feature": "aria-i18n-readme-full-resync",
+          "path": "openspec/archive/2026-06-13-aria-i18n-readme-full-resync"
+        },
+        {
+          "date": "2026-06-13",
+          "feature": "coordination-ref-lib-run-parity",
+          "path": "openspec/archive/2026-06-13-coordination-ref-lib-run-parity"
+        },
+        {
+          "date": "2026-06-13",
+          "feature": "state-scanner-git-stderr-locale-hardening",
+          "path": "openspec/archive/2026-06-13-state-scanner-git-stderr-locale-hardening"
+        },
+        {
+          "date": "2026-06-19",
+          "feature": "audit-rubric-runtime-reality-checks",
+          "path": "openspec/archive/2026-06-19-audit-rubric-runtime-reality-checks"
+        },
+        {
+          "date": "2026-06-19",
+          "feature": "mid-post-spec-drift-checkpoint",
+          "path": "openspec/archive/2026-06-19-mid-post-spec-drift-checkpoint"
+        },
+        {
+          "date": "2026-06-19",
+          "feature": "secret-guard-exfil-coverage-iteration",
+          "path": "openspec/archive/2026-06-19-secret-guard-exfil-coverage-iteration"
+        },
+        {
+          "date": "2026-06-19",
+          "feature": "tdd-enforcer-security-commit-separation",
+          "path": "openspec/archive/2026-06-19-tdd-enforcer-security-commit-separation"
+        },
+        {
+          "date": "2026-06-21",
+          "feature": "agent-team-audit-project-agent-augmentation",
+          "path": "openspec/archive/2026-06-21-agent-team-audit-project-agent-augmentation"
+        },
+        {
+          "date": "2026-06-21",
+          "feature": "aria-submodule-gate-block-flip",
+          "path": "openspec/archive/2026-06-21-aria-submodule-gate-block-flip"
+        },
+        {
+          "date": "2026-06-26",
+          "feature": "session-closer-synthesis",
+          "path": "openspec/archive/2026-06-26-session-closer-synthesis"
+        },
+        {
+          "date": "2026-07-03",
+          "feature": "secret-scan-honest-downgrade",
+          "path": "openspec/archive/2026-07-03-secret-scan-honest-downgrade"
+        },
+        {
+          "date": "2026-07-05",
+          "feature": "aria-archive-gate-runtime-reality",
+          "path": "openspec/archive/2026-07-05-aria-archive-gate-runtime-reality"
+        },
+        {
+          "date": "2026-07-05",
+          "feature": "interactive-session-dedup-coordination",
+          "path": "openspec/archive/2026-07-05-interactive-session-dedup-coordination"
+        },
+        {
+          "date": "2026-07-09",
+          "feature": "agent-router-auto-project-agent-injection",
+          "path": "openspec/archive/2026-07-09-agent-router-auto-project-agent-injection"
+        },
+        {
+          "date": "2026-07-09",
+          "feature": "agent-router-baseline-semantics-clarification",
+          "path": "openspec/archive/2026-07-09-agent-router-baseline-semantics-clarification"
+        },
+        {
+          "date": "2026-07-09",
+          "feature": "runtime-probe-archive-gate-integration",
+          "path": "openspec/archive/2026-07-09-runtime-probe-archive-gate-integration"
+        },
+        {
+          "date": "2026-07-11",
+          "feature": "coordination-claim-lifecycle-and-overlap",
+          "path": "openspec/archive/2026-07-11-coordination-claim-lifecycle-and-overlap"
+        },
+        {
+          "date": "2026-07-11",
+          "feature": "secret-guard-bash3-multiline-hardening",
+          "path": "openspec/archive/2026-07-11-secret-guard-bash3-multiline-hardening"
+        },
+        {
+          "date": "2026-07-11",
+          "feature": "secret-guard-multiline-and-anchor-fix",
+          "path": "openspec/archive/2026-07-11-secret-guard-multiline-and-anchor-fix"
+        },
+        {
+          "date": "2026-07-16",
+          "feature": "state-scanner-issue-cache-freshness-assertion",
+          "path": "openspec/archive/2026-07-16-state-scanner-issue-cache-freshness-assertion"
+        },
+        {
+          "date": "2026-07-16",
+          "feature": "state-scanner-snapshot-stderr-secret-leak",
+          "path": "openspec/archive/2026-07-16-state-scanner-snapshot-stderr-secret-leak"
         }
       ],
-      "total": 55
+      "total": 126
+    },
+    "carry_forward_inventory": {
+      "active_change_count": 7,
+      "by_change": {},
+      "total": 0
     },
     "changes": {
       "items": [
         {
-          "id": "aria-2.0-silknode-integration-contract",
-          "path": "openspec/changes/aria-2.0-silknode-integration-contract/proposal.md",
-          "raw_status": "Draft (预留, 等待 US-022+ 消费)",
-          "status": "pending"
+          "id": "aria-2.0-m6-cost-model-telemetry",
+          "path": "openspec/changes/aria-2.0-m6-cost-model-telemetry/proposal.md",
+          "raw_status": "✅ **Approved (owner 2026-07-09)** — A.1 + DEC 4-agent 审议 + post_spec R1→R3 CONVERGED。**Track-1 (Layer1 遥测管道 Phase 4-5) 实施完成 (动态工作流 2026-07-09)**: aria-orchestrator `feature/m6-cost-model-telemetry` @ `92acce5` (叠 input-delivery, migration 009; dispatch_telemetry 表 + marker 解析 fail-toward-warn + cost.json 评分; 979+196 tests 绿; 动态工作流 code-reviewer PASS + silent-failure-hunter 1 Important echo-caveat 已修 / 0 Critical)。**Track-1 合并 gate input-delivery** (选项 A stacked)。Track-2 容器侧 gate input-delivery; Track-3 AC-10 gate Luxeno Blocker 4。",
+          "status": "approved"
         },
         {
-          "id": "state-scanner-mechanical-enforcement",
-          "path": "openspec/changes/state-scanner-mechanical-enforcement/proposal.md",
-          "raw_status": "Approved (2026-04-23, Activation Gate 条件 2 用户显式请求触发, post_spec Agent Team 4/4 一致 PASS_WITH_WARNINGS + activate_with_revisions)",
+          "id": "aria-2.0-m6-dispatch-input-delivery",
+          "path": "openspec/changes/aria-2.0-m6-dispatch-input-delivery/proposal.md",
+          "raw_status": "✅ **Approved** (owner sign-off 2026-07-03; Phase A.2 post_spec CONVERGED via R3 unanimous PASS; **Phase A.3 agent 分配 LOCKED 2026-07-04** — `detailed-tasks.yaml` 30 tasks [backend-architect 21 / qa-engineer 4 / knowledge-manager 5], 1:1 对 tasks.md 30 项 + verification↔AC 映射; 经 mid_post_spec dogfood 修正; owner 全权归本侧后采用此细粒度版 supersede 早前 20-task; **post_planning R1→R2 CONVERGED 2026-07-04** [6 Major+minors fixed, R2 5/5 PASS; 首个 post_planning gate per DEC-20260704-001]; ready for Phase B.1)",
+          "status": "approved"
+        },
+        {
+          "id": "aria-2.0-m6-e2e-resilience",
+          "path": "openspec/changes/aria-2.0-m6-e2e-resilience/proposal.md",
+          "raw_status": "**Approved** (Phase A.2 CONVERGED 2026-05-24 via R3 stability check)。**代码侧完成** (TG-A obs + TG-B [REWORKED per #138, 2026-06-01] + acceptance 脚本; TG-B 产物: crash-recovery-coverage-matrix + 2 测试文件)。**未归档**: 待 168h 运营跑 (TG-A 7d 数据 + TG-C 样本依赖之; 前置见 Aria #147 阻塞链)。",
+          "status": "approved"
+        },
+        {
+          "id": "aria-2.0-m6-release-closeout",
+          "path": "openspec/changes/aria-2.0-m6-release-closeout/proposal.md",
+          "raw_status": "✅ **Approved** (Phase A.2 CONVERGED 2026-05-25 via R3 stability check; ready for Phase A.3 → Phase B.1)",
+          "status": "approved"
+        },
+        {
+          "id": "aria-2.0-m7-agent-lifecycle",
+          "path": "openspec/changes/aria-2.0-m7-agent-lifecycle/proposal.md",
+          "raw_status": "✅ **Approved** (owner sign-off 2026-06-18; Phase A.2 post_spec R1→R2 **CONVERGED** [R2 unanimous PASS 3/3]; **Phase A.3 agent 分配 LOCKED 2026-06-19** (无新 agent, 现有 roster 覆盖; 见 tasks.md §Phase A.3)。**Phase B 受 D3 时机门 — M6 release-closeout ship 后方可开**)",
+          "status": "approved"
+        },
+        {
+          "id": "aria-2.0-m7-fleet-aggregation",
+          "path": "openspec/changes/aria-2.0-m7-fleet-aggregation/proposal.md",
+          "raw_status": "✅ **Approved** (owner sign-off 2026-06-18; Phase A.2 post_spec R1→R2 **CONVERGED** [R2 unanimous PASS 3/3]; **Phase A.3 agent 分配 LOCKED 2026-06-19** (无新 agent, 现有 roster 覆盖; 见 tasks.md §Phase A.3)。**Phase B 受 D3 时机门 — M6 release-closeout ship 后方可开**)",
+          "status": "approved"
+        },
+        {
+          "id": "state-scanner-stale-refs-false-parity",
+          "path": "openspec/changes/state-scanner-stale-refs-false-parity/proposal.md",
+          "raw_status": "**✅ Approved v10 (owner sign-off 2026-07-15)** — R9 PASS-with-fixes 2/2 (0 Critical — R1-R8 八轮全 FAIL 后首个非 FAIL), fixes 已全部折入本版 (2026-07-14; D20 三档全分割经受住全部证伪, 唯一实质补丁=负墙钟龄钳位; 12M/13m 全为镜像/残留文本级, 已修并机械复核 [代 R10, 两审计一致建议]; 聚合 `.aria/audit-reports/post_spec-R9-2026-07-14-*-aggregated.md`)。**owner 终审通过 D15′-D20 五条代裁 (D15′ 双角色谓词 / D16 SOT 搬入 aria-plugin+lock / D18 豁免代际上界 / D19 漂移通道#5 划归 Spec C / D20 evidence_grade 三档全分割 E 优先)**。**下一步: Phase A.2/A.3** (落地顺序: Spec C → Spec B → 主 Spec; Spec B 待其独立 post_spec R6 收敛后签)。",
           "status": "approved"
         }
       ],
-      "total": 2
+      "total": 7
     },
     "configured": true,
+    "design_deferred": [
+      {
+        "id": "aria-2.0-m6-release-closeout",
+        "reason": "tasks.md has 41/41 unchecked task(s); normalized Status = 'approved' (≠ done)",
+        "staleness_days": 53,
+        "status": "approved"
+      }
+    ],
     "pending_archive": []
   },
   "project_root": "<project_root>",
@@ -430,9 +1280,88 @@
     "submodules": {
       "aria": {
         "exists": true,
-        "plugin_version": "1.16.4"
+        "plugin_version": "1.59.0",
+        "readme_version": "1.59.0",
+        "version_match": true
       }
     }
+  },
+  "remote_refresh": {
+    "legs": [
+      {
+        "consecutive_unverified": 0,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "github.com",
+        "remote": "github",
+        "repo": ".",
+        "scan_generation": 8
+      },
+      {
+        "consecutive_unverified": 0,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "github.com",
+        "remote": "github",
+        "repo": "standards",
+        "scan_generation": 8
+      },
+      {
+        "consecutive_unverified": 0,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "github.com",
+        "remote": "github",
+        "repo": "aria",
+        "scan_generation": 8
+      },
+      {
+        "consecutive_unverified": 0,
+        "coordination_ref_present": true,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "forgejo.10cg.pub",
+        "remote": "origin",
+        "repo": ".",
+        "scan_generation": 8
+      },
+      {
+        "consecutive_unverified": 0,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "forgejo.10cg.pub",
+        "remote": "origin",
+        "repo": "standards",
+        "scan_generation": 8
+      },
+      {
+        "consecutive_unverified": 0,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "forgejo.10cg.pub",
+        "remote": "origin",
+        "repo": "aria",
+        "scan_generation": 8
+      },
+      {
+        "consecutive_unverified": 0,
+        "fetch_ok": "true",
+        "fetched_at": "<timestamp>",
+        "generation_fetched": 8,
+        "host": "forgejo.10cg.pub",
+        "remote": "origin",
+        "repo": "aria-orchestrator",
+        "scan_generation": 8
+      }
+    ],
+    "skipped_count": 0,
+    "skipped_remotes": []
   },
   "requirements": {
     "configured": true,
@@ -445,14 +1374,15 @@
       {
         "path": "docs/requirements/prd-aria-v2.md",
         "raw_status": "Approved (Draft → Approved 2026-04-11, 讨论组+挑战组 4 轮收敛)",
-        "status": "approved"
+        "status": "pending"
       }
     ],
     "stories": {
       "by_status": {
-        "done": 12,
-        "in_progress": 1,
-        "pending": 2
+        "approved": 1,
+        "done": 17,
+        "in_progress": 2,
+        "pending": 1
       },
       "items": [
         {
@@ -528,6 +1458,12 @@
           "status": "done"
         },
         {
+          "id": "US-013",
+          "path": "docs/requirements/user-stories/US-013.md",
+          "raw_status": "done",
+          "status": "done"
+        },
+        {
           "id": "US-020",
           "path": "docs/requirements/user-stories/US-020.md",
           "raw_status": "done (2026-04-17, M0 schema final 态, T1 Legal final signoff 作为 awaiting_external 独立跟踪)",
@@ -542,11 +1478,61 @@
         {
           "id": "US-022",
           "path": "docs/requirements/user-stories/US-022.md",
-          "raw_status": "pending (placeholder, 待 US-021 M1 MVP Go 决议后起草 Spec)",
-          "status": "pending"
+          "raw_status": "**done 2026-05-03** (Go-with-revision per OD-11 选项 C; 验收 A/B/C ✓ + 验收 D WAIVED carryover M3; Spec archived `openspec/archive/2026-05-03-aria-2.0-m2-layer1-state-machine/`; 268 tests, ~148h vs 156h baseline 5% within; AD-M2-7/8/9 + OD-8/9/10/11 全 documented; m2-handoff signoffs filled; T7.5/T7.6 cluster smoke PASS; T15.3 ≥10 issue auto-dispatched 实证; M3 carryover ~21h scope 推 US-023)",
+          "status": "done"
+        },
+        {
+          "id": "US-023",
+          "path": "docs/requirements/user-stories/US-023.md",
+          "raw_status": "**done** (AI-implementable scope merged 2026-05-06 via PR #6 + #74 with strict 3-round pre_merge convergence audit, 5-agent team × 3 rounds, R1→R2→R3 ALIGNED 5/5 PASS converged; T5-T12 + AD-M3-1..7 全 Decided + 394/394 tests; Phase B.2.0 T4 + Phase B.2.Z T13-T16 + T9.8/T9.9 carryover to owner action queue tracked in m3-handoff.yaml §10 + Forgejo Issues #75/#76/#77 backlog). **M3 carryover trio CLOSED 2026-05-07** (3 child Specs all merged + archived: m3-carryover-result-path-derivation #75 / m3-handoff-validator-spillover #77 / m3-carryover-hcl-crons-sweep #76 via 3-round multi-agent PR audit STABLE convergence; only Spec 1 owner Aether dev verify remains as post-merge smoke not pre-merge gate)",
+          "status": "done"
+        },
+        {
+          "id": "US-024",
+          "path": "docs/requirements/user-stories/US-024.md",
+          "raw_status": "**done 2026-05-09** (M4 AI-implementable scope merged via aria-orchestrator PR #10 + Aria 主仓 PR #94 with strict 5-round pre_merge convergence audit; R1→R2→R3→R4→R5 CONVERGED; 536/536 tests; 9/10 task groups complete; T-deploy is owner-only carryover; 11 AD-M4 slots Decided; abi_compat_promises forward-binding to M5; Spec archived 2026-05-09)",
+          "status": "done"
+        },
+        {
+          "id": "US-025",
+          "path": "docs/requirements/user-stories/US-025.md",
+          "raw_status": "**done 2026-05-23 (M5 Phase D.2 close)** — Phase B.2 Layer 1 Phase 1-6 done 2026-05-15 + Phase C.2 merged 2026-05-15 (Aria PR #106 / aria-orch PR #11) + Phase B prod deploy 2026-05-20 (Layer 1 + smoke A/B/C) + **Phase C done 2026-05-22~23** (O1 FEISHU secret rotation + O2 Layer 2 image `forgejo.10cg.pub/10cg/aria-runner@sha256:5b80ca6c…35148f5` build+register + **O3 Tier-1 live LLM real smoke verified**: DEMO-M5-O3 dispatch on heavy-3 alloc `6cf0d7ab`, 11 steps in 18s, PR #121 created+validated+cleaned, assertion file_touched_hit + diff_contains_hit 全 true, claude_exit=0). **Phase D.2 close gate per brainstorm D7 MET**: T-deploy ✅ + Tier-1 live LLM ✅ + Spec X+Y archived ✅. Tier-2 6.27-6.29 cumulative validation non-blocking per design, continues post-close. M5 Spec archived `openspec/archive/2026-05-23-aria-2.0-m5-replay-reconciler-drift-review-loop-audit/`. Layer 2 deployment infra findings F1-F5 recorded in `aria-orchestrator/docs/m5-handoff.yaml::t_deploy_status.phase_c_completion.layer2_deployment_findings` + handoff `docs/handoff/2026-05-23-m5-phase-c-o3-done-d2-close.md` (carry-forward to post-M5: F2/F3 HCL auth interpolation gap + Nomad image GC churn need proper node-level docker auth.config). 846 Python + 57 bash tests / 0 regression preserved.",
+          "status": "done"
+        },
+        {
+          "id": "US-026",
+          "path": "docs/requirements/user-stories/US-026.md",
+          "raw_status": "**in_progress — Spec #1 + Spec #3 ARCHIVED 2026-05-28; Spec #2 + Spec #4 remaining** (M5 整体 close 2026-05-23; M6 brainstorm CONVERGED 2026-05-24 DEC-20260524-001). M6 sub-Spec closure trajectory:",
+          "status": "in_progress"
+        },
+        {
+          "id": "US-028",
+          "path": "docs/requirements/user-stories/US-028.md",
+          "raw_status": "**Approved — Phase A.2 CONVERGED** (2 sub-Spec owner-approved 2026-06-18, post_spec R1→R2 unanimous PASS; ready for Phase A.3 agent 分配; Phase B 时机门 = M6 ship 后)",
+          "status": "approved"
         }
       ],
-      "total": 15
+      "priority_items": [
+        {
+          "file": "docs/requirements/user-stories/US-026.md",
+          "id": "US-026",
+          "raw_status": "**in_progress — Spec #1 + Spec #3 ARCHIVED 2026-05-28; Spec #2 + Spec #4 remaining** (M5 整体 close 2026-05-23; M6 brainstorm CONVERGED 2026-05-24 DEC-20260524-001). M6 sub-Spec closure trajectory:",
+          "status_normalized": "in_progress"
+        },
+        {
+          "file": "docs/requirements/user-stories/US-007.md",
+          "id": "US-007",
+          "raw_status": "in_progress",
+          "status_normalized": "in_progress"
+        },
+        {
+          "file": "docs/requirements/user-stories/US-003.md",
+          "id": "US-003",
+          "raw_status": "pending",
+          "status_normalized": "pending"
+        }
+      ],
+      "total": 21
     }
   },
   "snapshot_schema_version": "1.0",
@@ -559,6 +1545,7 @@
       "ahead": 0,
       "behind": 0,
       "diverged": false,
+      "evidence_grade": "fresh",
       "name": "master",
       "upstream": "origin/master",
       "upstream_configured": true
@@ -566,30 +1553,72 @@
     "has_remote": true,
     "multi_remote": {
       "enabled": true,
-      "has_pending_push": true,
+      "gitlink_integrity": [
+        {
+          "consecutive_unverified": 0,
+          "remote": "github",
+          "status": "ok",
+          "submodule": "standards"
+        },
+        {
+          "consecutive_unverified": 0,
+          "remote": "github",
+          "status": "ok",
+          "submodule": "aria"
+        },
+        {
+          "consecutive_unverified": 0,
+          "remote": "github",
+          "status": "no_matching_remote",
+          "submodule": "aria-orchestrator"
+        },
+        {
+          "consecutive_unverified": 0,
+          "remote": "origin",
+          "status": "ok",
+          "submodule": "standards"
+        },
+        {
+          "consecutive_unverified": 0,
+          "remote": "origin",
+          "status": "ok",
+          "submodule": "aria"
+        },
+        {
+          "consecutive_unverified": 0,
+          "remote": "origin",
+          "status": "ok",
+          "submodule": "aria-orchestrator"
+        }
+      ],
+      "has_pending_push": false,
       "has_unreachable_remote": false,
       "main_repo": {
         "branch": "master",
-        "local_head": "49a0427",
+        "local_head": "dc4568d",
         "path": ".",
         "remotes": [
           {
-            "ahead_count": 2,
+            "ahead_count": 0,
             "behind_count": 0,
+            "evidence_grade": "fresh",
+            "fetch_ok": "true",
             "method": "local_refs",
             "name": "github",
-            "parity": "ahead",
+            "parity": "equal",
             "reachable": true,
-            "remote_head": "0d49942"
+            "remote_head": "dc4568d"
           },
           {
             "ahead_count": 0,
             "behind_count": 0,
+            "evidence_grade": "fresh",
+            "fetch_ok": "true",
             "method": "local_refs",
             "name": "origin",
             "parity": "equal",
             "reachable": true,
-            "remote_head": "49a0427"
+            "remote_head": "dc4568d"
           }
         ]
       },
@@ -597,122 +1626,189 @@
       "submodules": [
         {
           "branch": "master",
-          "local_head": "e6cb261",
+          "local_head": "19dad0b",
           "path": "aria",
           "remotes": [
             {
               "ahead_count": 0,
               "behind_count": 0,
+              "evidence_grade": "fresh",
+              "fetch_ok": "true",
               "method": "local_refs",
               "name": "github",
               "parity": "equal",
               "reachable": true,
-              "remote_head": "e6cb261"
+              "remote_head": "19dad0b"
             },
             {
               "ahead_count": 0,
               "behind_count": 0,
+              "evidence_grade": "fresh",
+              "fetch_ok": "true",
               "method": "local_refs",
               "name": "origin",
               "parity": "equal",
               "reachable": true,
-              "remote_head": "e6cb261"
+              "remote_head": "19dad0b"
             }
           ]
         },
         {
-          "branch": "master",
-          "local_head": "b2254db",
+          "local_head": "86bb684",
           "path": "aria-orchestrator",
           "remotes": [
             {
-              "ahead_count": 0,
-              "behind_count": 0,
-              "method": "local_refs",
-              "name": "github",
-              "parity": "equal",
-              "reachable": true,
-              "remote_head": "b2254db"
-            },
-            {
-              "ahead_count": 0,
-              "behind_count": 0,
+              "evidence_grade": "fresh",
+              "fetch_ok": "true",
               "method": "local_refs",
               "name": "origin",
-              "parity": "equal",
+              "parity": "unknown",
               "reachable": true,
-              "remote_head": "b2254db"
+              "reason": "detached_head"
             }
           ]
         },
         {
-          "branch": "master",
-          "local_head": "5b56dd4",
+          "local_head": "79b7cd6",
           "path": "standards",
           "remotes": [
             {
-              "ahead_count": 0,
-              "behind_count": 0,
+              "evidence_grade": "fresh",
+              "fetch_ok": "true",
               "method": "local_refs",
               "name": "github",
-              "parity": "equal",
+              "parity": "unknown",
               "reachable": true,
-              "remote_head": "5b56dd4"
+              "reason": "detached_head"
             },
             {
-              "ahead_count": 0,
-              "behind_count": 0,
+              "evidence_grade": "fresh",
+              "fetch_ok": "true",
               "method": "local_refs",
               "name": "origin",
-              "parity": "equal",
+              "parity": "unknown",
               "reachable": true,
-              "remote_head": "5b56dd4"
+              "reason": "detached_head"
             }
           ]
         }
       ]
     },
-    "remote_refs_age": "4m",
+    "remote_refs_age": "1m",
     "shallow": false,
     "submodules": [
       {
         "drift": {
           "ahead_count": 0,
           "behind_count": 0,
+          "evidence_grade": "fresh",
           "tree_vs_remote": false,
           "workdir_vs_tree": false
         },
-        "head_commit": "e6cb261",
+        "head_commit": "19dad0b",
         "path": "aria",
-        "remote_commit": "e6cb261",
+        "remote_commit": "19dad0b",
         "remote_commit_source": "local_ref",
-        "tree_commit": "e6cb261"
+        "tree_commit": "19dad0b"
       },
       {
         "drift": {
           "ahead_count": 0,
           "behind_count": 0,
+          "evidence_grade": "fresh",
           "tree_vs_remote": false,
           "workdir_vs_tree": false
         },
-        "head_commit": "b2254db",
+        "head_commit": "86bb684",
         "path": "aria-orchestrator",
-        "remote_commit": "b2254db",
+        "remote_commit": "86bb684",
         "remote_commit_source": "local_ref",
-        "tree_commit": "b2254db"
+        "tree_commit": "86bb684"
       },
       {
         "drift": {
           "ahead_count": 0,
           "behind_count": 0,
+          "evidence_grade": "fresh",
           "tree_vs_remote": false,
           "workdir_vs_tree": false
         },
-        "head_commit": "5b56dd4",
+        "head_commit": "79b7cd6",
         "path": "standards",
-        "remote_commit": "5b56dd4",
+        "remote_commit": "79b7cd6",
         "remote_commit_source": "local_ref",
-        "tree_commit": "5b56dd4"
+        "tree_commit": "79b7cd6"
+      }
+    ]
+  },
+  "tracks_multibranch": {
+    "branches_scanned": 6,
+    "collision": {
+      "groups": [
+        [
+          "dev-claude",
+          "simonfishgit/dev-claude"
+        ],
+        [
+          "aria-runner-bot/023236f2",
+          "simonfish/bfe8285d"
+        ]
+      ],
+      "kind": "self_multi_container"
+    },
+    "errors": [],
+    "exists": true,
+    "legacy_count": 112,
+    "tracks": [
+      {
+        "branch": "master",
+        "filename": "2026-07-12-147-live-recheck-138-rework-closeout.md",
+        "legacy": false,
+        "owner_container": "simonfish/bfe8285d",
+        "phase": "D",
+        "status": "done",
+        "track_id": "147-live-recheck-138-spec-rework",
+        "updated_at": "2026-07-12"
+      },
+      {
+        "branch": "fix/dec-20260712-002-file-and-renumber",
+        "filename": "2026-07-12-147-live-recheck-138-rework-closeout.md",
+        "legacy": false,
+        "owner_container": "simonfish/bfe8285d",
+        "phase": "D",
+        "status": "done",
+        "track_id": "147-live-recheck-138-spec-rework",
+        "updated_at": "2026-07-12"
+      },
+      {
+        "branch": "chore/submodule-bump-234-auth-reversal",
+        "filename": "2026-07-12-147-live-recheck-138-rework-closeout.md",
+        "legacy": false,
+        "owner_container": "simonfish/bfe8285d",
+        "phase": "D",
+        "status": "done",
+        "track_id": "147-live-recheck-138-spec-rework",
+        "updated_at": "2026-07-12"
+      },
+      {
+        "branch": "master",
+        "filename": "2026-07-05-95-archive-gate-runtime-reality-shipped.md",
+        "legacy": false,
+        "owner_container": "dev-claude",
+        "phase": "session-close",
+        "status": "complete",
+        "track_id": "95-archive-gate-runtime-reality-shipped",
+        "updated_at": "2026-07-05T03:23:26Z"
+      },
+      {
+        "branch": "fix/dec-20260712-002-file-and-renumber",
+        "filename": "2026-07-05-95-archive-gate-runtime-reality-shipped.md",
+        "legacy": false,
+        "owner_container": "dev-claude",
+        "phase": "session-close",
+        "status": "complete",
+        "track_id": "95-archive-gate-runtime-reality-shipped",
+        "updated_at": "2026-07-05T03:23:26Z"
       }
     ]
   },
