@@ -73,6 +73,14 @@ recommendation:
 > 甚至可能诱导用户在落后状态下强推)。v9 起**按 (parity, reason, evidence_grade) 六路分派**,
 > 不再对整块 `overall_parity: false` 发单一建议。**不是一律 fetch/pull** (US-008 directional
 > guard 在 multi_remote 层的对应物)。
+>
+> **Phase 2A gitlink 交叉引用 (F10″)**: `overall_parity` 现有第七种成因 — `gitlink_integrity[]`
+> 里某 (R,S) 对被 `_gitlink_blocking` 判定 (`status=="orphaned"`, 或 `orphan_unverified` 且
+> D18 计数达 `k_eff`)。**本规则 (multi_remote_drift) 的 dispatch 表尚未新增第七路** — 该场景的
+> AC-16 修复建议 (`git -C S push R <branch>`) 目前只是 proposal.md 记载的**设计意图**, 尚未接入
+> RECOMMENDATION_RULES 的机械 dispatch。触发条件判断时需**额外**检查 `gitlink_integrity` 是否
+> 非空 blocking (下方 dispatch 表只覆盖 `remotes[]` 层, 不覆盖 `gitlink_integrity[]` 层) — 这是已知
+> 文档-实现缺口, 待后续增量补上 dispatch 分支。
 
 ```yaml
 id: multi_remote_drift

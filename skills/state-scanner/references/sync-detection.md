@@ -606,6 +606,8 @@ helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
 
 **fail-soft 原则**: 任一 remote 不可达 → 该条目 `parity: unknown, reachable: false` + `reason` 枚举, 不阻断扫描, 不影响其他 remote 的检测。
 
+> **F10″/Phase 2A 提示 (state-scanner-stale-refs-false-parity 主 Spec)**: 本节 (§10) 描述的仍是 v1.15.0 的原始 helper/fallback 契约, 未反映 Phase 1 (`remote_refresh`/`evidence_grade`/`fetch_ok` 三态) 与 Phase 2A (`gitlink_integrity[]` 跨仓可达性检查) 的现行判据。**新增的 `sync_status.multi_remote.gitlink_integrity[]` 字段与本节 §10.2-10.5 描述的四状态守卫完全正交** — 它检测的不是「本仓与 remote 的 parity」, 而是「主仓已发布的 gitlink 在子模块自己的 remote 上是否可达」。字段/状态枚举的真 SOT 见 [state-snapshot-schema.md](./state-snapshot-schema.md) §`gitlink_integrity[]` status semantics; 谓词定义见 [predicate-domain-table.md](./predicate-domain-table.md) `gitlink_orphaned(R)`。
+
 ### 10.6 Consumer Inventory (向后兼容验证清单)
 
 现有读取 `sync_status.submodules[]` 的 consumer:
@@ -622,6 +624,11 @@ helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
 | 规则 ID | 触发条件 | 动作 |
 |---------|---------|------|
 | `multi_remote_drift` (priority 1.35) | `multi_remote.overall_parity === false` | 降级置信度, 输出 per-remote 修复建议 |
+
+> **F10″ 已知缺口**: `overall_parity=false` 也可能由 `gitlink_integrity[]` blocking (Phase 2A) 触发 —
+> `multi_remote_drift` 的 dispatch 表 (`references/rules/basic-rules.md` §1.35) 目前只覆盖
+> `remotes[]` 层的六路成因, **尚未新增第七路** gitlink 专属建议 (`git -C S push R <branch>`,
+> proposal.md AC-16 设计意图)。待后续增量接入。
 
 **不触发条件**:
 - `has_pending_push: true` (仅 ahead) — 正常待推送, 不报警

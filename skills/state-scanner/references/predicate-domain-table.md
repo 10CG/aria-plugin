@@ -43,9 +43,19 @@ domain fully partitioned. **Complement default**: value on the unregistered/else
 | `blocking_unknown(r)` | 1 (F4′) | `parity=="unknown" ∧ ¬benign_unknown(r)` | ✅ (complement) | 阻断 (fail-CLOSED) |
 | `has_unpublished_branch(r)` | 1 (F4′) | `parity=="unknown" ∧ reason=="no_local_tracking_ref" ∧ 证据资格(r)` (per-remote) | ✅ | `false` |
 | `_should_stop_admitting(dispatched_count, elapsed, deadline, budget)` | 1 (F3′, scheduling) | `budget is not None` (test seam) ⇒ `dispatched_count ≥ budget`; else (production) ⇒ `elapsed ≥ deadline_seconds` — the SOLE "stop admitting new legs" gate, checked leg-by-leg immediately before `submit()` (sequential admission gate, not post-hoc `cancel_futures`); shared byte-for-byte by both trigger sources (`remote_refresh.py:_should_stop_admitting`) | ✅ (two-branch total: `budget` present/absent) | — (not a fail-open/closed predicate; governs dispatch only, never freshness verdicts) |
-| `gitlink_orphaned(R)` | 2A (F10″/D14) | 8-branch cross-repo reachability; `true ⇒ blocking`; `orphan_unverified` visible + D18 time-escalation | ✅ (8 branches each with a home) | visible + escalate (fail toward visible, then red) |
+| `gitlink_orphaned(R)` | 2A (F10″/D14) | ✅ **implemented** (`multi_remote.py::_classify_gitlink_pair`) — 9-branch cross-repo reachability (8 non-ok exits + the implicit healthy `ok` exit); `status=="orphaned" ⇒ blocking`; `status=="orphan_unverified"` visible + D18 time-escalation | ✅ (9 branches each with a home: `ok`/`orphaned`/`orphan_unverified`/`no_published_ref`/`not_a_gitlink`/`uninitialized`/`no_matching_remote`/`shallow_unverifiable`/`soft_error`) | visible + escalate (fail toward visible, then red) |
+| `_gitlink_blocking(g, k_eff)` | 2A (F10″/D14) | `multi_remote.py` — `status=="orphaned" ⇒ true`; `status=="orphan_unverified" ⇒ (consecutive_unverified ≥ k_eff)`; every other status ⇒ `false`. Sole consumer of `gitlink_orphaned(R)`'s `status` output for `_overall_parity` clause 3 | ✅ (three-way: orphaned / orphan_unverified / everything-else, each with a defined return) | `false` (non-orphaned/non-escalated statuses never block) |
 
-> **Phase 1 gitlink 占位说明**: `gitlink_orphaned(R)` / `_gitlink_blocking(g)` 的**判定逻辑** (8-branch 横扫) 是 Phase 2A 交付物, **尚未实施**。Phase 1 已落地的是**接线占位**: `multi_remote.py` 的 `_overall_parity` 无条件读取 `gitlink_integrity` 列表并对其中每项调用 `_gitlink_blocking`, 但 Phase 1 生产路径下 `gitlink_integrity` 恒为 `[]` (`collect_multi_remote` 从未填充它) ⇒ `any(_gitlink_blocking(g) for g in [])` 恒为 `False` (空迭代 vacuously true 的裁决安全默认, 符合 F4′ clause 3 "universal-negation, empty-safe" 设计, 与 clause 1 的 positive-evidence 空集陷阱不同)。`_gitlink_blocking` 函数体 (`g.get("status") == "orphaned"`) 已就位, 是 Phase 2A 要消费的**契约接口**, 不是本表新增谓词的完整定义 — 保持登记在上一行, 待 Phase 2A 补全 8-branch 定义后本行状态字段同步更新。
+> **Phase 2A landed** (2026-07-1x): `gitlink_orphaned(R)`'s 9-branch domain and `_gitlink_blocking(g, k_eff)`
+> are both implemented and wired into `collect_multi_remote`'s R×S double loop (main repo's enforced
+> remotes × all declared submodule paths, including uninitialized ones). `gitlink_integrity[]` now
+> carries real per-(R,S) verdicts in production snapshots (no longer hardcoded `[]`) — see
+> `state-snapshot-schema.md` §`gitlink_integrity[]` status semantics for the full status table and
+> `multi_remote.py::_classify_gitlink_pair`'s docstring for the FIXED evaluation order (load-bearing:
+> reordering can change which branch a given fixture lands in). The (R,S)-keyed `consecutive_unverified`
+> D18 counter persists in its own cache file `.aria/cache/gitlink-integrity.json` (`_gitlink_pair_key`,
+> `_read_gitlink_cache`/`_write_gitlink_cache_atomic`) — a physically separate key space from the F3′
+> `remote_refresh` per-leg counter of the same name (`_GITLINK_COUNTER_RESET_STATUSES = {ok, orphaned}`).
 
 ## Retired predicates (must have zero live references — lock test #4)
 

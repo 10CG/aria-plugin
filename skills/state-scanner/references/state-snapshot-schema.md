@@ -558,7 +558,26 @@ multi_remote:
                                  #   structurally unusable as a per-remote signal; field kept
                                  #   for backward-compat readers but collector no longer emits
                                  #   a meaningful value (superseded by `evidence_grade` below)
-  gitlink_integrity: list[{...}]  # Phase 2A (F10″/D14) — always [] in Phase 1 (vacuous)
+  gitlink_integrity: list[GitlinkPair]  # Phase 2A (F10″/D14) — one entry per (R,S) pair;
+                                          # [] only when the repo declares zero submodules
+                                          # (`submodule_paths` empty — collect_multi_remote skips
+                                          # the R×S loop entirely, no git calls paid)
+
+GitlinkPair:
+  remote: str                     # R — main repo's enforced remote name
+  submodule: str                  # S — submodule path (relative), incl. UNINITIALIZED ones
+  status: str                     # enum (9-branch domain, predicate-domain-table.md `gitlink_orphaned(R)`):
+                                   #   "ok" | "orphaned" | "orphan_unverified" | "no_published_ref" |
+                                   #   "not_a_gitlink" | "uninitialized" | "no_matching_remote" |
+                                   #   "shallow_unverifiable" | "soft_error"
+  consecutive_unverified: int     # D18 (R,S)-keyed counter (SEPARATE key space from the parity-layer
+                                   # per-leg counter of the same name) — persisted in
+                                   # `.aria/cache/gitlink-integrity.json` (own physical file, own
+                                   # `_gitlink_pair_key` = "{remote}::{submodule}"); resets to 0 on
+                                   # status ∈ {ok, orphaned} (`_GITLINK_COUNTER_RESET_STATUSES`),
+                                   # increments on `orphan_unverified`, frozen (unchanged) on every
+                                   # other status (structural skip/soft_error is neither new evidence
+                                   # nor a confirmed unverified event)
 
 RemoteEntry:
   name: str
@@ -575,6 +594,44 @@ RemoteEntry:
                                   #   独立字段, 从不折进 `reason` (折进去会被 blocking_unknown 补集误判)
   fetch_ok: str                  # "true" | "false" | "not_attempted" — F3′ leg 直接透传
 ```
+
+### `gitlink_integrity[]` status semantics (Phase 2A, F10″/D14)
+
+`_classify_gitlink_pair` (`multi_remote.py`) evaluates the 9-branch domain in this FIXED order —
+load-bearing, reordering can change which branch a given fixture lands in:
+
+| status | Meaning | Blocking? |
+|---|---|---|
+| `ok` | G is branch-reachable on S's `R/*` | no |
+| `orphaned` | G unreachable AND both `(".", R)` and `(S, R)` legs are 豁免资格-eligible AND `gen(S,R) ≥ gen(主仓,R)` — a confirmed, non-stale breakage | **yes, always** |
+| `orphan_unverified` | G unreachable but staleness/generation-skew leaves time-order ambiguous — cannot yet rule out a "we just haven't re-fetched" illusion | only once `consecutive_unverified ≥ k_eff` (D18 escalation) |
+| `no_published_ref` | main repo has no resolvable `refs/remotes/{R}/{main_branch}` (incl. main-repo detached HEAD, which routes every S here) | no |
+| `not_a_gitlink` | `ls-tree(C, S)` is empty OR `mode != 160000` (path doesn't exist at C, or isn't a gitlink) | no |
+| `uninitialized` | S has no on-disk `.git` | no |
+| `no_matching_remote` | S has no remote literally named R (checked before `contains`, RM-3: rc=0-empty is byte-identical to a genuine orphan otherwise) | no |
+| `shallow_unverifiable` | S is a shallow clone — reachability undecidable | no |
+| `soft_error` | the `branch -r --contains` check itself could not run (rc≠0, ≠129 no-such-commit) | no |
+
+`_gitlink_blocking(g, k_eff)` is the sole consumer of `status` for `overall_parity` clause 3
+(`multi_remote.py`); every non-blocking status is benign-visible (surfaced in this field, never
+folded into `RemoteEntry.reason` — folding it in would make `blocking_unknown`'s complement
+definition misjudge it as blocking, contradicting the "skip/benign" intent, R7 RM-10).
+
+**Reachability definition (RM-11)**: "reachable" := **branch-reachable** only (`R/*`
+remote-tracking branches from Fetch 1's `--no-tags`). A gitlink pinned to a commit reachable
+ONLY via a tag (branch since deleted) is reported `orphaned`/`orphan_unverified` — a deliberate
+narrowing, not a bug; escape hatch = `read_only_remotes` or accept the warning (AC-17e).
+
+**Fetch prerequisite (RC-1)**: Fetch 1 (`remote_refresh`, F3′) MUST run with `--prune` — without it,
+a force-pushed/deleted remote branch leaves a stale local remote-tracking ref that makes `contains`
+false-green. `refs/aria/coordination` (Fetch 2, #141) is outside Fetch 1's refspec and unaffected
+by prune.
+
+**Cache**: `.aria/cache/gitlink-integrity.json` — `{"pairs": {"<remote>::<submodule>": {"consecutive_unverified": int}}}`.
+Physically separate file from `.aria/cache/remote-refresh.json` (F3′) — different key space, no
+shared merge logic (`_write_gitlink_cache_atomic` mirrors the same tmp+rename read-merge-atomic-write
+pattern at smaller scale). Written unconditionally when the repo has ≥1 declared submodule, even
+when the resulting `gitlink_integrity[]` is entirely `ok`.
 
 ### `evidence_grade` 三值定义 (D20, Phase 1 — 取代旧单谓词 `可信(r)`)
 
@@ -601,8 +658,12 @@ RemoteEntry:
 1. `enforced_set ≠ ∅` (守卫 `all([])` 的 vacuous-true 陷阱)
 2. `∃ r: parity == equal ∧ evidence_grade == "fresh"` — **两者都要** (仅 `parity == equal`
    不够: `stale_unverified` 的 `equal` 不算正证据, 否则复活 14h 事故)
-3. `∀ R ∈ gitlink_integrity: ¬gitlink_blocking(R)` (Phase 1 恒 `gitlink_integrity=[]`,
-   全称否定对空集天然为真, 与子句 1 的正向存在性空集陷阱不同; Phase 2A 补全)
+3. `∀ R ∈ gitlink_integrity: ¬gitlink_blocking(R, k_eff)` — Phase 2A (F10″) landed: `gitlink_integrity[]`
+   now carries real per-(R,S) verdicts from `_classify_gitlink_pair`; repos with zero declared
+   submodules still pass this clause vacuously (universal-negation over an empty set is safe, unlike
+   clause 1's positive-existence empty-set trap). `gitlink_blocking(R, k_eff)` is `true` for
+   `status=="orphaned"`, and for `status=="orphan_unverified" ∧ consecutive_unverified ≥ k_eff`
+   (D18 escalation) — see `gitlink_integrity[]` status table above.
 4. `∀ r: parity ∉ {behind, diverged} ∧ ¬blocking_unknown(r)`
 
 - `false`: 上述任一子句不满足
@@ -627,6 +688,13 @@ RemoteEntry:
 | Network failure | origin=equal, github=unknown (network_timeout) | **true** | false | **true** |
 | All networks down | origin=unknown (timeout), github=unknown (timeout) | false | false | **true** |
 | Not a git repo | (empty, fallback) | false | false | false |
+| **AC-16: gitlink orphaned** (published gitlink unreachable on its own remote) | main: github=equal/fresh; gitlink_integrity=[{remote:github, submodule:standards, status:orphaned}] | **false** | false | false |
+| **AC-17: gitlink healthy** (detached-HEAD submodule, published gitlink branch-reachable on every enforced remote) | main: github=equal/fresh, origin=equal/fresh; submodule remotes all equal/fresh; gitlink_integrity=[{...,status:ok}, {...,status:ok}] | **true** | false | false |
+
+`gitlink_integrity` entries never influence `has_pending_push` / `has_unreachable_remote` — those
+two flags remain scoped to `RemoteEntry.parity`/`fetch_ok`; a gitlink breakage is exclusively an
+`overall_parity` clause-3 concern, surfaced to the user via the `multi_remote_drift` recommendation
+rule (see `RECOMMENDATION_RULES.md` / `references/rules/basic-rules.md`).
 
 ## `issue_status` (Phase 1.13, T3.4) — optional
 
