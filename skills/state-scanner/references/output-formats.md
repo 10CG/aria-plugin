@@ -177,6 +177,24 @@
 
 ---
 
+## OpenSpec 布局漂移时 (#166 — 区别于「未配置」)
+
+> `layout_drift` soft_error 出现时**必须**这样渲染, 不得套用「未配置」模板 (二者语义相反: 这里是重度使用但 `changes/` 目录漂移了)。
+
+```
+📋 OpenSpec 状态
+───────────────────────────────────────────────────────────────
+  ⚠️ 布局漂移 (layout_drift): openspec/ 存在但 openspec/changes/ 缺失
+  已归档: N 个 (archive/ 仍正交扫描, 未连带归零)
+  疑似错位: my-change-proposal.md (应在 openspec/changes/<id>/ 下)
+  修复建议:
+    - 恢复 openspec/changes/ (在其中放 .gitkeep 使空目录不随 git 消失)
+    - 把错位的 proposal 迁回 openspec/changes/<id>/proposal.md
+  (scan.py exit=10; configured=False 但非「没用 OpenSpec」, 由本 soft_error 消歧)
+```
+
+---
+
 ## OpenSpec 干净状态 (目录存在但无活跃变更)
 
 ```

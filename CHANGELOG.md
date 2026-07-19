@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.61.0] - 2026-07-19
+
+### Fixed
+- **OpenSpec dimension silent false-green — 3 defects** (10CG/Aria #166; Spec `state-scanner-openspec-collector-false-green`, post_spec convergence R1→R4 CONVERGED). All three shared one failure mode: returning a clean-looking result instead of failing when they should.
+  - **Defect 1 — `collectors/openspec.py`: `changes/` missing → silent all-zero, and `archive/` not scanned either.** The `changes_dir.is_dir()` early-return also skipped the (orthogonal) `archive/` scan, so a repo that archived its last spec — git then drops the now-empty `changes/` dir — reported `configured=false / 0 active / 0 archived` identically to a repo that never used OpenSpec. Observed false-green for ~8 weeks in a consumer project. Now: the early-return is gone (the changes loop no-ops via a guarded iterable), `archive/` is always scanned (`archive.total` reflects disk), and a `layout_drift` soft_error fires **only with evidence** of prior/misplaced use (non-empty `archive/`, or a stray `*proposal*.md` / non-`changes` subdir holding a `proposal.md`) — a genuine cold-start or non-OpenSpec repo stays silent. `configured` keeps its documented `openspec/changes/ exists` semantics (stays `false` on the drift path); the soft_error carries the disambiguation. New: `archive.total > 0` can now coexist with `configured=false`.
+  - **Defect 2 — `lib/spec_complete.py`: archive safety net blind to `detailed-tasks.yaml`-only specs.** `gate_result()` early-returned at its own tasks.md-absent branch, so a spec using `detailed-tasks.yaml` (task-planner path B) archived with `verdict=pass` / `d_payload=None` / empty `unverified_claims` — residual deferred items buried with no tracker, headless included. Now that branch appends one `unverified_claims` entry (`{claim, reason, symbols}`), raises `verdict` to `warn`, and builds a non-`None` `d_payload`, so **both** existing #95 surfacing paths light up: Step 2 `warn_overlay` persists it to frontmatter and Step 7's D auto-issue (gated on `d_payload != null`, not on verdict) creates the tracker. Zero changes to `openspec-archive`. Follows the mainline `_fold_runtime_probe_declaration` warn/invalid double-write precedent. Full `detailed-tasks.yaml` parsing (precise per-spec verdict) is a deferred follow-up — until then every yaml-only spec warns, an honest "cannot verify" state rather than a false clean.
+  - **Defect 3 — `collectors/_status.py`: `_normalize_status("Completed") → unknown`.** #101's word-boundary fix (`\bcomplete\b`, to stop `incomplete` shadowing `complete`) over-tightened and dropped the natural inflection into `unknown`, which further generated `design_deferred` noise. Added `completed` to the done-family tokens; `\bcompleted\b` does not match `uncompleted`/`incomplete`, so #101 stays closed.
+- **`openspec_scan_failed` soft_error** (same batch, review-driven): an unreadable `openspec/` or `openspec/archive/` (permission/IO) now surfaces instead of being swallowed — a silently-empty result would have made an unreadable directory indistinguishable from a non-OpenSpec repo, i.e. a fresh instance of the very false-green this release removes. Caught by silent-failure-hunter as a fix-introduced regression in the first implementation (`except OSError: pass`) and corrected before merge.
+
+### Documentation
+- `references/state-snapshot-schema.md`: `layout_drift` + `openspec_scan_failed` kinds, and the new `configured=false ∧ archive.total>0` combination.
+- `references/status-field-guide.md`: `completed` added to the done-family token table (+ #166/#101 note).
+- `references/output-formats.md`: worked example for the layout-drift render path, so it is not mistaken for the "not configured" template.
+
+### Testing
+- 13 new tests across 3 files, each defect written baseline-failing first (RED verified) and including symmetric negative controls: cold-start must not fire `layout_drift`; a spec with both `tasks.md` and `detailed-tasks.yaml` must not fire the source-unsupported claim; `uncompleted`/`incomplete` must not normalize to `done`. Full suite 1232 tests green (rebased onto the v1.60.0 main-spec Phase 1-3 baseline); dogfood confirms `scan.py` exits 10 on a synthetic drift fixture with `archive.total` correct.
+- Rule #6 benchmark N/A: mechanical collector fix, no SKILL.md description/instruction change for a with/without AB to measure.
+- SKILL/Agents counts unchanged (35 user-facing + 7 internal = 42, 11 Agents).
+
+> Version note: this change originally claimed v1.60.0; that number was taken by the concurrently-shipped main spec `state-scanner-stale-refs-false-parity` (Phase 1-3 core), so it yielded to v1.61.0 and rebased onto that baseline.
+
 ## [1.60.0] - 2026-07-19
 
 ### Changed / Fixed — main spec `state-scanner-stale-refs-false-parity` (false-parity core)

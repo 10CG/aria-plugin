@@ -195,8 +195,12 @@ def _normalize_status(raw: str | None) -> str:
     if _has_token(low, "ready"):
         return "ready"
 
-    # done/complete LAST as fallback (#101 fix Bug 1: prevents substring shadow)
-    for token in ("done", "complete"):
+    # done/complete LAST as fallback (#101 fix Bug 1: prevents substring shadow).
+    # #166 defect 3: `completed` added — #101's `\bcomplete\b` word-boundary dropped
+    # the natural inflection `Completed` into `unknown`. `\bcompleted\b` does NOT
+    # match `uncompleted`/`incomplete` (n/c are word chars, no boundary), so #101
+    # stays closed.
+    for token in ("done", "complete", "completed"):
         if _has_token(low, token):
             return "done"
 
