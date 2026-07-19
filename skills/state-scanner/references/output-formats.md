@@ -611,6 +611,39 @@ stale handoff (age > 30 天 / 720h):
 
 ---
 
+### 变体 6: 远程引用证据陈旧 + gitlink 待核实 (stale-refs-false-parity, v1.60.0+)
+
+当 `multi_remote.remotes[].evidence_grade == "stale_unverified"`
+(证据陈旧: 未落在证据窗内, 但仍在豁免资格范围) 或
+`multi_remote.gitlink_integrity[].status == "orphan_unverified"`
+(gitlink 在该远程不可达, 但时序歧义尚不足以判定 orphaned) 时, 必须逐条点名,
+不得只报一个汇总结论 —— 「陈旧的 equal」不是正证据。
+
+```
+🔄 同步状态
+───────────────────────────────────────────────────────────────
+  当前分支: master (最新，与 origin/master 同步)
+  远程引用: 26h 前同步
+  ⚠️ 证据陈旧 (stale_unverified，parity 结论未经本轮验证):
+     - 主仓库 github
+     - aria 子模块 github
+  ❓ gitlink 待核实 (orphan_unverified，连续未验证 2/3 次):
+     - (github, standards)
+  子模块:
+    ✅ standards: 同步
+    ✅ aria: 同步
+```
+
+字段来源: `evidence_grade` 三值见 `state-snapshot-schema.md §evidence_grade 三值定义`;
+`gitlink_integrity[].status` 九分支域见同文件 `§gitlink_integrity[] status semantics`
+(`consecutive_unverified ≥ k_eff` 时升级为 `orphaned` 并进入 blocking)。
+
+> **未实现, 故不渲染**: `remote_refresh.skipped_remotes[]` 目前 `reason` 域只有
+> `"deadline"` (被 `refresh_deadline_seconds` 砍掉) 一个取值, schema 中不存在
+> backoff 标注 —— 退避机制未落地前不得渲染该词汇。
+
+---
+
 ## 多远程一致性 (Phase 1.12 v1.15.0+, enabled=true 时展示)
 
 ### 变体 1: 所有远程一致

@@ -147,6 +147,21 @@ state_scanner.coordination.mode:
   valid_values: [advisory, block]
   default: "advisory"             # advisory=放行+写推自己 claim+surface 告警 (advisory-over-hardlock); block=旧交互 abort/yield 语义
 
+# 远程引用新鲜度阈值 (state-scanner-stale-refs-false-parity Phase 0)
+# — D15′/D18 阈值, 供 F1′ 双轴谓词 (evidence_grade) + 豁免资格判定使用。
+#   由 multi_remote.py `_load_sync_freshness_config` 单独读取 (与 multi_remote 块正交)。
+state_scanner.sync_freshness.evidence_window_seconds:
+  type: integer
+  default: 3600                   # 证据窗 (E): leg 的 fetched_at 在此窗内才算 "fresh" 直接证据
+
+state_scanner.sync_freshness.hard_cap_days:
+  type: integer
+  default: 7                      # 墙钟硬顶: 超过即 expired, 豁免资格 (X) 一律不再成立
+
+state_scanner.sync_freshness.k_min:
+  type: integer
+  default: 3                      # 连续未验证次数下限; 冷启动下 k_eff = k_min (fail-CLOSED)
+
 tdd.strictness:
   type: string
   valid_values: [advisory, strict, superpowers]

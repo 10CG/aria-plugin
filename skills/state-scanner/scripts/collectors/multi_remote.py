@@ -1,10 +1,13 @@
 """Phase 1.12 — Multi-remote parity collector (v1.15.0+).
 
 Produces the `multi_remote` block documented in `state-scanner/SKILL.md` §1.12
-"多远程 Parity". Canonical schema source-of-truth is `git-remote-helper` SKILL.md;
-this collector is the fallback in-process implementation invoked when the helper
-is not available (or unconditionally, since the current in-tree topology ships
-the collector as the primary integration point).
+"多远程 Parity". Canonical schema source-of-truth is
+`state-scanner/references/state-snapshot-schema.md` (AD-SSME-6), mechanically
+enforced by `scripts/validate_schema_doc.py` — do NOT relocate the schema SOT
+into this module. (Historical note: the SOT pointer used to name
+`git-remote-helper` SKILL.md, back when this collector was only the fallback
+in-process implementation; the in-tree topology now ships the collector as the
+primary integration point and the schema doc as the sole SOT.)
 
 Design invariants (do not break without a snapshot_schema_version bump):
 - stdlib-only (subprocess, json, os, pathlib, re).

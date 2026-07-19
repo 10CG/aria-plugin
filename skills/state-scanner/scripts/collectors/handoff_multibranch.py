@@ -6,8 +6,10 @@ reconstructs the multi-track dashboard track list consumed by TASK-005.
 
 This collector is **read-only**: it uses ``git show`` / ``git ls-tree`` /
 ``git log`` to inspect remote refs without touching the working tree or index.
-It MUST run AFTER ``collect_coordination_fetch`` (TASK-003) so that all remote
-refs are present locally.
+It MUST run AFTER ``collect_remote_refresh`` (Phase 0.5, F3′) so that all remote
+refs are present locally. (Pre-F6′ this was ``collect_coordination_fetch``; that
+collector's network I/O was retired into ``remote_refresh.py`` and
+``coordination_fetch.py`` is now a pure derivation shim.)
 
 Return schema (top-level snapshot key: ``tracks_multibranch``):
 
@@ -55,7 +57,8 @@ Design notes:
 
 Spec: openspec/changes/multi-terminal-coordination/tasks.md §1.4
 Task: TASK-004 (backend-architect)
-Deps: TASK-003 (coordination_fetch.py) + TASK-009 (handoff.py parse_handoff_frontmatter)
+Deps: remote_refresh.py (F3′; supersedes TASK-003 coordination_fetch.py fetching)
+      + TASK-009 (handoff.py parse_handoff_frontmatter)
 """
 
 from __future__ import annotations
@@ -112,7 +115,7 @@ except ImportError:
 # Must match POINTER_FILENAME in handoff.py for consistency.
 _POINTER_FILENAME: str = "latest.md"
 
-# The remote name that coordination_fetch.py fetches from (TASK-003).
+# The remote name that remote_refresh.py fetches from (F3′, Phase 0.5).
 _REMOTE: str = "origin"
 
 # docs/handoff/ tree path (trailing slash required by git ls-tree --name-only)
