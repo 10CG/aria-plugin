@@ -154,5 +154,100 @@ class TestRunLocaleHardening(unittest.TestCase):
         self.assertIn(subj, stdout, "full CJK+emoji+arrow subject must survive LC_ALL=C")
 
 
+class TestNonInteractiveGitContract(unittest.TestCase):
+    """Task 3.4 (main spec stale-refs-false-parity) — git can never block on a
+    prompt. Asserts the MECHANISM (env vars + stdin wiring), not just that some
+    command happened to succeed: in this test environment no git command would
+    prompt anyway, so a passing end-to-end call proves nothing on its own
+    (memory: `noop_in_test_env_hardening_needs_mechanism_assertion`).
+    """
+
+    def test_terminal_prompt_disabled(self):
+        from collectors._common import _noninteractive_git_env
+
+        self.assertEqual(_noninteractive_git_env(5)["GIT_TERMINAL_PROMPT"], "0")
+
+    def test_locale_hardening_preserved(self):
+        """#143 must survive task 3.4's rewrite of the env construction."""
+        from collectors._common import _noninteractive_git_env
+
+        self.assertEqual(_noninteractive_git_env(5)["LC_ALL"], "C")
+
+    def test_ssh_batchmode_and_connect_timeout(self):
+        from collectors._common import _noninteractive_git_env
+
+        cmd = _noninteractive_git_env(5)["GIT_SSH_COMMAND"]
+        self.assertIn("BatchMode=yes", cmd)
+        self.assertIn("ConnectTimeout=4", cmd)
+
+    def test_connect_timeout_capped_and_below_subprocess_deadline(self):
+        """ConnectTimeout must stay STRICTLY below the subprocess timeout, else the
+        two expire together, TimeoutExpired wins, and ssh's classifiable failure
+        never surfaces (regression-locks a real bug: `min(timeout, 10)` made the
+        real-git test below return rc=124).
+
+        ⚠️ Assert on the GIT_SSH_COMMAND VALUE, never on the env dict — a failed
+        assertion renders its subject, and this dict is the process environment
+        (Rule #7: it carries live tokens).
+        """
+        from collectors._common import _noninteractive_git_env
+
+        def ssh_cmd(t: int) -> str:
+            return _noninteractive_git_env(t)["GIT_SSH_COMMAND"]
+
+        self.assertIn("ConnectTimeout=10", ssh_cmd(600))
+        self.assertIn("ConnectTimeout=9", ssh_cmd(10))
+        self.assertIn("ConnectTimeout=1", ssh_cmd(0))
+        self.assertIn("ConnectTimeout=1", ssh_cmd(-3))
+
+    def test_existing_ssh_command_not_clobbered(self):
+        """An adopter's custom ssh wrapper (proxy jump / alternate identity) wins —
+        clobbering it would break the fetch, a louder failure than a hang."""
+        from collectors._common import _noninteractive_git_env
+
+        with mock.patch.dict(os.environ, {"GIT_SSH_COMMAND": "ssh -J bastion"}):
+            self.assertEqual(_noninteractive_git_env(5)["GIT_SSH_COMMAND"], "ssh -J bastion")
+
+    def test_run_passes_devnull_stdin_and_hardened_env(self):
+        """`capture_output=True` governs stdout/stderr only — without an explicit
+        `stdin=DEVNULL` the child inherits this process's stdin and can wait on it."""
+        captured = {}
+
+        class _FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def _fake_run(cmd, **kwargs):
+            captured.update(kwargs)
+            return _FakeCompleted()
+
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            _run(["git", "status"], Path("."), timeout=5)
+
+        # Rule #7: pull the two values out FIRST — asserting against
+        # `captured["env"]` itself would render the whole live environment
+        # (tokens included) into the failure diff.
+        prompt = captured["env"]["GIT_TERMINAL_PROMPT"]
+        ssh_command = captured["env"]["GIT_SSH_COMMAND"]
+        self.assertEqual(captured["stdin"], subprocess.DEVNULL)
+        self.assertEqual(prompt, "0")
+        self.assertIn("BatchMode=yes", ssh_command)
+
+    def test_real_git_does_not_hang_on_unreachable_ssh_remote(self):
+        """End-to-end in the REAL exec environment (memory:
+        `defensive_fix_end2end_in_real_exec_env`): a genuine git call against an
+        unroutable SSH host must return a non-zero rc well inside the deadline
+        rather than sitting on a host-key/passphrase prompt. Uses TEST-NET-1
+        (RFC 5737, guaranteed unroutable) so the box's own network config cannot
+        turn this into a real connection."""
+        with tempfile.TemporaryDirectory() as td:
+            rc, _, _ = _run(
+                ["git", "ls-remote", "ssh://git@192.0.2.1/x.git"], Path(td), timeout=6
+            )
+        self.assertNotEqual(rc, 0)
+        self.assertNotEqual(rc, 124, "hit the subprocess deadline = it hung, not failed fast")
+
+
 if __name__ == "__main__":
     unittest.main()
