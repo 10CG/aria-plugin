@@ -624,6 +624,25 @@ class TestRemotePolicyNamespace(unittest.TestCase):
         self.assertEqual(out["enforced_remotes"], ["origin"])
         self.assertEqual(out["read_only_remotes"], ["mirror"])
 
+    def test_absent_skill_BLOCK_inherits_top_level(self):
+        """Review I1 regression lock: the whole `state_scanner.multi_remote` block is
+        MISSING (the most common adopter shape) and the policy lives only at top level.
+
+        The first version of `_load_config` early-returned `{}` on an empty block, so
+        this case silently got no policy at all — and the original inheritance test
+        missed it because its fixture kept the block non-empty with an unrelated
+        `enabled: True`. Exercise `_load_config` end-to-end (not the pure resolver)
+        so the early-return path itself is covered."""
+        from collectors.multi_remote import _load_config
+
+        with tmp_repo() as repo:
+            write_file(
+                repo / ".aria" / "config.json",
+                json.dumps({"multi_remote": {"read_only_remotes": ["mirror"]}}),
+            )
+            cfg = _load_config(repo)
+        self.assertEqual(cfg.get("read_only_remotes"), ["mirror"])
+
     def test_absent_skill_key_inherits_top_level(self):
         from collectors.multi_remote import _resolve_remote_policy
 

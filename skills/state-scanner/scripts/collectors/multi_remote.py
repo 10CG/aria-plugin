@@ -190,9 +190,18 @@ def _load_config(project_root: Path) -> dict[str, Any]:
         return {}
     ss = raw.get("state_scanner") or {}
     block = dict(ss.get("multi_remote") or {})
-    if not block:
-        return {}
-    return _resolve_remote_policy(block, raw.get("multi_remote") or {})
+    # ⚠️ No early return on an EMPTY/ABSENT skill block. That is the MOST COMMON
+    # adopter shape (most projects never write `state_scanner.multi_remote` at all),
+    # and per the contract an absent block IS `enforced_remotes == null` ⇒ it must
+    # inherit. Returning `{}` here silently dropped the top-level policy, leaving the
+    # cross-skill split-brain task 1.6 claims to close fully intact for those repos —
+    # a textbook «勾选完成≠运行现实». (Both review agents caught this independently;
+    # the first inheritance test passed only because its fixture kept the block
+    # non-empty with an unrelated `enabled: True` — fixture shape hugging the bug.)
+    # The "missing config FILE → `{}` byte-identically" guarantee is upheld by the
+    # `cfg_path.exists()` gate above, not by this block's emptiness.
+    merged = _resolve_remote_policy(block, raw.get("multi_remote") or {})
+    return merged
 
 
 def _resolve_remote_policy(
@@ -1505,6 +1514,24 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     for sb in submodule_blocks:
         enforced_entries.extend(_enforced_entries_of(sb))
 
+    # Observability (review I2): the verdict is computed over a SUBSET, so the subset
+    # must be visible. Otherwise two snapshots are unexplainable: (a) every remote
+    # read-only ⇒ empty participating set ⇒ clause-1 false, while `remotes[]` shows
+    # nothing but equal/fresh and no reason anywhere; (b) a read-only remote with
+    # fetch_ok=false sits visibly in `remotes[]` while `has_unreachable_remote` stays
+    # false. A red with no reason is a red operators learn to ignore — which lands us
+    # back at trusting a lying snapshot by a slower route.
+    enforced_names = sorted({str(e.get("name")) for e in enforced_entries})
+    all_names = sorted({str(e.get("name")) for e in all_remote_entries})
+    excluded_names = [n for n in all_names if n not in set(enforced_names)]
+    if not enforced_entries and all_remote_entries:
+        r.soft_error(
+            "enforced_set_empty",
+            f"remote policy excluded every discovered remote ({', '.join(all_names)}); "
+            "overall_parity is fail-CLOSED false on zero participating remotes — check "
+            "enforced_remotes / read_only_remotes (skill-level or top-level multi_remote)",
+        )
+
     has_unreachable_remote = any(
         _has_unreachable_remote(e.get("fetch_ok", "not_attempted"))
         for e in enforced_entries
@@ -1524,6 +1551,9 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         "has_unreachable_remote": has_unreachable_remote,
         "has_pending_push": has_pending_push,
         "gitlink_integrity": gitlink_integrity_list,
+        # Which remotes the verdict was actually computed over (review I2). Additive.
+        "enforced_remotes_resolved": enforced_names,
+        "excluded_read_only": excluded_names,
     }
 
     r.data = data

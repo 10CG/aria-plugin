@@ -242,8 +242,11 @@ class TestNonInteractiveGitContract(unittest.TestCase):
         (RFC 5737, guaranteed unroutable) so the box's own network config cannot
         turn this into a real connection."""
         with tempfile.TemporaryDirectory() as td:
+            # timeout=12 ⇒ ConnectTimeout=10 (capped), leaving a 2s margin instead of
+            # the original 1s — a slow CI box could otherwise trip the deadline first
+            # and turn a correct fast-fail into a spurious rc=124 (review Minor 3).
             rc, _, _ = _run(
-                ["git", "ls-remote", "ssh://git@192.0.2.1/x.git"], Path(td), timeout=6
+                ["git", "ls-remote", "ssh://git@192.0.2.1/x.git"], Path(td), timeout=12
             )
         self.assertNotEqual(rc, 0)
         self.assertNotEqual(rc, 124, "hit the subprocess deadline = it hung, not failed fast")

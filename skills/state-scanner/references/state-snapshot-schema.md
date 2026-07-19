@@ -571,6 +571,17 @@ multi_remote:
                                           # [] only when the repo declares zero submodules
                                           # (`submodule_paths` empty — collect_multi_remote skips
                                           # the R×S loop entirely, no git calls paid)
+  enforced_remotes_resolved: list[str]  # Phase 4 (task 6.1/6.2) — the remote NAMES the
+                                        #   verdict was actually computed over, after
+                                        #   enforced_remotes/read_only_remotes filtering.
+                                        #   `overall_parity` / `has_unreachable_remote` are
+                                        #   functions of THIS set, not of `remotes[]`, so it
+                                        #   must be readable or a filtered red has no reason.
+                                        #   Empty ⇒ policy excluded everything ⇒ fail-CLOSED
+                                        #   false + an `enforced_set_empty` soft error.
+  excluded_read_only: list[str]         # complement: discovered but NOT enforced. Their
+                                        #   entries still appear verbatim in `remotes[]` —
+                                        #   filtering governs the verdict, it never hides data.
 
 GitlinkPair:
   remote: str                     # R — main repo's enforced remote name

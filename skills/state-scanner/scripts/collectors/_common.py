@@ -323,13 +323,22 @@ def _noninteractive_git_env(timeout: int) -> dict[str, str]:
     It must be STRICTLY smaller than the subprocess deadline (hence `timeout - 1`),
     otherwise the two expire together, TimeoutExpired wins the race, and ssh's own
     bounded failure — which carries a classifiable error instead of an opaque
-    rc=124 — never gets to happen. Verified end-to-end against an unroutable host
+    rc=124 — never gets to happen.
+
+    ⚠️ Boundary (review M1): the inequality needs `timeout >= 2`, so the caller's
+    timeout is floored at 2 for THIS derivation only. A 1s git timeout is already
+    outside any regime where an ssh handshake completes; giving the ssh side one
+    extra second changes nothing except restoring the ordering.
+    Verified end-to-end against an unroutable host
     in `test_common.py`: with `min(timeout, 10)` that test returned rc=124 (hung to
     the deadline); with `timeout - 1` it returns ssh's own connect failure.
     """
     env = {**os.environ, "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"}
     if not env.get("GIT_SSH_COMMAND"):
-        connect_timeout = max(1, min(int(timeout) - 1, 10))
+        # Floor the caller timeout at 2 so the strict inequality below actually
+        # holds: at timeout==1, `max(1, 0) == 1 == timeout` would reinstate the very
+        # race this derivation exists to avoid (review M1).
+        connect_timeout = max(1, min(max(int(timeout), 2) - 1, 10))
         env["GIT_SSH_COMMAND"] = (
             f"ssh -o BatchMode=yes -o ConnectTimeout={connect_timeout}"
         )

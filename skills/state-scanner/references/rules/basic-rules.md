@@ -151,13 +151,25 @@ conditions:
 
   # OQ-C 裁决 (owner 2026-07-19, tasks 1.3/9.3): 建议层降级, 不造有状态冷却。
   degrade_when:
-    match: "multi_remote.has_unreachable_remote == true"
+    match: |
+      multi_remote.has_unreachable_remote == true
+      OR 所有 enforced remote 的 evidence_grade ∈ {stale_unverified, expired}
+      (即: 本次 scan 没有任何一条腿拿到新鲜证据)
     behavior: |
       不走上方 dispatch, 换成一条「离线 / 远端不可达, 同步状态不可知」降级横幅
       (复用 coordination_fetch 现有 degraded 红条先例)。
     rationale: |
-      全 fetch 失败时六路 dispatch 的输入本身就不可信 —— 逐条报 remote drift 是拿
+      没有任何新鲜证据时六路 dispatch 的输入本身就不可信 —— 逐条报 remote drift 是拿
       不可知当已知。降级横幅诚实且天然去重 (一次 scan 一条), 不需要记忆「上次提过谁」。
+    🔴_why_not_has_unreachable_alone: |
+      初版只写 `has_unreachable_remote == true`, 而该 flag 的实现是
+      `fetch_ok == "false"` —— **离线扫描时每条腿是 `not_attempted` 而非 `false`**
+      (remote_refresh 在 is_scan_offline() 下走 _not_attempted_outcome), 所以
+      `has_unreachable_remote` 为 false ⇒ 降级横幅在它点名要覆盖的「离线」场景下
+      永不触发, dispatch 照常在 expired 证据上逐条报 drift。三态语义 (true /
+      false / not_attempted) 不能压回二值来判「能不能信」: 「没去问」和「问了失败」
+      对可达性是两回事, 但对**证据是否新鲜**是同一回事 —— 所以第二个子句按
+      evidence_grade 判, 而不是把 not_attempted 硬塞进 unreachable。
     scope: |
       🔴 只作用于建议层, 不作用于 `overall_parity` 裁决层。裁决层去抖会重新引入假绿 ——
       那正是本 Spec 要根治的病。裁决层照常 fail-CLOSED 报 false。

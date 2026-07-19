@@ -164,24 +164,28 @@ class TestSnapshotSelfConsistencyAC5(unittest.TestCase):
     HEALTHY_TRACKS = {
         "tracks": [{"track_id": "t-1", "filename": "2026-07-19-x.md", "branch": "master"}]
     }
-    CLAIMS_PARITY = {"multi_remote": {"overall_parity": True}, "current_branch": {"reason": None}}
+    CLAIMS_PARITY = {
+        "multi_remote": {"overall_parity": True, "enforced_remotes_resolved": ["origin"]},
+        "current_branch": {"reason": None},
+    }
 
     def _mock_run(self, *, ancestor_rc: int, log_rc: int = 0, sha: str = "deadbee0"):
         def fake(cmd, cwd, timeout=5):
             if cmd[:3] == ["git", "log", "-1"]:
-                return (log_rc, f"{sha}\n" if log_rc == 0 else "", "")
+                return (log_rc, f"{sha}\n" if (log_rc == 0 and sha) else "", "")
             if cmd[:2] == ["git", "merge-base"]:
                 return (ancestor_rc, "", "")
             return (1, "", "unmocked")
         return fake
 
-    def _check(self, git_data, tracks_data, sync_data, *, ancestor_rc, log_rc=0):
+    def _check(self, git_data, tracks_data, sync_data, *, ancestor_rc, log_rc=0,
+               sha="deadbee0"):
         from unittest import mock
 
         import scan
 
         with mock.patch.object(scan, "_run", side_effect=self._mock_run(
-            ancestor_rc=ancestor_rc, log_rc=log_rc
+            ancestor_rc=ancestor_rc, log_rc=log_rc, sha=sha
         )):
             return scan._check_snapshot_self_consistency(
                 Path("/x"), git_data, tracks_data, sync_data
@@ -205,14 +209,17 @@ class TestSnapshotSelfConsistencyAC5(unittest.TestCase):
     def test_honest_parity_false_is_not_a_contradiction(self):
         """The snapshot already admits it is not in sync — the unreachable tracks are
         the EVIDENCE for that, not a contradiction of it."""
-        sync = {"multi_remote": {"overall_parity": False}, "current_branch": {"reason": None}}
+        sync = {
+            "multi_remote": {"overall_parity": False, "enforced_remotes_resolved": ["origin"]},
+            "current_branch": {"reason": None},
+        }
         errs = self._check(self.HEALTHY_GIT, self.HEALTHY_TRACKS, sync, ancestor_rc=1)
         self.assertEqual(errs, [])
 
     def test_non_empty_reason_is_not_a_contradiction(self):
         """AC-5 is a disjunction: a non-empty `reason` also discharges it."""
         sync = {
-            "multi_remote": {"overall_parity": True},
+            "multi_remote": {"overall_parity": True, "enforced_remotes_resolved": ["origin"]},
             "current_branch": {"reason": "network_timeout"},
         }
         errs = self._check(self.HEALTHY_GIT, self.HEALTHY_TRACKS, sync, ancestor_rc=1)
@@ -231,19 +238,104 @@ class TestSnapshotSelfConsistencyAC5(unittest.TestCase):
         self.assertEqual(errs, [])
 
     def test_detached_head_makes_no_claim(self):
-        git_data = {"current_branch": "master", "detached_head": True}
-        errs = self._check(git_data, self.HEALTHY_TRACKS, self.CLAIMS_PARITY, ancestor_rc=1)
-        self.assertEqual(errs, [])
+        """Asserts the guard SHORT-CIRCUITS (zero subprocesses), not merely that the
+        result is empty — an empty list alone would also pass with `_run` broken
+        (review M5)."""
+        from unittest import mock
 
-    def test_unresolvable_commit_makes_no_claim(self):
-        """`git log` cannot name the introducing commit ⇒ no evidence in either
-        direction ⇒ stay silent rather than guess (fail-toward-quiet on unknowns,
-        since the loud path here would be a false accusation of inconsistency)."""
+        import scan
+
+        git_data = {"current_branch": "master", "detached_head": True}
+        with mock.patch.object(scan, "_run") as m:
+            errs = scan._check_snapshot_self_consistency(
+                Path("/x"), git_data, self.HEALTHY_TRACKS, self.CLAIMS_PARITY
+            )
+        self.assertEqual(errs, [])
+        self.assertEqual(m.call_count, 0)
+
+    def test_unevaluable_track_is_recorded_not_swallowed(self):
+        """`git log` FAILED (rc != 0) ⇒ the detector could not evaluate. That is not
+        "all clear" and must not ship as silence while the snapshot claims health.
+
+        This replaces an earlier version of this test that asserted `errs == []` for
+        the same input — i.e. it ratified a fail-OPEN hole (review C1/C2). The choice
+        was never binary between silence and a false accusation: `inconclusive` is a
+        third verdict, and it is the honest one. The rc != 0 population correlates
+        positively with the stale-ref world this detector guards, so silence there is
+        precisely the wrong default."""
         errs = self._check(
             self.HEALTHY_GIT, self.HEALTHY_TRACKS, self.CLAIMS_PARITY,
             ancestor_rc=1, log_rc=1,
         )
+        self.assertEqual(len(errs), 1)
+        self.assertEqual(errs[0]["kind"], "snapshot_consistency_inconclusive")
+        self.assertEqual(errs[0]["tracks"][0]["filename"], "2026-07-19-x.md")
+        # Rule #7: only a bounded label survives, never raw stderr.
+        self.assertIn("error", errs[0]["tracks"][0])
+
+    def test_empty_log_output_is_a_real_answer_not_an_error(self):
+        """rc == 0 with empty stdout means git answered: this file has no commit on
+        that ref. Genuinely nothing to claim — must NOT be reported as inconclusive.
+        This is the twin that keeps the C1 fix from over-correcting into noise."""
+        errs = self._check(
+            self.HEALTHY_GIT, self.HEALTHY_TRACKS, self.CLAIMS_PARITY,
+            ancestor_rc=1, log_rc=0, sha="",
+        )
         self.assertEqual(errs, [])
+
+    def test_detection_uses_enforced_set_not_hardcoded_origin(self):
+        """Review I4: the detector must query the SAME remotes the verdict used.
+
+        Fixture pins a repo whose enforced remote is `upstream`, not `origin` — with
+        the old hardcoded `origin/<branch>` the git call would return empty on every
+        track and the detector would silently never fire."""
+        from unittest import mock
+
+        import scan
+
+        seen_refs = []
+
+        def fake(cmd, cwd, timeout=5):
+            if cmd[:3] == ["git", "log", "-1"]:
+                seen_refs.append(cmd[4])
+                return (0, "deadbee0\n", "")
+            if cmd[:2] == ["git", "merge-base"]:
+                return (1, "", "")
+            return (1, "", "unmocked")
+
+        sync = {
+            "multi_remote": {
+                "overall_parity": True,
+                "enforced_remotes_resolved": ["upstream"],
+            },
+            "current_branch": {"reason": None},
+        }
+        with mock.patch.object(scan, "_run", side_effect=fake):
+            errs = scan._check_snapshot_self_consistency(
+                Path("/x"), self.HEALTHY_GIT, self.HEALTHY_TRACKS, sync
+            )
+        self.assertEqual(seen_refs, ["upstream/master"])
+        self.assertEqual(len(errs), 1)
+        self.assertEqual(errs[0]["tracks"][0]["remote"], "upstream")
+
+    def test_empty_enforced_set_makes_no_claim(self):
+        """If the policy left no participating remotes, there is nothing to compare
+        against — the empty-set red is already reported by multi_remote's
+        `enforced_set_empty` soft error, this detector must not pile on."""
+        from unittest import mock
+
+        import scan
+
+        sync = {
+            "multi_remote": {"overall_parity": True, "enforced_remotes_resolved": []},
+            "current_branch": {"reason": None},
+        }
+        with mock.patch.object(scan, "_run") as m:
+            errs = scan._check_snapshot_self_consistency(
+                Path("/x"), self.HEALTHY_GIT, self.HEALTHY_TRACKS, sync
+            )
+        self.assertEqual(errs, [])
+        self.assertEqual(m.call_count, 0)
 
     def test_missing_tracks_block_is_tolerated(self):
         errs = self._check(self.HEALTHY_GIT, {}, self.CLAIMS_PARITY, ancestor_rc=1)

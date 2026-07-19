@@ -524,13 +524,13 @@ Phase 1.12 输出直接驱动阶段 2 的两条推荐规则（均不阻断，仅
 git -C <path> remote | sort -u
 ```
 
-若 `state_scanner.multi_remote.enforced_remotes` 非 null, 则使用白名单代替自动发现。不存在的 remote 输出 `reachable: false, reason: not_found`。
+若 `enforced_remotes` 非 null 则使用白名单代替自动发现 (skill 级为 null 时继承顶层 `multi_remote.enforced_remotes`, task 1.6)。**配置了但仓库里不存在的 remote 名不产出条目** —— 记入 `remote_refresh.no_matching_remotes[]` 观测字段, 绝不伪造成一条 ghost fail 腿 (F5′/RM-3)。
 
 **步骤 2: 获取 remote HEAD**
 
 读取 `refs/remotes/<remote>/<branch>` 本地缓存 (`method: "local_refs"`) —— **单一路径**。
 
-> **`verify_mode` / `ls_remote` 已退役** (task 1.10/OQ-F, aria-plugin v1.61.0): F3′ `remote_refresh`
+> **`verify_mode` / `ls_remote` 已退役** (task 1.10/OQ-F, aria-plugin v1.62.0): F3′ `remote_refresh`
 > (Phase 0.5) 已在任何 Phase-1 collector 读本地 git 状态之前 fetch 过每条 enforced 腿, 本地 ref 即
 > 服务器真相, 再打一次 `ls-remote` 是双倍网络换同一个答案; 更要命的是它构成**第三个独立可达性
 > 计算点** (与 local_refs、F3′ 腿记录并列), 各有各的新鲜度语义与错误分类, 彼此不一致时无裁决规则
@@ -573,8 +573,8 @@ has_pending_push=false
 for each remote_entry:
   if remote_entry.parity in ["behind", "diverged"]:
     overall_parity=false
-  if remote_entry.reachable == false:
-    has_unreachable_remote=true
+  if remote_entry.fetch_ok == "false":     # 三态: true / false / not_attempted
+    has_unreachable_remote=true            # ⚠️ 不是 reachable — 见下方说明
   if remote_entry.parity == "ahead":
     has_pending_push=true
 ```
@@ -612,7 +612,7 @@ helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
 > 不是 `reachable`。字段本身保留 (golden fixture / schema / 下游消费方都引用它), 但不要再拿它
 > 当可达性判据。
 
-**fail-soft 原则**: 任一 remote 不可达 → 该条目 `parity: unknown, reachable: false` + `reason` 枚举, 不阻断扫描, 不影响其他 remote 的检测。
+**fail-soft 原则**: 任一 remote 不可达 → 该条目 `parity: unknown` + `reason` 枚举 + 其 F3′ 腿记 `fetch_ok: "false"`, 不阻断扫描, 不影响其他 remote 的检测。(`reachable` 自 task 1.10 起恒 true, 不再承载此语义。)
 
 > **F10″/Phase 2A 提示 (state-scanner-stale-refs-false-parity 主 Spec)**: 本节 (§10) 描述的仍是 v1.15.0 的原始 helper/fallback 契约, 未反映 Phase 1 (`remote_refresh`/`evidence_grade`/`fetch_ok` 三态) 与 Phase 2A (`gitlink_integrity[]` 跨仓可达性检查) 的现行判据。**新增的 `sync_status.multi_remote.gitlink_integrity[]` 字段与本节 §10.2-10.5 描述的四状态守卫完全正交** — 它检测的不是「本仓与 remote 的 parity」, 而是「主仓已发布的 gitlink 在子模块自己的 remote 上是否可达」。字段/状态枚举的真 SOT 见 [state-snapshot-schema.md](./state-snapshot-schema.md) §`gitlink_integrity[]` status semantics; 谓词定义见 [predicate-domain-table.md](./predicate-domain-table.md) `gitlink_orphaned(R)`。
 

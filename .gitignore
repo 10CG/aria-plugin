@@ -11,3 +11,6 @@ skills/*-workspace/
 # File-extension-specific pattern (not directory-level) so metrics/.gitkeep stays tracked.
 metrics/*.json
 metrics/*.jsonl
+
+# Runtime caches written by state-scanner collectors (per-scan state, never source)
+**/.aria/cache/

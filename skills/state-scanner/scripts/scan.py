@@ -95,7 +95,7 @@ from collectors import (
     log,
     scan_now,
 )
-from collectors._common import _run
+from collectors._common import _run, classify_git_error
 
 SNAPSHOT_SCHEMA_VERSION = "1.0"
 
@@ -111,52 +111,90 @@ def _same_branch_head_unreachable_tracks(
     project_root: Path,
     git_data: dict[str, Any],
     tracks_data: dict[str, Any],
+    enforced_remotes: list[str],
     timeout: int = 5,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """AC-5 support (task 2.12) — find handoff tracks published on the CURRENT
     branch's remote counterpart whose introducing commit HEAD cannot reach.
+
+    Checked against the SAME remote set the verdict was computed over
+    (`enforced_remotes_resolved`), never a hardcoded `origin` (review I4). Two
+    distinct bugs come from hardcoding it: (a) if `origin` is read-only or outside
+    the allowlist, `overall_parity` can legitimately be true while `origin` itself is
+    arbitrarily stale ⇒ the detector fires a FALSE contradiction against a remote the
+    verdict never consulted; (b) a repo whose primary remote is not named `origin`
+    gets empty `git log` output on every track ⇒ the detector silently never fires.
+    Detection set and verdict set must be the same set, or the comparison is
+    meaningless in both directions.
 
     Scope discipline, verbatim from AC-5: only tracks whose ``branch`` equals the
     HEAD branch qualify. "Any commit HEAD cannot reach" would flag every repo that
     merely has other active branches — a false-red on healthy repos, and the AC
     text calls that out explicitly as the wrong predicate.
 
-    Returns one dict per offending track (empty list = consistent, and also the
-    result whenever HEAD is detached or the tracks collector produced nothing).
+    Returns ``(offenders, inconclusive)``:
+    - ``offenders``: tracks proven unreachable from HEAD.
+    - ``inconclusive``: tracks the detector could not EVALUATE (git command failed).
+
+    🔴 The two must not be merged into one "nothing to report" bucket. `rc != 0` and
+    `rc == 0 with empty output` look alike at the call site but mean opposite things:
+    the second is a real answer ("this file has no commit on that ref"), the first is
+    the absence of an answer (`origin/<branch>` missing locally, fetch never landed,
+    subprocess deadline, git binary gone). And the rc != 0 population correlates
+    POSITIVELY with the condition being detected — a missing or unfetchable
+    `origin/<branch>` is precisely the stale-remote-ref world this spec exists to stop
+    lying about. Swallowing it would make the one detector guarding the originating
+    accident go quiet exactly in the accident's neighborhood, while the snapshot still
+    ships green. That is fail-OPEN in a codebase whose invariant is 宁可报红, 不可假绿.
     """
     branch = git_data.get("current_branch")
     if not branch or git_data.get("detached_head"):
-        return []
+        return [], []
     tracks = tracks_data.get("tracks")
     if not isinstance(tracks, list):
-        return []
+        return [], []
+    if not enforced_remotes:
+        return [], []
 
     offenders: list[dict[str, str]] = []
+    inconclusive: list[dict[str, str]] = []
     for t in tracks:
         if not isinstance(t, dict) or t.get("branch") != branch:
             continue
         filename = t.get("filename")
         if not filename:
             continue
-        rc, out, _ = _run(
-            [
+        for remote in enforced_remotes:
+            cmd = [
                 "git", "log", "-1", "--format=%H",
-                f"origin/{branch}", "--", f"docs/handoff/{filename}",
-            ],
-            project_root,
-            timeout=timeout,
-        )
-        sha = out.strip()
-        if rc != 0 or not sha:
-            continue  # cannot establish the commit ⇒ no claim either way
-        rc_anc, _, _ = _run(
-            ["git", "merge-base", "--is-ancestor", sha, "HEAD"], project_root, timeout=timeout
-        )
-        if rc_anc != 0:
-            offenders.append(
-                {"track_id": str(t.get("track_id", "")), "filename": str(filename), "commit": sha[:7]}
+                f"{remote}/{branch}", "--", f"docs/handoff/{filename}",
+            ]
+            rc, out, err = _run(cmd, project_root, timeout=timeout)
+            if rc != 0:
+                # Rule #7: route stderr through the typed channel — a bounded label
+                # survives, the raw text (which can carry a credential URL) does not.
+                inconclusive.append({
+                    "filename": str(filename),
+                    "remote": str(remote),
+                    "error": classify_git_error(rc, err, "git log").label,
+                })
+                continue
+            sha = out.strip()
+            if not sha:
+                continue  # a real answer: no commit for this file on that ref
+            rc_anc, _, _ = _run(
+                ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+                project_root,
+                timeout=timeout,
             )
-    return offenders
+            if rc_anc != 0:
+                offenders.append({
+                    "track_id": str(t.get("track_id", "")),
+                    "filename": str(filename),
+                    "remote": str(remote),
+                    "commit": sha[:7],
+                })
+    return offenders, inconclusive
 
 
 def _check_snapshot_self_consistency(
@@ -189,27 +227,46 @@ def _check_snapshot_self_consistency(
     means the snapshot is telling the truth about being behind/uncertain, and the
     tracks are simply the evidence for it.
     """
-    offenders = _same_branch_head_unreachable_tracks(project_root, git_data, tracks_data)
-    if not offenders:
-        return []
-
+    # Cheap guards first (M4): if the snapshot is not claiming health, nothing the
+    # detector finds can be a contradiction — skip the subprocesses entirely.
     multi = sync_data.get("multi_remote") or {}
-    if multi.get("overall_parity") is not True:
-        return []
     current = sync_data.get("current_branch") or {}
-    if current.get("reason"):
+    claims_health = multi.get("overall_parity") is True and not current.get("reason")
+    if not claims_health:
         return []
 
-    return [{
-        "kind": "snapshot_self_contradiction",
-        "detail": (
-            f"{len(offenders)} handoff track(s) on origin/{git_data.get('current_branch')} "
-            "are unreachable from HEAD, yet overall_parity=true with no reason on the "
-            "current branch (AC-5). Remote-tracking refs are likely stale despite the "
-            "F3′ refresh — re-run with a successful fetch before trusting parity."
-        ),
-        "tracks": offenders,
-    }]
+    enforced_remotes = multi.get("enforced_remotes_resolved") or []
+    offenders, inconclusive = _same_branch_head_unreachable_tracks(
+        project_root, git_data, tracks_data, enforced_remotes
+    )
+
+    out: list[dict[str, Any]] = []
+    if offenders:
+        out.append({
+            "kind": "snapshot_self_contradiction",
+            "detail": (
+                f"{len(offenders)} handoff track(s) on origin/{git_data.get('current_branch')} "
+                "are unreachable from HEAD, yet overall_parity=true with no reason on the "
+                "current branch (AC-5). Remote-tracking refs are likely stale despite the "
+                "F3′ refresh — re-run with a successful fetch before trusting parity."
+            ),
+            "tracks": offenders,
+        })
+    if inconclusive:
+        # Distinct from the contradiction above: we do not know whether the snapshot
+        # is lying, and that itself must be on the record while it claims health.
+        # Silence here would be indistinguishable from "checked, all clear".
+        out.append({
+            "kind": "snapshot_consistency_inconclusive",
+            "detail": (
+                f"AC-5 could not be evaluated for {len(inconclusive)} track(s) on "
+                f"origin/{git_data.get('current_branch')} (git command failed) while the "
+                "snapshot claims overall_parity=true with no reason. Treat the parity "
+                "verdict as unverified for this scan."
+            ),
+            "tracks": inconclusive,
+        })
+    return out
 
 
 def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
