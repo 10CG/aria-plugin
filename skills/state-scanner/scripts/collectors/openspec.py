@@ -159,6 +159,34 @@ def _staleness_days(proposal: Path, proposal_text: str) -> int:
     return max(0, int((scan_now().timestamp() - ts) / 86400))
 
 
+def _detect_stray_openspec_artifacts(spec_root: Path, r: CollectorResult) -> list[str]:
+    """#166 defect 1: proposal-like artifacts under openspec/ that are NOT in the
+    canonical openspec/changes/<id>/ layout — evidence that changes/ drifted
+    (proposals landed in the wrong place). Two real shapes: a bare ``*proposal*.md``
+    directly under openspec/, or a subdir (other than changes/, archive/) holding a
+    proposal.md. Excludes the standard project.md. Names feed the layout_drift detail.
+
+    An unreadable openspec/ (permission/IO) is surfaced as ``openspec_scan_failed``
+    soft_error — NOT swallowed (a silently-empty result would make an unreadable
+    openspec/ look identical to a non-OpenSpec repo, the exact false-green this
+    change exists to kill; matches every other read-failure in this module).
+    """
+    stray: list[str] = []
+    try:
+        entries = sorted(spec_root.iterdir())
+    except OSError as e:
+        r.soft_error("openspec_scan_failed", f"openspec/ unreadable: {e}")
+        return stray
+    for entry in entries:
+        if entry.name in ("changes", "archive"):
+            continue
+        if entry.is_file() and "proposal" in entry.name and entry.suffix == ".md":
+            stray.append(entry.name)
+        elif entry.is_dir() and (entry / "proposal.md").is_file():
+            stray.append(entry.name + "/")
+    return stray
+
+
 def collect_openspec(project_root: Path) -> CollectorResult:
     """Scan openspec/changes/ + openspec/archive/ for active + archived Specs."""
     r = CollectorResult()
@@ -166,27 +194,18 @@ def collect_openspec(project_root: Path) -> CollectorResult:
     changes_dir = spec_root / "changes"
     archive_dir = spec_root / "archive"
 
-    if not changes_dir.is_dir():
-        r.data = {
-            "configured": False,
-            "changes": {"total": 0, "items": []},
-            "archive": {"total": 0, "items": []},
-            "pending_archive": [],
-            "design_deferred": [],
-            "carry_forward_inventory": {
-                "total": 0,
-                "active_change_count": 0,
-                "by_change": {},
-            },
-        }
-        return r
-
     change_items: list[dict[str, Any]] = []
     pending_archive: list[dict[str, Any]] = []
     design_deferred: list[dict[str, Any]] = []
     carry_forward_by_change: dict[str, dict[str, Any]] = {}
     carry_forward_total = 0
-    for d in sorted(changes_dir.iterdir()):
+
+    # #166 defect 1: openspec/ exists but openspec/changes/ vanished (git drops empty
+    # dirs after the last spec is archived) → do NOT early-return a silent all-zero
+    # payload. The changes loop below no-ops when changes/ is absent, archive/ is still
+    # scanned orthogonally, and the layout_drift verdict is emitted after that scan
+    # (so it can reuse archive_items instead of probing archive/ a second time).
+    for d in sorted(changes_dir.iterdir()) if changes_dir.is_dir() else []:
         if not d.is_dir():
             continue
         proposal = d / "proposal.md"
@@ -265,7 +284,14 @@ def collect_openspec(project_root: Path) -> CollectorResult:
 
     archive_items: list[dict[str, Any]] = []
     if archive_dir.is_dir():
-        for d in sorted(archive_dir.iterdir()):
+        # fail-soft listing: an unreadable archive/ must neither crash the whole scan
+        # nor vanish silently (#166 review, silent-failure-hunter).
+        try:
+            archive_entries = sorted(archive_dir.iterdir())
+        except OSError as e:
+            r.soft_error("openspec_scan_failed", f"openspec/archive/ unreadable: {e}")
+            archive_entries = []
+        for d in archive_entries:
             if not d.is_dir():
                 continue
             m = re.match(r"^(\d{4}-\d{2}-\d{2})-(.+)$", d.name)
@@ -279,8 +305,27 @@ def collect_openspec(project_root: Path) -> CollectorResult:
                 }
             )
 
+    # #166 defect 1 verdict: changes/ missing while openspec/ exists. Scream only with
+    # evidence of prior/misplaced OpenSpec use (archive_items non-empty — reused from
+    # the scan above — or stray proposals); stay silent for a genuine cold-start so the
+    # signal keeps its meaning. openspec/ absent entirely never reaches here.
+    if not changes_dir.is_dir() and spec_root.is_dir():
+        stray = _detect_stray_openspec_artifacts(spec_root, r)
+        if stray or archive_items:
+            hint = f"misplaced: {', '.join(stray)}" if stray else "archive/ has content"
+            r.soft_error(
+                "layout_drift",
+                f"openspec/ exists but openspec/changes/ is missing ({hint}) — "
+                f"active changes (if any) are invisible and new specs may be "
+                f"misplaced. Restore changes/ (e.g. add openspec/changes/.gitkeep so "
+                f"the dir persists when empty).",
+            )
+
     r.data = {
-        "configured": True,
+        # #166 defect 1: configured tracks the documented `openspec/changes/ exists`
+        # semantics (drift path stays False; layout_drift soft_error disambiguates
+        # "drifted" from "not configured" — no code branches on this field).
+        "configured": changes_dir.is_dir(),
         "changes": {"total": len(change_items), "items": change_items},
         "archive": {"total": len(archive_items), "items": archive_items},
         "pending_archive": pending_archive,

@@ -310,7 +310,7 @@ PriorityItem:
 ## `openspec` (Phase 1.6 + 1.6.1)
 
 ```yaml
-configured: bool                # openspec/changes/ exists
+configured: bool                # openspec/changes/ exists (#166: drift path [openspec/ 在, changes/ 缺] 保 False; layout_drift soft_error 消歧, 见下)
 changes:
   total: int
   items: list[{id: str, path: str, status: str, raw_status: str|null}]
@@ -341,6 +341,13 @@ carry_forward_inventory:                       # Phase 1.6.1 (v1.23.0+)
 - **排除**: `{in_progress, ready, pending}` (由 `requirements.stories.priority_items` 别处 surface); fresh-approved (staleness<30d) 合法在飞, changes[].items 原样可见, 不卷入
 - **complete 判定唯一 SOT**: `scripts/lib/spec_complete.py::is_spec_complete` (契约 A); staleness 阈值 N=30 为 hardcode 常量 (非 config)
 - **archive_type 消费** (契约 B): 仅识别 `implementation-deferred`; 缺 frontmatter / 缺字段 = 正常归档 → null 无诊断; proposal.md 缺失 / OSError / 未知值 → null + `soft_error(archive_type_unreadable)` fail-soft
+
+**layout_drift soft_error** (#166 `state-scanner-openspec-collector-false-green`, additive):
+
+- **触发**: `openspec/` 存在但 `openspec/changes/` 缺失 (归档完最后一个 spec 后 git 丢弃空目录) **且** 有既往/错位使用证据 —— `archive/` 非空 **或** `openspec/` 下有裸 `*proposal*.md` / 非-`changes`·`archive` 子目录含 `proposal.md` → `soft_error("layout_drift")` (detail 点名错位产物 + `.gitkeep` 补救提示)
+- **静默豁免**: 纯冷启动 (`openspec/` 存在但 `changes/`+`archive/` 皆空、无裸 proposal) → 不报 (合法「未用过」, 保信噪比); `openspec/` 完全不存在 → 不报 (真没用 OpenSpec)
+- **正交扫描不变量**: drift 路径 `configured=False` (保 `changes/ exists` 语义) 但 `archive/` 仍被扫 → **`archive.total>0` 可与 `configured=False` 共存** (新组合; 靠 `layout_drift` 消歧「布局漂移」vs「没配置」, 无代码分支消费 `configured`)
+- **`openspec_scan_failed` (同批新增)**: `openspec/` 或 `openspec/archive/` 存在但**不可读** (权限/IO) → soft_error, 既不静默返回空 (那会让不可读目录与「没用 OpenSpec」输出等价 —— 本 change 要消灭的同一种假绿) 也不崩整个 scan; 列表降级为空并继续
 
 **Carry-forward inventory** (Spec `state-scanner-inline-carry-forward-surfacing`, v1.23.0):
 

@@ -1297,7 +1297,34 @@ def gate_result(spec_dir: str | Path) -> dict:
 
     tasks_path = spec_dir / "tasks.md"
     if not tasks_path.is_file():
-        return result  # 无 tasks.md → 无完成声称可核验, fail-soft 放行 (pass)
+        # #166 defect 2: tasks.md absent but detailed-tasks.yaml present (task-planner
+        # path B) → the archive safety net cannot verify completion claims for this
+        # spec. Surface it (verdict=warn + an unverified_claims entry) so BOTH #95
+        # downstream consumers fire even in headless archival: warn_overlay persists it
+        # to frontmatter AND a non-None d_payload makes the D auto-issue tracker build.
+        # Mirrors the mainline _fold_runtime_probe_declaration warn/invalid double-write
+        # (see its docstring). Full detailed-tasks.yaml parsing (precise per-spec
+        # verdict, only tracker when real residuals) is a deferred follow-up.
+        if (spec_dir / "detailed-tasks.yaml").is_file():
+            if result["verdict"] != "block":
+                result["verdict"] = "warn"
+            result["unverified_claims"].append(
+                {
+                    "claim": "archive-safety-net-source-unsupported",
+                    "reason": (
+                        "detailed-tasks.yaml 数据源未支持 — 完成声称无法核验 "
+                        "(安全网失明); 需人工复核"
+                    ),
+                    "symbols": [],
+                }
+            )
+            try:
+                result["d_payload"] = _build_d_payload(
+                    spec_dir, [], result["unverified_claims"]
+                )
+            except Exception as e:  # pragma: no cover - _build_d_payload defensive
+                result["soft_errors"].append(f"D payload build failed: {e}")
+        return result  # 无 tasks.md → tasks 分支不可核验 (yaml-only 已 surface, 见上)
 
     try:
         tasks_text = tasks_path.read_text(encoding="utf-8", errors="replace")
