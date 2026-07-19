@@ -19,6 +19,7 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 | `generated_at` | scan.py `build_snapshot` entry | required (v-additive) | ISO 8601 UTC `Z` scan-start time; additive → schema stays `"1.0"`. Spec C: issue-cache-freshness lag-1 asserts `generated_at − issue_status.fetched_at ≤ 2×TTL`. Consumers built before this ship use `snap.get("generated_at")` defensive access. |
 | `project_root` | CLI `--project-root` | required | informational |
 | `interrupt` | Phase 0 | required | additive keys OK |
+| `remote_refresh` | Phase 0.5 (F3′, main spec `state-scanner-stale-refs-false-parity`) | required | additive keys OK (see § below) |
 | `git` | Phase 1 | required | additive keys OK |
 | `upm` | Phase 1.4 | required | additive keys OK |
 | `changes` | Phase 1.5 | required | additive keys OK |
@@ -35,6 +36,7 @@ Field naming collision guard (CF-3): **`snapshot_schema_version`** at top level 
 | `handoff` | Phase 1.15 | required | additive keys OK (H0 spec, 2026-05-14) |
 | `handoff_worktrees` | Phase 1.15b | required | additive keys OK (#139, v1.45.0) |
 | `coordination_fetch` | Phase 1.16 | required | additive keys OK (`coordination_ref_present` #141, v1.46.0) |
+| `tracks_multibranch` | Phase 1.17 (`multi-terminal-coordination` TASK-004) | required | additive keys OK (see § below) |
 | `errors` | aggregated fail-soft | required | informational |
 
 **Emission rule for optional keys**: Phase 1.13 `issue_status` is the only optional top-level key. Its absence signals `issue_scan.enabled=false`, which is semantically distinct from `issue_status: null`. Consumers checking for the feature should use `"issue_status" in snapshot`, not `snapshot.get("issue_status")`.
@@ -926,6 +928,40 @@ Persisted in the cache payload so cache-hit / stale-serve paths return a **stabl
 
 **Soft errors**: `coordination_fetch_failed` (Fetch 1 real failure) / `coordination_fetch_degraded` (Fetch 1 failed + stale cache served) / `coordination_ref_fetch_failed` (Fetch 2 non-benign failure, v1.46.0). A benign-absent coordination ref emits NONE.
 
+## `tracks_multibranch` (Phase 1.17, `multi-terminal-coordination` TASK-004)
+
+Cross-branch handoff track rebuilder: scans every `origin/*` branch for `docs/handoff/*.md`, parses `§2.3.1` frontmatter (via the sibling `handoff.py::parse_handoff_frontmatter`), and reconstructs the multi-track dashboard consumed by `track_board.py` (TASK-005). **Read-only** — inspects remote refs via `git show`/`git ls-tree`/`git log`, never touches the working tree or index. Runs AFTER `coordination_fetch` (Phase 1.16) / `remote_refresh` (Phase 0.5) so remote refs are already populated locally.
+
+```yaml
+tracks_multibranch:
+  exists: bool                    # True when ≥1 track found across all branches
+  tracks: list[TrackEntry]
+  branches_scanned: int
+  legacy_count: int               # tracks that fell back to legacy (no frontmatter)
+  collision:                      # TASK-000 (#133) — additive, ADVISORY-ONLY
+    kind: str                     # enum: "none" | "cross_owner" | "self_multi_container"
+    groups: list[list[str]]       # per colliding track_id: list of owner-container members
+  errors: list[str]               # accumulated non-fatal error messages
+
+TrackEntry:
+  track_id: str          # frontmatter["track-id"] OR "legacy:<branch>:<filename>"
+  owner_container: str   # frontmatter["owner-container"] OR "unknown"
+  phase: str              # frontmatter["phase"] OR "unknown"
+  status: str              # frontmatter["status"] OR "legacy"
+  updated_at: str          # frontmatter["updated-at"] OR git log committer date (ISO)
+  branch: str              # short branch name (no "origin/" prefix)
+  filename: str            # basename of the handoff file
+  legacy: bool             # True when frontmatter was absent/incomplete
+```
+
+**`latest.md` exclusion**: the navigation pointer (`docs/handoff/latest.md`) is excluded from `_list_handoff_files` per `feedback_collector_exclude_navigation_pointer` — it never appears as a `TrackEntry`.
+
+**Collision preservation**: the same `track_id` appearing on multiple branches is intentionally preserved (not deduped) — collision detection per `session-handoff.md §2.3.5`. `track_board.py` renders the collision signals; this collector only classifies and surfaces them.
+
+**Scan cap**: bounded by `resolve_max_branches_scanned()` (`_common.py`; env > config `state_scanner.handoff_multibranch.max_branches` > default 20, #71 v1.38.0). Branches are scanned in `git for-each-ref --sort=-committerdate` order (most-recently-updated first) so the cap drops stale branches before active ones. When the cap is hit, a `soft_error` notes the resolved cap value.
+
+**Fail-soft**: branch-list failure (`git for-each-ref` non-zero) → `{"exists": false, "tracks": [], "branches_scanned": 0, "legacy_count": 0, "collision": {"kind": "none", "groups": []}, "errors": [...]}` + `soft_error("handoff_multibranch_branch_list_failed", ...)`. Per-branch `git ls-tree` / `git show` / `git log` failures are accumulated into the track's own `errors` and do not abort the scan of other branches. All git stderr routes through the Rule #7 typed channel (`classify_git_error`) — never raw stderr in `errors[]`.
+
 ## `errors` (aggregated fail-soft)
 
 ```yaml
@@ -956,3 +992,4 @@ Every soft_error across all collectors is aggregated here in call order, namespa
 | 2026-05-16 | H5 fix (`fix/h5-handoff-pointer-divergence`) — `latest_path` now prefers `docs/handoff/latest.md` pointer target over raw mtime (mtime fallback only). New additive `latest_source` field (`"pointer"`/`"mtime"`/`null`). New `soft_error("handoff_pointer_target_missing")` for stale pointer. Schema stays `"1.0"` (additive). Fixes mtime-vs-pointer divergence found at H0 closeout. |
 | 2026-06-10 | #134 `aria-archive-completeness-gate` (v1.42.0) — two additive nested fields under `openspec`: `archive.items[].archive_type` (str\|null, 契约 B 消费侧) + `design_deferred[]` (id/status/staleness_days/reason, gate↔surface 互补 per DEC-20260609-001 §3 D3). Backward-compat contract subsection added. Schema stays `"1.0"` (additive, no bump). |
 | 2026-06-12 | #141 `state-scanner-coordination-fetch-resilience` (v1.46.0) — **NEW `coordination_fetch` section** (Phase 1.16, previously undocumented in this SOT). Two-fetch split fixes atomic rc=128 on remotes without `refs/aria/coordination`. Additive `coordination_ref_present` (bool\|null). `success`/`degraded` re-anchored to Fetch 1 (semantic change, non-shape; carried by plugin MINOR, not a schema_version bump). Schema stays `"1.0"`. |
+| 2026-07-19 | Task 10.1 (`state-scanner-stale-refs-false-parity`) — registered two top-level keys that `validate_schema_doc.py` (Phase 3 inc3) found emitted by `scan.py` but absent from the §Top-level invariants table: `remote_refresh` (Phase 0.5, F3′ — full `legs[]`/`skipped_count`/`skipped_remotes`/`no_matching_remotes` schema already existed in the Full Schema body below the table, just never linked from the table row) and `tracks_multibranch` (Phase 1.17, `multi-terminal-coordination` TASK-004 — new `## tracks_multibranch` Full Schema section added: `exists`/`tracks[]`/`branches_scanned`/`legacy_count`/`collision`/`errors[]`). No behavior change, no schema_version bump — doc-only gap closure. `gitlink_integrity[]`/`evidence_grade`/`overall_parity` four-clause definition were re-checked against `multi_remote.py` and found already complete (Phase 2 docs agent coverage confirmed, no gap). |
