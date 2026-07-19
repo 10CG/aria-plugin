@@ -596,7 +596,7 @@ RemoteEntry:
   ahead_count: int|null
   reachable: bool
   reason: str|null              # enum: null | "auth_failed" | "not_found" | "network_timeout" | "no_local_tracking_ref" | "remote_branch_missing" | "parse_error" | "shallow_clone" | "detached_head" | "not_refreshed"
-  method: str                   # enum: "local_refs" | "ls_remote"
+  method: str                   # enum: "local_refs" (single value since task 1.10 retired ls_remote)
   evidence_grade: str            # D20 三值 "fresh" | "stale_unverified" | "expired" — F1′/F4′ 从
                                   #   `remote_refresh` (Phase 0.5) 的 fetched_at/generation_fetched/
                                   #   consecutive_unverified 联接而来 (multi_remote.py `_leg_evidence_grade`)。

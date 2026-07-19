@@ -76,12 +76,17 @@ replaced by the per-remote `evidence_grade` field below, joined from the F3′
           parity: equal|ahead|behind|diverged|unknown
           behind_count: int | null
           ahead_count: int | null
-          reachable: bool             # false only when verify_mode=ls_remote and call fails
+          reachable: bool             # vestigial since task 1.10 retired ls_remote: the
+          #                             only writer of `false` was that path, so this is now
+          #                             constant true. Honest reachability lives in
+          #                             `fetch_ok`/`evidence_grade` (F1′). Field kept because
+          #                             golden fixtures + schema doc + downstream consumers
+          #                             all reference it; removing it is a separate change.
           reason: null | no_local_tracking_ref | shallow_clone | detached_head
                   | auth_failed | not_found | network_timeout | not_refreshed
                   | rev_list_failed | rev_list_parse_failed | parse_error
                   | remote_branch_missing
-          method: local_refs | ls_remote
+          method: local_refs          # single value since task 1.10
           evidence_grade: fresh | stale_unverified | expired   # D20, F1′/F4′ join
           fetch_ok: "true" | "false" | "not_attempted"          # F3′ leg join
 """
@@ -149,7 +154,7 @@ _GITLINK_COUNTER_RESET_STATUSES = frozenset({"ok", "orphaned"})
 def _load_config(project_root: Path) -> dict[str, Any]:
     """Read `.aria/config.json` → `state_scanner.multi_remote` block.
 
-    Missing file / missing block → defaults (enabled=true, verify_mode=local_refs).
+    Missing file / missing block → defaults (enabled=true).
     Malformed JSON → defaults + soft error logged by caller if it cares.
 
     F2′ retirement note (main spec stale-refs-false-parity, Phase 1): this used
@@ -219,7 +224,7 @@ def _load_sync_freshness_config(project_root: Path) -> dict[str, Any]:
     landed keys: `evidence_window_seconds` / `hard_cap_days` / `k_min` — D15′/D18
     thresholds for the F1′ dual-role predicates). Deliberately a SEPARATE read
     from `_load_config`: `sync_freshness` is a sibling block, unrelated to
-    `multi_remote`'s own enabled/verify_mode/timeout_seconds keys. Same
+    `multi_remote`'s own enabled/timeout_seconds keys. Same
     fail-soft contract: missing file/block or malformed JSON → `{}` (callers
     apply hardcoded defaults)."""
     cfg_path = project_root / ".aria" / "config.json"
@@ -390,120 +395,28 @@ def _remote_parity_local_refs(
     return base
 
 
-def _remote_parity_ls_remote(
-    repo_dir: Path,
-    remote: str,
-    branch: str | None,
-    local_head: str | None,
-    shallow: bool,
-    timeout: int,
-) -> dict[str, Any]:
-    """Verify parity by calling `git ls-remote <remote> <branch>` (network I/O).
-
-    This resolves remote_head directly from the server. Ahead/behind counts still
-    require a local rev-list, so if the fetched sha is unreachable from HEAD we
-    degrade gracefully to just reporting remote_head + reachable=true with a
-    best-effort equal/behind classification.
-    """
-    base: dict[str, Any] = {
-        "name": remote,
-        "remote_head": None,
-        "parity": "unknown",
-        "behind_count": None,
-        "ahead_count": None,
-        "reachable": True,
-        "reason": None,
-        "method": "ls_remote",
-    }
-
-    if branch is None:
-        base["reason"] = "detached_head"
-        return base
-
-    rc, out, err = _run(
-        ["git", "ls-remote", "--heads", remote, branch], repo_dir, timeout=timeout
-    )
-    if rc != 0:
-        base["reachable"] = False
-        low = (err or "").lower()
-        if "could not resolve host" in low or "timed out" in low or "timeout" in low:
-            base["reason"] = "network_timeout"
-        elif "authentication failed" in low or "permission denied" in low:
-            base["reason"] = "auth_failed"
-        elif "not found" in low or "does not exist" in low:
-            base["reason"] = "not_found"
-        else:
-            base["reason"] = "network_timeout"
-        return base
-
-    # Output is "<sha>\t<ref>"; first line only (single branch).
-    first = out.strip().split("\n", 1)[0] if out.strip() else ""
-    if not first:
-        # QA-I1 fix (post_implementation audit R1): empty stdout with rc=0 means
-        # the remote responded but this branch does not exist on it — a new
-        # feature branch that has never been pushed, not an unreachable remote.
-        # Marking reachable=False would suppress push reminders incorrectly.
-        base["reason"] = "remote_branch_missing"
-        base["reachable"] = True
-        return base
-    if "\t" not in first:
-        # Malformed output — remote reachable but response unparseable.
-        base["reason"] = "parse_error"
-        base["reachable"] = True
-        return base
-    sha = first.split("\t", 1)[0].strip()
-    base["remote_head"] = sha[:7] if len(sha) >= 7 else sha or None
-
-    if shallow:
-        # Can't compute counts in shallow clones.
-        base["reason"] = "shallow_clone"
-        return base
-
-    if local_head is None:
-        base["reason"] = "detached_head"
-        return base
-
-    # Try rev-list HEAD...<sha>; if <sha> not in local object db, degrade.
-    rc, out, _ = _run(
-        ["git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"],
-        repo_dir,
-        timeout=timeout,
-    )
-    if rc != 0:
-        # Unknown sha locally → we know remote_head but not counts; flag equal iff heads match.
-        if local_head and sha.startswith(local_head):
-            base["parity"] = "equal"
-            base["ahead_count"] = 0
-            base["behind_count"] = 0
-        # else leave parity=unknown with reason None (best-effort)
-        return base
-    parts = out.strip().split()
-    if len(parts) != 2:
-        return base
-    try:
-        ahead, behind = int(parts[0]), int(parts[1])
-    except ValueError:
-        return base
-    base["ahead_count"] = ahead
-    base["behind_count"] = behind
-    if ahead > 0 and behind > 0:
-        base["parity"] = "diverged"
-    elif ahead > 0:
-        base["parity"] = "ahead"
-    elif behind > 0:
-        base["parity"] = "behind"
-    else:
-        base["parity"] = "equal"
-    return base
-
-
+# F-OQ-F retirement (task 1.10, main spec stale-refs-false-parity Phase 4):
+# `_remote_parity_ls_remote` lived here — a second, independent reachability
+# computation that talked to the network itself (`git ls-remote`) instead of
+# reading refs F3′ had already refreshed. Retired wholesale, not deprecated:
+#
+# - F3′ (Phase 0.5) now fetches every enforced leg BEFORE any Phase-1 collector
+#   reads local git state, so `local_refs` sees server truth without a second
+#   round trip. Keeping ls_remote meant DOUBLE the network for the same answer.
+# - Worse than redundant, it was a THIRD parity opinion (alongside local_refs and
+#   the F3′ leg record) with its own freshness semantics and its own error
+#   classification — exactly the "two parallel computation points" shape this
+#   whole spec exists to remove. A stale-vs-live disagreement between the two
+#   modes had no defined resolution.
+#
+# `verify_mode` is retired with it: the config key is now IGNORED (not an error —
+# an adopter who set it keeps scanning, just on the one remaining path).
 # ---------------------------------------------------------------------------
 # Per-repo scan
 # ---------------------------------------------------------------------------
 def _scan_repo(
     repo_dir: Path,
     path_label: str,
-    verify_mode: str,
     timeout: int,
 ) -> dict[str, Any]:
     """Scan one repo (main or submodule). Returns repo_block.
@@ -523,15 +436,13 @@ def _scan_repo(
 
     remote_results: list[dict[str, Any]] = []
     for rname in remotes:
-        if verify_mode == "ls_remote":
-            r = _remote_parity_ls_remote(
+        # Single path since task 1.10 retired `verify_mode`/ls_remote (see the
+        # retirement note above `_remote_parity_local_refs`).
+        remote_results.append(
+            _remote_parity_local_refs(
                 repo_dir, rname, branch, local_head, shallow, timeout
             )
-        else:
-            r = _remote_parity_local_refs(
-                repo_dir, rname, branch, local_head, shallow, timeout
-            )
-        remote_results.append(r)
+        )
 
     return {
         "path": path_label,
@@ -1308,7 +1219,6 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
 
     Reads `.aria/config.json` → `state_scanner.multi_remote`:
       - enabled (default true)
-      - verify_mode: "local_refs" (default) | "ls_remote"
       - timeout_seconds (default 5)
     (F2′ retired `warn_after_hours` — see `_load_config` docstring.)
 
@@ -1351,9 +1261,8 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         r.data = {"enabled": False}
         return r
 
-    verify_mode = str(cfg.get("verify_mode", "local_refs")).lower()
-    if verify_mode not in ("local_refs", "ls_remote"):
-        verify_mode = "local_refs"
+    # `verify_mode` retired (task 1.10) — read no more. An adopter config that
+    # still carries the key is simply ignored, never an error.
     timeout = int(cfg.get("timeout_seconds", _DEFAULT_TIMEOUT) or _DEFAULT_TIMEOUT)
 
     # Guard: must be inside a git working tree; otherwise emit enabled=true + empty blocks.
@@ -1379,7 +1288,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         return r
 
     # --- Main repo
-    main_block = _scan_repo(project_root, ".", verify_mode, timeout)
+    main_block = _scan_repo(project_root, ".", timeout)
 
     # --- Submodules
     # `submodule_paths` (ALL declared paths, incl. UNINITIALIZED ones) is
@@ -1394,7 +1303,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
             # Uninitialized submodule — skip (SKILL.md §1.12 fail-soft philosophy).
             continue
         try:
-            block = _scan_repo(sm_dir, rel_path, verify_mode, timeout)
+            block = _scan_repo(sm_dir, rel_path, timeout)
         except Exception as e:  # pragma: no cover — defensive
             r.soft_error("multi_remote_submodule_failed", f"{rel_path}: {e}")
             continue

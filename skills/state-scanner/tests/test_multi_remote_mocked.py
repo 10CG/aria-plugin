@@ -1,7 +1,7 @@
 """Phase 1.12 multi_remote — subprocess-mocked unit tests (T6.5-followup).
 
 Bumps coverage of `collectors.multi_remote` from 33% → ≥70% by mocking `_run`
-across `_remote_parity_local_refs`, `_remote_parity_ls_remote`, `_scan_repo`,
+across `_remote_parity_local_refs`, `_scan_repo`,
 and full `collect_multi_remote` flows including submodule iteration.
 """
 
@@ -20,7 +20,6 @@ from collectors.multi_remote import (
     _head_commit,
     _list_remotes,
     _remote_parity_local_refs,
-    _remote_parity_ls_remote,
     _scan_repo,
     collect_multi_remote,
 )
@@ -266,248 +265,13 @@ class TestParityLocalRefs(unittest.TestCase):
         self.assertEqual(out["reason"], "rev_list_parse_failed")
 
 
-class TestParityLsRemote(unittest.TestCase):
-    def test_detached_head_short_circuits(self):
-        out = _remote_parity_ls_remote(
-            Path("/x"), "origin", None, "abc", False, 5
-        )
-        self.assertEqual(out["reason"], "detached_head")
-        self.assertEqual(out["method"], "ls_remote")
-
-    def test_network_timeout_classification(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                128, "", "fatal: could not resolve host"
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc", False, 5
-            )
-        self.assertFalse(out["reachable"])
-        self.assertEqual(out["reason"], "network_timeout")
-
-    def test_auth_failed_classification(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                128, "", "fatal: Authentication failed"
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc", False, 5
-            )
-        self.assertEqual(out["reason"], "auth_failed")
-        self.assertFalse(out["reachable"])
-
-    def test_not_found_classification(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                128, "", "fatal: repository does not exist"
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc", False, 5
-            )
-        self.assertEqual(out["reason"], "not_found")
-
-    def test_unclassified_error_falls_back_to_timeout(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                128, "", "fatal: weird error"
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc", False, 5
-            )
-        self.assertEqual(out["reason"], "network_timeout")
-
-    def test_remote_branch_missing(self):
-        """QA-I1: empty stdout but rc=0 → branch doesn't exist on remote."""
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "feat-x"): (0, "\n", ""),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "feat-x", "abc", False, 5
-            )
-        self.assertEqual(out["reason"], "remote_branch_missing")
-        self.assertTrue(out["reachable"])
-
-    def test_malformed_response(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, "no-tab-here\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc", False, 5
-            )
-        self.assertEqual(out["reason"], "parse_error")
-        self.assertTrue(out["reachable"])
-
-    def test_shallow_after_remote_resolved(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, "abc1234567890abc1234567890abc1234567890ab\trefs/heads/master\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc1234", shallow=True, timeout=5
-            )
-        self.assertEqual(out["reason"], "shallow_clone")
-        self.assertEqual(out["remote_head"], "abc1234")
-
-    def test_local_head_none_after_remote(self):
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, "abc1234567890abc1234567890abc1234567890ab\trefs/heads/master\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", local_head=None, shallow=False, timeout=5
-            )
-        self.assertEqual(out["reason"], "detached_head")
-
-    def test_equal_via_ls_remote(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "0\t0\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc1234", False, 5
-            )
-        self.assertEqual(out["parity"], "equal")
-        self.assertEqual(out["remote_head"], "abc1234")
-
-    def test_unknown_sha_degrades_to_equal_when_heads_match(self):
-        """rc != 0 from rev-list but local_head startswith remote sha → 'equal'."""
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                128, "", "unknown sha"
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc1234", False, 5
-            )
-        # local_head=abc1234 is the prefix of remote sha
-        self.assertEqual(out["parity"], "equal")
-        self.assertEqual(out["ahead_count"], 0)
-        self.assertEqual(out["behind_count"], 0)
-
-    def test_unknown_sha_no_match_stays_unknown(self):
-        sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                128, "", "unknown sha"
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "abc1234", False, 5
-            )
-        self.assertEqual(out["parity"], "unknown")
-
-    def test_rev_list_parse_failure_in_ls_remote(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "weird\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "deadbe", False, 5
-            )
-        self.assertEqual(out["parity"], "unknown")
-
-    def test_ls_remote_ahead_classification(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "3\t0\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "deadbe", False, 5
-            )
-        self.assertEqual(out["parity"], "ahead")
-        self.assertEqual(out["ahead_count"], 3)
-
-    def test_ls_remote_behind_classification(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "0\t4\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "deadbe", False, 5
-            )
-        self.assertEqual(out["parity"], "behind")
-        self.assertEqual(out["behind_count"], 4)
-
-    def test_ls_remote_diverged_classification(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "2\t1\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "deadbe", False, 5
-            )
-        self.assertEqual(out["parity"], "diverged")
-
-    def test_rev_list_value_error_in_ls_remote(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "x\ty\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            out = _remote_parity_ls_remote(
-                Path("/x"), "origin", "master", "deadbe", False, 5
-            )
-        self.assertEqual(out["parity"], "unknown")
+# Task 1.10 retirement note (main spec stale-refs-false-parity, Phase 4):
+# `TestParityLsRemote` lived here — 17 tests pinning `_remote_parity_ls_remote`'s
+# error classification, sha parsing and ahead/behind degradation. The function is
+# DELETED wholesale (OQ-F: F3′ made the network round trip redundant, and a second
+# reachability opinion was itself the defect shape this spec removes), so the tests
+# are deleted rather than rewritten — there is no surviving behavior to reassert.
+# `local_refs` coverage is unchanged above in `TestParityLocalRefs`.
 
 
 class TestScanRepo(unittest.TestCase):
@@ -537,37 +301,15 @@ class TestScanRepo(unittest.TestCase):
                 # F2′ retirement: _scan_repo now returns the block alone (the
                 # `stale` tuple element was a dead `False` constant — see
                 # collectors/multi_remote.py `_scan_repo` docstring).
-                block = _scan_repo(
-                    Path("/x"), ".", verify_mode="local_refs", timeout=5
-                )
+                block = _scan_repo(Path("/x"), ".", timeout=5)
         self.assertEqual(block["branch"], "master")
         self.assertEqual(len(block["remotes"]), 2)
         parities = [r["parity"] for r in block["remotes"]]
         self.assertEqual(set(parities), {"equal", "ahead"})
 
-    def test_scan_with_ls_remote_mode(self):
-        sha = "abc1234567890abc1234567890abc1234567890ab"
-        run_table = {
-            ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
-            ("git", "remote"): (0, "origin\n", ""),
-            ("git", "ls-remote", "--heads", "origin", "master"): (
-                0, f"{sha}\trefs/heads/master\n", ""
-            ),
-            ("git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"): (
-                0, "0\t0\n", ""
-            ),
-        }
-        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
-            with mock.patch(
-                "collectors.multi_remote._is_shallow", return_value=False
-            ), mock.patch(
-                "collectors.multi_remote._current_branch", return_value="master"
-            ):
-                block = _scan_repo(
-                    Path("/x"), ".", verify_mode="ls_remote", timeout=5
-                )
-        self.assertEqual(block["remotes"][0]["method"], "ls_remote")
-        self.assertEqual(block["remotes"][0]["parity"], "equal")
+    # Task 1.10: `test_scan_with_ls_remote_mode` deleted with the mode itself.
+    # `_scan_repo` no longer takes `verify_mode`; the surviving single path is
+    # covered by `test_scan_with_two_remotes_local_refs` above.
 
 
 class TestCollectorFullFlow(unittest.TestCase):
@@ -615,13 +357,16 @@ class TestCollectorFullFlow(unittest.TestCase):
         self.assertFalse(r.data["has_pending_push"])
         self.assertEqual(r.data["main_repo"]["remotes"][0]["parity"], "equal")
 
-    def test_invalid_verify_mode_falls_back(self):
+    def test_retired_verify_mode_key_is_ignored_not_fatal(self):
+        """Task 1.10: an adopter config still carrying `verify_mode` must keep
+        scanning on the one surviving path — retirement means the key is inert,
+        not that it becomes an error."""
         with tmp_repo() as repo:
             write_file(
                 repo / ".aria" / "config.json",
                 json.dumps({
                     "state_scanner": {
-                        "multi_remote": {"enabled": True, "verify_mode": "BOGUS"}
+                        "multi_remote": {"enabled": True, "verify_mode": "ls_remote"}
                     }
                 }),
             )
@@ -645,6 +390,8 @@ class TestCollectorFullFlow(unittest.TestCase):
                     "collectors.multi_remote._enumerate_submodule_paths", return_value=[]
                 ):
                     r = collect_multi_remote(repo)
+        # local_refs path ran (no ls-remote command was ever mocked, so an
+        # ls_remote attempt would have surfaced as unmocked/unknown)
         self.assertEqual(r.data["main_repo"]["remotes"][0]["method"], "local_refs")
         self.assertEqual(r.data["main_repo"]["remotes"][0]["parity"], "behind")
         self.assertFalse(r.data["overall_parity"])

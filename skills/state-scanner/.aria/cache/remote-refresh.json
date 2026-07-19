@@ -1,0 +1,21 @@
+{
+  "scan_generation": 1,
+  "legs": {
+    ".::github": {
+      "fetched_at": "2026-07-19T15:44:35+00:00",
+      "fetch_ok": "true",
+      "error_kind": null,
+      "generation_fetched": 1,
+      "consecutive_unverified": 0,
+      "coordination_ref_present": null
+    },
+    ".::origin": {
+      "fetched_at": "2026-07-19T15:44:36+00:00",
+      "fetch_ok": "true",
+      "error_kind": null,
+      "generation_fetched": 1,
+      "consecutive_unverified": 0,
+      "coordination_ref_present": false
+    }
+  }
+}
