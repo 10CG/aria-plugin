@@ -95,6 +95,7 @@ from collectors import (
     log,
     scan_now,
 )
+from collectors._common import _run
 
 SNAPSHOT_SCHEMA_VERSION = "1.0"
 
@@ -104,6 +105,111 @@ EXIT_HARD_PRECONDITION = 20     # cwd is not a git repo, etc.
 EXIT_INTERNAL_BUG = 30          # uncaught exception path
 
 LOG_LEVEL_CHOICES = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def _same_branch_head_unreachable_tracks(
+    project_root: Path,
+    git_data: dict[str, Any],
+    tracks_data: dict[str, Any],
+    timeout: int = 5,
+) -> list[dict[str, str]]:
+    """AC-5 support (task 2.12) — find handoff tracks published on the CURRENT
+    branch's remote counterpart whose introducing commit HEAD cannot reach.
+
+    Scope discipline, verbatim from AC-5: only tracks whose ``branch`` equals the
+    HEAD branch qualify. "Any commit HEAD cannot reach" would flag every repo that
+    merely has other active branches — a false-red on healthy repos, and the AC
+    text calls that out explicitly as the wrong predicate.
+
+    Returns one dict per offending track (empty list = consistent, and also the
+    result whenever HEAD is detached or the tracks collector produced nothing).
+    """
+    branch = git_data.get("current_branch")
+    if not branch or git_data.get("detached_head"):
+        return []
+    tracks = tracks_data.get("tracks")
+    if not isinstance(tracks, list):
+        return []
+
+    offenders: list[dict[str, str]] = []
+    for t in tracks:
+        if not isinstance(t, dict) or t.get("branch") != branch:
+            continue
+        filename = t.get("filename")
+        if not filename:
+            continue
+        rc, out, _ = _run(
+            [
+                "git", "log", "-1", "--format=%H",
+                f"origin/{branch}", "--", f"docs/handoff/{filename}",
+            ],
+            project_root,
+            timeout=timeout,
+        )
+        sha = out.strip()
+        if rc != 0 or not sha:
+            continue  # cannot establish the commit ⇒ no claim either way
+        rc_anc, _, _ = _run(
+            ["git", "merge-base", "--is-ancestor", sha, "HEAD"], project_root, timeout=timeout
+        )
+        if rc_anc != 0:
+            offenders.append(
+                {"track_id": str(t.get("track_id", "")), "filename": str(filename), "commit": sha[:7]}
+            )
+    return offenders
+
+
+def _check_snapshot_self_consistency(
+    project_root: Path,
+    git_data: dict[str, Any],
+    tracks_data: dict[str, Any],
+    sync_data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """AC-5 (task 2.12) — the cross-collector invariant this whole spec started from.
+
+    The originating accident was ONE SNAPSHOT CONTRADICTING ITSELF: `tracks_multibranch`
+    listed handoff files that existed on `origin/master` while `sync_status` reported
+    `parity: equal` against that same ref. Both readings came from the same stale
+    remote-tracking ref, so neither collector could notice on its own — the
+    contradiction is only visible where their outputs meet, which is here.
+
+    F3′ (Phase 0.5, fetch --prune before any Phase-1 collector reads local git state)
+    removes the CAUSE; this check is the detector that keeps its removal honest. If it
+    ever fires again, the fingerprint is recorded rather than silently shipped as a
+    green verdict.
+
+    Deliberately placed at the assembly layer, NOT inside either collector: it is a
+    statement about two collectors' joint output, and `multi_remote` (Phase 1.12)
+    runs before `handoff_multibranch` (Phase 1.17) so it could not consume it anyway
+    without a reordering this spec has no reason to risk.
+
+    Verdict shape follows AC-5's disjunction — an offending track is a contradiction
+    ONLY when the snapshot simultaneously claims health: `overall_parity == true` AND
+    the current branch's own `reason` is empty. Either of those already being honest
+    means the snapshot is telling the truth about being behind/uncertain, and the
+    tracks are simply the evidence for it.
+    """
+    offenders = _same_branch_head_unreachable_tracks(project_root, git_data, tracks_data)
+    if not offenders:
+        return []
+
+    multi = sync_data.get("multi_remote") or {}
+    if multi.get("overall_parity") is not True:
+        return []
+    current = sync_data.get("current_branch") or {}
+    if current.get("reason"):
+        return []
+
+    return [{
+        "kind": "snapshot_self_contradiction",
+        "detail": (
+            f"{len(offenders)} handoff track(s) on origin/{git_data.get('current_branch')} "
+            "are unreachable from HEAD, yet overall_parity=true with no reason on the "
+            "current branch (AC-5). Remote-tracking refs are likely stale despite the "
+            "F3′ refresh — re-run with a successful fetch before trusting parity."
+        ),
+        "tracks": offenders,
+    }]
 
 
 def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
@@ -202,6 +308,17 @@ def build_snapshot(project_root: Path) -> tuple[dict[str, Any], int]:
     ]:
         for err in result.errors:
             errors.append({"collector": collector_name, **err})
+
+    # AC-5 (task 2.12): cross-collector self-consistency. Runs after every collector
+    # so it can compare their joint output; attributed to a synthetic collector name
+    # because no single collector owns the invariant.
+    for err in _check_snapshot_self_consistency(
+        project_root,
+        phase1_git.data,
+        phase1_17_handoff_mb.data,
+        phase1_12_sync.data,
+    ):
+        errors.append({"collector": "snapshot_consistency", **err})
 
     snapshot = {
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,

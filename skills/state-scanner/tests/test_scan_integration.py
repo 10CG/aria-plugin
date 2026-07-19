@@ -150,5 +150,105 @@ class TestIssueStatusOptIn(unittest.TestCase):
             self.assertIn("issue_status", snap)
 
 
+class TestSnapshotSelfConsistencyAC5(unittest.TestCase):
+    """AC-5 (task 2.12, main spec stale-refs-false-parity) — the cross-collector
+    invariant the spec's originating accident violated: `tracks_multibranch` listing
+    handoff files on `origin/master` that HEAD cannot reach, while `sync_status`
+    simultaneously reports `overall_parity: true` with no reason.
+
+    `_run` is mocked at the `scan` module boundary so each case pins ONE predicate;
+    building real diverged repos would make the fixtures the thing under test.
+    """
+
+    HEALTHY_GIT = {"current_branch": "master", "detached_head": False}
+    HEALTHY_TRACKS = {
+        "tracks": [{"track_id": "t-1", "filename": "2026-07-19-x.md", "branch": "master"}]
+    }
+    CLAIMS_PARITY = {"multi_remote": {"overall_parity": True}, "current_branch": {"reason": None}}
+
+    def _mock_run(self, *, ancestor_rc: int, log_rc: int = 0, sha: str = "deadbee0"):
+        def fake(cmd, cwd, timeout=5):
+            if cmd[:3] == ["git", "log", "-1"]:
+                return (log_rc, f"{sha}\n" if log_rc == 0 else "", "")
+            if cmd[:2] == ["git", "merge-base"]:
+                return (ancestor_rc, "", "")
+            return (1, "", "unmocked")
+        return fake
+
+    def _check(self, git_data, tracks_data, sync_data, *, ancestor_rc, log_rc=0):
+        from unittest import mock
+
+        import scan
+
+        with mock.patch.object(scan, "_run", side_effect=self._mock_run(
+            ancestor_rc=ancestor_rc, log_rc=log_rc
+        )):
+            return scan._check_snapshot_self_consistency(
+                Path("/x"), git_data, tracks_data, sync_data
+            )
+
+    def test_contradiction_is_reported(self):
+        """Unreachable same-branch track + snapshot claiming health = the fingerprint."""
+        errs = self._check(
+            self.HEALTHY_GIT, self.HEALTHY_TRACKS, self.CLAIMS_PARITY, ancestor_rc=1
+        )
+        self.assertEqual(len(errs), 1)
+        self.assertEqual(errs[0]["kind"], "snapshot_self_contradiction")
+        self.assertEqual(errs[0]["tracks"][0]["track_id"], "t-1")
+
+    def test_reachable_track_is_silent(self):
+        errs = self._check(
+            self.HEALTHY_GIT, self.HEALTHY_TRACKS, self.CLAIMS_PARITY, ancestor_rc=0
+        )
+        self.assertEqual(errs, [])
+
+    def test_honest_parity_false_is_not_a_contradiction(self):
+        """The snapshot already admits it is not in sync — the unreachable tracks are
+        the EVIDENCE for that, not a contradiction of it."""
+        sync = {"multi_remote": {"overall_parity": False}, "current_branch": {"reason": None}}
+        errs = self._check(self.HEALTHY_GIT, self.HEALTHY_TRACKS, sync, ancestor_rc=1)
+        self.assertEqual(errs, [])
+
+    def test_non_empty_reason_is_not_a_contradiction(self):
+        """AC-5 is a disjunction: a non-empty `reason` also discharges it."""
+        sync = {
+            "multi_remote": {"overall_parity": True},
+            "current_branch": {"reason": "network_timeout"},
+        }
+        errs = self._check(self.HEALTHY_GIT, self.HEALTHY_TRACKS, sync, ancestor_rc=1)
+        self.assertEqual(errs, [])
+
+    def test_other_branch_tracks_are_out_of_scope(self):
+        """Scope discipline AC-5 states explicitly: "any commit HEAD cannot reach" would
+        flag every repo that merely has other active branches (false-red on healthy
+        repos). Only the HEAD branch's own tracks qualify."""
+        tracks = {
+            "tracks": [
+                {"track_id": "t-2", "filename": "2026-07-19-y.md", "branch": "feature/other"}
+            ]
+        }
+        errs = self._check(self.HEALTHY_GIT, tracks, self.CLAIMS_PARITY, ancestor_rc=1)
+        self.assertEqual(errs, [])
+
+    def test_detached_head_makes_no_claim(self):
+        git_data = {"current_branch": "master", "detached_head": True}
+        errs = self._check(git_data, self.HEALTHY_TRACKS, self.CLAIMS_PARITY, ancestor_rc=1)
+        self.assertEqual(errs, [])
+
+    def test_unresolvable_commit_makes_no_claim(self):
+        """`git log` cannot name the introducing commit ⇒ no evidence in either
+        direction ⇒ stay silent rather than guess (fail-toward-quiet on unknowns,
+        since the loud path here would be a false accusation of inconsistency)."""
+        errs = self._check(
+            self.HEALTHY_GIT, self.HEALTHY_TRACKS, self.CLAIMS_PARITY,
+            ancestor_rc=1, log_rc=1,
+        )
+        self.assertEqual(errs, [])
+
+    def test_missing_tracks_block_is_tolerated(self):
+        errs = self._check(self.HEALTHY_GIT, {}, self.CLAIMS_PARITY, ancestor_rc=1)
+        self.assertEqual(errs, [])
+
+
 if __name__ == "__main__":
     unittest.main()
