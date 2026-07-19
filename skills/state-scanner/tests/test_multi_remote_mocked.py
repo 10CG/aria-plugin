@@ -493,6 +493,120 @@ class TestCollectorFullFlow(unittest.TestCase):
         self.assertTrue(flags["overall_parity"])  # equal evidence + no blockers
 
 
+class TestAcceptanceCriteriaCoverage(unittest.TestCase):
+    """Tasks 2.4 / 2.9 / 2.10 — AC assertions the Phase 1-3 implementation satisfied
+    but never pinned with a DIRECT test (found by the Phase 4 tasks.md audit).
+
+    Each of these was previously argued to be "covered by construction" or "covered
+    indirectly"; the point of writing them out is that a construction argument stops
+    holding the moment someone refactors the construction.
+    """
+
+    def _leg(self, *, fetched_at, fetch_ok="true", error_kind=None, generation=1):
+        return {
+            "fetched_at": fetched_at,
+            "fetch_ok": fetch_ok,
+            "error_kind": error_kind,
+            "generation_fetched": generation,
+            "consecutive_unverified": 0,
+            "coordination_ref_present": None,
+        }
+
+    def _run_scan(self, repo, legs: dict, run_table: dict):
+        write_file(
+            repo / ".aria" / "cache" / "remote-refresh.json",
+            json.dumps({"scan_generation": 1, "legs": legs}),
+        )
+        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
+            with mock.patch(
+                "collectors.multi_remote._is_shallow", return_value=False
+            ), mock.patch(
+                "collectors.multi_remote._current_branch", return_value="master"
+            ), mock.patch(
+                "collectors.multi_remote._enumerate_submodule_paths", return_value=[]
+            ):
+                return collect_multi_remote(repo)
+
+    def test_ac6_leg_keys_are_composite_so_submodule_cannot_borrow_main_evidence(self):
+        """AC-6: a submodule remote that was NEVER fetched must not inherit the main
+        repo's `equal` evidence. The structural defense is that leg keys are
+        (repo_path, remote) composites, not bare remote names — assert THAT, since it
+        is what makes the collision impossible."""
+        from collectors.multi_remote import _remote_refresh_leg_key
+
+        main_key = _remote_refresh_leg_key(".", "origin")
+        sub_key = _remote_refresh_leg_key("aria", "origin")
+        self.assertNotEqual(main_key, sub_key)
+        self.assertIn("aria", sub_key)
+        # And the main key must not be a bare remote name that a submodule lookup
+        # could accidentally match.
+        self.assertNotEqual(main_key, "origin")
+
+    def test_ac13_auth_failure_inside_window_keeps_parity_but_flags_unreachable(self):
+        """AC-13 (two axes independent): fetch failed (auth) while `fetched_at` is
+        still inside the evidence window ⇒ parity does NOT degrade, BUT
+        `has_unreachable_remote` is true. Both halves in one test — asserting only
+        one half is what let the axes get conflated in earlier drafts."""
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with tmp_repo() as repo:
+            legs = {".::origin": self._leg(
+                fetched_at=now_iso, fetch_ok="false", error_kind="auth_403"
+            )}
+            table = {
+                ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
+                ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
+                ("git", "remote"): (0, "origin\n", ""),
+                ("git", "rev-parse", "--short=7", "refs/remotes/origin/master"): (
+                    0, "abc1234\n", ""
+                ),
+                ("git", "rev-list", "--left-right", "--count",
+                 "HEAD...refs/remotes/origin/master"): (0, "0\t0\n", ""),
+            }
+            r = self._run_scan(repo, legs, table)
+        entry = r.data["main_repo"]["remotes"][0]
+        self.assertEqual(entry["parity"], "equal", "axis 1: parity must NOT degrade")
+        self.assertTrue(
+            r.data["has_unreachable_remote"], "axis 2: the failed fetch must be flagged"
+        )
+
+    def test_ac9_repeated_scans_are_byte_stable(self):
+        """AC-9 successor: the original TTL-hit assertion (30s window, diff==0) no
+        longer maps onto F3′'s generation/deadline scheduling. What the AC actually
+        protects is that a second scan with no new information does not churn the
+        output — assert THAT directly.
+
+        ⚠️ Honest scope: this fixture declares no submodules, so there is no gitlink
+        D18 counter to advance and nothing clock-driven in `data`. It therefore
+        passes with or without `ARIA_SCAN_OFFLINE` — verified, not assumed. The env
+        var is kept as belt-and-suspenders against a future field that IS
+        clock-derived, NOT because it is load-bearing here. The counter-churn face
+        of stability (where the 9.7 offline freeze genuinely bites) is covered by
+        the submodule-carrying `test_two_consecutive_runs_diff_zero` /
+        `test_channel7_8` cases, not by this test."""
+        import os
+
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with tmp_repo() as repo:
+            legs = {".::origin": self._leg(fetched_at=now_iso)}
+            table = {
+                ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
+                ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
+                ("git", "remote"): (0, "origin\n", ""),
+                ("git", "rev-parse", "--short=7", "refs/remotes/origin/master"): (
+                    0, "abc1234\n", ""
+                ),
+                ("git", "rev-list", "--left-right", "--count",
+                 "HEAD...refs/remotes/origin/master"): (0, "0\t0\n", ""),
+            }
+            with mock.patch.dict(os.environ, {"ARIA_SCAN_OFFLINE": "1"}):
+                first = self._run_scan(repo, legs, table)
+                second = self._run_scan(repo, legs, table)
+        self.assertEqual(
+            json.dumps(first.data, sort_keys=True),
+            json.dumps(second.data, sort_keys=True),
+        )
+
+
 class TestRemotePolicyNamespace(unittest.TestCase):
     """Task 1.6 — `_resolve_remote_policy` pure inheritance matrix.
 
