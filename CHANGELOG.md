@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.60.0] - 2026-07-19
+
+### Changed / Fixed — main spec `state-scanner-stale-refs-false-parity` (false-parity core)
+
+**⚠️ Behavior change (task 13.6): `sync_status.multi_remote.overall_parity` now reports `false` in the accident shape where it previously FALSELY reported `true`.** A submodule gitlink the parent repo published but which is unreachable on a remote (the 2026-07-12 R5-C-A accident: `standards@79b7cd6` orphaned on github) is now detected and blocks. `parity` semantics (incl. `ahead` staying non-blocking) are unchanged. `git fetch` in the new collector carries `--prune` (fossil remote-tracking refs no longer make reachability false-green).
+
+Four-part fix — *freshness by fetch, not by measurement*:
+- **F3′ `remote_refresh` collector (Phase 0.5)**: parallel per-host `git fetch --no-tags --prune`, deadline-bounded, over every enforced (repo, remote) leg (main + submodules). Legs cut by the deadline report `fetch_ok="not_attempted"` (not blocking). `coordination_fetch` is now a backward-compat shim derived from this collector's origin leg. New config keys `state_scanner.multi_remote.{refresh_deadline_seconds=15, per_host_fetch_limit=4, fetch_timeout_seconds=30}`.
+- **F1′/F4′ dual-role predicates + `evidence_grade`** (D15′/D20): per-remote `evidence_grade ∈ {fresh, stale_unverified, expired}`. `overall_parity = enforced_set≠∅ ∧ (∃ r: parity==equal ∧ evidence_grade=="fresh") ∧ (∀ R: ¬gitlink_blocking) ∧ (∀ r: parity∉{behind,diverged} ∧ ¬blocking_unknown)`. A stale `equal` is no longer positive evidence (the founding 14h-stale bug); `_blocking_unknown` is the strict complement of `_benign_unknown` (fail-CLOSED, never a positive enum).
+- **F10″ orphaned-gitlink reachability**: new `multi_remote.gitlink_integrity[]` per-(remote, submodule) `{status ∈ 9 values, consecutive_unverified}`. `orphaned` ⇒ blocking; BOTH `ok` and `orphaned` verdicts are gated on 豁免资格 freshness (a verdict off stale refs collapses to `orphan_unverified`, D18-escalated to blocking after `k_eff` scans).
+- **F2′** retired the FETCH_HEAD-mtime `local_refs_stale` signal. **F9′**: `sync.py` now consumes the F1′/F3′ freshness (`evidence_grade` on `current_branch` + `submodules[].drift`) instead of re-measuring; the US-008 directional guard (`sync.py`) is byte-for-byte untouched.
+- **9.7 offline freeze** (`ARIA_SCAN_OFFLINE` / `ARIA_SCAN_NOW` / `ARIA_SCAN_FETCH_BUDGET`) makes repeated scans byte-stable, eliminating `test_two_consecutive_runs_diff_zero` drift.
+
+### Notes
+- Delivered across four blueprint→implement→adversarial-review dynamic workflows + main-loop verification (a BLOCKER false-green in the gitlink `ok` path — an `ok` verdict computed off stale refs — was caught in review and fixed). Full state-scanner suite 1219 green + real-repo dogfood validated (gitlink_integrity 5 ok / 1 no_matching_remote honest, no false orphan). **Spec remains ACTIVE (not archived)**: 79/119 tasks done; k_eff `observed_rotation` DEFERRED (fail-CLOSED, k_eff=k_min cold-start); 29 tasks TODO — F5′ enforced/read_only-remote wiring into `_overall_parity` (6.1/6.2), non-interactive git hardening (3.4), tracks_multibranch same-branch unreachability (2.12, AC-5), config namespace alignment (1.6) — see `docs/handoff`. SKILL/Agents unchanged (35+7=42, 11 Agents).
+
 ## [1.59.1] - 2026-07-17
 
 ### Fixed
