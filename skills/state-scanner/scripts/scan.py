@@ -4,9 +4,25 @@
 Spec: openspec/changes/state-scanner-mechanical-enforcement/
 Schema: aria/skills/state-scanner/references/state-snapshot-schema.md
 
-This module is intentionally minimal after the TL-1 split (post_spec audit,
-2026-04-23). All phase logic lives in `collectors/` — see `collectors/__init__.py`
+This module was intentionally minimal after the TL-1 split (post_spec audit,
+2026-04-23): all phase logic lived in `collectors/` — see `collectors/__init__.py`
 for the exported surface.
+
+⚠️ **That invariant is currently VIOLATED and the violation is tracked, not hidden**
+(post_planning R1 M-I / R2 N-2): `_same_branch_head_unreachable_tracks` +
+`_check_snapshot_self_consistency` (the AC-5 cross-collector check, task 2.12) are
+real business logic living here, and they hold `_run` directly — this module now
+spawns git subprocesses of its own. Line count went 302 → 476 (+57%) in that one
+increment.
+
+The stated reason ("a cross-collector invariant belongs to no single collector, and
+multi_remote/1.12 runs before handoff_multibranch/1.17") only rules out embedding it
+INSIDE an existing collector. It does not rule out the option the repo already has a
+precedent for: `collect_sync_state(project_root, multi_remote_data=...)` lives in
+`collectors/sync.py` and explicitly takes another collector's output as a parameter.
+A `collectors/snapshot_consistency.py` called after both would satisfy the invariant
+AND keep this module assembly-only. Deferred, tracked in Aria #168 — do NOT treat
+this docstring's first paragraph as describing the current state.
 
 Coverage (schema v1.0):
 - Phase 0:    interrupt recovery (workflow-state.json)
