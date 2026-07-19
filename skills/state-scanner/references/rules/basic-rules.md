@@ -74,23 +74,24 @@ recommendation:
 > 不再对整块 `overall_parity: false` 发单一建议。**不是一律 fetch/pull** (US-008 directional
 > guard 在 multi_remote 层的对应物)。
 >
-> **Phase 2A gitlink 交叉引用 (F10″)**: `overall_parity` 现有第七种成因 — `gitlink_integrity[]`
-> 里某 (R,S) 对被 `_gitlink_blocking` 判定 (`status=="orphaned"`, 或 `orphan_unverified` 且
-> D18 计数达 `k_eff`)。**本规则 (multi_remote_drift) 的 dispatch 表尚未新增第七路** — 该场景的
-> AC-16 修复建议 (`git -C S push R <branch>`) 目前只是 proposal.md 记载的**设计意图**, 尚未接入
-> RECOMMENDATION_RULES 的机械 dispatch。触发条件判断时需**额外**检查 `gitlink_integrity` 是否
-> 非空 blocking (下方 dispatch 表只覆盖 `remotes[]` 层, 不覆盖 `gitlink_integrity[]` 层) — 这是已知
-> 文档-实现缺口, 待后续增量补上 dispatch 分支。
+> **Phase 2A gitlink 交叉引用 (F10″), Phase 4 已接入**: `overall_parity` 的第七种成因是
+> `gitlink_integrity[]` 里某 (R,S) 对被 `_gitlink_blocking` 判定 (`status=="orphaned"`, 或
+> `orphan_unverified` 且 D18 计数达 `k_eff`)。下方 dispatch 表**已新增第七路** (task 13.3/9.2),
+> 建议文案为 `git -C S push R <branch>`。注意它与前六路**正交**: 前六路在 `remotes[*]` 层逐
+> remote 判定, 第七路在 `gitlink_integrity[*]` 层逐 (R,S) 对判定 —— 同一次 scan 两层可以同时命中,
+> 两条建议都要出, 不是二选一。
 >
-> **去重/冷却 (OQ-C, state-scanner-stale-refs-false-parity tasks.md 1.3/9.3)**: 本规则**无去重/冷却
-> 机制** (grep 零命中) —— 每次 scan 只要 `overall_parity: false` 就重新走六路 dispatch, 不记忆
-> "上次已提示过同一条 remote drift"。proposal.md OQ-C 有**倾向**记录但**尚未锁死** (tasks.md 1.3
-> checkbox 未勾, Phase A 裁决未完成): 不造新的有状态冷却机制, 改用 F1′ 的 `has_unreachable_remote`
-> 在建议层做降级 —— 该 flag 为 true (离线/全 fetch 失败) 时本规则**不触发**六路 dispatch, 换成一条
-> 「离线, 同步状态不可知」降级横幅 (复用 `coordination_fetch` 现有 `degraded` 红条先例)。**debounce
-> 只作用于建议层, 不作用于 `overall_parity` 裁决层** (裁决层去抖会重新引入假绿, 违背本规则 v9 改写
-> 的初衷)。**当前状态**: 这条只是 proposal.md 记载的设计意图, `RECOMMENDATION_RULES` 尚未接入任何
-> debounce/降级分支 —— 按 OQ-C 未定裁决处理, **不强行实现**, 待 owner 在 Phase A 显式裁定后再落地。
+> **去重/冷却 (OQ-C, tasks 1.3/9.3) — owner 已裁定 2026-07-19: 不造有状态冷却**。本规则不新增
+> 任何持久化 debounce 状态; 改用 F1′ 已有的 `has_unreachable_remote` 在**建议层**降级: 该 flag 为
+> true (离线 / 全 fetch 失败) 时不走 dispatch, 换一条「离线, 同步状态不可知」降级横幅 (复用
+> `coordination_fetch` 现有 `degraded` 红条先例)。见下方 `degrade_when`。
+>
+> 裁决理由: 全 fetch 失败时 dispatch 的输入本身不可信, 逐条报 drift 是拿不可知当已知; 降级横幅
+> 诚实且天然去重 (一次 scan 一条), 不需要记忆「上次提过谁」, 也就不需要新的状态面 —— 与 task
+> 3.5d 退避计数器同类的持久化风险一并避开。
+>
+> 🔴 **降级只作用于建议层, 不作用于 `overall_parity` 裁决层**。裁决层去抖会重新引入假绿, 那正是
+> 本 Spec 要根治的病; 裁决层照常 fail-CLOSED 报 false。
 
 ```yaml
 id: multi_remote_drift
@@ -99,7 +100,7 @@ description: 检测到多远程 HEAD 不一致 (按成因分派, 不再单一 pu
 
 conditions:
   any:
-    - multi_remote.overall_parity: false   # 触发分诊, 具体建议由下方六路 dispatch 决定
+    - multi_remote.overall_parity: false   # 触发分诊, 具体建议由下方 dispatch 表决定
 
   detection:
     method: "per-remote (parity, reason, evidence_grade) 分诊, 遍历 main + submodules"
@@ -107,7 +108,7 @@ conditions:
       - sync_status.multi_remote.main_repo.remotes[*]  # {parity, reason, evidence_grade, behind_count, ahead_count}
       - sync_status.multi_remote.submodules[*].remotes[*]
 
-  dispatch:  # 六路成因分派 (v9, 按 remote 逐条判定, 一个 remote 只落一路)
+  dispatch:  # 成因分派: v9 六路 (remotes[] 层, 一个 remote 只落一路) + Phase 4 第七路 (gitlink 层, 正交)
     - cause: "behind / diverged"
       match: "parity in (behind, diverged)"
       action: "建议 pull: git -C <path> pull <remote> <branch> (diverged 需人工 merge/rebase 决策)"
@@ -134,11 +135,37 @@ conditions:
       match: "parity == unknown AND reason not in 以上任何枚举 (含 rev_list_failed / parse_error / 未来新增枚举)"
       action: "同「网络凭据」档处理 (fail-CLOSED — 未识别的 reason 保守当作不可验证, 不建议方向性操作)"
       triggers_rule: true
+    # 第七路 (task 13.3/9.2, Phase 4 接入): gitlink 层成因。上面六路都在
+    # `remotes[*]` 层逐 remote 判定; 本路在 `gitlink_integrity[*]` 层逐 (R,S) 对判定,
+    # 与前六路正交 —— 同一次 scan 可以同时落某个 remote 的 behind 档和某个 (R,S)
+    # 对的 gitlink 档, 两条建议都要出。
+    - cause: "gitlink orphaned (F10″ 第七种成因)"
+      match: |
+        gitlink_integrity[*] 中存在被 _gitlink_blocking 判定的对:
+        status == "orphaned"  OR  (status == "orphan_unverified" AND consecutive_unverified >= k_eff)
+      action: |
+        「主仓在 <remote> 上引用的子模块 <submodule> commit 在 <remote> 上不存在 —
+        从 <remote> clone --recursive 会断裂。修法: git -C <submodule> push <remote> <branch>」
+        (方向是推子模块, 不是动主仓 gitlink —— 主仓引用是对的, 缺的是子模块那侧的镜像)
+      triggers_rule: true
+
+  # OQ-C 裁决 (owner 2026-07-19, tasks 1.3/9.3): 建议层降级, 不造有状态冷却。
+  degrade_when:
+    match: "multi_remote.has_unreachable_remote == true"
+    behavior: |
+      不走上方 dispatch, 换成一条「离线 / 远端不可达, 同步状态不可知」降级横幅
+      (复用 coordination_fetch 现有 degraded 红条先例)。
+    rationale: |
+      全 fetch 失败时六路 dispatch 的输入本身就不可信 —— 逐条报 remote drift 是拿
+      不可知当已知。降级横幅诚实且天然去重 (一次 scan 一条), 不需要记忆「上次提过谁」。
+    scope: |
+      🔴 只作用于建议层, 不作用于 `overall_parity` 裁决层。裁决层去抖会重新引入假绿 ——
+      那正是本 Spec 要根治的病。裁决层照常 fail-CLOSED 报 false。
 
 recommendation:
   workflow: null
   steps: []
-  reason: "检测到多远程 HEAD 不同步 — 具体建议按上方 dispatch 表逐 remote 生成 (pull / 查网络凭据 / 无), 不再笼统建议 push"
+  reason: "检测到多远程 HEAD 不同步 — 具体建议按上方 dispatch 表逐 remote / 逐 (R,S) 对生成 (pull / 推子模块 / 查网络凭据 / 无), 不再笼统建议 push"
   non_blocking: true
 ```
 

@@ -625,10 +625,14 @@ helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
 |---------|---------|------|
 | `multi_remote_drift` (priority 1.35) | `multi_remote.overall_parity === false` | 降级置信度, 输出 per-remote 修复建议 |
 
-> **F10″ 已知缺口**: `overall_parity=false` 也可能由 `gitlink_integrity[]` blocking (Phase 2A) 触发 —
-> `multi_remote_drift` 的 dispatch 表 (`references/rules/basic-rules.md` §1.35) 目前只覆盖
-> `remotes[]` 层的六路成因, **尚未新增第七路** gitlink 专属建议 (`git -C S push R <branch>`,
-> proposal.md AC-16 设计意图)。待后续增量接入。
+> **F10″ 第七路 (Phase 4 已接入)**: `overall_parity=false` 也可能由 `gitlink_integrity[]` blocking
+> (Phase 2A) 触发。`multi_remote_drift` 的 dispatch 表 (`references/rules/basic-rules.md` §1.35)
+> 现已覆盖第七路 gitlink 专属建议 (`git -C S push R <branch>`)。它与 `remotes[]` 层的六路正交,
+> 同一次 scan 可同时命中两层。
+>
+> **OQ-C 降级 (owner 裁定 2026-07-19)**: `has_unreachable_remote: true` 时本规则不走 dispatch,
+> 改出「离线, 同步状态不可知」降级横幅。不新增持久化冷却状态; 降级只在建议层, 裁决层照常
+> fail-CLOSED。
 
 **不触发条件**:
 - `has_pending_push: true` (仅 ahead) — 正常待推送, 不报警
