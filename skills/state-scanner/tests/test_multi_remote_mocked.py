@@ -788,6 +788,32 @@ class TestEnforcedPolicyGovernsVerdict(unittest.TestCase):
             r = self._collect(repo, table)
         self.assertTrue(r.data["overall_parity"])
 
+    def test_observability_fields_expose_the_participating_set(self):
+        """Review I2 的产出侧断言 (post_planning R1 qa-engineer Major-1 补): 生产代码
+        注释自陈「裁决基于子集就必须让子集可读」, 但此前无任何测试断言这两个字段的
+        真实取值 —— 声称的可观测性没有被钉死。"""
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(repo, {"read_only_remotes": ["mirror"]})
+            r = self._collect(repo, table)
+        self.assertEqual(r.data["enforced_remotes_resolved"], ["origin"])
+        self.assertEqual(r.data["excluded_read_only"], ["mirror"])
+
+    def test_empty_enforced_set_emits_soft_error_not_just_silent_false(self):
+        """fail-CLOSED 的 false 必须**带理由**。没有 `enforced_set_empty` soft error 时,
+        运维看到的是一堆 equal/fresh 的 remote 配一个 false 裁决而无任何解释 —— 而
+        「没有理由的红」最终会被学会忽略, 等于绕远路回到信任撒谎的 snapshot。"""
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(
+                repo, {"read_only_remotes": ["origin", "mirror"]}, mirror_counts="0\t0\n"
+            )
+            r = self._collect(repo, table)
+        self.assertFalse(r.data["overall_parity"])
+        self.assertTrue(
+            any(e.get("error") == "enforced_set_empty" for e in r.errors),
+            f"expected enforced_set_empty soft error, got {[e.get('error') for e in r.errors]}",
+        )
+        self.assertEqual(r.data["enforced_remotes_resolved"], [])
+
     def test_policy_excluding_every_remote_is_fail_closed(self):
         """R3/R4 audit hazard: read-only covering ALL remotes empties the
         participating set. `all([]) == True` would report "in sync" on ZERO

@@ -34,7 +34,14 @@ def _repo(label_branch, head, *remotes):
     return {"branch": label_branch, "local_head": head, "remotes": list(remotes)}
 
 
-def _rem(name, parity, ahead=0, reachable=True, reason=None, evidence_grade=None):
+def _rem(name, parity, ahead=0, reachable=True, reason=None, evidence_grade=None,
+         fetch_ok="true"):
+    """`fetch_ok` 是 F1′/F3′ 的三态可达性真信号 (true/false/not_attempted)。
+
+    `reachable` 保留在夹具里只为形态贴合真实 snapshot —— 它自 task 1.10 退役
+    ls_remote 后已恒为 true (唯一写 false 的代码路径被删), **不再是可达性判据**。
+    断言不可达的测试必须设 `fetch_ok="false"`, 设 `reachable=False` 不会触发任何东西。
+    """
     return {
         "name": name,
         "parity": parity,
@@ -42,6 +49,7 @@ def _rem(name, parity, ahead=0, reachable=True, reason=None, evidence_grade=None
         "reachable": reachable,
         "reason": reason,
         "evidence_grade": evidence_grade,
+        "fetch_ok": fetch_ok,
     }
 
 
@@ -70,9 +78,24 @@ class TestSyncSectionAC2(unittest.TestCase):
         self.assertTrue(any("aria" in ln for ln in r["lines"]))
 
     def test_unreachable_remote_warns(self):
-        mr = {"main_repo": _repo("master", "ccc3333", _rem("origin", "unknown", reachable=False))}
+        """v1.62.0 (task 1.10) 后判据从 `reachable is False` 改为 `fetch_ok == "false"`。
+
+        ⚠️ 本测试曾随该修复静默转红并被 ship —— state-scanner 的 run_tests.py 的
+        TESTS_DIR 硬编码只扫自己的 tests/, 结构上看不见 session-closer, 所以"全绿"
+        声称覆盖不到这次改动的真实爆炸半径 (post_planning R1 qa-engineer 抓出)。
+        """
+        mr = {"main_repo": _repo("master", "ccc3333",
+                                 _rem("origin", "unknown", fetch_ok="false"))}
         r = fill_sync_section(mr)
         self.assertTrue(any("不可达" in w for w in r["warnings"]))
+
+    def test_retired_reachable_field_no_longer_triggers(self):
+        """负控: 只设 `reachable=False` (退役判据) 不得再触发不可达告警 —— 否则说明
+        判据没真切换。这条锁死"不要再回去读 reachable"。"""
+        mr = {"main_repo": _repo("master", "ccc3333",
+                                 _rem("origin", "unknown", reachable=False))}
+        r = fill_sync_section(mr)
+        self.assertFalse(any("不可达" in w for w in r["warnings"]))
 
     def test_empty_no_crash(self):
         self.assertEqual(fill_sync_section(None), {"lines": [], "warnings": []})

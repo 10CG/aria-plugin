@@ -42,7 +42,7 @@ task 1.8 (SOT 指针) / 3.2 (改名遗漏) / 7.2 (退役键 ≥8 处清扫) / 10
 
 ### 质量
 
-测试 1219 → 1248。双轮独立对抗 review (silent-failure-hunter + code-reviewer) 命中 2 Critical + 5 Important + 3 Minor, 全部修复 —— 其中 3 条属「勾选完成≠运行现实」(AC-5 探针 fail-OPEN 且被自己的测试锁死 / task 1.6 继承在最常见配置形态下未生效 / `reachable` 退役留下活消费方)。真实 dogfood 验证。
+测试 1232 → 1250。双轮独立对抗 review (silent-failure-hunter + code-reviewer) 命中 2 Critical + 5 Important + 3 Minor, 全部修复 —— 其中 3 条属「勾选完成≠运行现实」(AC-5 探针 fail-OPEN 且被自己的测试锁死 / task 1.6 继承在最常见配置形态下未生效 / `reachable` 退役留下活消费方)。真实 dogfood 验证。
 
 ### 仍未做 (spec 内, 明示不冒充完成)
 
