@@ -1,10 +1,13 @@
 """Phase 1.12 — Multi-remote parity collector (v1.15.0+).
 
 Produces the `multi_remote` block documented in `state-scanner/SKILL.md` §1.12
-"多远程 Parity". Canonical schema source-of-truth is `git-remote-helper` SKILL.md;
-this collector is the fallback in-process implementation invoked when the helper
-is not available (or unconditionally, since the current in-tree topology ships
-the collector as the primary integration point).
+"多远程 Parity". Canonical schema source-of-truth is
+`state-scanner/references/state-snapshot-schema.md` (AD-SSME-6), mechanically
+enforced by `scripts/validate_schema_doc.py` — do NOT relocate the schema SOT
+into this module. (Historical note: the SOT pointer used to name
+`git-remote-helper` SKILL.md, back when this collector was only the fallback
+in-process implementation; the in-tree topology now ships the collector as the
+primary integration point and the schema doc as the sole SOT.)
 
 Design invariants (do not break without a snapshot_schema_version bump):
 - stdlib-only (subprocess, json, os, pathlib, re).
@@ -73,12 +76,17 @@ replaced by the per-remote `evidence_grade` field below, joined from the F3′
           parity: equal|ahead|behind|diverged|unknown
           behind_count: int | null
           ahead_count: int | null
-          reachable: bool             # false only when verify_mode=ls_remote and call fails
+          reachable: bool             # vestigial since task 1.10 retired ls_remote: the
+          #                             only writer of `false` was that path, so this is now
+          #                             constant true. Honest reachability lives in
+          #                             `fetch_ok`/`evidence_grade` (F1′). Field kept because
+          #                             golden fixtures + schema doc + downstream consumers
+          #                             all reference it; removing it is a separate change.
           reason: null | no_local_tracking_ref | shallow_clone | detached_head
                   | auth_failed | not_found | network_timeout | not_refreshed
                   | rev_list_failed | rev_list_parse_failed | parse_error
                   | remote_branch_missing
-          method: local_refs | ls_remote
+          method: local_refs          # single value since task 1.10
           evidence_grade: fresh | stale_unverified | expired   # D20, F1′/F4′ join
           fetch_ok: "true" | "false" | "not_attempted"          # F3′ leg join
 """
@@ -146,7 +154,7 @@ _GITLINK_COUNTER_RESET_STATUSES = frozenset({"ok", "orphaned"})
 def _load_config(project_root: Path) -> dict[str, Any]:
     """Read `.aria/config.json` → `state_scanner.multi_remote` block.
 
-    Missing file / missing block → defaults (enabled=true, verify_mode=local_refs).
+    Missing file / missing block → defaults (enabled=true).
     Malformed JSON → defaults + soft error logged by caller if it cares.
 
     F2′ retirement note (main spec stale-refs-false-parity, Phase 1): this used
@@ -155,6 +163,23 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     FETCH_HEAD-mtime staleness is retired wholesale (see module docstring);
     `sync_check.warn_after_hours` remains in the config schema for `sync.py`'s
     own (unrelated, F9′/Phase-2) consumption only, never read here.
+
+    🔴 **Task 1.6 (namespace, Phase 4)**: the remote-POLICY keys
+    (`enforced_remotes` / `read_only_remotes`) are NOT state-scanner's to define.
+    `phase-c-integrator/SKILL.md` §C.2.5 step 3 publishes the cross-skill contract
+    verbatim: "skill 级 `enforced_remotes == null` 时继承顶层
+    `multi_remote.enforced_remotes`, 空则自动发现所有 remote". Reading only the
+    skill-level block (the pre-4.x behavior) would give state-scanner and
+    phase-c-integrator two different answers to "which remotes must be in parity"
+    — a split-brain that reproduces THIS SPEC'S OWN disease (two parallel
+    computation points) one layer up, at the cross-skill seam. So the two policy
+    keys are resolved through `_resolve_remote_policy` below and merged into the
+    returned block; every other key stays skill-local.
+
+    The merge is deliberately narrow: only these two keys inherit, only when the
+    skill-level value is absent or explicitly null, and a missing config file
+    still returns `{}` byte-identically (no synthetic keys) so callers that
+    distinguish "unconfigured" from "configured empty" are unaffected.
     """
     cfg_path = project_root / ".aria" / "config.json"
     if not cfg_path.exists():
@@ -164,7 +189,43 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     ss = raw.get("state_scanner") or {}
-    return ss.get("multi_remote") or {}
+    block = dict(ss.get("multi_remote") or {})
+    # ⚠️ No early return on an EMPTY/ABSENT skill block. That is the MOST COMMON
+    # adopter shape (most projects never write `state_scanner.multi_remote` at all),
+    # and per the contract an absent block IS `enforced_remotes == null` ⇒ it must
+    # inherit. Returning `{}` here silently dropped the top-level policy, leaving the
+    # cross-skill split-brain task 1.6 claims to close fully intact for those repos —
+    # a textbook «勾选完成≠运行现实». (Both review agents caught this independently;
+    # the first inheritance test passed only because its fixture kept the block
+    # non-empty with an unrelated `enabled: True` — fixture shape hugging the bug.)
+    # The "missing config FILE → `{}` byte-identically" guarantee is upheld by the
+    # `cfg_path.exists()` gate above, not by this block's emptiness.
+    merged = _resolve_remote_policy(block, raw.get("multi_remote") or {})
+    return merged
+
+
+def _resolve_remote_policy(
+    skill_block: dict[str, Any], top_level: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply the published skill→top-level inheritance for the two remote-policy
+    keys (task 1.6). Pure function over two already-parsed dicts so the contract
+    is unit-testable without touching the filesystem.
+
+    Inheritance rule (phase-c-integrator §C.2.5 step 3, verbatim): a skill-level
+    value of `null` (or an absent key — JSON gives no way to tell them apart, and
+    the contract treats both as "not overridden") inherits the top-level value.
+    A skill-level value that is PRESENT and non-null wins outright, INCLUDING an
+    explicit `[]`.
+
+    ⚠️ `[]` is not "check nothing" — `resolve_enforced_remotes` reads an empty
+    list as AUTO-DISCOVER-ALL (see its own F5′ trap docstring). This function
+    only decides WHICH list is in force; it never reinterprets the value.
+    """
+    out = dict(skill_block)
+    for key in ("enforced_remotes", "read_only_remotes"):
+        if out.get(key) is None and top_level.get(key) is not None:
+            out[key] = top_level[key]
+    return out
 
 
 def _load_sync_freshness_config(project_root: Path) -> dict[str, Any]:
@@ -172,7 +233,7 @@ def _load_sync_freshness_config(project_root: Path) -> dict[str, Any]:
     landed keys: `evidence_window_seconds` / `hard_cap_days` / `k_min` — D15′/D18
     thresholds for the F1′ dual-role predicates). Deliberately a SEPARATE read
     from `_load_config`: `sync_freshness` is a sibling block, unrelated to
-    `multi_remote`'s own enabled/verify_mode/timeout_seconds keys. Same
+    `multi_remote`'s own enabled/timeout_seconds keys. Same
     fail-soft contract: missing file/block or malformed JSON → `{}` (callers
     apply hardcoded defaults)."""
     cfg_path = project_root / ".aria" / "config.json"
@@ -343,120 +404,28 @@ def _remote_parity_local_refs(
     return base
 
 
-def _remote_parity_ls_remote(
-    repo_dir: Path,
-    remote: str,
-    branch: str | None,
-    local_head: str | None,
-    shallow: bool,
-    timeout: int,
-) -> dict[str, Any]:
-    """Verify parity by calling `git ls-remote <remote> <branch>` (network I/O).
-
-    This resolves remote_head directly from the server. Ahead/behind counts still
-    require a local rev-list, so if the fetched sha is unreachable from HEAD we
-    degrade gracefully to just reporting remote_head + reachable=true with a
-    best-effort equal/behind classification.
-    """
-    base: dict[str, Any] = {
-        "name": remote,
-        "remote_head": None,
-        "parity": "unknown",
-        "behind_count": None,
-        "ahead_count": None,
-        "reachable": True,
-        "reason": None,
-        "method": "ls_remote",
-    }
-
-    if branch is None:
-        base["reason"] = "detached_head"
-        return base
-
-    rc, out, err = _run(
-        ["git", "ls-remote", "--heads", remote, branch], repo_dir, timeout=timeout
-    )
-    if rc != 0:
-        base["reachable"] = False
-        low = (err or "").lower()
-        if "could not resolve host" in low or "timed out" in low or "timeout" in low:
-            base["reason"] = "network_timeout"
-        elif "authentication failed" in low or "permission denied" in low:
-            base["reason"] = "auth_failed"
-        elif "not found" in low or "does not exist" in low:
-            base["reason"] = "not_found"
-        else:
-            base["reason"] = "network_timeout"
-        return base
-
-    # Output is "<sha>\t<ref>"; first line only (single branch).
-    first = out.strip().split("\n", 1)[0] if out.strip() else ""
-    if not first:
-        # QA-I1 fix (post_implementation audit R1): empty stdout with rc=0 means
-        # the remote responded but this branch does not exist on it — a new
-        # feature branch that has never been pushed, not an unreachable remote.
-        # Marking reachable=False would suppress push reminders incorrectly.
-        base["reason"] = "remote_branch_missing"
-        base["reachable"] = True
-        return base
-    if "\t" not in first:
-        # Malformed output — remote reachable but response unparseable.
-        base["reason"] = "parse_error"
-        base["reachable"] = True
-        return base
-    sha = first.split("\t", 1)[0].strip()
-    base["remote_head"] = sha[:7] if len(sha) >= 7 else sha or None
-
-    if shallow:
-        # Can't compute counts in shallow clones.
-        base["reason"] = "shallow_clone"
-        return base
-
-    if local_head is None:
-        base["reason"] = "detached_head"
-        return base
-
-    # Try rev-list HEAD...<sha>; if <sha> not in local object db, degrade.
-    rc, out, _ = _run(
-        ["git", "rev-list", "--left-right", "--count", f"HEAD...{sha}"],
-        repo_dir,
-        timeout=timeout,
-    )
-    if rc != 0:
-        # Unknown sha locally → we know remote_head but not counts; flag equal iff heads match.
-        if local_head and sha.startswith(local_head):
-            base["parity"] = "equal"
-            base["ahead_count"] = 0
-            base["behind_count"] = 0
-        # else leave parity=unknown with reason None (best-effort)
-        return base
-    parts = out.strip().split()
-    if len(parts) != 2:
-        return base
-    try:
-        ahead, behind = int(parts[0]), int(parts[1])
-    except ValueError:
-        return base
-    base["ahead_count"] = ahead
-    base["behind_count"] = behind
-    if ahead > 0 and behind > 0:
-        base["parity"] = "diverged"
-    elif ahead > 0:
-        base["parity"] = "ahead"
-    elif behind > 0:
-        base["parity"] = "behind"
-    else:
-        base["parity"] = "equal"
-    return base
-
-
+# F-OQ-F retirement (task 1.10, main spec stale-refs-false-parity Phase 4):
+# `_remote_parity_ls_remote` lived here — a second, independent reachability
+# computation that talked to the network itself (`git ls-remote`) instead of
+# reading refs F3′ had already refreshed. Retired wholesale, not deprecated:
+#
+# - F3′ (Phase 0.5) now fetches every enforced leg BEFORE any Phase-1 collector
+#   reads local git state, so `local_refs` sees server truth without a second
+#   round trip. Keeping ls_remote meant DOUBLE the network for the same answer.
+# - Worse than redundant, it was a THIRD parity opinion (alongside local_refs and
+#   the F3′ leg record) with its own freshness semantics and its own error
+#   classification — exactly the "two parallel computation points" shape this
+#   whole spec exists to remove. A stale-vs-live disagreement between the two
+#   modes had no defined resolution.
+#
+# `verify_mode` is retired with it: the config key is now IGNORED (not an error —
+# an adopter who set it keeps scanning, just on the one remaining path).
 # ---------------------------------------------------------------------------
 # Per-repo scan
 # ---------------------------------------------------------------------------
 def _scan_repo(
     repo_dir: Path,
     path_label: str,
-    verify_mode: str,
     timeout: int,
 ) -> dict[str, Any]:
     """Scan one repo (main or submodule). Returns repo_block.
@@ -476,15 +445,13 @@ def _scan_repo(
 
     remote_results: list[dict[str, Any]] = []
     for rname in remotes:
-        if verify_mode == "ls_remote":
-            r = _remote_parity_ls_remote(
+        # Single path since task 1.10 retired `verify_mode`/ls_remote (see the
+        # retirement note above `_remote_parity_local_refs`).
+        remote_results.append(
+            _remote_parity_local_refs(
                 repo_dir, rname, branch, local_head, shallow, timeout
             )
-        else:
-            r = _remote_parity_local_refs(
-                repo_dir, rname, branch, local_head, shallow, timeout
-            )
-        remote_results.append(r)
+        )
 
     return {
         "path": path_label,
@@ -1261,7 +1228,6 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
 
     Reads `.aria/config.json` → `state_scanner.multi_remote`:
       - enabled (default true)
-      - verify_mode: "local_refs" (default) | "ls_remote"
       - timeout_seconds (default 5)
     (F2′ retired `warn_after_hours` — see `_load_config` docstring.)
 
@@ -1304,9 +1270,8 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         r.data = {"enabled": False}
         return r
 
-    verify_mode = str(cfg.get("verify_mode", "local_refs")).lower()
-    if verify_mode not in ("local_refs", "ls_remote"):
-        verify_mode = "local_refs"
+    # `verify_mode` retired (task 1.10) — read no more. An adopter config that
+    # still carries the key is simply ignored, never an error.
     timeout = int(cfg.get("timeout_seconds", _DEFAULT_TIMEOUT) or _DEFAULT_TIMEOUT)
 
     # Guard: must be inside a git working tree; otherwise emit enabled=true + empty blocks.
@@ -1332,7 +1297,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         return r
 
     # --- Main repo
-    main_block = _scan_repo(project_root, ".", verify_mode, timeout)
+    main_block = _scan_repo(project_root, ".", timeout)
 
     # --- Submodules
     # `submodule_paths` (ALL declared paths, incl. UNINITIALIZED ones) is
@@ -1347,7 +1312,7 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
             # Uninitialized submodule — skip (SKILL.md §1.12 fail-soft philosophy).
             continue
         try:
-            block = _scan_repo(sm_dir, rel_path, verify_mode, timeout)
+            block = _scan_repo(sm_dir, rel_path, timeout)
         except Exception as e:  # pragma: no cover — defensive
             r.soft_error("multi_remote_submodule_failed", f"{rel_path}: {e}")
             continue
@@ -1396,13 +1361,32 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     # check that can never fire — also keeps every pre-existing submodule-less
     # test fixture from needing new mocked commands).
     main_branch = main_block["branch"]
+
+    # --- Task 6.1/6.2 (Phase 4): the F5′ remote policy, resolved ONCE here and
+    # shared by BOTH consumers below (the gitlink R×S loop and the core parity
+    # verdict). Phase 2A wired it into the gitlink loop only; resolving it twice
+    # from `cfg` would be a second computation point for "which remotes count" —
+    # exactly the shape of defect this spec exists to remove.
+    configured_enforced = cfg.get("enforced_remotes")
+    read_only_remotes = tuple(cfg.get("read_only_remotes") or ())
+
+    def _enforced_entries_of(block: dict[str, Any]) -> list[dict[str, Any]]:
+        """Filter one repo block's remote entries down to the enforced set.
+
+        Policy is a set of remote NAMES, so it applies per-repo: a submodule that
+        declares an `upstream` its parent does not is filtered on its own actual
+        remote list, and a configured name absent from THIS repo is simply not
+        matched (recorded as `no_matching_remotes` observability by
+        remote_refresh, never fabricated into a ghost entry here).
+        """
+        names = [rr["name"] for rr in block["remotes"]]
+        enforced, _ = resolve_enforced_remotes(configured_enforced, names, read_only_remotes)
+        keep = set(enforced)
+        return [rr for rr in block["remotes"] if rr.get("name") in keep]
+
     gitlink_integrity_list: list[dict[str, Any]] = []
     if submodule_paths:
-        enforced_main_remotes, _ = resolve_enforced_remotes(
-            cfg.get("enforced_remotes"),
-            [rr["name"] for rr in main_block["remotes"]],
-            tuple(cfg.get("read_only_remotes") or ()),
-        )
+        enforced_main_remotes = [rr["name"] for rr in _enforced_entries_of(main_block)]
         gitlink_cache = _read_gitlink_cache(project_root)
         raw_gitlink_pairs = gitlink_cache.get("pairs")
         gitlink_pairs_on_disk: dict[str, Any] = (
@@ -1505,17 +1489,58 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     # directly rather than via `_aggregate_flags` (see that function's Phase 1
     # docstring note for why it is bypassed here).
     has_pending_push = any(e.get("parity") == "ahead" for e in all_remote_entries)
+
+    # Task 6.1/6.2 (Phase 4): F5′ enforced/read-only filtering NOW governs the core
+    # verdict. Before this increment `resolve_enforced_remotes` reached only the
+    # 13.x gitlink loop, so `read_only_remotes` was a DEAD config key for parity:
+    # remote_refresh already skipped fetching read-only legs (it has consumed the
+    # policy since Phase 0.5), while `_overall_parity` still demanded evidence for
+    # them — so configuring a read-only mirror made the verdict WORSE (no leg ⇒ no
+    # fresh evidence ⇒ blocking_unknown ⇒ permanent false). Filtering both sides
+    # through one policy makes fetch scope and verdict scope the same set.
+    #
+    # 6.2 scope, explicitly: read-only exclusion applies to `overall_parity` AND
+    # `has_unreachable_remote` (and therefore to the `multi_remote_drift`
+    # recommendation rule, which triggers off these two). `has_pending_push` is
+    # deliberately LEFT on the unfiltered set — task 5.3's preserved decision keeps
+    # ahead-detection untouched, and "local has commits the mirror lacks" stays
+    # worth surfacing even for a remote whose parity you have opted out of.
+    #
+    # Empty-set safety: if the policy filters everything away (e.g. every remote is
+    # read-only), `_overall_parity`'s clause 1 returns False rather than the
+    # vacuous `all([]) == True` — zero participating remotes is zero positive
+    # evidence, never "in sync" (R3/R4 audit finding, fail-CLOSED).
+    enforced_entries: list[dict[str, Any]] = _enforced_entries_of(main_block)
+    for sb in submodule_blocks:
+        enforced_entries.extend(_enforced_entries_of(sb))
+
+    # Observability (review I2): the verdict is computed over a SUBSET, so the subset
+    # must be visible. Otherwise two snapshots are unexplainable: (a) every remote
+    # read-only ⇒ empty participating set ⇒ clause-1 false, while `remotes[]` shows
+    # nothing but equal/fresh and no reason anywhere; (b) a read-only remote with
+    # fetch_ok=false sits visibly in `remotes[]` while `has_unreachable_remote` stays
+    # false. A red with no reason is a red operators learn to ignore — which lands us
+    # back at trusting a lying snapshot by a slower route.
+    enforced_names = sorted({str(e.get("name")) for e in enforced_entries})
+    all_names = sorted({str(e.get("name")) for e in all_remote_entries})
+    excluded_names = [n for n in all_names if n not in set(enforced_names)]
+    if not enforced_entries and all_remote_entries:
+        r.soft_error(
+            "enforced_set_empty",
+            f"remote policy excluded every discovered remote ({', '.join(all_names)}); "
+            "overall_parity is fail-CLOSED false on zero participating remotes — check "
+            "enforced_remotes / read_only_remotes (skill-level or top-level multi_remote)",
+        )
+
     has_unreachable_remote = any(
         _has_unreachable_remote(e.get("fetch_ok", "not_attempted"))
-        for e in all_remote_entries
+        for e in enforced_entries
     )
-    # Phase 1: F5′ enforced-remote filtering is NOT yet wired here — every
-    # discovered remote (unfiltered by `enforced_remotes`/`read_only_remotes`)
-    # is passed as `enforced_entries` (task 6 scope, a later increment).
-    # gitlink_integrity now carries REAL per-(R,S) verdicts (Phase 2A/F10″,
-    # computed above) — repos with zero declared submodules still pass `[]`.
+    # gitlink_integrity carries REAL per-(R,S) verdicts (Phase 2A/F10″, computed
+    # above, over the SAME enforced remote set) — repos with zero declared
+    # submodules still pass `[]`.
     overall_parity = _overall_parity(
-        all_remote_entries, gitlink_integrity=gitlink_integrity_list, k_eff=k_eff
+        enforced_entries, gitlink_integrity=gitlink_integrity_list, k_eff=k_eff
     )
 
     data: dict[str, Any] = {
@@ -1526,6 +1551,9 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
         "has_unreachable_remote": has_unreachable_remote,
         "has_pending_push": has_pending_push,
         "gitlink_integrity": gitlink_integrity_list,
+        # Which remotes the verdict was actually computed over (review I2). Additive.
+        "enforced_remotes_resolved": enforced_names,
+        "excluded_read_only": excluded_names,
     }
 
     r.data = data

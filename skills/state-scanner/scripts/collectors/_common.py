@@ -314,6 +314,37 @@ class CollectorResult:
         log.warning("collector soft error: %s — %s", kind, detail)
 
 
+def _noninteractive_git_env(timeout: int) -> dict[str, str]:
+    """Build `_run`'s child environment: LC_ALL=C (#143) + the task 3.4
+    non-interactive contract. Split out as a named function so the contract is
+    unit-testable without spawning a process (`test_common.py`).
+
+    `ConnectTimeout` is derived from the caller's own `timeout` and capped at 10s.
+    It must be STRICTLY smaller than the subprocess deadline (hence `timeout - 1`),
+    otherwise the two expire together, TimeoutExpired wins the race, and ssh's own
+    bounded failure — which carries a classifiable error instead of an opaque
+    rc=124 — never gets to happen.
+
+    ⚠️ Boundary (review M1): the inequality needs `timeout >= 2`, so the caller's
+    timeout is floored at 2 for THIS derivation only. A 1s git timeout is already
+    outside any regime where an ssh handshake completes; giving the ssh side one
+    extra second changes nothing except restoring the ordering.
+    Verified end-to-end against an unroutable host
+    in `test_common.py`: with `min(timeout, 10)` that test returned rc=124 (hung to
+    the deadline); with `timeout - 1` it returns ssh's own connect failure.
+    """
+    env = {**os.environ, "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"}
+    if not env.get("GIT_SSH_COMMAND"):
+        # Floor the caller timeout at 2 so the strict inequality below actually
+        # holds: at timeout==1, `max(1, 0) == 1 == timeout` would reinstate the very
+        # race this derivation exists to avoid (review M1).
+        connect_timeout = max(1, min(max(int(timeout), 2) - 1, 10))
+        env["GIT_SSH_COMMAND"] = (
+            f"ssh -o BatchMode=yes -o ConnectTimeout={connect_timeout}"
+        )
+    return env
+
+
 def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
     """subprocess wrapper: returns (rc, stdout, stderr). Never raises on non-zero rc.
 
@@ -336,6 +367,33 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
     passthrough (commit msgs / refs / paths — UTF-8 byte-identical under LC_ALL=C,
     verified via `git log --oneline` md5). LANG=C is redundant once LC_ALL=C is set
     (LC_ALL collapses all LC_*), so it is omitted.
+
+    Non-interactive contract (task 3.4, main spec stale-refs-false-parity): git
+    must NEVER be able to block on a prompt here. `timeout=` alone is not that
+    guarantee — it is a *deadline*, so a credential prompt on a private HTTPS
+    remote or an unknown-host-key prompt on SSH burns the FULL timeout on every
+    affected leg, and F3′'s per-scan fetch budget then reports `not_attempted`
+    for legs that never got a slot. Three orthogonal doors are closed:
+
+    - `stdin=DEVNULL` — git's prompt reads hit EOF instead of waiting on a tty
+      that, under scan.py, may not even be the operator's terminal.
+    - `GIT_TERMINAL_PROMPT=0` — git's own switch for "fail instead of asking"
+      (covers the HTTPS credential-helper path, which does not read stdin).
+    - `GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=N"` — BatchMode
+      kills passphrase/host-key prompts; ConnectTimeout bounds the TCP hang that
+      BatchMode alone does not (a firewalled host stalls in connect(), long
+      before ssh would have asked anything).
+
+    ⚠️ `GIT_SSH_COMMAND` is set ONLY when the adopter has not set it. Clobbering a
+    custom ssh wrapper (proxy jump, alternate identity, sshd on a nonstandard
+    port) would break the fetch outright — a louder failure than the hang this
+    guards. In that case the other two doors plus `timeout=` still apply, and the
+    adopter's wrapper is the right place for their own BatchMode.
+
+    Because prompts are structurally unreachable, the "auth failure prompts only
+    once" requirement holds by construction: an auth failure returns a non-zero rc
+    on the spot, gets a bounded label via `classify_git_error`, and is never
+    re-asked — there is no interactive retry path to dedupe.
 
     Defensive None guard (#131 fix, 2026-05-28): ``(p.stdout or "")`` /
     ``(p.stderr or "")`` belt-and-suspenders for any future Python subprocess
@@ -362,7 +420,11 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 5) -> tuple[int, str, str]:
             # governs byte→str decoding of passthrough (commit msgs / refs / paths,
             # which stay UTF-8 byte-identical under LC_ALL=C — verified). LANG=C is
             # redundant once LC_ALL=C is set (LC_ALL collapses all LC_*), so omitted.
-            env={**os.environ, "LC_ALL": "C"},
+            # task 3.4 (non-interactive contract): see docstring. stdin=DEVNULL is
+            # NOT implied by capture_output — that governs stdout/stderr only, and
+            # the child would otherwise inherit this process's stdin.
+            stdin=subprocess.DEVNULL,
+            env=_noninteractive_git_env(timeout),
         )
         # #131 fix: enforce str return contract — defensive against any future
         # subprocess thread race that surfaces None outputs despite capture_output.

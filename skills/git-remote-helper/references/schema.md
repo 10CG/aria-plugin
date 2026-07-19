@@ -55,7 +55,7 @@ Spec A (state-scanner Phase 1.12) 和降级 fallback 实现必须引用本文档
       "method": "local_refs | ls_remote"
     }
   ],
-  "local_refs_stale": "boolean (true if FETCH_HEAD mtime > 24h, local_refs mode only)",
+  "local_refs_stale": "RETIRED (F2′, state-scanner-stale-refs-false-parity Phase 1) — FETCH_HEAD mtime is repo-global while freshness is per-(repo,remote); superseded by per-leg evidence_grade. No longer emitted.",
   "overall_parity": "boolean",
   "has_unreachable_remote": "boolean",
   "has_pending_push": "boolean"

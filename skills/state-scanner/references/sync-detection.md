@@ -524,16 +524,19 @@ Phase 1.12 输出直接驱动阶段 2 的两条推荐规则（均不阻断，仅
 git -C <path> remote | sort -u
 ```
 
-若 `state_scanner.multi_remote.enforced_remotes` 非 null, 则使用白名单代替自动发现。不存在的 remote 输出 `reachable: false, reason: not_found`。
+若 `enforced_remotes` 非 null 则使用白名单代替自动发现 (skill 级为 null 时继承顶层 `multi_remote.enforced_remotes`, task 1.6)。**配置了但仓库里不存在的 remote 名不产出条目** —— 记入 `remote_refresh.no_matching_remotes[]` 观测字段, 绝不伪造成一条 ghost fail 腿 (F5′/RM-3)。
 
 **步骤 2: 获取 remote HEAD**
 
-根据 `verify_mode` 选择策略:
+读取 `refs/remotes/<remote>/<branch>` 本地缓存 (`method: "local_refs"`) —— **单一路径**。
 
-| verify_mode | 方法 | 标注 |
-|-------------|------|------|
-| `local_refs` (默认) | 读取 `refs/remotes/<remote>/<branch>` 本地缓存 | `method: "local_refs"` |
-| `ls_remote` | `timeout <N> git -C <path> ls-remote <remote> HEAD` | `method: "ls_remote"` |
+> **`verify_mode` / `ls_remote` 已退役** (task 1.10/OQ-F, aria-plugin v1.62.0): F3′ `remote_refresh`
+> (Phase 0.5) 已在任何 Phase-1 collector 读本地 git 状态之前 fetch 过每条 enforced 腿, 本地 ref 即
+> 服务器真相, 再打一次 `ls-remote` 是双倍网络换同一个答案; 更要命的是它构成**第三个独立可达性
+> 计算点** (与 local_refs、F3′ 腿记录并列), 各有各的新鲜度语义与错误分类, 彼此不一致时无裁决规则
+> —— 正是本 Spec 要消除的缺陷形态。采用者配置里残留的 `verify_mode` 键now被**忽略**, 不报错。
+>
+> 注意: 独立 skill `git-remote-helper` 自己的 `ls_remote` 模式**未受影响**, 那是另一套契约。
 
 **步骤 3: 计算 parity**
 
@@ -570,8 +573,8 @@ has_pending_push=false
 for each remote_entry:
   if remote_entry.parity in ["behind", "diverged"]:
     overall_parity=false
-  if remote_entry.reachable == false:
-    has_unreachable_remote=true
+  if remote_entry.fetch_ok == "false":     # 三态: true / false / not_attempted
+    has_unreachable_remote=true            # ⚠️ 不是 reachable — 见下方说明
   if remote_entry.parity == "ahead":
     has_pending_push=true
 ```
@@ -600,11 +603,16 @@ helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
 | 本地无 tracking ref | `"unknown"` | `"unknown"` | `"no_local_tracking_ref"` |
 | shallow clone | `true` | `"unknown"` | `"shallow_clone"` |
 | detached HEAD | `true` | `"unknown"` | `"detached_head"` |
-| auth 失败 (ls_remote) | `false` | `"unknown"` | `"auth_failed"` |
-| URL 无效/仓库不存在 | `false` | `"unknown"` | `"not_found"` |
-| ls_remote 超时 | `false` | `"unknown"` | `"network_timeout"` |
+| auth 失败 | `true` (见下) | `"unknown"` | `"auth_failed"` |
+| URL 无效/仓库不存在 | `true` (见下) | `"unknown"` | `"not_found"` |
+| 网络超时 | `true` (见下) | `"unknown"` | `"network_timeout"` |
 
-**fail-soft 原则**: 任一 remote 不可达 → 该条目 `parity: unknown, reachable: false` + `reason` 枚举, 不阻断扫描, 不影响其他 remote 的检测。
+> **`reachable` 已成常量 true** (task 1.10): 写入 `false` 的唯一代码路径是已退役的 `ls_remote`。
+> 上表后三行的失败现在由 F3′ 腿记录承载 —— 真实信号是 `fetch_ok` 三态与 `evidence_grade`,
+> 不是 `reachable`。字段本身保留 (golden fixture / schema / 下游消费方都引用它), 但不要再拿它
+> 当可达性判据。
+
+**fail-soft 原则**: 任一 remote 不可达 → 该条目 `parity: unknown` + `reason` 枚举 + 其 F3′ 腿记 `fetch_ok: "false"`, 不阻断扫描, 不影响其他 remote 的检测。(`reachable` 自 task 1.10 起恒 true, 不再承载此语义。)
 
 > **F10″/Phase 2A 提示 (state-scanner-stale-refs-false-parity 主 Spec)**: 本节 (§10) 描述的仍是 v1.15.0 的原始 helper/fallback 契约, 未反映 Phase 1 (`remote_refresh`/`evidence_grade`/`fetch_ok` 三态) 与 Phase 2A (`gitlink_integrity[]` 跨仓可达性检查) 的现行判据。**新增的 `sync_status.multi_remote.gitlink_integrity[]` 字段与本节 §10.2-10.5 描述的四状态守卫完全正交** — 它检测的不是「本仓与 remote 的 parity」, 而是「主仓已发布的 gitlink 在子模块自己的 remote 上是否可达」。字段/状态枚举的真 SOT 见 [state-snapshot-schema.md](./state-snapshot-schema.md) §`gitlink_integrity[]` status semantics; 谓词定义见 [predicate-domain-table.md](./predicate-domain-table.md) `gitlink_orphaned(R)`。
 
@@ -625,10 +633,14 @@ helper 输出的 JSON 直接挂载到 `sync_status.multi_remote`。
 |---------|---------|------|
 | `multi_remote_drift` (priority 1.35) | `multi_remote.overall_parity === false` | 降级置信度, 输出 per-remote 修复建议 |
 
-> **F10″ 已知缺口**: `overall_parity=false` 也可能由 `gitlink_integrity[]` blocking (Phase 2A) 触发 —
-> `multi_remote_drift` 的 dispatch 表 (`references/rules/basic-rules.md` §1.35) 目前只覆盖
-> `remotes[]` 层的六路成因, **尚未新增第七路** gitlink 专属建议 (`git -C S push R <branch>`,
-> proposal.md AC-16 设计意图)。待后续增量接入。
+> **F10″ 第七路 (Phase 4 已接入)**: `overall_parity=false` 也可能由 `gitlink_integrity[]` blocking
+> (Phase 2A) 触发。`multi_remote_drift` 的 dispatch 表 (`references/rules/basic-rules.md` §1.35)
+> 现已覆盖第七路 gitlink 专属建议 (`git -C S push R <branch>`)。它与 `remotes[]` 层的六路正交,
+> 同一次 scan 可同时命中两层。
+>
+> **OQ-C 降级 (owner 裁定 2026-07-19)**: `has_unreachable_remote: true` 时本规则不走 dispatch,
+> 改出「离线, 同步状态不可知」降级横幅。不新增持久化冷却状态; 降级只在建议层, 裁决层照常
+> fail-CLOSED。
 
 **不触发条件**:
 - `has_pending_push: true` (仅 ahead) — 正常待推送, 不报警

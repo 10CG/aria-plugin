@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.62.0] - 2026-07-19
+
+主 spec `state-scanner-stale-refs-false-parity` **Phase 4 (29 TODO 实质收口)**。核心四段式已于 v1.60.0 ship, 本版收口余下实质 TODO, spec 随之具备归档条件。
+
+### ⚠️ 行为变更 (采用者必读)
+
+- **`enforced_remotes` / `read_only_remotes` 从惰性配置变为承重** (task 6.1/6.2/6.4)。此前这两个键**只**影响 gitlink R×S 循环与 F3′ fetch 范围, **不影响** `overall_parity` / `has_unreachable_remote` 的核心裁决 —— 即「配了等于没配」。现在它们直接决定裁决参与集:
+  - 配了 `read_only_remotes` 的采用者: 该 remote 的 behind/diverged/不可达**不再**拉低 `overall_parity` (此前反而会, 因为 remote_refresh 早已跳过它的 fetch 而裁决仍向它索要新鲜证据 ⇒ 恒 false)。这是**修复**, 但确实改变了输出。
+  - 配了 `enforced_remotes` 白名单的采用者: 白名单外的 remote 不再参与裁决。
+  - **opt-out**: 不设这两个键 = 自动发现全部 remote = 与 v1.61.0 行为一致。
+- **命名空间对齐** (task 1.6): skill 级 `state_scanner.multi_remote.{enforced,read_only}_remotes` 为 null 或**整块缺席**时, 继承顶层 `multi_remote.*` (phase-c-integrator §C.2.5 step 3 已发布契约)。此前 state-scanner 只读 skill 级, 与 phase-c-integrator 对「该强制哪些 remote」给出不同答案 = cross-skill split-brain。
+- **`verify_mode` / `ls_remote` 路径退役** (task 1.10/OQ-F): 配置键现被**忽略** (不报错, 继续扫描)。F3′ 已让网络往返冗余; 保留它等于第三个独立可达性计算点。`remotes[].method` 恒为 `local_refs`; `remotes[].reachable` 恒为 `true` (真实信号见 `fetch_ok`/`evidence_grade`)。独立 skill `git-remote-helper` 的 ls_remote 模式**不受影响**。
+- **git 非交互契约** (task 3.4): 所有 git 子进程加 `stdin=DEVNULL` + `GIT_TERMINAL_PROMPT=0` + `GIT_SSH_COMMAND` BatchMode/ConnectTimeout (仅当采用者未自设)。凭据/host-key 提示不再挂到超时。
+
+### 新增
+
+- **AC-5 跨 collector 自洽检测** (task 2.12): `tracks_multibranch` 与 `sync_status` 互相矛盾时 (同分支 handoff track 对 HEAD 不可达 ∧ snapshot 仍宣称 parity 健康) 记 `snapshot_self_contradiction`; 无法评估时记 `snapshot_consistency_inconclusive` (不静默)。检测集 = 裁决集 (`enforced_remotes_resolved`), 不硬编码 origin。
+- **snapshot 新字段** (additive, 不 bump schema): `sync_status.multi_remote.enforced_remotes_resolved[]` / `excluded_read_only[]` —— 裁决基于子集, 子集必须可读, 否则过滤后的红没有理由。policy 排除全部 remote 时另发 `enforced_set_empty` soft error (裁决仍 fail-CLOSED false)。
+- **`multi_remote_drift` 第七路** (task 13.3/9.2): gitlink 层成因接入 dispatch, 建议 `git -C <submodule> push <remote> <branch>`。与 remotes[] 层六路正交, 可同时命中。
+- **OQ-C 裁定** (owner 2026-07-19, task 1.3/9.3): 不造有状态冷却; 无任何新鲜证据时 drift 规则降级为离线横幅。降级只在建议层, 裁决层照常 fail-CLOSED。
+
+### 修复
+
+- `session-closer/handoff_autofill.py`: `reachable is False` 随 ls_remote 退役成死码, handoff 静默不再报 remote 不可达 → 改读 `fetch_ok`。
+- 运行时缓存 `.aria/cache/remote-refresh.json` 曾被误提交 (每次扫描脏工作树 + 随插件分发) → 移出索引 + `.gitignore`。
+
+### 文档
+
+task 1.8 (SOT 指针) / 3.2 (改名遗漏) / 7.2 (退役键 ≥8 处清扫) / 10.4 / 10.6 / 10.7 / 11.2 (AB rubric 按 v4+ unknown 二分语义精确化)。
+
+### 质量
+
+测试 1219 → 1248。双轮独立对抗 review (silent-failure-hunter + code-reviewer) 命中 2 Critical + 5 Important + 3 Minor, 全部修复 —— 其中 3 条属「勾选完成≠运行现实」(AC-5 探针 fail-OPEN 且被自己的测试锁死 / task 1.6 继承在最常见配置形态下未生效 / `reachable` 退役留下活消费方)。真实 dogfood 验证。
+
+### 仍未做 (spec 内, 明示不冒充完成)
+
+- task 3.16 k_eff `observed_rotation` 持久化: **DEFERRED** (fail-CLOSED, k_eff=k_min 冷启动)。AC-15 防饥饿仅对 rotation ≤ 3 的采用者完全成立。
+- task 3.5d 永久失败 leg 退避 (`consecutive_failures` + 2^n 跳过): 未实现。
+- task 11.1 `/skill-creator` AB benchmark: 本 cycle 未重跑 (机械 collector 改动为主, 未改 SKILL.md description/指令面)。
+
 ## [1.61.0] - 2026-07-19
 
 ### Fixed

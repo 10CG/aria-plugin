@@ -107,8 +107,14 @@ def fill_sync_section(multi_remote):
                     )
             elif parity not in ("equal", None):
                 warnings.append(f"[{label}] parity={parity} vs {r.get('name')}")
-            if r.get("reachable") is False:
-                warnings.append(f"[{label}] remote {r.get('name')} 不可达")
+            # `reachable` went constant-true when task 1.10 retired the ls_remote path
+            # (its only writer of False), so this branch had become dead code and the
+            # handoff silently stopped reporting unreachable remotes. Read the honest
+            # signal instead — same predicate as multi_remote._has_unreachable_remote,
+            # deliberately not a second copy of the reasoning: "not_attempted"
+            # (deadline-cut) is "we didn't ask", NOT "we can't reach".
+            if r.get("fetch_ok") == "false":
+                warnings.append(f"[{label}] remote {r.get('name')} 不可达 (fetch 失败)")
         lines.append(f"[{label}] {branch} = {head} | " + " ".join(parts))
 
     _one("main", mr.get("main_repo"))

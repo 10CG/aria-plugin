@@ -571,6 +571,17 @@ multi_remote:
                                           # [] only when the repo declares zero submodules
                                           # (`submodule_paths` empty — collect_multi_remote skips
                                           # the R×S loop entirely, no git calls paid)
+  enforced_remotes_resolved: list[str]  # Phase 4 (task 6.1/6.2) — the remote NAMES the
+                                        #   verdict was actually computed over, after
+                                        #   enforced_remotes/read_only_remotes filtering.
+                                        #   `overall_parity` / `has_unreachable_remote` are
+                                        #   functions of THIS set, not of `remotes[]`, so it
+                                        #   must be readable or a filtered red has no reason.
+                                        #   Empty ⇒ policy excluded everything ⇒ fail-CLOSED
+                                        #   false + an `enforced_set_empty` soft error.
+  excluded_read_only: list[str]         # complement: discovered but NOT enforced. Their
+                                        #   entries still appear verbatim in `remotes[]` —
+                                        #   filtering governs the verdict, it never hides data.
 
 GitlinkPair:
   remote: str                     # R — main repo's enforced remote name
@@ -596,7 +607,7 @@ RemoteEntry:
   ahead_count: int|null
   reachable: bool
   reason: str|null              # enum: null | "auth_failed" | "not_found" | "network_timeout" | "no_local_tracking_ref" | "remote_branch_missing" | "parse_error" | "shallow_clone" | "detached_head" | "not_refreshed"
-  method: str                   # enum: "local_refs" | "ls_remote"
+  method: str                   # enum: "local_refs" (single value since task 1.10 retired ls_remote)
   evidence_grade: str            # D20 三值 "fresh" | "stale_unverified" | "expired" — F1′/F4′ 从
                                   #   `remote_refresh` (Phase 0.5) 的 fetched_at/generation_fetched/
                                   #   consecutive_unverified 联接而来 (multi_remote.py `_leg_evidence_grade`)。
