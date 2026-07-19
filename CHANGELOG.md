@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 新增
 
-- **AC-5 跨 collector 自洽检测** (task 2.12): `tracks_multibranch` 与 `sync_status` 互相矛盾时 (同分支 handoff track 对 HEAD 不可达 ∧ snapshot 仍宣称 parity 健康) 记 `snapshot_self_contradiction`; 无法评估时记 `snapshot_consistency_inconclusive` (不静默)。检测集 = 裁决集 (`enforced_remotes_resolved`), 不硬编码 origin。
+- **AC-5 跨 collector 自洽检测** (task 2.12) — ⚠️ **advisory 级, 非裁决级**: `tracks_multibranch` 与 `sync_status` 互相矛盾时 (同分支 handoff track 对 HEAD 不可达 ∧ snapshot 仍宣称 parity 健康) 记 `snapshot_self_contradiction` 到 `errors[]`; 无法评估时记 `snapshot_consistency_inconclusive` (不静默)。检测集 = 裁决集 (`enforced_remotes_resolved`), 不硬编码 origin。
+  **限定 (post_planning 补审 C-1)**: 本实现**只检测并上报, 不改变裁决** —— 它不会把 `overall_parity` 翻成 false, 也不会写 `reason`。AC-5 原文要求的是裁决级断言 (「不可达 ⇒ overall_parity=false 或 reason 非空」), 该维度**未实现**。且 `errors[]` 目前不在 `output-formats.md` 的渲染清单里, 消费方需自行读 snapshot 的 `errors[]` 或依据 scan.py exit=10 感知。**不得据此认为 snapshot 已能自动拒绝自相矛盾的 parity 结论。** 补齐条件见 [Aria #168](https://forgejo.10cg.pub/10CG/Aria/issues/168)。
 - **snapshot 新字段** (additive, 不 bump schema): `sync_status.multi_remote.enforced_remotes_resolved[]` / `excluded_read_only[]` —— 裁决基于子集, 子集必须可读, 否则过滤后的红没有理由。policy 排除全部 remote 时另发 `enforced_set_empty` soft error (裁决仍 fail-CLOSED false)。
 - **`multi_remote_drift` 第七路** (task 13.3/9.2): gitlink 层成因接入 dispatch, 建议 `git -C <submodule> push <remote> <branch>`。与 remotes[] 层六路正交, 可同时命中。
 - **OQ-C 裁定** (owner 2026-07-19, task 1.3/9.3): 不造有状态冷却; 无任何新鲜证据时 drift 规则降级为离线横幅。降级只在建议层, 裁决层照常 fail-CLOSED。
