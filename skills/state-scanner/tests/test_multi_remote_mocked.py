@@ -746,5 +746,241 @@ class TestCollectorFullFlow(unittest.TestCase):
         self.assertTrue(flags["overall_parity"])  # equal evidence + no blockers
 
 
+class TestRemotePolicyNamespace(unittest.TestCase):
+    """Task 1.6 — `_resolve_remote_policy` pure inheritance matrix.
+
+    Contract under test is phase-c-integrator/SKILL.md §C.2.5 step 3: skill-level
+    null inherits top-level; skill-level non-null wins outright.
+    """
+
+    def test_skill_null_inherits_top_level(self):
+        from collectors.multi_remote import _resolve_remote_policy
+
+        out = _resolve_remote_policy(
+            {"enabled": True, "enforced_remotes": None, "read_only_remotes": None},
+            {"enforced_remotes": ["origin"], "read_only_remotes": ["mirror"]},
+        )
+        self.assertEqual(out["enforced_remotes"], ["origin"])
+        self.assertEqual(out["read_only_remotes"], ["mirror"])
+
+    def test_absent_skill_key_inherits_top_level(self):
+        from collectors.multi_remote import _resolve_remote_policy
+
+        out = _resolve_remote_policy({"enabled": True}, {"enforced_remotes": ["origin"]})
+        self.assertEqual(out["enforced_remotes"], ["origin"])
+
+    def test_skill_value_wins_over_top_level(self):
+        from collectors.multi_remote import _resolve_remote_policy
+
+        out = _resolve_remote_policy(
+            {"enforced_remotes": ["github"]}, {"enforced_remotes": ["origin"]}
+        )
+        self.assertEqual(out["enforced_remotes"], ["github"])
+
+    def test_explicit_empty_list_wins_and_is_not_treated_as_null(self):
+        """`[]` at skill level is a PRESENT value → it wins, and it must NOT be
+        re-read as "inherit". (Its own meaning — auto-discover-all — belongs to
+        `resolve_enforced_remotes`, not to this resolver.)"""
+        from collectors.multi_remote import _resolve_remote_policy
+
+        out = _resolve_remote_policy(
+            {"enforced_remotes": []}, {"enforced_remotes": ["origin"]}
+        )
+        self.assertEqual(out["enforced_remotes"], [])
+
+    def test_unrelated_keys_untouched(self):
+        from collectors.multi_remote import _resolve_remote_policy
+
+        out = _resolve_remote_policy(
+            {"enabled": False, "timeout_seconds": 3}, {"enforced_remotes": ["origin"]}
+        )
+        self.assertFalse(out["enabled"])
+        self.assertEqual(out["timeout_seconds"], 3)
+
+
+class TestEnforcedPolicyGovernsVerdict(unittest.TestCase):
+    """Tasks 6.1/6.2 — F5′ enforced/read-only filtering reaches the CORE verdict.
+
+    Falsifiability note (this is the point of the class): every test here is
+    written so it FAILS against the pre-task-6 code, where `_overall_parity` was
+    handed `all_remote_entries` unfiltered. A green run on the Aria repo's own
+    config proves nothing — that config sets neither policy key, so the filter is
+    a no-op there (memory: `noop_in_test_env_hardening_needs_mechanism_assertion`).
+    """
+
+    def _two_remote_repo(self, repo: Path, policy: dict, mirror_counts: str = "0\t3\n"):
+        """origin: equal+fresh. mirror: `mirror_counts` (default = behind by 3)."""
+        write_file(
+            repo / ".aria" / "config.json",
+            json.dumps({"state_scanner": {"multi_remote": dict(policy)}}),
+        )
+        _write_fresh_remote_refresh_cache(repo, [".::origin", ".::mirror"])
+        return {
+            ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
+            ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
+            ("git", "remote"): (0, "origin\nmirror\n", ""),
+            ("git", "rev-parse", "--short=7", "refs/remotes/origin/master"): (
+                0, "abc1234\n", ""
+            ),
+            ("git", "rev-list", "--left-right", "--count",
+             "HEAD...refs/remotes/origin/master"): (0, "0\t0\n", ""),
+            ("git", "rev-parse", "--short=7", "refs/remotes/mirror/master"): (
+                0, "def5678\n", ""
+            ),
+            ("git", "rev-list", "--left-right", "--count",
+             "HEAD...refs/remotes/mirror/master"): (0, mirror_counts, ""),
+        }
+
+    def _collect(self, repo, run_table):
+        with mock.patch("collectors.multi_remote._run", side_effect=_make_run(run_table)):
+            with mock.patch(
+                "collectors.multi_remote._is_shallow", return_value=False
+            ), mock.patch(
+                "collectors.multi_remote._current_branch", return_value="master"
+            ), mock.patch(
+                "collectors.multi_remote._enumerate_submodule_paths", return_value=[]
+            ):
+                return collect_multi_remote(repo)
+
+    def test_read_only_remote_excluded_from_overall_parity(self):
+        """A behind read-only mirror must NOT drag the verdict false.
+
+        Pre-fix behavior: mirror is in `all_remote_entries` → clause 4 sees
+        parity=="behind" → False. That is the "read_only_remotes is a dead key"
+        defect this task closes.
+        """
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(repo, {"read_only_remotes": ["mirror"]})
+            r = self._collect(repo, table)
+        self.assertTrue(r.data["overall_parity"])
+        # The excluded remote is still REPORTED verbatim — filtering governs the
+        # verdict, it does not hide data from the operator.
+        names = [e["name"] for e in r.data["main_repo"]["remotes"]]
+        self.assertIn("mirror", names)
+        self.assertEqual(
+            next(e for e in r.data["main_repo"]["remotes"] if e["name"] == "mirror")["parity"],
+            "behind",
+        )
+
+    def test_without_policy_the_behind_mirror_still_blocks(self):
+        """Control: same fixture, no policy → verdict false. Guards against the
+        filter silently swallowing everything regardless of config."""
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(repo, {})
+            r = self._collect(repo, table)
+        self.assertFalse(r.data["overall_parity"])
+
+    def test_enforced_allowlist_narrows_the_verdict(self):
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(repo, {"enforced_remotes": ["origin"]})
+            r = self._collect(repo, table)
+        self.assertTrue(r.data["overall_parity"])
+
+    def test_policy_inherited_from_top_level_block(self):
+        """Task 1.6 end-to-end: the policy lives at TOP level, skill block present
+        but leaves it null → same verdict as if it were skill-local."""
+        with tmp_repo() as repo:
+            write_file(
+                repo / ".aria" / "config.json",
+                json.dumps({
+                    "multi_remote": {"read_only_remotes": ["mirror"]},
+                    "state_scanner": {
+                        "multi_remote": {"enabled": True, "read_only_remotes": None}
+                    },
+                }),
+            )
+            _write_fresh_remote_refresh_cache(repo, [".::origin", ".::mirror"])
+            table = {
+                ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
+                ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
+                ("git", "remote"): (0, "origin\nmirror\n", ""),
+                ("git", "rev-parse", "--short=7", "refs/remotes/origin/master"): (
+                    0, "abc1234\n", ""
+                ),
+                ("git", "rev-list", "--left-right", "--count",
+                 "HEAD...refs/remotes/origin/master"): (0, "0\t0\n", ""),
+                ("git", "rev-parse", "--short=7", "refs/remotes/mirror/master"): (
+                    0, "def5678\n", ""
+                ),
+                ("git", "rev-list", "--left-right", "--count",
+                 "HEAD...refs/remotes/mirror/master"): (0, "0\t3\n", ""),
+            }
+            r = self._collect(repo, table)
+        self.assertTrue(r.data["overall_parity"])
+
+    def test_policy_excluding_every_remote_is_fail_closed(self):
+        """R3/R4 audit hazard: read-only covering ALL remotes empties the
+        participating set. `all([]) == True` would report "in sync" on ZERO
+        evidence — clause 1 must return False instead."""
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(
+                repo, {"read_only_remotes": ["origin", "mirror"]}, mirror_counts="0\t0\n"
+            )
+            r = self._collect(repo, table)
+        self.assertFalse(r.data["overall_parity"])
+
+    def test_has_pending_push_stays_unfiltered(self):
+        """6.2 scope boundary (task 5.3 preserved decision): ahead-detection is NOT
+        narrowed by the policy — an unpushed commit is worth surfacing even on a
+        remote whose parity you opted out of."""
+        with tmp_repo() as repo:
+            table = self._two_remote_repo(
+                repo, {"read_only_remotes": ["mirror"]}, mirror_counts="2\t0\n"
+            )
+            r = self._collect(repo, table)
+        self.assertTrue(r.data["has_pending_push"])
+        self.assertTrue(r.data["overall_parity"])
+
+    def test_has_unreachable_remote_respects_policy(self):
+        """6.2: the read-only exclusion applies to `has_unreachable_remote` too —
+        otherwise a mirror that merely blips the network still lights up the
+        global warning (and, through it, the `multi_remote_drift` rule)."""
+        with tmp_repo() as repo:
+            write_file(
+                repo / ".aria" / "config.json",
+                json.dumps({
+                    "state_scanner": {"multi_remote": {"read_only_remotes": ["mirror"]}}
+                }),
+            )
+            now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            write_file(
+                repo / ".aria" / "cache" / "remote-refresh.json",
+                json.dumps({
+                    "scan_generation": 1,
+                    "legs": {
+                        ".::origin": {
+                            "fetched_at": now_iso, "fetch_ok": "true",
+                            "error_kind": None, "generation_fetched": 1,
+                            "consecutive_unverified": 0,
+                            "coordination_ref_present": None,
+                        },
+                        ".::mirror": {
+                            "fetched_at": now_iso, "fetch_ok": "false",
+                            "error_kind": "network", "generation_fetched": 1,
+                            "consecutive_unverified": 1,
+                            "coordination_ref_present": None,
+                        },
+                    },
+                }),
+            )
+            table = {
+                ("git", "rev-parse", "--is-inside-work-tree"): (0, "true\n", ""),
+                ("git", "rev-parse", "--short=7", "HEAD"): (0, "abc1234\n", ""),
+                ("git", "remote"): (0, "origin\nmirror\n", ""),
+                ("git", "rev-parse", "--short=7", "refs/remotes/origin/master"): (
+                    0, "abc1234\n", ""
+                ),
+                ("git", "rev-list", "--left-right", "--count",
+                 "HEAD...refs/remotes/origin/master"): (0, "0\t0\n", ""),
+                ("git", "rev-parse", "--short=7", "refs/remotes/mirror/master"): (
+                    0, "abc1234\n", ""
+                ),
+                ("git", "rev-list", "--left-right", "--count",
+                 "HEAD...refs/remotes/mirror/master"): (0, "0\t0\n", ""),
+            }
+            r = self._collect(repo, table)
+        self.assertFalse(r.data["has_unreachable_remote"])
+
+
 if __name__ == "__main__":
     unittest.main()

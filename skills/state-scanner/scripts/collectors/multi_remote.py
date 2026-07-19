@@ -155,6 +155,23 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     FETCH_HEAD-mtime staleness is retired wholesale (see module docstring);
     `sync_check.warn_after_hours` remains in the config schema for `sync.py`'s
     own (unrelated, F9′/Phase-2) consumption only, never read here.
+
+    🔴 **Task 1.6 (namespace, Phase 4)**: the remote-POLICY keys
+    (`enforced_remotes` / `read_only_remotes`) are NOT state-scanner's to define.
+    `phase-c-integrator/SKILL.md` §C.2.5 step 3 publishes the cross-skill contract
+    verbatim: "skill 级 `enforced_remotes == null` 时继承顶层
+    `multi_remote.enforced_remotes`, 空则自动发现所有 remote". Reading only the
+    skill-level block (the pre-4.x behavior) would give state-scanner and
+    phase-c-integrator two different answers to "which remotes must be in parity"
+    — a split-brain that reproduces THIS SPEC'S OWN disease (two parallel
+    computation points) one layer up, at the cross-skill seam. So the two policy
+    keys are resolved through `_resolve_remote_policy` below and merged into the
+    returned block; every other key stays skill-local.
+
+    The merge is deliberately narrow: only these two keys inherit, only when the
+    skill-level value is absent or explicitly null, and a missing config file
+    still returns `{}` byte-identically (no synthetic keys) so callers that
+    distinguish "unconfigured" from "configured empty" are unaffected.
     """
     cfg_path = project_root / ".aria" / "config.json"
     if not cfg_path.exists():
@@ -164,7 +181,34 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     ss = raw.get("state_scanner") or {}
-    return ss.get("multi_remote") or {}
+    block = dict(ss.get("multi_remote") or {})
+    if not block:
+        return {}
+    return _resolve_remote_policy(block, raw.get("multi_remote") or {})
+
+
+def _resolve_remote_policy(
+    skill_block: dict[str, Any], top_level: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply the published skill→top-level inheritance for the two remote-policy
+    keys (task 1.6). Pure function over two already-parsed dicts so the contract
+    is unit-testable without touching the filesystem.
+
+    Inheritance rule (phase-c-integrator §C.2.5 step 3, verbatim): a skill-level
+    value of `null` (or an absent key — JSON gives no way to tell them apart, and
+    the contract treats both as "not overridden") inherits the top-level value.
+    A skill-level value that is PRESENT and non-null wins outright, INCLUDING an
+    explicit `[]`.
+
+    ⚠️ `[]` is not "check nothing" — `resolve_enforced_remotes` reads an empty
+    list as AUTO-DISCOVER-ALL (see its own F5′ trap docstring). This function
+    only decides WHICH list is in force; it never reinterprets the value.
+    """
+    out = dict(skill_block)
+    for key in ("enforced_remotes", "read_only_remotes"):
+        if out.get(key) is None and top_level.get(key) is not None:
+            out[key] = top_level[key]
+    return out
 
 
 def _load_sync_freshness_config(project_root: Path) -> dict[str, Any]:
@@ -1396,13 +1440,32 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     # check that can never fire — also keeps every pre-existing submodule-less
     # test fixture from needing new mocked commands).
     main_branch = main_block["branch"]
+
+    # --- Task 6.1/6.2 (Phase 4): the F5′ remote policy, resolved ONCE here and
+    # shared by BOTH consumers below (the gitlink R×S loop and the core parity
+    # verdict). Phase 2A wired it into the gitlink loop only; resolving it twice
+    # from `cfg` would be a second computation point for "which remotes count" —
+    # exactly the shape of defect this spec exists to remove.
+    configured_enforced = cfg.get("enforced_remotes")
+    read_only_remotes = tuple(cfg.get("read_only_remotes") or ())
+
+    def _enforced_entries_of(block: dict[str, Any]) -> list[dict[str, Any]]:
+        """Filter one repo block's remote entries down to the enforced set.
+
+        Policy is a set of remote NAMES, so it applies per-repo: a submodule that
+        declares an `upstream` its parent does not is filtered on its own actual
+        remote list, and a configured name absent from THIS repo is simply not
+        matched (recorded as `no_matching_remotes` observability by
+        remote_refresh, never fabricated into a ghost entry here).
+        """
+        names = [rr["name"] for rr in block["remotes"]]
+        enforced, _ = resolve_enforced_remotes(configured_enforced, names, read_only_remotes)
+        keep = set(enforced)
+        return [rr for rr in block["remotes"] if rr.get("name") in keep]
+
     gitlink_integrity_list: list[dict[str, Any]] = []
     if submodule_paths:
-        enforced_main_remotes, _ = resolve_enforced_remotes(
-            cfg.get("enforced_remotes"),
-            [rr["name"] for rr in main_block["remotes"]],
-            tuple(cfg.get("read_only_remotes") or ()),
-        )
+        enforced_main_remotes = [rr["name"] for rr in _enforced_entries_of(main_block)]
         gitlink_cache = _read_gitlink_cache(project_root)
         raw_gitlink_pairs = gitlink_cache.get("pairs")
         gitlink_pairs_on_disk: dict[str, Any] = (
@@ -1505,17 +1568,40 @@ def collect_multi_remote(project_root: Path) -> CollectorResult:
     # directly rather than via `_aggregate_flags` (see that function's Phase 1
     # docstring note for why it is bypassed here).
     has_pending_push = any(e.get("parity") == "ahead" for e in all_remote_entries)
+
+    # Task 6.1/6.2 (Phase 4): F5′ enforced/read-only filtering NOW governs the core
+    # verdict. Before this increment `resolve_enforced_remotes` reached only the
+    # 13.x gitlink loop, so `read_only_remotes` was a DEAD config key for parity:
+    # remote_refresh already skipped fetching read-only legs (it has consumed the
+    # policy since Phase 0.5), while `_overall_parity` still demanded evidence for
+    # them — so configuring a read-only mirror made the verdict WORSE (no leg ⇒ no
+    # fresh evidence ⇒ blocking_unknown ⇒ permanent false). Filtering both sides
+    # through one policy makes fetch scope and verdict scope the same set.
+    #
+    # 6.2 scope, explicitly: read-only exclusion applies to `overall_parity` AND
+    # `has_unreachable_remote` (and therefore to the `multi_remote_drift`
+    # recommendation rule, which triggers off these two). `has_pending_push` is
+    # deliberately LEFT on the unfiltered set — task 5.3's preserved decision keeps
+    # ahead-detection untouched, and "local has commits the mirror lacks" stays
+    # worth surfacing even for a remote whose parity you have opted out of.
+    #
+    # Empty-set safety: if the policy filters everything away (e.g. every remote is
+    # read-only), `_overall_parity`'s clause 1 returns False rather than the
+    # vacuous `all([]) == True` — zero participating remotes is zero positive
+    # evidence, never "in sync" (R3/R4 audit finding, fail-CLOSED).
+    enforced_entries: list[dict[str, Any]] = _enforced_entries_of(main_block)
+    for sb in submodule_blocks:
+        enforced_entries.extend(_enforced_entries_of(sb))
+
     has_unreachable_remote = any(
         _has_unreachable_remote(e.get("fetch_ok", "not_attempted"))
-        for e in all_remote_entries
+        for e in enforced_entries
     )
-    # Phase 1: F5′ enforced-remote filtering is NOT yet wired here — every
-    # discovered remote (unfiltered by `enforced_remotes`/`read_only_remotes`)
-    # is passed as `enforced_entries` (task 6 scope, a later increment).
-    # gitlink_integrity now carries REAL per-(R,S) verdicts (Phase 2A/F10″,
-    # computed above) — repos with zero declared submodules still pass `[]`.
+    # gitlink_integrity carries REAL per-(R,S) verdicts (Phase 2A/F10″, computed
+    # above, over the SAME enforced remote set) — repos with zero declared
+    # submodules still pass `[]`.
     overall_parity = _overall_parity(
-        all_remote_entries, gitlink_integrity=gitlink_integrity_list, k_eff=k_eff
+        enforced_entries, gitlink_integrity=gitlink_integrity_list, k_eff=k_eff
     )
 
     data: dict[str, Any] = {
