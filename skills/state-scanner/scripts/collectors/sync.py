@@ -33,10 +33,12 @@ stub so downstream consumers can detect its absence uniformly).
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 from typing import Any
 
-from ._common import CollectorResult, _run, classify_git_error, scan_now
+from ._common import CollectorResult, _run, classify_git_error, log, scan_now
 from .git import _current_branch, _enumerate_submodule_paths, _is_shallow
 
 
@@ -46,6 +48,27 @@ _ORIGIN_HEAD_REFS = [
     "refs/remotes/origin/master",
     "refs/remotes/origin/main",
 ]
+
+
+def _multi_remote_enabled_in_config(project_root: Path) -> bool:
+    """Read `.aria/config.json` → `state_scanner.multi_remote.enabled`, defaulting
+    to `True` (mirrors `multi_remote._load_config`'s own default — missing file /
+    missing block / malformed JSON all fall back to "enabled"). Duplicated (not
+    imported) deliberately: this collector's module docstring commits to staying
+    network/import-light and this is a one-line, fail-soft read, not worth a
+    cross-module coupling for a single Phase-2 review-driven runtime assertion
+    (see `collect_sync_state`'s `multi_remote_data is None` warning below).
+    """
+    cfg_path = project_root / ".aria" / "config.json"
+    if not cfg_path.exists():
+        return True
+    try:
+        raw = json.loads(cfg_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    ss = raw.get("state_scanner") or {}
+    mr = ss.get("multi_remote") or {}
+    return mr.get("enabled", True) is not False
 
 
 def _has_remote(project_root: Path) -> bool:
@@ -499,6 +522,23 @@ def collect_sync_state(
       }
     """
     r = CollectorResult()
+
+    # Phase 2 review Minor (b) — scan.py 换序运行时断言: if the caller omitted
+    # `multi_remote_data` while config says multi_remote is enabled, every
+    # `evidence_grade` below silently degrades to "expired" (see docstring above)
+    # with NO observable signal other than re-reading this whole function's
+    # source — a caller who reorders `collect_multi_remote`/`collect_sync_state`
+    # in scan.py (or forgets to pass `.data`) gets a silent freshness downgrade,
+    # not an error. Promote it from grep-only to log-observable. Best-effort:
+    # config read failures never raise here (see `_multi_remote_enabled_in_config`
+    # fail-soft default), and this never changes `r.data` — advisory only.
+    if multi_remote_data is None and _multi_remote_enabled_in_config(project_root):
+        log.warning(
+            "collect_sync_state: multi_remote_data is None but "
+            "state_scanner.multi_remote.enabled is not false — evidence_grade "
+            "will resolve to 'expired' for all fields. Caller should collect "
+            "multi_remote FIRST and pass its .data (see module docstring)."
+        )
 
     # F9′ 8.1 — pre-parse the caller-supplied multi_remote block into the two slices
     # `_collect_current_branch`/`_collect_submodule_entry` need. Any shape surprise

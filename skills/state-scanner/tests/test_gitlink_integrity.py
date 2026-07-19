@@ -222,6 +222,24 @@ class TestGitlinkUnreachable(unittest.TestCase):
         self.assertFalse(unreachable)
         self.assertTrue(is_soft_error)
 
+    def test_rc129_future_git_wording_falls_to_soft_error(self):
+        # Phase 2 review Minor (a): pins the FAILURE MODE, not just a fixed
+        # string — a future git version could reword its rc=129 "not found"
+        # message to something that doesn't match any of `_looks_like_no_such_
+        # commit`'s three known substrings ("no such commit" / "bad object" /
+        # "not a valid object name"). When that happens this must degrade to
+        # soft_error (unreachable=False), NOT silently misclassify as a genuine
+        # reachability verdict — locking this stops a future git upgrade from
+        # quietly flipping severity without a test catching it.
+        table = {
+            (
+                "git", "-C", "/sub", "branch", "-r", "--contains", G_SHA, "--list", "github/*",
+            ): (129, "", "fatal: some-future-git-wording")
+        }
+        unreachable, is_soft_error = self._run_check(table)
+        self.assertFalse(unreachable)
+        self.assertTrue(is_soft_error)
+
     def test_other_nonzero_rc_is_soft_error(self):
         table = {
             (
