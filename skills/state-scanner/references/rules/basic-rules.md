@@ -81,6 +81,16 @@ recommendation:
 > RECOMMENDATION_RULES 的机械 dispatch。触发条件判断时需**额外**检查 `gitlink_integrity` 是否
 > 非空 blocking (下方 dispatch 表只覆盖 `remotes[]` 层, 不覆盖 `gitlink_integrity[]` 层) — 这是已知
 > 文档-实现缺口, 待后续增量补上 dispatch 分支。
+>
+> **去重/冷却 (OQ-C, state-scanner-stale-refs-false-parity tasks.md 1.3/9.3)**: 本规则**无去重/冷却
+> 机制** (grep 零命中) —— 每次 scan 只要 `overall_parity: false` 就重新走六路 dispatch, 不记忆
+> "上次已提示过同一条 remote drift"。proposal.md OQ-C 有**倾向**记录但**尚未锁死** (tasks.md 1.3
+> checkbox 未勾, Phase A 裁决未完成): 不造新的有状态冷却机制, 改用 F1′ 的 `has_unreachable_remote`
+> 在建议层做降级 —— 该 flag 为 true (离线/全 fetch 失败) 时本规则**不触发**六路 dispatch, 换成一条
+> 「离线, 同步状态不可知」降级横幅 (复用 `coordination_fetch` 现有 `degraded` 红条先例)。**debounce
+> 只作用于建议层, 不作用于 `overall_parity` 裁决层** (裁决层去抖会重新引入假绿, 违背本规则 v9 改写
+> 的初衷)。**当前状态**: 这条只是 proposal.md 记载的设计意图, `RECOMMENDATION_RULES` 尚未接入任何
+> debounce/降级分支 —— 按 OQ-C 未定裁决处理, **不强行实现**, 待 owner 在 Phase A 显式裁定后再落地。
 
 ```yaml
 id: multi_remote_drift
