@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.62.1] - 2026-07-19
+
+post_planning R2 抓出的**残留静默失败**修复 (patch; 非 v1.62.0 引入, 但同属本 spec 要根除的形态)。
+
+### 修复
+
+- **`parity=equal` + 陈旧证据在 handoff 里完全静默** (R2 I-1): `session-closer` 的 `fill_sync_section` 只对 `parity=="unknown"` 做 reason 分诊; 而 `evidence_grade=stale_unverified` 档**按设计保留 `parity="equal"`** (只有 `expired` 会被 `_apply_freshness_downgrade` 翻成 unknown), 于是整个从 unknown 分诊的门缝溜走 ⇒ **handoff 写着「origin=equal」零告警, 而同一份 snapshot 的 `overall_parity` 是 false**。两个人类可读产物互相矛盾 —— 正是本 spec 立项要根除的「陈旧 refs 上的 equal」在姊妹消费方复发。现补一档告警「该 equal 未经本轮验证, 不可当已同步」, 并配 fresh-equal 负控防其退化为噪音源。
+- **benign-reason 集合导入失败的静默降级现可见** (R2 M-2): 跨 skill import 挂掉时原样返回空集 ⇒ 所有 `parity=unknown` 被保守升级为告警, 但**使用者看不出这是降级**, 只看到一堆无来由的告警。改为哨兵子类 (行为与空集逐字节一致, 身份可辨), 调用方在 warnings 里写明降级发生。
+
+### 测试
+
++3 (`session-closer` 62 → 65): stale-equal 正控 / fresh-equal 负控 / `fetch_ok=not_attempted` carve-out (R2 M-1 指出该 carve-out 有五行注释论证却零测试锁定, 变异存活)。**双变异验证**: 删 I-1 分支 + 放宽 `fetch_ok` 判据 ⇒ 对应两条测试各自转红。
+
 ## [1.62.0] - 2026-07-19
 
 主 spec `state-scanner-stale-refs-false-parity` **Phase 4 (29 TODO 实质收口)**。核心四段式已于 v1.60.0 ship, 本版收口余下实质 TODO, spec 随之具备归档条件。

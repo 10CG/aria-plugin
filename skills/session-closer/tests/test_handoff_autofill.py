@@ -89,6 +89,35 @@ class TestSyncSectionAC2(unittest.TestCase):
         r = fill_sync_section(mr)
         self.assertTrue(any("不可达" in w for w in r["warnings"]))
 
+    def test_stale_equal_must_warn(self):
+        """post_planning R2 I-1: `parity=equal` + `evidence_grade=stale_unverified` 此前
+        在 handoff 里完全静默 —— 而同一份数据 state-scanner 的 `_overall_parity` 判 False。
+        两个人类可读产物互相矛盾, 正是本 spec 立项要根除的形态 (「陈旧 refs 上的 equal」)。
+
+        `expired` 档能报出来是因为它会被 `_apply_freshness_downgrade` 翻成 unknown;
+        `stale_unverified` 按设计保留 `parity="equal"`, 所以从 unknown 分诊门缝溜走。
+        """
+        mr = {"main_repo": _repo("master", "aaa1111",
+                                 _rem("origin", "equal", evidence_grade="stale_unverified"))}
+        r = fill_sync_section(mr)
+        self.assertTrue(any("未经本轮验证" in w for w in r["warnings"]), r["warnings"])
+
+    def test_fresh_equal_stays_silent(self):
+        """负控: 真新鲜的 equal 不得告警 —— 否则上一条会退化成噪音源。"""
+        mr = {"main_repo": _repo("master", "aaa1111",
+                                 _rem("origin", "equal", evidence_grade="fresh"))}
+        self.assertEqual(fill_sync_section(mr)["warnings"], [])
+
+    def test_not_attempted_does_not_claim_unreachable(self):
+        """post_planning R2 M-1: `fetch_ok` 三态的 carve-out 之前无测试钉死 —— 变异
+        (把判据放宽成 `!= "true"`) 未被任何测试杀掉。`not_attempted` 是「我们没问」
+        (deadline 砍腿), 不是「我们够不着」, 不得报不可达。"""
+        mr = {"main_repo": _repo("master", "ccc3333",
+                                 _rem("origin", "unknown", reason="not_refreshed",
+                                      fetch_ok="not_attempted"))}
+        r = fill_sync_section(mr)
+        self.assertFalse(any("不可达" in w for w in r["warnings"]), r["warnings"])
+
     def test_retired_reachable_field_no_longer_triggers(self):
         """负控: 只设 `reachable=False` (退役判据) 不得再触发不可达告警 —— 否则说明
         判据没真切换。这条锁死"不要再回去读 reachable"。"""

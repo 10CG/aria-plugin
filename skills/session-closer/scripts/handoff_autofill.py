@@ -52,7 +52,19 @@ def _benign_unconditional_reasons():
 
         return BENIGN_UNCONDITIONAL_REASONS
     except Exception:
-        return frozenset()
+        # post_planning R2 M-2: 降级方向是安全的 (退化为多报噪音而非吞掉), 但降级本身
+        # 此前对使用者不可见 —— 用户会看到一堆无来由的 parity=unknown 告警而不知道是
+        # 跨 skill 导入挂了。返回哨兵而非裸空集, 让调用方能把这件事写进 warnings。
+        # (R2 实测: 把 skill 目录复制到隔离路径时该 fallback 真的静默触发过。)
+        return _BENIGN_IMPORT_FAILED
+
+
+class _BenignImportFailed(frozenset):
+    """空 frozenset 的哨兵子类: 行为与 frozenset() 完全一致 (故所有既有判据不变),
+    但身份可辨 ⇒ 调用方能区分「真的没有 benign reason」与「导入失败降级了」。"""
+
+
+_BENIGN_IMPORT_FAILED = _BenignImportFailed()
 
 
 def _unknown_is_benign(reason, evidence_grade, benign_reasons):
@@ -105,6 +117,18 @@ def fill_sync_section(multi_remote):
                         f"[{label}] parity=unknown reason={reason} "
                         f"(evidence_grade={evidence_grade}) vs {r.get('name')} — 未验证, 需人工核实"
                     )
+            elif parity == "equal" and r.get("evidence_grade") not in ("fresh", None):
+                # post_planning R2 I-1: 本 spec 立项要杀的就是「陈旧 refs 上的 equal」,
+                # 而它在这个姊妹消费方里还活着。`stale_unverified` 档按设计**保留**
+                # parity="equal" (只有 expired 才被 _apply_freshness_downgrade 翻成
+                # unknown), 于是整个从 unknown 分诊的门缝溜走 ⇒ handoff 写着
+                # 「origin=equal」一片祥和, 而同一份 snapshot 的 overall_parity 是 false。
+                # 实测复现: fill_sync_section 零 warning vs _overall_parity → False。
+                # 两个人类可读产物互相矛盾, 正是本 spec 的病。
+                warnings.append(
+                    f"[{label}] parity=equal 但 evidence_grade={r.get('evidence_grade')} "
+                    f"vs {r.get('name')} — 该 equal **未经本轮验证**, 不可当已同步"
+                )
             elif parity not in ("equal", None):
                 warnings.append(f"[{label}] parity={parity} vs {r.get('name')}")
             # `reachable` went constant-true when task 1.10 retired the ls_remote path
@@ -116,6 +140,12 @@ def fill_sync_section(multi_remote):
             if r.get("fetch_ok") == "false":
                 warnings.append(f"[{label}] remote {r.get('name')} 不可达 (fetch 失败)")
         lines.append(f"[{label}] {branch} = {head} | " + " ".join(parts))
+
+    if isinstance(benign_reasons, _BenignImportFailed):
+        warnings.append(
+            "⚠️ benign-reason 集合导入失败 (跨 skill import) — 所有 parity=unknown 已保守"
+            "升级为告警, 下方 unknown 条目可能含实际无害的情形"
+        )
 
     _one("main", mr.get("main_repo"))
     for sub in mr.get("submodules") or []:
