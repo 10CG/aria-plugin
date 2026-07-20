@@ -103,6 +103,32 @@ bash_case "guard:ack bypass"                0 \
 bash_case "guard:ack too short rejected"    2 \
 'ssh root@heavy-1 "docker logout forgejo.10cg.pub"  # guard:ack: x'
 
+# ── hooks.json registration ───────────────────────────────────────────────
+# Mirrors secret-guard.test.sh's runtime check: the guard must actually be
+# wired into PreToolUse/Bash, and ${CLAUDE_PLUGIN_ROOT} must resolve. A hook
+# that works standalone but is unregistered protects nothing.
+
+plugin_root="$(cd "$(dirname "$0")/../.." && pwd)"
+registered="$(jq -r '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[].command' \
+  "$plugin_root/hooks/hooks.json" 2>/dev/null | grep -c 'host-docker-logout-guard.sh' || true)"
+if [[ "$registered" == "1" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [registration]: expected exactly 1 PreToolUse/Bash entry, got $registered")
+fi
+
+# secret-guard must remain the FIRST hook of that matcher: its own test asserts
+# on .hooks[0].command, and displacing it would silently retarget that check.
+first_hook="$(jq -r '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[0].command' \
+  "$plugin_root/hooks/hooks.json" 2>/dev/null)"
+if [[ "$first_hook" == *secret-guard.sh ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [registration-order]: .hooks[0] is '$first_hook', expected secret-guard.sh")
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────
 
 echo "host-docker-logout-guard: $pass passed, $fail failed"
