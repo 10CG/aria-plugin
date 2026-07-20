@@ -109,7 +109,14 @@ task 1.8 (SOT 指针) / 3.2 (改名遗漏) / 7.2 (退役键 ≥8 处清扫) / 10
 
 - task 3.16 k_eff `observed_rotation` 持久化: **DEFERRED** (fail-CLOSED, k_eff=k_min 冷启动)。AC-15 防饥饿仅对 rotation ≤ 3 的采用者完全成立。
 - task 3.5d 永久失败 leg 退避 (`consecutive_failures` + 2^n 跳过): 未实现。
-- task 11.1 `/skill-creator` AB benchmark: 本 cycle 未重跑 (机械 collector 改动为主, 未改 SKILL.md description/指令面)。
+- ~~task 11.1 `/skill-creator` AB benchmark: 本 cycle 未重跑 (机械 collector 改动为主, 未改 SKILL.md description/指令面)。~~
+  **[已更正 2026-07-20]** 该豁免理由**不成立** —— post_planning 补审 (M-E) 与 owner 复议均判定: 本 cycle 改了 `references/rules/basic-rules.md` 77 行 (新增 `multi_remote_drift` dispatch 第七路 + `degrade_when`), 那是「在什么状态下给什么建议」的**判定规则**, 属指令面。owner 裁决 2026-07-20: Rule #6 的 `deterministic substitute` 豁免机制先例收窄到 v1.59.0/v1.60.0 两个 phase, **Phase 4 不适用, 补跑 AB**。
+  **AB 已补跑** (三臂 with_skill/old_skill/without_skill, 8 run, 结果 `aria-plugin-benchmarks/ab-results/2026-07-20-v1.62.0-phase4-rule6/`):
+  - **正向证据 (窄但干净)**: `A11 离线降级` 三向完全区分 —— with_skill 三个 run 全部产出行为分支「无新鲜证据时不走 dispatch, 改降级横幅; 降级只在建议层, 裁决层照常 fail-CLOSED」, old_skill 与 baseline 零产出。
+  - **核心靶未被捕获**: `A10/B4 gitlink 第七路` 的实质提升真实存在 (old_skill 自述「dispatch 表尚未新增第七路, AC-16 只是设计意图未接线」= (b) 档; with_skill 作为已接线 dispatch 给出 = (c) 档), 但原断言只要求「提及」⇒ 两档同分, 连 baseline 靠通用常识也满分。已把断言拆条 (ab-suite v1.5.0)。
+  - **控制组零回归** (eval-06 两臂 4/4)。
+  - ⚠️ **Rule #6 canonical 维度 (skill vs no-skill) 本次不可用**: `CLAUDE.md` 自动加载进每个 agent, 其项目状态段含 `evidence_grade`/`gitlink_integrity`/`fail-CLOSED`/`overall_parity`; eval-11 的 baseline 逐字用了 `stale_unverified`/`expired`/`fail-closed` 与该段同形 ⇒ 搬运而非模型自身知识。且两个 baseline 臂实跑只读 git 否证了场景前提, skill 臂按测试集范式作描述性推演, 三臂不在回答同一问题。**在本仓内做干净的 without_skill 臂结构上不可能** —— 未据此列下任何「skill 有价值」的结论。
+  - **顺带修了测试集 4 处缺陷** (ab-suite v1.4.0→1.5.0), 最要命的是 `A5 写反`: 本场景 `overall_parity=true`, 1.35 的正确行为是**不触发** (ahead 被 clause 4 排除 + dispatch 表 `triggers_rule:false`), 按字面评分会把两个 skill 臂的正确推演判成错。该断言是 v9「六路分派」改动后没跟上的遗留。
 
 ## [1.61.0] - 2026-07-19
 
