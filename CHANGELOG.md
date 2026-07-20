@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.62.2] - 2026-07-20
+
+owner 裁决的两条收尾 (Aria #168 裁决 1 与裁决 3)。
+
+### 移除
+
+- **`state_scanner.sync_check.warn_after_hours` 配置键彻底删除** (task 7.2 / F2′ 收尾)。该键在生产代码里**从未被读取过** —— 实查全仓 `.py` 零命中, `sync.py` 只读 `state_scanner.multi_remote.enabled`。而 `multi_remote.py` 的 docstring 三个版本以来一直声称它「remains in the config schema for `sync.py`'s own consumption」, 与 `sync-detection.md` 的 (正确的)「从未被任何代码路径消费」互相矛盾 —— post_planning 补审抓出该互斥, owner 裁定按事实删除。
+  - 清扫点: `config-loader/DEFAULTS.json` / `config-loader/SKILL.md` / `.aria/config.template.json` (**采用者模板** —— 每个新接入项目此前都会拿到这个不生效的键) / 本仓 `.aria/config.json` / `sync-detection.md` 两处现行时描述。
+  - **对采用者**: 无行为变更 (该键从未生效)。配置里仍留着它的项目不会报错, 只是彻底成为无人读取的文本。新鲜度判据一直是也仍是 `sync_status.multi_remote.*.remotes[].evidence_grade`。
+
+### 新增
+
+- **`skills/run_all_tests.sh` — 跨 skill 全量测试入口**。此前每个 skill 的 runner 只扫自己的 `tests/` (state-scanner 的 `run_tests.py` 把 `TESTS_DIR` 硬编码成自己的目录), 全仓仅它一个 runner ⇒「改了 A skill 里、消费方在 B skill 的代码, 只跑 A 的测试」是**结构性漏检**, v1.62.0 真的因此 ship 了一条红测试。
+  - **设计要点 (区分「真失败」与「跑不了」)**: 本仓部分 skill 是 pytest 套件而 pytest 非本项目依赖 (stdlib-only 是 state-scanner 的硬约束)。把「没装 pytest」算成红会让这个入口默认就是红的 —— **而一个默认红的检查等于没有检查**, 会立刻被学会忽略, 正是本 spec 全程在打的恒红面。所以缺依赖记 SKIP 并写明原因, 只有真失败才 FAIL。
+  - 实测: 7 OK / 0 FAIL / 2 SKIP, 累计 **1439** 个测试, 退出码 0。
+  - **可证伪性已验**: 把 v1.62.0 那个真实缺陷 (session-closer 判据退回 `reachable`) 注入回去 ⇒ 该入口转红并点名 `session-closer`, 退出码 1。
+
 ## [1.62.1] - 2026-07-19
 
 post_planning R2 抓出的**残留静默失败**修复 (patch; 非 v1.62.0 引入, 但同属本 spec 要根除的形态)。

@@ -181,7 +181,10 @@ if [ -z "$remote_refs_age" ]; then
 fi
 ```
 
-`FETCH_HEAD > warn_after_hours`（默认 24h）时，在输出中附加 warning 标注（"建议执行 git fetch"）。
+> ⚠️ **本步骤已退役** (F2′ / task 7.2, v1.62.2): `warn_after_hours` 这个配置键从未被任何生产代码
+> 路径读取过, 且已从 DEFAULTS.json / config.template.json / config-loader SKILL.md 全部移除。
+> FETCH_HEAD-mtime 是**仓库全局**的, 而新鲜度是 per-(repo, remote) 的 —— 结构上就不能拿它做
+> 单条腿的判据。现行判据是 `sync_status.multi_remote.*.remotes[].evidence_grade` (F1′/F3′/F4′ join)。
 
 ### 步骤 5: Submodule 遍历 + 四级 fallback 链（修复 M4 / Decision D10）
 
@@ -322,7 +325,7 @@ fi
 |------|------|---------|
 | 无 remote（纯本地仓库） | 跳过所有远程相关字段 | `has_remote: false` |
 | FETCH_HEAD 缺失 | 标注 never | `remote_refs_age: "never"` |
-| FETCH_HEAD > `warn_after_hours`（默认 24h） | 输出附加 warning | `remote_refs_age: "2d"` + warning |
+| ~~FETCH_HEAD > `warn_after_hours`~~ | **已退役** (F2′/7.2, v1.62.2 键已删) | 改判 `evidence_grade` |
 | upstream 未配置 | 跳过 ahead/behind 计算 | `ahead: null, behind: null, reason: "no_upstream"` |
 | detached HEAD | 跳过分支名和 upstream | `current_branch.name: null, reason: "detached_head"` |
 | 浅克隆 | 跳过 behind 计算 | `shallow: true, behind: null, reason: "shallow_clone"` |
@@ -355,7 +358,7 @@ fi
 
 > ⚠️ **勘误 (state-scanner-stale-refs-false-parity F9′ 9.2)**: 下方 `state_scanner.sync_check.*`
 > 配置块是**历史文档虚构** —— `collectors/sync.py` 全文 `grep sync_check` 零命中, `collect_sync_state`
-> 从不读取 `.aria/config.json`, `enabled`/`check_submodules`/`warn_after_hours` 三个字段从未被
+> 从不读取 `.aria/config.json` 的这些键 —— `enabled`/`check_submodules`/`warn_after_hours` 从未被
 > 任何代码路径消费。**Phase 1.12 `sync_check` 恒开启, 无法关闭** —— 它承载 US-008 方向性数据丢失
 > 护栏 (`sync.py:317-333`, behind→update / ahead→push 的强制方向判据), 关闭它等同关闭护栏,
 > 设计上不允许存在开关。`warn_after_hours` 语义已被 F3′ `remote_refresh` 的 `evidence_grade`

@@ -76,11 +76,6 @@ state_scanner.sync_check.check_remote:
   type: boolean
   default: false
 
-state_scanner.sync_check.warn_after_hours:
-  type: integer
-  range: [1, 720]
-  default: 24
-
 # Phase 1.13 — Issue 感知扫描 (v2.9.0, opt-in)
 state_scanner.issue_scan.enabled:
   type: boolean

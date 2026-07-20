@@ -1,15 +1,12 @@
 {
   "version": "1.0",
-
   "workflow": {
     "auto_proceed": false
   },
-
   "multi_remote": {
     "enforced_remotes": [],
     "read_only_remotes": []
   },
-
   "phase_c_integrator": {
     "multi_remote_push": {
       "enabled": true,
@@ -24,26 +21,30 @@
       }
     }
   },
-
   "state_scanner": {
     "confidence_threshold": 90,
     "auto_execute_enabled": false,
-    "auto_execute_rules": ["commit_only", "quick_fix", "doc_only"],
+    "auto_execute_rules": [
+      "commit_only",
+      "quick_fix",
+      "doc_only"
+    ],
     "audit_log_path": ".aria/audit.log",
-
     "sync_check": {
       "enabled": true,
       "check_submodules": true,
-      "check_remote": false,
-      "warn_after_hours": 24
+      "check_remote": false
     },
-
     "issue_scan": {
       "enabled": false,
       "platform": null,
       "platform_hostnames": {
-        "forgejo": ["forgejo.10cg.pub"],
-        "github": ["github.com"]
+        "forgejo": [
+          "forgejo.10cg.pub"
+        ],
+        "github": [
+          "github.com"
+        ]
       },
       "cache_ttl_seconds": 900,
       "cache_path": ".aria/cache/issues.json",
@@ -52,7 +53,6 @@
       "limit": 20,
       "label_filter": []
     },
-
     "multi_remote": {
       "enabled": true,
       "timeout_seconds": 15,
@@ -61,30 +61,29 @@
       "per_host_fetch_limit": 4,
       "fetch_timeout_seconds": 30
     },
-
     "sync_freshness": {
       "evidence_window_seconds": 3600,
       "hard_cap_days": 7,
       "k_min": 3
     }
   },
-
   "context_monitor": {
     "staleness_threshold_seconds": 300,
     "window_tokens": null
   },
-
   "ai_native_estimator": {
     "enabled": true,
     "min_samples": 3,
     "window": 10,
-    "bootstrap_seed": { "L1": 30000, "L2": 150000, "L3": 500000 }
+    "bootstrap_seed": {
+      "L1": 30000,
+      "L2": 150000,
+      "L3": 500000
+    }
   },
-
   "tdd": {
     "strictness": "advisory"
   },
-
   "phase_b_developer": {
     "framework_build_check": {
       "enabled": false,
@@ -92,54 +91,52 @@
       "mode": "advisory"
     }
   },
-
   "benchmarks": {
     "require_before_merge": true,
     "skill_change_block_mode": "warn"
   },
-
   "experiments": {
     "agent_team_audit": false,
-    "agent_team_audit_points": ["pre_merge"]
+    "agent_team_audit_points": [
+      "pre_merge"
+    ]
   },
-
   "audit": {
     "enabled": false,
     "mode": "adaptive",
     "max_rounds": 5,
-
     "drift_guard": {
       "warn_threshold": 0.2,
       "refocus_threshold": 0.5,
       "convergence_mode": false
     },
-
-    "scope_skip_paths": ["deploy/", "docs/", ".forgejo/workflows/", ".github/workflows/", "*.md"],
-
+    "scope_skip_paths": [
+      "deploy/",
+      "docs/",
+      ".forgejo/workflows/",
+      ".github/workflows/",
+      "*.md"
+    ],
     "convergence_criteria": {
       "conclusion_match": true,
       "unanimous_pass": true
     },
-
     "adaptive_rules": {
       "level_1": "off",
       "level_2": "convergence",
       "level_3": "challenge"
     },
-
     "mid_implementation": {
       "trigger": "task_progress",
       "threshold": 50,
       "unit": "percent_tasks_completed"
     },
-
     "mid_post_spec": {
       "trigger": "spec_drift_detected",
       "source": "test_or_smoke_verdict_invalidated_assumptions_or_ai_recognized",
       "max_rounds": 1,
       "scope": "drift_point_only"
     },
-
     "checkpoints": {
       "post_brainstorm": "off",
       "post_spec": "off",
@@ -150,47 +147,142 @@
       "pre_merge": "off",
       "post_closure": "off"
     },
-
     "teams": {
       "post_brainstorm": {
-        "convergence": ["tech-lead", "backend-architect", "knowledge-manager"],
-        "discussion": ["tech-lead"],
-        "challenge": ["backend-architect", "qa-engineer", "knowledge-manager"]
+        "convergence": [
+          "tech-lead",
+          "backend-architect",
+          "knowledge-manager"
+        ],
+        "discussion": [
+          "tech-lead"
+        ],
+        "challenge": [
+          "backend-architect",
+          "qa-engineer",
+          "knowledge-manager"
+        ]
       },
       "post_spec": {
-        "convergence": ["tech-lead", "backend-architect", "qa-engineer", "knowledge-manager", "context-manager", "api-documenter", "ui-ux-designer"],
-        "discussion": ["tech-lead", "backend-architect", "api-documenter"],
-        "challenge": ["qa-engineer", "knowledge-manager", "context-manager", "ai-engineer", "ui-ux-designer"]
+        "convergence": [
+          "tech-lead",
+          "backend-architect",
+          "qa-engineer",
+          "knowledge-manager",
+          "context-manager",
+          "api-documenter",
+          "ui-ux-designer"
+        ],
+        "discussion": [
+          "tech-lead",
+          "backend-architect",
+          "api-documenter"
+        ],
+        "challenge": [
+          "qa-engineer",
+          "knowledge-manager",
+          "context-manager",
+          "ai-engineer",
+          "ui-ux-designer"
+        ]
       },
       "post_planning": {
-        "convergence": ["tech-lead", "qa-engineer", "context-manager"],
-        "discussion": ["tech-lead", "context-manager"],
-        "challenge": ["qa-engineer", "backend-architect"]
+        "convergence": [
+          "tech-lead",
+          "qa-engineer",
+          "context-manager"
+        ],
+        "discussion": [
+          "tech-lead",
+          "context-manager"
+        ],
+        "challenge": [
+          "qa-engineer",
+          "backend-architect"
+        ]
       },
       "mid_implementation": {
-        "convergence": ["tech-lead", "code-reviewer"],
-        "discussion": ["code-reviewer"],
-        "challenge": ["tech-lead"]
+        "convergence": [
+          "tech-lead",
+          "code-reviewer"
+        ],
+        "discussion": [
+          "code-reviewer"
+        ],
+        "challenge": [
+          "tech-lead"
+        ]
       },
       "mid_post_spec": {
-        "convergence": ["tech-lead", "backend-architect"],
-        "discussion": ["tech-lead"],
-        "challenge": ["tech-lead", "qa-engineer"]
+        "convergence": [
+          "tech-lead",
+          "backend-architect"
+        ],
+        "discussion": [
+          "tech-lead"
+        ],
+        "challenge": [
+          "tech-lead",
+          "qa-engineer"
+        ]
       },
       "post_implementation": {
-        "convergence": ["code-reviewer", "backend-architect", "qa-engineer", "ai-engineer", "api-documenter", "mobile-developer"],
-        "discussion": ["code-reviewer", "backend-architect", "api-documenter"],
-        "challenge": ["qa-engineer", "tech-lead", "ai-engineer", "mobile-developer"]
+        "convergence": [
+          "code-reviewer",
+          "backend-architect",
+          "qa-engineer",
+          "ai-engineer",
+          "api-documenter",
+          "mobile-developer"
+        ],
+        "discussion": [
+          "code-reviewer",
+          "backend-architect",
+          "api-documenter"
+        ],
+        "challenge": [
+          "qa-engineer",
+          "tech-lead",
+          "ai-engineer",
+          "mobile-developer"
+        ]
       },
       "pre_merge": {
-        "convergence": ["code-reviewer", "qa-engineer", "tech-lead", "knowledge-manager", "mobile-developer", "api-documenter", "ui-ux-designer"],
-        "discussion": ["code-reviewer", "qa-engineer", "api-documenter"],
-        "challenge": ["tech-lead", "knowledge-manager", "mobile-developer", "ui-ux-designer"]
+        "convergence": [
+          "code-reviewer",
+          "qa-engineer",
+          "tech-lead",
+          "knowledge-manager",
+          "mobile-developer",
+          "api-documenter",
+          "ui-ux-designer"
+        ],
+        "discussion": [
+          "code-reviewer",
+          "qa-engineer",
+          "api-documenter"
+        ],
+        "challenge": [
+          "tech-lead",
+          "knowledge-manager",
+          "mobile-developer",
+          "ui-ux-designer"
+        ]
       },
       "post_closure": {
-        "convergence": ["tech-lead", "knowledge-manager", "context-manager"],
-        "discussion": ["tech-lead", "context-manager"],
-        "challenge": ["knowledge-manager", "qa-engineer"]
+        "convergence": [
+          "tech-lead",
+          "knowledge-manager",
+          "context-manager"
+        ],
+        "discussion": [
+          "tech-lead",
+          "context-manager"
+        ],
+        "challenge": [
+          "knowledge-manager",
+          "qa-engineer"
+        ]
       }
     }
   }

@@ -161,8 +161,13 @@ def _load_config(project_root: Path) -> dict[str, Any]:
     to inherit `warn_after_hours` from the sibling `sync_check` block when
     `multi_remote` omitted it. That inheritance is REMOVED — `warn_after_hours` /
     FETCH_HEAD-mtime staleness is retired wholesale (see module docstring);
-    `sync_check.warn_after_hours` remains in the config schema for `sync.py`'s
-    own (unrelated, F9′/Phase-2) consumption only, never read here.
+    `sync_check.warn_after_hours` is GONE from the config schema entirely as of
+    v1.62.2 (task 7.2). This docstring previously claimed it "remains … for
+    `sync.py`'s own consumption" — that was FALSE and shipped for three
+    releases: `sync.py` reads exactly one config key
+    (`state_scanner.multi_remote.enabled`) and never touched
+    `warn_after_hours`. post_planning补审 caught the contradiction between this
+    line and sync-detection.md's (correct) "never consumed by any code path".
 
     🔴 **Task 1.6 (namespace, Phase 4)**: the remote-POLICY keys
     (`enforced_remotes` / `read_only_remotes`) are NOT state-scanner's to define.
