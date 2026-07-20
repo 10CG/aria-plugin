@@ -270,7 +270,8 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
   # 防双入口重复 (见 phase-d-closer SKILL.md §D.2)。
 
   触发: gate_result.d_payload (Step 1 --gate 调用已产出, 本 Step 直接复用, 不重新调脚本) != null
-    # d_payload 由 lib 聚合 "tasks.md 未勾选项 + carry-forward 注释" (deferred) 与
+    # d_payload 由 lib 聚合 "tasks.md 未勾选项 + carry-forward 注释, 或 (tasks.md 缺失时)
+    #   detailed-tasks.yaml 非-done status 项 + carry-forward 注释" (deferred) 与
     # "全部 unverified_claims" (无论 §Step2 warn_overlay 是否写了 --ack-unverified) 而来;
     # 干净归档 (无 deferred 且无 unverified) → d_payload=null → 本 Step 完全跳过, 不产生任何输出
 

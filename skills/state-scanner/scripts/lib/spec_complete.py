@@ -7,13 +7,18 @@ Spec (C/D 扩展, #95): openspec/changes/aria-archive-gate-runtime-reality/ (DEC
 
     is_spec_complete(spec_dir) -> {"complete": bool, "reason": str}
 
-判定逻辑 (A1.2, 无歧义形式):
+判定逻辑 (A1.2, 无歧义形式; aria-plugin #113 起三支):
 
     complete := (tasks.md 存在 AND 全 [x] AND 无 inline carry-forward/defer 注释)
+                OR (tasks.md 缺失 AND detailed-tasks.yaml 存在 AND 可解析
+                    AND 全部 status ∈ done-family{done,completed}
+                    AND 无 inline carry-forward/defer 注释)
                 OR (_normalize_status(Status) == 'done')
 
-- tasks.md absent → verdict 仅由 Status 归一化决定 (绝非 vacuously True,
-  否则反向击穿 gap(a) Approved-only 即归档旁路)。
+- tasks.md absent **且无 detailed-tasks.yaml (或其不可解析/有残留)** → verdict
+  仅由 Status 归一化决定 (绝非 vacuously True, 否则反向击穿 gap(a)
+  Approved-only 即归档旁路)。tasks.md absent 但 yaml 全 done 无标注 → 由 OR
+  中支放行 (task-planner path B 的 tasks 分支等价物, #113 SC-6)。
 - tasks.md 存在但 0 个 checkbox → tasks 分支不可验证, 同样回落 Status 分支
   (同一 vacuous-truth 防线)。
 - ``implemented`` 不算 complete (DEC §3 D2: post-merge 但未 verify/archive-ready)。
@@ -38,7 +43,7 @@ integration/调用/registered/hook) 有无真实生产语义引用:
         "blocking_reasons": [str, ...],
         "warnings": [str, ...],
         "unverified_claims": [{"claim": str, "reason": str, "symbols": [str]}],
-        "d_payload": {...} | None,    # TASK-011, 供 openspec-archive Step2 建 issue
+        "d_payload": {...} | None,    # TASK-011, 供 openspec-archive Step 7 建 issue
         "soft_errors": [str, ...],    # TASK-008 fail-soft 诊断轨迹 (从不因此 block)
         # 条件性字段 (runtime-probe-archive-gate-integration TASK-005/007, #95
         # follow-up A) — 仅当 proposal.md frontmatter 声明 `runtime_probe:` 时
@@ -71,7 +76,7 @@ integration/调用/registered/hook) 有无真实生产语义引用:
   5. C-block/C-warn 装配 (TASK-009/010) 汇入 ``gate_result``; D payload
      (TASK-011, ``_build_d_payload``) 聚合 deferred 未勾项 + 全部 unverified_claims
      (无论是否 ack) 生成 issue body + 去重 marker ``<!-- archive-tracker:{spec_id} -->``
-     (实际 Forgejo issue 创建是 TG-2 openspec-archive Step2 SKILL.md Bash 侧职责,
+     (实际 Forgejo issue 创建是 TG-2 openspec-archive Step 7 SKILL.md Bash 侧职责,
      本模块只产 payload)。
   6. runtime_probe 声明式动态子检查 (``_fold_runtime_probe_declaration``,
      runtime-probe-archive-gate-integration TASK-005/006/007/008, #95
@@ -181,6 +186,50 @@ except ImportError:
 _CHECKBOX_RE = re.compile(r"^\s*[-*]\s*\[(.)\]", re.MULTILINE)
 
 
+def _yaml_only_tasks_verdict(spec_dir: Path) -> tuple[bool, str]:
+    """OR 左半的 yaml 版 (aria-plugin #113 SC-6): tasks.md 缺失时用
+    ``detailed-tasks.yaml`` 判定 tasks 分支。
+
+    Returns ``(complete, reason)``. ``complete=True`` 仅当全部任务 status 落
+    done-family 白名单 **且** 原始 yaml 文本零 inline carry-forward/defer 标注
+    (与 tasks.md 分支「全 [x] ∧ 无标注」逐条同型, 「干净」定义与 gate 残留轴
+    统一 — 决策 7)。其余情形返回 ``(False, reason)`` 由调用方 fall through 到
+    Status 分支 (OR 右半)。全 fail-soft: 读失败/解析失败均退回单信号态语义。
+    """
+    yaml_path = spec_dir / "detailed-tasks.yaml"
+    if not yaml_path.is_file():
+        return (False, "tasks.md absent — verdict by normalized Status only")
+    try:
+        yaml_text = yaml_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return (False, f"tasks.md absent; detailed-tasks.yaml unreadable ({e})")
+
+    parsed = parse_detailed_tasks(yaml_text)
+    if not parsed["parse_ok"]:
+        return (
+            False,
+            f"tasks.md absent; detailed-tasks.yaml unparseable ({parsed['reason']})",
+        )
+
+    tasks = parsed["tasks"]
+    non_done = [t for t in tasks if not is_done_status(t["raw_status"])]
+    if non_done:
+        return (
+            False,
+            f"detailed-tasks.yaml has {len(non_done)}/{len(tasks)} non-done task(s)",
+        )
+    annotations = _extract_carry_forward_annotations(yaml_text)
+    if annotations:
+        return (
+            False,
+            f"detailed-tasks.yaml 全 done 但含 {len(annotations)} 条 carry-forward/defer 注释",
+        )
+    return (
+        True,
+        f"detailed-tasks.yaml 全 done ({len(tasks)} task(s), 无 carry-forward/defer 注释)",
+    )
+
+
 def is_spec_complete(spec_dir: str | Path) -> dict:
     """Return ``{"complete": bool, "reason": str}`` for one OpenSpec change dir.
 
@@ -204,11 +253,17 @@ def is_spec_complete(spec_dir: str | Path) -> dict:
 
     normalized = _normalize_status(_extract_status(proposal_text))
 
-    # ── tasks.md 分支 ──
+    # ── tasks.md 分支 (OR 左半) ──
     tasks_file = spec_dir / "tasks.md"
     tasks_reason: str
     if not tasks_file.is_file():
-        tasks_reason = "tasks.md absent — verdict by normalized Status only"
+        # aria-plugin #113 (SC-6): tasks.md 缺失时若有 detailed-tasks.yaml
+        # (task-planner path B), 用同一「干净」定义 (全 done-family ∧ 零 inline
+        # 标注) 补上 OR 左半 — 与本分支 tasks.md 全[x] 判定同型; parse 失败或
+        # 有残留则 fall through 到 Status 分支 (等价改动前的单信号态)。
+        yaml_complete, tasks_reason = _yaml_only_tasks_verdict(spec_dir)
+        if yaml_complete:
+            return {"complete": True, "reason": tasks_reason}
     else:
         try:
             tasks_text = tasks_file.read_text(encoding="utf-8", errors="replace")
@@ -289,8 +344,16 @@ _CODE_EXT_RE = re.compile(r"([A-Za-z0-9_./\-]+\.(?:py|sh|js|mjs|cjs|ts|rb|go))\b
 # tasks.md 行内 backtick 裸 identifier (无扩展名), 如 `` `phase1_gate` ``。
 _BACKTICK_IDENTIFIER_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_.]*)`")
 
-# detailed-tasks.yaml 任务条目边界: `  - id: TASK-XXX`。
-_TASK_ID_LINE_RE = re.compile(r"^([ \t]*)-\s*id:\s*(\S+)", re.MULTILINE)
+# detailed-tasks.yaml 任务条目边界 — 物理归位到 lib/detailed_tasks.py (aria-plugin
+# #113 决策 8, carry_forward.py 同型); 本文件 re-import 同一对象 (不双写 `- id:`
+# 边界知识; SC-9 边界一致性测试锁定)。
+try:
+    from detailed_tasks import _TASK_ID_LINE_RE
+except ImportError:  # pragma: no cover - CLI sys.path bootstrap (mirrors carry_forward)
+    _LIB_DIR_DT = str(Path(__file__).resolve().parent)
+    if _LIB_DIR_DT not in sys.path:
+        sys.path.insert(0, _LIB_DIR_DT)
+    from detailed_tasks import _TASK_ID_LINE_RE  # type: ignore[import]
 
 # proposal.md Key Deliverables 小节标题 (英文惯例 + 中文兜底)。
 _KEY_DELIVERABLES_HEADING_RE = re.compile(
@@ -373,19 +436,19 @@ def _extract_key_deliverables_section(proposal_text: str) -> list[str]:
     return [ln.strip() for ln in section.splitlines() if ln.strip().startswith(("-", "*"))]
 
 
-def _split_task_blocks(detailed_tasks_text: str) -> list[tuple[str, str]]:
-    """Slice detailed-tasks.yaml into ``[(task_id, block_text), ...]`` by ``- id:`` boundaries.
-
-    Light line-based scanner (stdlib-only, NOT a general YAML parser — mirrors
-    the scoped-parser convention already used by collectors/custom_checks.py).
-    """
-    matches = list(_TASK_ID_LINE_RE.finditer(detailed_tasks_text))
-    blocks = []
-    for i, m in enumerate(matches):
-        start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(detailed_tasks_text)
-        blocks.append((m.group(2), detailed_tasks_text[start:end]))
-    return blocks
+# _split_task_blocks 物理归位到 lib/detailed_tasks.py (aria-plugin #113 决策 8);
+# re-import 同一对象 (SC-9 边界一致性)。#95 deliverables 抽取消费方行为不变。
+try:
+    from detailed_tasks import _split_task_blocks, is_done_status, parse_detailed_tasks
+except ImportError:  # pragma: no cover - CLI sys.path bootstrap (mirrors carry_forward)
+    _LIB_DIR_DT2 = str(Path(__file__).resolve().parent)
+    if _LIB_DIR_DT2 not in sys.path:
+        sys.path.insert(0, _LIB_DIR_DT2)
+    from detailed_tasks import (  # type: ignore[import]
+        _split_task_blocks,
+        is_done_status,
+        parse_detailed_tasks,
+    )
 
 
 def _extract_yaml_key_list(block_text: str, key: str) -> list[str]:
@@ -1116,12 +1179,12 @@ def _build_d_payload(
     spec_dir: str | Path, deferred_items: list[dict], unverified_claims: list[dict]
 ) -> dict | None:
     """TASK-011: assemble the D auto-issue payload (lib side only — the actual
-    Forgejo API call is TG-2's ``openspec-archive`` Step2 SKILL.md Bash responsibility).
+    Forgejo API call is TG-2's ``openspec-archive`` Step 7 SKILL.md Bash responsibility).
 
     Returns ``None`` when there is nothing to track (no deferred items AND no
     unverified claims) — D must not fire on a clean archive. Body embeds the
     dedup marker ``<!-- archive-tracker:{spec_id} -->`` (proposal §What Changes 2)
-    so Step2 can search-before-create idempotently; the archive-commit SHA
+    so Step 7 can search-before-create idempotently; the archive-commit SHA
     backlink is intentionally left as a placeholder — only the Bash layer knows
     the post-archive commit SHA.
     """
@@ -1140,7 +1203,7 @@ def _build_d_payload(
         for c in unverified_claims:
             lines.append(f"- {c['claim']} — {c['reason']}")
         lines.append("")
-    lines.append("> 归档 SHA 回链: 由 openspec-archive Step2 归档提交后填入")
+    lines.append("> 归档 SHA 回链: 由 openspec-archive Step 7 归档提交后填入")
     return {
         "spec_id": spec_id,
         "marker": marker,
@@ -1148,6 +1211,191 @@ def _build_d_payload(
         "unverified_claims": unverified_claims,
         "body": "\n".join(lines),
     }
+
+
+# ---------------------------------------------------------------------------
+# aria-plugin #113: yaml-only datasource fold (three states) — supersedes the
+# v1.61.0 blanket `archive-safety-net-source-unsupported` fallback.
+# Semantics SOT: openspec/changes/state-scanner-gate-yaml-datasource/proposal.md
+# §What Changes 2 (+ 决策 3/7/12/15).
+# ---------------------------------------------------------------------------
+
+# Stable claim tags (documented here rather than in state-snapshot-schema.md —
+# that file has never carried gate claim-string literals; gate schema authority
+# is this module's docstring, 决策 11).
+_YAML_UNPARSEABLE_CLAIM = "archive-safety-net-source-unparseable"
+_YAML_INTEGRATION_CLAIM = "archive-safety-net-integration-claims-unverified"
+
+
+def _fold_probe_and_build_payload(
+    result: dict,
+    spec_dir: Path,
+    deferred_items: list[dict],
+    project_root: Path | None = None,
+) -> None:
+    """Shared tail for the gate's terminal arms: run the runtime_probe fold, THEN
+    assemble the D payload — the fold must precede assembly so probe-warn
+    ``unverified_claims`` entries are aggregated too (#95 TASK-007 double-write).
+
+    Design rationale carried over from the pre-extraction inline block (#95
+    TASK-005/008; kept here because these are invariants a maintainer can break):
+
+    - **A missing proposal.md is louder than a missing tasks.md.** proposal.md's
+      existence/readability is *this* check's own input (orthogonal to #134's
+      tasks.md judgement), and a change dir lacking proposal.md is itself
+      anomalous — so it earns a soft_error rather than tasks.md's "legitimately
+      absent" silence (spec §What Changes 3).
+    - **The crash fallback deliberately does NOT append unverified_claims / D
+      payload entries.** A probe-pipeline crash is a failure of the *check
+      mechanism*, not evidence about the spec; it is recorded in warnings +
+      soft_errors for review instead of being escalated into the D tracker.
+      (Contrast the yaml-fold crash handler, where the yaml IS the only
+      completion datasource, so its failure must reach the tracker.)
+    - **``_fold_runtime_probe_declaration`` defers all ``result`` writes to a
+      single final block** (see its docstring), so on the exception path
+      ``result`` is guaranteed un-partially-written — which is why the crash
+      branch can safely assume no ``runtime_probe`` key was produced.
+    """
+    proposal_path_for_probe = spec_dir / "proposal.md"
+    if project_root is None:  # single derivation point; callers may pass their own
+        project_root = _find_project_root(spec_dir) or spec_dir.parent
+    if not proposal_path_for_probe.is_file():
+        result["soft_errors"].append(
+            f"proposal.md not found for runtime_probe declaration check: {proposal_path_for_probe}"
+        )
+    else:
+        try:
+            probe_proposal_text = proposal_path_for_probe.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError as e:
+            result["soft_errors"].append(
+                f"proposal.md read failed for runtime_probe declaration check: {e}"
+            )
+        else:
+            try:
+                _fold_runtime_probe_declaration(result, probe_proposal_text, project_root)
+            except Exception as e:  # TASK-008: 探针全异常兜底 (silent-failure 防线)
+                if result["verdict"] != "block":
+                    result["verdict"] = "warn"
+                result["warnings"].append(
+                    f"runtime_probe evaluation crashed — fail-toward-warn (not blocking): {e}"
+                )
+                result["soft_errors"].append(f"runtime_probe evaluation unexpected error: {e}")
+
+    try:
+        result["d_payload"] = _build_d_payload(
+            spec_dir, deferred_items, result["unverified_claims"]
+        )
+    except Exception as e:  # pragma: no cover - _build_d_payload defensive
+        result["soft_errors"].append(f"D payload build failed: {e}")
+        result["d_payload"] = None
+
+
+def _yaml_unparseable(result: dict, reason: str) -> None:
+    """State 3 — the yaml exists but cannot be parsed: fall back to the honest
+    v1.61.0 posture (warn + unverified claim + non-None d_payload). The only new
+    risk direction the parser could introduce is sealed here: a parse failure is
+    NEVER a silent pass.
+    """
+    if result["verdict"] != "block":
+        result["verdict"] = "warn"
+    result["unverified_claims"].append(
+        {
+            "claim": _YAML_UNPARSEABLE_CLAIM,
+            "reason": (
+                f"detailed-tasks.yaml 存在但解析失败 ({reason}) — "
+                "完成声称无法核验; 需人工复核"
+            ),
+            "symbols": [],
+        }
+    )
+    result["soft_errors"].append(f"detailed-tasks.yaml parse failed: {reason}")
+
+
+def _fold_yaml_only_datasource(result: dict, spec_dir: Path) -> list[dict]:
+    """Fold a ``detailed-tasks.yaml``-only spec's residual + integrity axes into
+    ``result`` **in place**. Three states (proposal §What Changes 2):
+
+    1. ``parse_ok`` ∧ residuals → precise ``deferred_items`` in d_payload; verdict
+       untouched (mirrors the tasks.md path: unchecked items feed d_payload but
+       never raise verdict — ``complete`` is the orthogonal axis for "unfinished").
+    2. ``parse_ok`` ∧ residual-axis clean → nothing appended; d_payload stays None
+       when the integrity axis is also clean (no tracker, no blanket noise).
+    3. parse failure → ``_yaml_unparseable`` (honest "cannot verify" posture).
+
+    **Residual set** = {tasks whose status is outside the done-family whitelist}
+    ∪ {inline carry-forward/defer annotations in the raw yaml text} — a complete
+    mirror of ``_extract_deferred_or_unchecked_items``'s two halves, so "clean"
+    means the same thing at all three consumption points (决策 7).
+
+    **Integrity axis** (决策 15): the #95 symbol-liveness pipeline consumes
+    ``tasks_text`` and is structurally inapplicable here, so a done-family task
+    whose *title* claims integration work cannot be liveness-checked. Rather than
+    silently downgrading `pass` semantics (the blanket entry used to cover this
+    axis too), emit ONE scoped claim naming those titles. Non-done integration
+    titles are "unfinished", not "unverifiable completion claims" — the residual
+    axis already lists them, so they are filtered out here (no double-report,
+    mirroring the tasks.md path's ``it["checked"]`` filter at :1342).
+    """
+    yaml_path = spec_dir / "detailed-tasks.yaml"
+    try:
+        yaml_text = yaml_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        _yaml_unparseable(result, f"unreadable ({e})")
+        return []
+
+    parsed = parse_detailed_tasks(yaml_text)
+    if not parsed["parse_ok"]:
+        _yaml_unparseable(result, parsed["reason"])
+        return []
+
+    # ── 残留轴 (status 非白名单 ∪ 行内 carry-forward 标注) ──
+    deferred_items: list[dict] = []
+    for task in parsed["tasks"]:
+        if is_done_status(task["raw_status"]):
+            continue
+        raw = task["raw_status"]
+        shown = raw if raw is not None else "missing"
+        deferred_items.append(
+            {
+                "parent_id": task["id"],
+                "line": f"{task['id']}: {task['title']} [status={shown}]",
+                "reason": "status-missing" if raw is None else f"status={raw}",
+            }
+        )
+    for annotation in _extract_carry_forward_annotations(yaml_text):
+        deferred_items.append(
+            {"parent_id": None, "line": annotation, "reason": "carry-forward annotation"}
+        )
+
+    # ── 属实性轴 (scoped, 仅 done-family 集成类 title) ──
+    integration_titles = [
+        task["title"]
+        for task in parsed["tasks"]
+        if is_done_status(task["raw_status"]) and _line_has_integration_keyword(task["title"])
+    ]
+    if integration_titles:
+        shown = "; ".join(integration_titles[:3])
+        if len(integration_titles) > 3:
+            shown += f"; ... (+{len(integration_titles) - 3})"
+        result["unverified_claims"].append(
+            {
+                "claim": _YAML_INTEGRATION_CLAIM,
+                "reason": (
+                    f"detailed-tasks.yaml 含 {len(integration_titles)} 条已完成集成类 "
+                    f"task title ({shown}) — yaml 数据源暂无 symbol-liveness 核验; "
+                    "需人工复核"
+                ),
+                "symbols": [],
+            }
+        )
+        if result["verdict"] != "block":
+            result["verdict"] = "warn"
+
+    # d_payload 由调用方在 runtime_probe fold **之后**组装 (SC-12 顺序契约,
+    # 与 tasks.md 路径 fold→payload 同序), 本函数只产出残留清单。
+    return deferred_items
 
 
 # ---------------------------------------------------------------------------
@@ -1297,34 +1545,56 @@ def gate_result(spec_dir: str | Path) -> dict:
 
     tasks_path = spec_dir / "tasks.md"
     if not tasks_path.is_file():
-        # #166 defect 2: tasks.md absent but detailed-tasks.yaml present (task-planner
-        # path B) → the archive safety net cannot verify completion claims for this
-        # spec. Surface it (verdict=warn + an unverified_claims entry) so BOTH #95
-        # downstream consumers fire even in headless archival: warn_overlay persists it
-        # to frontmatter AND a non-None d_payload makes the D auto-issue tracker build.
-        # Mirrors the mainline _fold_runtime_probe_declaration warn/invalid double-write
-        # (see its docstring). Full detailed-tasks.yaml parsing (precise per-spec
-        # verdict, only tracker when real residuals) is a deferred follow-up.
+        # aria-plugin #113 (supersedes #166 defect 2's blanket fallback): tasks.md
+        # absent but detailed-tasks.yaml present (task-planner path B) → parse the
+        # yaml and produce a PRECISE per-spec verdict instead of the v1.61.0
+        # all-yaml-specs-alike `archive-safety-net-source-unsupported` blanket entry.
+        # Three states, see _fold_yaml_only_datasource.
         if (spec_dir / "detailed-tasks.yaml").is_file():
-            if result["verdict"] != "block":
-                result["verdict"] = "warn"
-            result["unverified_claims"].append(
-                {
-                    "claim": "archive-safety-net-source-unsupported",
-                    "reason": (
-                        "detailed-tasks.yaml 数据源未支持 — 完成声称无法核验 "
-                        "(安全网失明); 需人工复核"
-                    ),
-                    "symbols": [],
-                }
-            )
+            yaml_deferred_items: list[dict] = []
             try:
-                result["d_payload"] = _build_d_payload(
-                    spec_dir, [], result["unverified_claims"]
+                yaml_deferred_items = _fold_yaml_only_datasource(result, spec_dir)
+            except Exception as e:
+                # TASK-008 fail-soft — but fail **toward warn**, never toward green.
+                # This arm's yaml IS the spec's only completion datasource: if
+                # evaluating it crashes we know strictly less than nothing, so a
+                # `pass` here would be the #166 silent-false-green pattern
+                # recurring inside the change built to kill it (pre-merge
+                # silent-failure-hunter, empirically demonstrated). `soft_errors`
+                # alone cannot carry this: openspec-archive routes on `verdict`
+                # (SKILL.md §Step1 "读 JSON verdict 字段做路由决策") and gates the
+                # D auto-issue on `d_payload != null` — neither looks at
+                # soft_errors. Appending the unverified claim is what makes
+                # d_payload non-None so the tracker still fires headless (the
+                # same double-write `_yaml_unparseable` performs). Mirrors the
+                # sibling probe-crash handler in _fold_probe_and_build_payload.
+                if result["verdict"] != "block":
+                    result["verdict"] = "warn"
+                result["warnings"].append(
+                    f"yaml-only datasource fold crashed — fail-toward-warn (not blocking): {e}"
                 )
-            except Exception as e:  # pragma: no cover - _build_d_payload defensive
-                result["soft_errors"].append(f"D payload build failed: {e}")
-        return result  # 无 tasks.md → tasks 分支不可核验 (yaml-only 已 surface, 见上)
+                result["unverified_claims"].append(
+                    {
+                        "claim": _YAML_UNPARSEABLE_CLAIM,
+                        "reason": (
+                            f"detailed-tasks.yaml 完成声称无法核验 (fold 内部异常: {e}); "
+                            "需人工复核"
+                        ),
+                        "symbols": [],
+                    }
+                )
+                result["soft_errors"].append(f"yaml-only datasource fold failed: {e}")
+            # SC-12 (#113 TASK-004): this arm falls through to the runtime_probe
+            # fold instead of returning — otherwise a clean yaml-only spec could
+            # reach `pass` with a DECLARED probe never evaluated (a false-green
+            # corner that did not exist while the blanket warn covered it).
+            # Deliberately scoped: the reversal of DEC-20260705-001 §What Changes ③
+            # R3 applies to the yaml-PRESENT subclass only — its premise ("spec
+            # structurally incomplete ⇒ probe meaningless") is what the precise
+            # parser invalidates. The bare proposal-only subclass below keeps the
+            # designed zero-trace early return (SC-13 guard).
+            _fold_probe_and_build_payload(result, spec_dir, yaml_deferred_items)
+        return result  # 两文件皆缺 (proposal-only) → 维持 v1.54.0 designed 零评估早退
 
     try:
         tasks_text = tasks_path.read_text(encoding="utf-8", errors="replace")
@@ -1424,60 +1694,17 @@ def gate_result(spec_dir: str | Path) -> dict:
             if result["verdict"] != "block":
                 result["verdict"] = "warn"
 
-    # ── runtime_probe (TASK-005/006/007/008, #95 follow-up A): 声明式可选动态
-    # 子检查折入 — 必须在 D payload 组装前跑, 使 probe-warn 产生的
-    # unverified_claims 条目能被 _build_d_payload 一并聚合 (TASK-007 双下游复用)。
-    # 独立于 tasks.md 早退路径之外单独判定 (proposal.md 的存在性/可读性是本
-    # 检查自己的输入, 与 #134 的 tasks.md 判定正交)。
-    proposal_path_for_probe = spec_dir / "proposal.md"
-    if not proposal_path_for_probe.is_file():
-        # 缺失等同无声明零动作, 但比 tasks.md 缺失先例更响 (TASK-005, spec
-        # §What Changes 3 已言明: change 目录缺 proposal.md 本身即异常, 不适用
-        # tasks.md 的"合法可缺"静默逻辑)。
-        result["soft_errors"].append(
-            f"proposal.md not found for runtime_probe declaration check: {proposal_path_for_probe}"
-        )
-    else:
-        try:
-            probe_proposal_text = proposal_path_for_probe.read_text(
-                encoding="utf-8", errors="replace"
-            )
-        except OSError as e:
-            result["soft_errors"].append(
-                f"proposal.md read failed for runtime_probe declaration check: {e}"
-            )
-        else:
-            try:
-                _fold_runtime_probe_declaration(result, probe_proposal_text, project_root)
-            except Exception as e:  # TASK-008: 探针全异常兜底 (silent-failure 防线)
-                # 探针评估全链 (extract→validate→probe→fold) 外层兜底: 任何未预期
-                # 异常 → verdict 抬至 ≥warn (已 block 保持 block) + warnings[] 记
-                # 探针内部错误 + 照常产出完整裁决 (归档不 abort 无静默, #95
-                # pre-merge Critical 教训)。有意不追加 unverified_claims/D
-                # payload 条目 (与本 task verification 文字范围一致 — 记入
-                # 报告供 review, 而非默认延伸到 D tracker)。_fold_runtime_probe_
-                # declaration 把全部 result 写入延后到单笔末尾完成 (见其
-                # docstring), 故此处 result 保证未被部分写入 —— 异常路径不产
-                # runtime_probe 键 (评估未完成)。
-                if result["verdict"] != "block":
-                    result["verdict"] = "warn"
-                result["warnings"].append(
-                    f"runtime_probe evaluation crashed — fail-toward-warn (not blocking): {e}"
-                )
-                result["soft_errors"].append(f"runtime_probe evaluation unexpected error: {e}")
-
-    # ── D payload (TASK-011): deferred 未勾项 + 全部 unverified_claims (无论 ack) ──
+    # ── D payload 输入 (TASK-011): deferred 未勾项 + carry-forward 标注 ──
     try:
         deferred_items = _extract_deferred_or_unchecked_items(tasks_text)
     except Exception as e:
         result["soft_errors"].append(f"deferred item extraction failed: {e}")
         deferred_items = []
 
-    try:
-        result["d_payload"] = _build_d_payload(spec_dir, deferred_items, result["unverified_claims"])
-    except Exception as e:
-        result["soft_errors"].append(f"D payload build failed: {e}")
-        result["d_payload"] = None
+    # ── runtime_probe fold → D payload 组装 (顺序契约: fold 先, 使 probe-warn
+    # 的 unverified_claims 条目被一并聚合 — #95 TASK-007 双下游复用)。
+    # 与 yaml-only 臂共用同一尾巴 (#113 TASK-004, 不双写)。
+    _fold_probe_and_build_payload(result, spec_dir, deferred_items, project_root)
 
     return result
 

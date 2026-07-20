@@ -23,11 +23,26 @@
 **不确定是否需要就不声明** —— 声明是新增负担而非默认义务，且分区必须已存在真实
 telemetry 写入路径；无中生有声明一个不存在的分区只会换来恒定 `warn`。
 
-**前置条件（L3 Full spec）**: 探针折入发生在归档门完成 `tasks.md` 读取之后 ——
-**无 `tasks.md` 的 spec（Level 2 / proposal-only）即使写了声明也不会被评估**，
-归档时零痕迹（无 warn / 无 note / 无 soft_error；designed 行为，proposal §What 3
-R3 裁决 + 集成测试锁定）。若你的 L2 spec 真需要运行时核验，先补 `tasks.md` 升级
-为 L3。
+**前置条件（数据源二选一，aria-plugin v1.63.0 起分两子态）**: 探针折入发生在归档门
+读完任务数据源之后。你的 spec 必须有**其中一个**任务数据源，声明才会被评估：
+
+| spec 形态 | 声明是否被评估 | 说明 |
+|-----------|----------------|------|
+| 有 `tasks.md`（L3 Full） | ✅ 评估 | 一直如此 |
+| 无 `tasks.md`、有 `detailed-tasks.yaml`（task-planner path B / 常见 L2） | ✅ 评估（**v1.63.0 起**） | 见下 |
+| 两者皆无（纯 proposal-only） | ❌ **不评估，归档时零痕迹** | 无 warn / 无 note / 无 soft_error |
+
+**为何 yaml-only 子态从「不评估」改为「评估」**（aria-plugin #113，有意反转
+DEC-20260705-001 §What Changes ③ R3 裁决在该子态上的适用）：原裁决的前提是
+「spec 结构性不完整时探针无意义」。v1.63.0 的归档门已能精确解析
+`detailed-tasks.yaml`，这类 spec 不再「结构性不完整」，前提失效；若继续早退，一个
+声明了探针的 yaml-only spec 可以干净 `pass` 而探针从未跑过 —— 那是新的假绿角落。
+**纯 proposal-only 子态前提仍成立，维持原裁决**（由
+`tests/test_spec_complete.py::TestRuntimeProbeFoldL2ProposalOnlyEvaporates` 锁定，
+断言未变）。
+
+若你的 spec 两个数据源都没有而确需运行时核验，补任一数据源即可（`tasks.md` 升 L3，
+或让 task-planner 产出 `detailed-tasks.yaml`）。
 
 ## 声明 Schema
 

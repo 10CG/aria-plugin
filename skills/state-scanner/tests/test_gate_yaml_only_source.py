@@ -1,15 +1,19 @@
-"""#166 defect 2 — gate_result() blind to detailed-tasks.yaml-only specs.
+"""#166 defect 2 → aria-plugin #113: gate_result() and detailed-tasks.yaml-only specs.
 
-Spec `state-scanner-openspec-collector-false-green`: the archive safety net
-(`spec_complete.py::gate_result`) early-returns at the tasks.md-absent branch,
-so a spec that uses `detailed-tasks.yaml` (task-planner path B) instead of
-`tasks.md` silently passes (verdict=pass, d_payload=None) — its residual
-deferred/unverified items get buried at archive time with no tracker.
+**History.** #166 defect 2 fixed the archive safety net's total blindness to
+`detailed-tasks.yaml`-only specs (task-planner path B): the tasks.md-absent branch
+early-returned with `verdict=pass` / `d_payload=None`, burying residual items at
+archive time with no tracker. v1.61.0's fix was an honest but *blanket* posture —
+EVERY yaml-only spec got a `archive-safety-net-source-unsupported` unverified
+claim + warn, because the gate did not parse the yaml at all.
 
-Fix (owner option A): the yaml-only branch must append an `unverified_claims`
-entry (with `symbols` key) + set verdict=warn + build a non-None d_payload, so
-both #95 surfacing paths (warn_overlay frontmatter + D auto-issue tracker) light
-up even in headless archival. Full yaml parsing is deferred (follow-up).
+**Now (#113, this file's current contract).** The gate parses the yaml, so the
+blanket tag is retired in favour of precise per-spec verdicts. The test below was
+rewritten accordingly (SC-9 carve-out: it encoded the now-retired behaviour and
+had to change with it — keeping it green would have welded the blanket noise back
+in). Full three-state coverage lives in `test_gate_yaml_datasource.py`; this file
+keeps the historical entry points: the residual case that #166 originally cared
+about, and the dual-layer negative control (unchanged semantics).
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ if _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
 from spec_complete import gate_result  # noqa: E402
 
-# The stable claim tag the fix appends (tests match on this, not on prose wording).
+# Retired in #113 — asserted absent so the blanket posture cannot silently return.
 _SOURCE_UNSUPPORTED_CLAIM = "archive-safety-net-source-unsupported"
 
 
@@ -40,22 +44,28 @@ def _yaml_only_spec(root, spec_id: str = "yaml-only-spec"):
 
 
 class TestGateYamlOnlyDefect2(unittest.TestCase):
-    def test_yaml_only_warns_and_builds_payload(self):
-        # SC-5: yaml-only → verdict=warn + unverified_claims non-empty (with symbols) + d_payload != None.
+    def test_yaml_only_residual_is_enumerated_not_blanketed(self):
+        """#113 supersedes the v1.61.0 blanket: the same one-pending-task fixture
+        now yields a PRECISE residual in d_payload (so the D auto-issue tracker
+        still fires headless, #166's core requirement) with NO blanket claim and
+        no verdict inflation (residuals ride the `complete` axis, not `verdict`).
+        """
         with tmp_project() as root:
             spec_dir = _yaml_only_spec(root)
             result = gate_result(spec_dir)
-            self.assertEqual(result["verdict"], "warn")
-            self.assertTrue(result["unverified_claims"], "expected a source-unsupported unverified claim")
-            claims = {c["claim"] for c in result["unverified_claims"]}
-            self.assertIn(_SOURCE_UNSUPPORTED_CLAIM, claims)
-            entry = next(c for c in result["unverified_claims"] if c["claim"] == _SOURCE_UNSUPPORTED_CLAIM)
-            self.assertIn("symbols", entry)  # type contract {claim, reason, symbols}
-            self.assertIsNotNone(result["d_payload"])  # → D auto-issue tracker fires (headless)
+            self.assertNotIn(
+                _SOURCE_UNSUPPORTED_CLAIM,
+                {c["claim"] for c in result["unverified_claims"]},
+            )
+            self.assertEqual(result["verdict"], "pass")
+            self.assertIsNotNone(result["d_payload"])  # → D auto-issue tracker fires
+            items = result["d_payload"]["deferred_items"]
+            self.assertEqual([i["parent_id"] for i in items], ["TASK-001"])
+            self.assertEqual(items[0]["reason"], "status=pending")
 
     def test_both_sources_no_false_warn(self):
-        # SC-6 negative control: tasks.md AND detailed-tasks.yaml both present →
-        #   goes the tasks.md path, must NOT emit the source-unsupported claim.
+        # Negative control (semantics unchanged across #166 → #113): tasks.md AND
+        # detailed-tasks.yaml both present → goes the tasks.md path, no yaml-only claim.
         with tmp_project() as root:
             spec_dir = root / "openspec" / "changes" / "both-spec"
             write_file(spec_dir / "proposal.md", "# both\n\n> **Status**: Approved\n\n## Why\ntest\n")

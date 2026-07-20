@@ -262,13 +262,25 @@ def collect_openspec(project_root: Path) -> CollectorResult:
                     }
                 )
 
-        # Phase 1.6.1: scan tasks.md for inline carry-forward annotations
+        # Phase 1.6.1: scan tasks.md for inline carry-forward annotations.
+        # aria-plugin #113 (SC-7): when tasks.md is absent, fall back to the
+        # detailed-tasks.yaml raw text through the SAME regex SOT (task-planner
+        # path B specs used to contribute a structural 0 — display-side false
+        # green). Precedence mirrors the gate (决策 6): tasks.md present ⇒ yaml
+        # NOT consulted, so dual-layer output stays byte-identical (stale
+        # A.3-era yaml annotations must not double-count).
         tasks_file = d / "tasks.md"
+        annotation_source = None
         if tasks_file.is_file():
+            annotation_source = ("tasks_read_failed", tasks_file)
+        elif (d / "detailed-tasks.yaml").is_file():
+            annotation_source = ("detailed_tasks_read_failed", d / "detailed-tasks.yaml")
+        if annotation_source is not None:
+            error_kind, source_path = annotation_source
             try:
-                tasks_content = tasks_file.read_text(encoding="utf-8", errors="replace")
+                tasks_content = source_path.read_text(encoding="utf-8", errors="replace")
             except OSError as e:
-                r.soft_error("tasks_read_failed", f"{d.name}: {e}")
+                r.soft_error(error_kind, f"{d.name}: {e}")
                 continue
             matches = _extract_carry_forward_annotations(tasks_content)
             if matches:
