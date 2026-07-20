@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.63.0] - 2026-07-20
+
+### Added — `host-docker-logout-guard` PreToolUse hook (Aether #234 预防层)
+
+heavy 宿主 `/root/.docker/config.json` 的 login 态是**节点常驻 T2 registry 凭据**
+(act_runner 拉 runner-images / aether-build 拉 base image 都经它), 不归发起 ssh 的
+session 所有。2026-07-08 (heavy-3) 与 2026-07-16 (heavy-1) 两起 wipe 均为 AI session
+ssh 进宿主跑完 build/release 后"礼貌"执行 `docker logout` 所致 —— 留下 16B
+`{"auths":{}}`, 下一次冷缓存 CI build 报 unauthorized; 两次都因 auditd 缺席 +
+journald 已轮转而需要事后取证才定位。
+
+- **拦截条件 (四者同时成立才 exit 2)**: 命令含 `docker logout` + 含 ssh/scp 指向
+  heavy (heavy-1..5 或 192.168.69.80-84) + 未设 `DOCKER_CONFIG` + 无 `# guard:ack:`。
+- **阻断消息给出路**: 多数场景无需任何 login/logout (宿主已持该凭据); 需要不同凭据
+  走 `DOCKER_CONFIG=/tmp/iso` 隔离; 凭据真丢了是**从健康节点复制修复**而非 logout。
+- **误报防线**: ssh/scp 向量为必要条件, 故纯文档字样 (commit message / md / grep)
+  不触发 —— 针对 secret-guard 已连踩两次的 doc-words 误报形态设了 6 条 ALLOW 对照。
+- **已知边界 (写在文件头, 不粉饰)**: 若 logout 与 ssh 落在**不同 tool call** 则不拦
+  (两起已知事件恰为单次调用); 非宿主侧控制 (`nomad alloc exec` / 可写挂载仍可 wipe);
+  `DOCKER_CONFIG` 采全命令粗判。持久防御仍是 auditd watch (10cg.local#19) 与
+  act_runner `valid_volumes` 收窄。
+- jq 缺失时**告警放行**而非 fail-closed —— 不新增第二条会话死锁路径 (#154 教训),
+  jq 硬依赖由 secret-guard 单独把关。
+- TDD 三段: RED (仅测试, 18/18 fail) → GREEN → 测试加固 (补 2 条注册断言, 两态
+  验证非空洞)。BLOCK 用例是 session transcript 复原的两起事件**逐字命令形态**;
+  BLOCK/ALLOW 双向并存使恒定返回的桩无法通过。
+- 注册**并入既有 Bash matcher 的 hooks 数组**, 不新增第二个 `matcher: "Bash"` 条目
+  (后者会让 secret-guard 的 `.hooks[0]` 注册断言改测新 hook, 静默架空既有覆盖 ——
+  实现中真踩到过, 故补断言锁 secret-guard 的首位)。
+
 ## [1.62.2] - 2026-07-20
 
 owner 裁决的两条收尾 (Aria #168 裁决 1 与裁决 3)。

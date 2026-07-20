@@ -31,6 +31,11 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/host-docker-logout-guard.sh",
+            "timeout": 5
           }
         ]
       },
