@@ -1862,12 +1862,19 @@ class TestRuntimeProbeFoldBlockSurvivesCrash(unittest.TestCase):
 
 
 class TestRuntimeProbeFoldL2ProposalOnlyEvaporates(unittest.TestCase):
-    """[SFH C-1③] designed early-exit lock: a proposal-only (Level 2, no
-    tasks.md) spec's runtime_probe declaration is NEVER evaluated.
-    `gate_result()`'s tasks.md-presence early return (`if not
-    tasks_path.is_file(): return result`) fires BEFORE the proposal.md /
-    runtime_probe fold section is ever reached — regardless of how the
-    declaration itself would otherwise resolve.
+    """[SFH C-1③] designed early-exit lock: a proposal-only (Level 2, **no
+    tasks.md AND no detailed-tasks.yaml**) spec's runtime_probe declaration is
+    NEVER evaluated. `gate_result()`'s bare tasks.md-absent early return fires
+    BEFORE the proposal.md / runtime_probe fold section is ever reached —
+    regardless of how the declaration itself would otherwise resolve.
+
+    **Scope narrowed by aria-plugin #113 (SC-12/SC-13).** The lock now covers the
+    BARE proposal-only subclass only. A tasks.md-absent spec that DOES carry
+    `detailed-tasks.yaml` (task-planner path B) falls through to the fold, because
+    #113's precise yaml parsing invalidates the R3 premise ("spec 结构性不完整
+    ⇒ 探针无意义") for that subclass specifically — see
+    tests/test_gate_yaml_probe_reach.py. This test's fixture passes neither
+    source, so its assertions are unchanged (untouched guard, not a carve-out).
 
     This is a DESIGNED early-exit, not an accidental gap: proposal.md
     §What Changes ③ (R3 裁决) states "gate_result 两个既有早退路径 (tasks.md
@@ -1877,8 +1884,9 @@ class TestRuntimeProbeFoldL2ProposalOnlyEvaporates(unittest.TestCase):
     L2/proposal-only spec (tasks.md 合法可缺、complete 可为 true) —— 有声明
     也不评估、零痕迹". The front-matter authoring guidance in
     references/runtime-probe-declaration.md was updated alongside this test
-    lock: "无 tasks.md 的 spec (Level 2 / proposal-only) 即使写了声明也不会
-    被评估". Zero trace: no `runtime_probe` key, and no
+    lock (and re-narrowed by #113 into two sub-states: no-tasks.md-AND-no-yaml
+    → still zero evaluation; no-tasks.md-but-yaml-present → evaluated from
+    v1.63.0). Zero trace: no `runtime_probe` key, and no
     warnings/unverified_claims/soft_errors additions of ANY kind — not even
     the ones a missing-partition declaration would normally produce at the
     unit level (twin fixture: test_runtime_probe.py::TestProbeTriState::

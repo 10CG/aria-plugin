@@ -42,6 +42,7 @@ exhaust status below, which a check command cannot itself emit.)
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -92,20 +93,24 @@ def _coerce_scalar(raw: str) -> Any:
     return s
 
 
-def _strip_inline_comment(value: str) -> str:
-    """Strip ` # comment` tail from an inline scalar. Preserves `#` inside quotes."""
-    in_single = False
-    in_double = False
-    for i, ch in enumerate(value):
-        if ch == "'" and not in_double:
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-        elif ch == "#" and not in_single and not in_double:
-            # Require a space before `#` to avoid chopping `#abc` inside unquoted strings
-            if i == 0 or value[i - 1].isspace():
-                return value[:i].rstrip()
-    return value
+# `_strip_inline_comment` (quote-aware inline-scalar comment stripper) was moved
+# physically to lib/detailed_tasks.py (aria-plugin #113) so lib/ can reuse the SAME
+# implementation without an import cycle through this package's __init__ — the
+# lib/carry_forward.py precedent (#134 A1.1b). Re-imported here so this module's
+# behaviour and public name are unchanged.
+# Imported as a BARE module via scripts/lib (never `from lib.detailed_tasks
+# import ...`): the top-level name `lib` is ambiguous — it resolves to
+# state-scanner/lib or scripts/lib depending on sys.path order, and binding it
+# here (this module loads very early through collectors/__init__) would poison
+# sys.modules for every later `from lib import ...` consumer. Same convention as
+# collectors/openspec.py's spec_complete import.
+try:
+    from ..lib.detailed_tasks import _strip_inline_comment
+except ImportError:  # pragma: no cover - CLI/bare-module context
+    _LIB_DIR_SIC = str(Path(__file__).resolve().parent.parent / "lib")
+    if _LIB_DIR_SIC not in sys.path:
+        sys.path.insert(0, _LIB_DIR_SIC)
+    from detailed_tasks import _strip_inline_comment  # type: ignore[import]
 
 
 def _indent_of(line: str) -> int:

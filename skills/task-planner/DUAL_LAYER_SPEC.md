@@ -121,6 +121,9 @@ tasks:
     parent: "1.1"  # 链接到 tasks.md 编号
     title: Add OTP secret column to users table
     status: pending  # pending | in_progress | completed | blocked
+    # ⚠️ 该枚举自 aria-plugin v1.63.0 起被 state-scanner 归档门消费 (#113):
+    #   done-family 白名单 = {done, completed} (fail-CLOSED, 其余一律算残留)。
+    #   新增枚举值前请同步核对 scripts/lib/detailed_tasks.py::_DONE_FAMILY 语义。
     complexity: M  # S | M | L | XL
     estimated_hours: "2-4"
     dependencies: []

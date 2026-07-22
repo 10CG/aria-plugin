@@ -327,6 +327,11 @@ design_deferred:                               # additive (#134, v1.42.0+) — g
     reason: str                                # is_spec_complete() 的 incomplete 诊断
   }]
 carry_forward_inventory:                       # Phase 1.6.1 (v1.23.0+)
+  # 数据源 (v1.63.0+, aria-plugin #113): 每个 active change 取 `tasks.md`; **tasks.md
+  # 缺失时 fallback 读 `detailed-tasks.yaml` 原始文本**过同一 regex SOT
+  # (lib/carry_forward.py) — task-planner path B 产出的 spec 此前结构性恒 0 (展示假绿)。
+  # precedence 与归档门一致: tasks.md 在场则 yaml **不**扫 (dual-layer 输出不变,
+  # 防 A.3 规划期陈旧标注双计); tasks.md 存在但不可读 → soft_error 且不落 fallback。
   total: int                                   # sum across all active changes
   active_change_count: int                     # disambiguates 0-active vs N-active-but-clean
   by_change:                                   # only changes with count>0 appear
