@@ -10,6 +10,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.64.0] - 2026-07-22
+
+### Changed — `gate_result` 完整支持 `detailed-tasks.yaml` 数据源 (aria-plugin #113)
+
+v1.61.0 为 yaml-only spec 加的是 **blanket unverified 兜底** —— 对「真干净」与「有 10 项
+未完成」输出无差别, 归档门只能给一句笼统 warn。本版改为解析 `detailed-tasks.yaml` 后给出
+**精确 per-spec 裁决**。
+
+- **新增 `lib/detailed_tasks.py`** (parser 单一 SOT): 物理归位 `_TASK_ID_LINE_RE` +
+  `_split_task_blocks` (承 `carry_forward.py` #134 先例, `spec_complete` re-import 不双写
+  `- id:` 边界知识); range-bounded (`tasks:` 至下一 0 缩进顶层键) + indent-anchored 计数自洽;
+  **字段列锚定**的 status/title 提取 —— `^[ \t]*status:` 会被折叠标量行 / 嵌套子映射的
+  `status: done` 遮蔽任务真实 status (两形状均复现误判), 改为锚到任务自身字段列, 浅于/缺失
+  即计残留 (fail-CLOSED); 白名单仅 `{done, completed}`; 承接 quote-aware
+  `_strip_inline_comment` (原属 `custom_checks`, 循环导入所迫, 见 proposal amendment A-1)。
+- **`gate_result` yaml-only 三态化**: 有残留 → `deferred_items` 精确列举 (status 残留 ∪
+  行内标注两半, 镜像 `tasks.md` 路径) / 真干净 ∧ 零 done-family 集成 title → **full pass**
+  (不 warn 不建 tracker) / parse 失败 → 退回诚实 blanket (`-unparseable`)。属实性轴 scoped
+  披露 (`-integration-claims-unverified`), 不静默降格 pass 语义。
+- **probe fold 可达性窄化**: yaml-present 臂 fall-through 到 `_fold_runtime_probe_declaration`
+  —— **有意反转 DEC-20260705-001 §What Changes ③ R3 于该子类**。原裁决前提是「spec 结构性
+  不完整 ⇒ 探针无意义」; 精确解析使该前提失效, 若续早退, 一个声明了探针的 yaml-only spec 可
+  干净 `pass` 而探针从未跑过 = 新的假绿角落。proposal-only 与 tasks.md-unreadable 两臂**维持**
+  v1.54.0 designed 早退 (由未触碰的守卫测试锁定)。
+- **`is_spec_complete` yaml tasks-branch** (OR 中支) + **collector `carry_forward` yaml
+  fallback** (yaml-only spec 此前恒 0 展示假绿)。
+
+### Fixed — pre-merge review 处置
+
+- 🔴 **CRITICAL (fix-introduced)**: 新解析的崩溃兜底写成 `except: soft_errors.append(...)`
+  而 `verdict` 保持 `pass` —— 唯一完成度数据源崩溃时 gate 反报干净 pass, **正是本 change
+  立意要消灭的 #166 病在自己的兜底路径复发**。同文件姊妹处理器 (probe crash) 写对了,
+  **同文件内不一致本身即信号**。改 fail-toward-warn。
+- 「有记录」≠「有路由」: `soft_errors` 看似已 surface, 但 `openspec-archive` 只按 `verdict`
+  路由、只按 `d_payload != null` 建 tracker, 无人读 `soft_errors` ⇒ 等价静默。
+- code-reviewer 4 Important 中 3 条同型: **测试声称了它没验证的东西** (目录当不可读文件被
+  `.is_file()` 先挡 / 同名测试测的是反面 / 断言全包在无保护 `if` 里)。
+
+### Added — Rule #6 决策表第三行的定向替代 (非简单豁免)
+
+`references/runtime-probe-declaration.md` 是**处方性 authoring 向导** (spec 作者读它判断
+自己写的 `runtime_probe:` 声明会不会被归档门评估)。按 owner 2026-07-20 第三次收敛的判据
+(`standards/conventions/skill-benchmark-exemption.md`, 判据 = 内容是否影响 AI 行为 + AB
+测不测得到) 落**第三行**: AB 套件结构上测不到 authoring 行为 (11 个 state-scanner eval 全
+是 scanning 场景; 全套件 `grep -rl runtime_probe` **零命中**) ⇒ 跑 AB 是测量剧场。按 §3
+三条落地, 缺一回落照跑:
+
+1. **点名行为** + 为何套件测不到 (实测证据非断言);
+2. **新建定向可证伪 fixture** `tests/test_runtime_probe_authoring_guide_contract.py` —— 验
+   「向导承诺 ↔ 运行时现实」逐行一致。**双路径证伪实证**: (A) 回退向导改动 → 4/4 红;
+   (B) 保留表格但把 yaml-only 行 ✅ 篡改为 ❌ → **精确只红对应那一条**, 另 3 条保持绿;
+3. **套件缺口开成 issue** aria-plugin #117 (「AB 缺 authoring 维度」, 与 #116 正交)。
+
+测试 1250 → **1322 全绿**。版本让位第 5 次 (v1.63.0 被并发轨占用)。
+SKILL/Agents 数不变 (35 user-facing + 7 internal = 42, 11 Agents)。
+
 ## [1.63.0] - 2026-07-20
 
 ### Added — `host-docker-logout-guard` PreToolUse hook (Aether #234 预防层)
