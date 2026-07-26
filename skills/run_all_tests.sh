@@ -15,6 +15,9 @@
 #   算成红, 这个入口默认就是红的 —— 而一个默认红的检查等于没有检查, 会立刻被学会
 #   忽略。这正是本 spec 全程在打的假绿/恒红对偶。所以: 缺依赖 => SKIP 并写明原因,
 #   只有真正的测试失败才算 FAIL。
+#   ⚠️ 推论 (aria-plugin #119 附带观察): 这意味着 "exit 0" 是**环境依赖的绿** ——
+#   未装 pytest 的环境里 pytest 套件全走 SKIP, 装了 pytest 才会暴露其中的真实 FAIL。
+#   "本机 exit 0" 不构成跨环境结论; 有 SKIP 时汇总行会列出待装依赖后纳入的套件。
 #
 # 用法:
 #   bash skills/run_all_tests.sh            # 全跑
@@ -80,7 +83,13 @@ for tests_dir in $(find "$SKILLS_DIR" -type d -name tests | sort); do
   else
     echo "FAIL ($n tests) — 见下方详情"
     fail_count=$((fail_count + 1)); FAILED_DIRS+=("$skill")
-    echo "$out" | grep -E '^(FAIL|ERROR):' | sed 's/^/    /' | head -10
+    # 详情抽取: unittest 失败行是 "FAIL:"/"ERROR:" (带冒号), pytest 是 "FAILED <nodeid>"/
+    # "ERROR <file>" (空格无冒号), 另抓 pytest 的 "E   <原因>" 行 (如 ModuleNotFoundError,
+    # 光有文件名不够定位)。两族都没命中 (未知框架/收集期崩溃形态变化) 则回显尾部原文
+    # 兜底, 保证"见下方详情"永不落空 (aria-plugin #119)
+    detail=$(echo "$out" | grep -E '^(FAIL|ERROR):|^(FAILED|ERROR) |^E ' | head -10)
+    [ -z "$detail" ] && detail=$(echo "$out" | tail -10)
+    echo "$detail" | sed 's/^/    /'
   fi
 done
 
