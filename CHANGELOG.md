@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.64.1] - 2026-07-26
+
+### Fixed — 跨 skill runner 生态两小缺陷 (aria-plugin #118 + #119, 打包 Level 1 cycle)
+
+- **#118 tdd-enforcer 教学示例 pytest 收集失败**: `examples/python` 的 `src/` 不在
+  path 且无任何 pytest path 配置, 按 README 跑 `pytest tests/test_calculator.py -v`
+  或 cd tests 后裸 `pytest` 收集即 `ModuleNotFoundError: No module named 'calculator'`。
+  在装了 pytest 的环境, 这使跨 skill 入口 `run_all_tests.sh` 恒 exit 1 (恒红侵蚀 runner
+  信号; 无 pytest 环境则被 SKIP 掩住 — "exit 0 绿在缺依赖上")。修: 新增
+  `tests/conftest.py` 把 `../src` 挂上 `sys.path`; 放 tests/ 同目录不受
+  rootdir/confcutdir 影响, 两种调用形态 (README 形 / runner 形) 验证均
+  `14 passed, 1 skipped`。
+- **#119 run_all_tests.sh 详情抽取恒空**: 原 `grep -E '^(FAIL|ERROR):'` 只匹配
+  unittest 失败行 (冒号紧跟), pytest 的 `FAILED <nodeid>` / `ERROR <file>` (空格无冒号)
+  结构性零命中 — pytest 套件 FAIL 时「见下方详情」承诺落空, 须手动 cd 复跑才能定位。
+  修: pattern 扩到两族并纳入 pytest `E   <原因>` 行 (光有文件名不够定位); 零命中时回显
+  输出尾部 10 行兜底 (框架无关, 详情永不落空); 头注释点明「exit 0 是环境依赖的绿」
+  (issue 附带观察成文)。
+- **端到端验证**: 装 pytest 环境 (隔离 venv) 9 OK / 0 FAIL / 0 SKIP (1640 tests) exit 0;
+  无 pytest 宿主 7 OK / 2 SKIP 形态不变。#119 修复用 #118 未修态作真实 FAIL 载荷验证
+  (详情行打出 `E   ModuleNotFoundError` + `ERROR test_calculator.py`)。
+- **Rule #6**: deterministic substitute — 零 SKILL.md 变更, 全部落确定性代码层
+  (examples fixture + bash runner); 结构化验证 = 上述双环境端到端。
+- triage 留痕: 两 issue `confirmed` (repro 4/4 + 3/3), comment 16938 / 16941。
+
 ## [1.64.0] - 2026-07-22
 
 ### Changed — `gate_result` 完整支持 `detailed-tasks.yaml` 数据源 (aria-plugin #113)
