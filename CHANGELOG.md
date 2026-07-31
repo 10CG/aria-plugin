@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.65.0] - 2026-07-31
+
+### Added — C.2.4 路径覆盖感知 `not_applicable` 态 (aria-plugin #122)
+
+根治路径过滤型 CI 仓库的 pre-merge gate 结构性恒 `wait` (v1.54.0 起累计 5 次人工
+裁决绕行的终结; owner 2026-07-25 定案「唯一真机制」)。
+
+- **新增 `scripts/path_coverage.py`** (stdlib-only 评估器): 仓根三目录
+  (`.forgejo`/`.gitea`/`.github`) workflow 发现; `on:` 触发子集解析 (标量 / flow
+  列表 / 块映射三形, push 与 pull_request 逐触发 OR 判定); 判定规则 1-8 全分割
+  (数据依赖执行序, 互斥+全覆盖), reason 7 值封闭集全部可断言。
+- **fail-toward-covered 骨架**: 一切不确定 → 行为退回现状 — YAML 解析失败 / git
+  diff 失败 → `unknown`; 未建模 glob 语法 (`[abc]`/`!` 等) 判匹配; 零贡献触发键
+  仅精确白名单 `{workflow_dispatch, schedule}` (`pull_request_target` 等未建模键
+  按 covered); `paths-ignore` 按 covered; **workflow 文件自身变更强制 covered**
+  (对 CI 配置动刀的 PR 永不 not_applicable)。`--no-renames` 使 rename 新旧路径
+  都参与匹配; `git rev-parse --show-toplevel` 定仓根 (执行上下文契约成文)。
+- **gate 集成** (`pre_merge_gate.py`): 评估点 precheck 后、(a) PR CI 查询前;
+  `not_applicable` 跳过 (a) 不跳 (b) main in-flight (SilkNode PR-321 保护保留,
+  stub backend NIE 经 (b) 照常 propagate); `compute_verdict` 显式分支 — in-flight
+  空 → `green` + raw_message 警告留痕 / 非空 → `wait` (仅 (b) 轴); `path_coverage`
+  additive 键仅最终 verdict 路径携带, 各早退分支六键不变。
+- **config**: `path_coverage_enabled` 默认 `true` (owner sign-off 2026-07-27
+  单独批默认项); false → 行为与 v1.64.x 逐字段一致。
+- **文档**: SKILL.md §C.2.4 八处同步 (新步骤 2.5 + AI surface 双义务:
+  not_applicable 警告行 + unknown 评估失败上报 — 评估器自身失效不得静默) +
+  config-loader 登记 + workflow-state-schema `raw_message` 用途补注。
+- **质量轨迹**: Spec post_spec R1→R4 CONVERGED (R1 5-agent 5/5 REVISE 含 4
+  Critical [执行上下文 / glob 未建模方向 / 仓边界 / workflow 自身变更反向假绿],
+  R2 新增 pull_request_target Critical, R4 PASS 0/0/0; 审计报告 12 份)。测试
+  62→97 (SC-1~28; 既有测试 mixin 统一打桩评估器入口, 零真实 git 子进程卫生断言);
+  全量跨 skill 1546 绿。Rule #6 照跑 AB (3 eval × with/old/without 三臂, 产出
+  形态 descriptive 统一): new-vs-old 零回归 + 定向语义正向在场; without 臂真
+  污染零命中 (DEC-20260722-001 决策 4 重测门 → 备选 [C] 关闭, #116 随之闭环)。
+- **meta-dogfood**: 本 cycle 自身的 C.2 合并即 not_applicable **首个生产判定**
+  (aether backend 真在场, (b) 轴真查, verdict=green + 双留痕) — 机制对自己的
+  ship 给出了 spec 预测的判定。
+
 ## [1.64.1] - 2026-07-26
 
 ### Fixed — 跨 skill runner 生态两小缺陷 (aria-plugin #118 + #119, 打包 Level 1 cycle)
