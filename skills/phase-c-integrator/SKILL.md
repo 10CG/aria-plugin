@@ -51,6 +51,7 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `phase_c_integrator.pre_merge_gate.wait_check_intervals` | `[30,60,120,300,300]` | 指数退避秒数; 数组耗尽后重复 `intervals[-1]` |
 | `phase_c_integrator.pre_merge_gate.primitive_call_timeout_seconds` | `30` | 单次 aether subprocess 调用 timeout |
 | `phase_c_integrator.pre_merge_gate.poll_chunk_seconds` | `5` | Ctrl-C polling chunk 大小 |
+| `phase_c_integrator.pre_merge_gate.path_coverage_enabled` | `true` | **v1.65.0+** 路径覆盖感知 (aria-plugin #122): 变更路径结构性无 CI workflow 覆盖时产 `not_applicable`, 跳过 (a) PR CI wait ((b) main in-flight 照查)。见 §C.2.4 步骤 2.5 |
 
 当 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时，C.2 合并前触发 audit-engine (pre_merge 检查点)。
 旧配置 `experiments.agent_team_audit=true` 且 `"pre_merge" in agent_team_audit_points` 自动映射到新配置。
@@ -168,14 +169,16 @@ C.2.4 - Pre-Merge Precondition Gate (v1.3.0+):
     - aria 端 verdict 计算 (aether-pre-merge-check skill 从未实施, P0-B not shipped)
   三态结果:
     green:  本 PR CI passing + main 无 in-flight CI → 继续 branch-manager merge
+            (v1.65.0+ 亦含: path coverage not_applicable + main 无 in-flight, 带警告放行)
     wait:   main 有 in-flight CI run OR PR CI pending → 进入 wait+retry (workflow-runner wait_recoverable)
     fail:   PR CI failing OR primitive 错误 → BLOCK + 报告
   output:
     pre_merge_verdict: "green" | "wait" | "fail"
     in_flight_runs: [{run_id, branch, started_at, elapsed_seconds}]   # wait 时
-    pr_ci_status: "passing" | "failing" | "pending"
+    pr_ci_status: "passing" | "failing" | "pending" | "not_applicable"   # not_applicable = gate 层产生 (v1.65.0+)
     primitive_used: "aether-ci-cli" | "manual"
     primitive_version_sha: "f29abee"   # aether-cli #116 baseline
+    path_coverage: {decision, workflows_scanned, matched_workflows, changed_files_count, reason}   # v1.65.0+, 评估执行时在场
 
 C.2.4.5 - Submodule Pointer Regression Gate (v1.28.0+):
   触发条件:
@@ -236,15 +239,18 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 
 1. **Aether binary pre-flight check**: `aether --help | grep -q "in-flight"` 验证 binary 含 P0-A flag,缺失 → fail-fast 提示 "请升级 aether ≥ commit f29abee (2026-05-06)"
 2. **Backend resolution** (v1.31.0+): `resolve_ci_backend(cfg)` 按 config 显式 `ci_backends` 顺序探测,或 fallback 到 BACKENDS list 静态顺序 (Aether-first, GHA-stub-second);所有 backend probe=False → 按 `no_ci_fallback` 配置降级。详见 §C.2.4.X CI Backends
-3. **Query main in-flight**: `aether ci status --branch main --in-flight --json` → parse `data.runs[]`
-4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending`
+2.5. **Path coverage 评估** (v1.65.0+, aria-plugin #122; `path_coverage_enabled=true` 默认): `evaluate_path_coverage(main_branch, pr_branch)` 解析仓内 workflow (`.forgejo/.gitea/.github` 三目录) 的 `on:` push/pull_request 触发 paths, 与 `git diff --name-only --no-renames <main>...<pr>` 变更集求交, 三值 decision: `covered` (会/无法排除会触发) / `not_applicable` (高置信零覆盖) / `unknown` (评估失败)。**fail-toward-covered**: 一切不确定 (解析失败 / git 失败 / 未建模构造) → 行为退回现状。**执行上下文契约**: 在执行 C.2 合并的目标仓根内调用 (子模块合并 → 子模块根); `main_branch` 显式传真值 (本项目 `master`), 不依赖 CLI default
+3. **Query main in-flight**: `aether ci status --branch main --in-flight --json` → parse `data.runs[]` — **无条件执行, 不因 not_applicable 免除** ((b) 轴保留; stub backend 的 NotImplementedError 亦经此步照常 propagate)
+4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending`。**v1.65.0+: decision=not_applicable 时本步跳过** (零覆盖路径不存在可等的 PR CI), `pr_ci_status` 置 `not_applicable`
 5. **Verdict 计算** (aria 端):
    - `pr_ci_status in [failing, error]` → `verdict=fail`
    - `pr_ci_status == pending` → `verdict=wait` (PR CI 尚未完成)
+   - `pr_ci_status == not_applicable AND main_in_flight_runs == []` → `verdict=green` + raw_message 留痕 (v1.65.0+)
+   - `pr_ci_status == not_applicable AND main_in_flight_runs != []` → `verdict=wait` (仅 (b) 轴驱动, v1.65.0+)
    - `pr_ci_status == passing AND main_in_flight_runs == []` → `verdict=green`
    - `pr_ci_status == passing AND main_in_flight_runs != []` → `verdict=wait`
 6. **路由决策**:
-   - `green` → 调用 branch-manager merge action,进入 C.2.5
+   - `green` → 调用 branch-manager merge action,进入 C.2.5。**v1.65.0+ surface 义务 (二者缺一不可)**: (a) green 来源为 not_applicable 时, AI **必须**在 workflow report 加警告行「C.2.4: 变更路径无 CI workflow 覆盖, PR CI wait 已跳过 (not_applicable), main in-flight 已核」; (b) `path_coverage.decision == unknown` 时 (gate 行为=现状, 但评估器自身失败), AI **必须** surface「C.2.4 path coverage 评估失败 (reason=`git-diff-failed`/`workflow-parse-failed` 等), 已按 covered 现状行为处理」— 评估器静默失效是本机制自己要防的恒红病, 不得吞
    - `wait` → 输出 `wait_recoverable` 错误给 workflow-runner,触发 wait+retry 循环 (见 workflow-runner SKILL.md §wait_recoverable)
    - `fail` → BLOCK + 输出 verdict + raw_message,phase-c-integrator return failure
 
@@ -259,15 +265,18 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 ```json
 {
   "verdict": "green" | "wait" | "fail",
-  "pr_ci_status": "passing" | "failing" | "pending",
+  "pr_ci_status": "passing" | "failing" | "pending" | "not_applicable",
   "in_flight_runs": [
     {"run_id": 3161, "branch": "main", "started_at": "2026-05-09T12:45:00Z", "elapsed_seconds": 459}
   ],
   "primitive_used": "aether-ci-cli",
   "primitive_version_sha": "f29abee",
-  "raw_message": "..."
+  "raw_message": "...",
+  "path_coverage": {"decision": "covered|not_applicable|unknown", "workflows_scanned": 1, "matched_workflows": [], "changed_files_count": 2, "reason": "no-triggering-paths"}
 }
 ```
+
+枚举归层注记 (v1.65.0+): `not_applicable` 由 **gate 层**产生 (path coverage 短路, 从不来自 backend); backend `CIStatus.state` Literal 另含 `not_found` (backend 层值, gate 输出目前不产生, 列此消除文档与 `ci_backends/base.py:29` 的历史漂移)。`path_coverage` 为 additive 可选键 — 仅评估已执行且流程走到最终 verdict 路径时在场; 各早退分支 (no-backend / precheck 失败 / backend query 失败 / enabled:false) 保持六键不变。
 
 **配置参数**:
 | 参数 | 默认 | 说明 |
@@ -279,6 +288,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 | `wait_check_intervals` | `[30,60,120,300,300]` | 指数退避 (秒); 数组耗尽后重复 `intervals[-1]` |
 | `primitive_call_timeout_seconds` | `30` | 单次 subprocess 调用 timeout |
 | `poll_chunk_seconds` | `5` | Ctrl-C polling chunk |
+| `path_coverage_enabled` | `true` | **v1.65.0+** 路径覆盖感知开关 (#122, owner sign-off 2026-07-27 单独批默认 true)。false → 不评估, 输出无 `path_coverage` 键, 行为=v1.64.x |
 
 **降级行为**:
 - `enabled: false` → 完全跳过 C.2.4 (与 v1.2.0 行为 100% 一致)
@@ -287,6 +297,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 - 显式禁用 (`ci_backends: []`) → 视为"无可用 backend" 路径,按 `no_ci_fallback` 降级 (canonical way to disable v1.31.0+)
 - Stub backend NIE (e.g. `gh` 装但 GHA stub query 未实现) → **不走 fallback,直接 abort** (Hard Constraint #7)
 - aether binary 过期 (无 `--in-flight` flag) → fail-fast,**不**继续执行 (避免 silent skip)
+- **Path coverage fail-toward-covered 边界 (v1.65.0+)**: 评估的任何不确定面 — git diff 失败 / workflow YAML 解析失败 / 未建模 glob 语法 (`[abc]`/`!` 等, 判匹配) / 未建模触发键 (`pull_request_target` 等, 判 covered; 零贡献仅精确白名单 `{workflow_dispatch, schedule}`) / `paths-ignore` 在场 — 一律落 `covered`/`unknown`, gate 行为与 v1.64.x 逐字段一致; `not_applicable` 只在全部 workflow 解析成功且确定不触发时产生。判定规则 1-8 全分割 + reason 封闭集详见 Spec `openspec/changes/phase-c-gate-path-coverage-not-applicable/proposal.md §1`
 
 **Race condition 处理**: gate 检查与 merge call 之间,main 可能新触发 CI run。窗口最小化 (gate green 后立即调 merge),不消除 race。深度 mitigation 留 future Spec。
 

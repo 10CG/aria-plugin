@@ -279,6 +279,12 @@ phase_c_integrator.pre_merge_gate.poll_chunk_seconds:
 phase_c_integrator.pre_merge_gate.user_escape_hatch:
   type: boolean
   default: true
+
+phase_c_integrator.pre_merge_gate.path_coverage_enabled:
+  type: boolean
+  default: true
+  # v1.65.0+ — aria-plugin #122 路径覆盖感知 not_applicable 态,
+  # 详见 aria/skills/phase-c-integrator/SKILL.md §C.2.4 步骤 2.5
 ```
 
 ## 旧配置兼容层
