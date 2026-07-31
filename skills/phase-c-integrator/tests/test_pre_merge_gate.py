@@ -45,14 +45,35 @@ def _aether_payload(runs: list[dict]) -> str:
     )
 
 
+# v1.65.0+ (#122): 评估器打桩返回值 — decision=covered 使 gate 走既有查询路径,
+# 既有测试语义零变 (SC-11), 且套件运行期间零真实 git 子进程 (SC-22/QA-3)。
+_PC_COVERED_STUB = {
+    "decision": "covered",
+    "workflows_scanned": 1,
+    "matched_workflows": [".forgejo/workflows/stub.yml"],
+    "changed_files_count": 1,
+    "reason": "workflow-trigger-matched",
+}
+
+
 class _ProbeCacheResetMixin:
     """Mixin: reset probe cache before and after each test for isolation
     (Hard Constraint #11 Option B + AC-7 test isolation).
+
+    v1.65.0+ (#122): 同时统一 patch gate.evaluate_path_coverage (QA-3 隔离方法论)
+    — 既有测试不因 path_coverage_enabled 默认 true 触发真实 git 子进程 (SC-22)。
     """
 
     def setUp(self) -> None:  # type: ignore[override]
         super().setUp()
         reset_probe_cache()
+        patcher = mock.patch.object(
+            gate,
+            "evaluate_path_coverage",
+            return_value=dict(_PC_COVERED_STUB),
+        )
+        self.pc_eval = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self) -> None:  # type: ignore[override]
         reset_probe_cache()
@@ -556,6 +577,171 @@ class TestProbeCacheIsolation(_ProbeCacheResetMixin, unittest.TestCase):
             reset_probe_cache()  # invalidate
             cached_probe(AetherBackend)
         self.assertEqual(call_count["n"], 2, "probe should be called twice after reset")
+
+
+class PathCoverageGateTests(_ProbeCacheResetMixin, unittest.TestCase):
+    """v1.65.0+ (#122) path coverage × gate 集成 — SC-9/10/11/12/13/15/21/22。
+
+    评估器本体的判定逻辑在 test_path_coverage.py; 本类只测 gate 侧接线:
+    跳 (a) 的因果机制 (assert_not_called, QA-2) / (b) 轴保留 / NIE 交叉不变量 /
+    additive schema / 默认值锁定 / 关闭开关 / 既有套件 git 子进程卫生。
+    """
+
+    _NA_STUB = {
+        "decision": "not_applicable",
+        "workflows_scanned": 1,
+        "matched_workflows": [],
+        "changed_files_count": 2,
+        "reason": "no-triggering-paths",
+    }
+
+    _OLD_KEYS = (
+        "verdict",
+        "pr_ci_status",
+        "in_flight_runs",
+        "primitive_used",
+        "primitive_version_sha",
+        "raw_message",
+    )
+
+    def _backend(
+        self,
+        main_runs: list[dict] | None = None,
+        pr_state: str = "passing",
+    ):
+        b = mock.MagicMock(spec=AetherBackend)
+        b.name = "aether-ci-cli"
+        b.precheck.return_value = (True, "")
+        b.query_branch_in_flight.return_value = InFlightStatus(
+            runs=main_runs or [], checked_at="2026-07-31T00:00:00Z"
+        )
+        b.query_pr_ci.return_value = CIStatus(
+            state=pr_state, checked_at="2026-07-31T00:00:00Z"
+        )
+        return b
+
+    def test_sc9_not_applicable_with_inflight_waits_and_skips_pr_query(self) -> None:
+        self.pc_eval.return_value = dict(self._NA_STUB)
+        run = {"id": 1, "branch": "main", "started_at": "2026-07-31T00:00:00Z"}
+        b = self._backend(main_runs=[run])
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b):
+            out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(out["verdict"], "wait")
+        self.assertEqual(out["pr_ci_status"], "not_applicable")
+        b.query_pr_ci.assert_not_called()  # QA-2: 因果机制本身
+        self.assertEqual(out["path_coverage"], self._NA_STUB)
+
+    def test_sc10_not_applicable_clean_green_with_message(self) -> None:
+        self.pc_eval.return_value = dict(self._NA_STUB)
+        b = self._backend(main_runs=[])
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b):
+            out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(out["verdict"], "green")
+        self.assertEqual(out["pr_ci_status"], "not_applicable")
+        self.assertTrue(out["raw_message"])  # D8 留痕非空
+        self.assertIn("not_applicable", out["raw_message"])
+        self.assertIn("no-triggering-paths", out["raw_message"])
+        b.query_pr_ci.assert_not_called()
+        self.assertEqual(out["path_coverage"], self._NA_STUB)
+
+    def test_sc11_covered_existing_fields_identical_to_disabled(self) -> None:
+        # covered (mixin 默认桩) vs 显式关闭 — 既有六键逐字段一致 (additive-only)。
+        b1 = self._backend(main_runs=[], pr_state="passing")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b1):
+            covered_out = gate.gate_check(pr_branch="feat/x")
+        b2 = self._backend(main_runs=[], pr_state="passing")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b2):
+            disabled_out = gate.gate_check(
+                pr_branch="feat/x",
+                config={"path_coverage_enabled": False},
+            )
+        for key in self._OLD_KEYS:
+            self.assertEqual(covered_out[key], disabled_out[key], key)
+        self.assertIn("path_coverage", covered_out)
+        b1.query_pr_ci.assert_called_once()  # covered → (a) 照常查询
+
+    def test_sc12_default_true_lock(self) -> None:
+        # 默认值锁定 (unset → 评估执行): config 不含 path_coverage_enabled。
+        b = self._backend()
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b):
+            gate.gate_check(pr_branch="feat/x", config={})
+        self.pc_eval.assert_called_once_with(
+            main_branch="main", pr_branch="feat/x"
+        )
+
+    def test_sc13_disabled_no_eval_no_key(self) -> None:
+        b = self._backend()
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b):
+            out = gate.gate_check(
+                pr_branch="feat/x",
+                config={"path_coverage_enabled": False},
+            )
+        self.pc_eval.assert_not_called()
+        self.assertNotIn("path_coverage", out)
+        self.assertEqual(out["verdict"], "green")
+
+    def test_sc15_schema_additive_and_early_exit_six_keys(self) -> None:
+        # not_applicable 输出保留全部既有键。
+        self.pc_eval.return_value = dict(self._NA_STUB)
+        b = self._backend(main_runs=[])
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b):
+            out = gate.gate_check(pr_branch="feat/x")
+        for key in self._OLD_KEYS:
+            self.assertIn(key, out)
+        # backend-query-failure 早退分支不带 path_coverage 键 (BA-6)。
+        b2 = self._backend()
+        b2.query_branch_in_flight.side_effect = AetherQueryError("boom")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b2):
+            fail_out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(fail_out["verdict"], "fail")
+        self.assertNotIn("path_coverage", fail_out)
+
+    def test_sc21_nie_propagates_through_b_axis(self) -> None:
+        # not_applicable 只免 (a); stub backend NIE 经 (b) 照常 propagate (TL-4)。
+        self.pc_eval.return_value = dict(self._NA_STUB)
+        b = self._backend()
+        b.query_branch_in_flight.side_effect = NotImplementedError(
+            "stub backend"
+        )
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=b):
+            with self.assertRaises(NotImplementedError):
+                gate.gate_check(pr_branch="feat/x")
+
+    def test_sc22_no_real_git_subprocess_in_suite(self) -> None:
+        # 卫生断言 (QA-3): 评估器入口被 mixin 打桩后, 代表性 gate_check 全程
+        # 不触发 path_coverage 模块的真实 git 子进程。
+        import path_coverage as pc_module
+
+        def _forbidden(*_a, **_k):  # pragma: no cover
+            raise AssertionError("real git subprocess spawned in unit suite")
+
+        with mock.patch.object(pc_module.subprocess, "run", _forbidden):
+            b = self._backend(main_runs=[], pr_state="passing")
+            with mock.patch.object(
+                gate, "resolve_ci_backend", return_value=b
+            ):
+                out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(out["verdict"], "green")
+
+    def test_compute_verdict_explicit_not_applicable_branch(self) -> None:
+        # BA-8: 显式分支单元级 — in-flight 空/非空两态 + path_coverage 透传。
+        out_green = gate.compute_verdict(
+            main_in_flight_runs=[],
+            pr_ci_status="not_applicable",
+            backend_name="aether-ci-cli",
+            path_coverage=dict(self._NA_STUB),
+        )
+        self.assertEqual(out_green["verdict"], "green")
+        self.assertTrue(out_green["raw_message"])
+        self.assertEqual(out_green["path_coverage"], self._NA_STUB)
+        out_wait = gate.compute_verdict(
+            main_in_flight_runs=[{"id": 1}],
+            pr_ci_status="not_applicable",
+            backend_name="aether-ci-cli",
+            path_coverage=dict(self._NA_STUB),
+        )
+        self.assertEqual(out_wait["verdict"], "wait")
+        self.assertIn("(b)-axis", out_wait["raw_message"])
 
 
 if __name__ == "__main__":

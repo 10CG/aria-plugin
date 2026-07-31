@@ -39,6 +39,9 @@ from ci_backends import (
     CIBackend,
     cached_probe,
 )
+# v1.65.0+ (#122): path coverage 评估器。模块级符号, 测试经
+# mock.patch.object(gate, "evaluate_path_coverage") 打桩 (镜像 resolve_ci_backend 先例)。
+from path_coverage import evaluate_path_coverage  # noqa: E402
 
 # Verdict enum values.
 VERDICT_GREEN = "green"
@@ -56,6 +59,9 @@ DEFAULT_CONFIG = {
     "primitive_call_timeout_seconds": 30,
     "poll_chunk_seconds": 5,
     "user_escape_hatch": True,
+    # v1.65.0+ (#122): 路径覆盖感知默认开启 (owner sign-off 2026-07-27 单独批
+    # 默认 true)。fail-toward-covered: 评估不确定时行为与关闭时逐字段一致。
+    "path_coverage_enabled": True,
 }
 
 # Legacy key alias map for soft-deprecation (Hard Constraint #3).
@@ -166,6 +172,7 @@ def compute_verdict(
     pr_ci_status: str,
     backend_name: str = "aether-ci-cli",
     cfg: dict[str, Any] | None = None,
+    path_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute three-state verdict per SKILL.md §C.2.4 step 5.
 
@@ -182,10 +189,29 @@ def compute_verdict(
     that returned str is replaced — Hard Constraint #10 locks new signature.
     """
     # Verdict computation (preserved logic from pre_merge_gate.py L217-228).
+    raw_message = ""
     if pr_ci_status in ("failing", "error"):
         verdict = VERDICT_FAIL
     elif pr_ci_status == "pending":
         verdict = VERDICT_WAIT
+    elif pr_ci_status == "not_applicable":
+        # v1.65.0+ (#122) 显式分支 (BA-8: 不依赖 fallthrough 隐式兜底) —
+        # (a) PR CI wait 已因路径零覆盖免除; (b) main in-flight 轴照常裁决 (D3)。
+        pc_reason = (path_coverage or {}).get("reason", "")
+        if main_in_flight_runs:
+            verdict = VERDICT_WAIT
+            raw_message = (
+                "path_coverage: no workflow covers changed files "
+                f"(reason={pc_reason}); PR CI wait skipped (not_applicable); "
+                "waiting on main in-flight runs only ((b)-axis)"
+            )
+        else:
+            verdict = VERDICT_GREEN
+            raw_message = (
+                "path_coverage: no workflow covers changed files "
+                f"(reason={pc_reason}); PR CI wait skipped (not_applicable); "
+                "main in-flight clear"
+            )
     elif main_in_flight_runs:
         # pr_ci_status == "passing" + main has in-flight runs → wait
         verdict = VERDICT_WAIT
@@ -198,7 +224,8 @@ def compute_verdict(
         pr_ci_status=pr_ci_status,
         in_flight_runs=main_in_flight_runs,
         primitive_used=backend_name,
-        raw_message="",
+        raw_message=raw_message,
+        path_coverage=path_coverage,
     )
 
 
@@ -209,14 +236,21 @@ def _build_output(
     primitive_used: str,
     raw_message: str = "",
     primitive_version_sha: str = "",
+    path_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the canonical output dict per SKILL.md §C.2.4 Output schema."""
+    """Build the canonical output dict per SKILL.md §C.2.4 Output schema.
+
+    v1.65.0+ (#122, BA-6): `path_coverage` 是 additive 可选键 — 仅当评估已执行
+    且流程走到 compute_verdict 最终路径时在场 (path_coverage 非 None); 各早退
+    分支 (enabled:false / no-backend / precheck 失败 / backend query 失败) 保持
+    既有六键不变。
+    """
     # For Aether backend, populate primitive_version_sha from module constant.
     # For other backends, leave empty (or future: backend-specific version).
     if primitive_used == "aether-ci-cli" and not primitive_version_sha:
         from ci_backends.aether import AETHER_CLI_MIN_SHA
         primitive_version_sha = AETHER_CLI_MIN_SHA
-    return {
+    out = {
         "verdict": verdict,
         "pr_ci_status": pr_ci_status,
         "in_flight_runs": in_flight_runs,
@@ -224,6 +258,9 @@ def _build_output(
         "primitive_version_sha": primitive_version_sha,
         "raw_message": raw_message,
     }
+    if path_coverage is not None:
+        out["path_coverage"] = path_coverage
+    return out
 
 
 def _no_ci_output(no_ci_fallback: str) -> dict[str, Any]:
@@ -276,7 +313,9 @@ def gate_check(
 
     Query order (Hard Constraint #1, ground truth gate_check L309-329):
       main in-flight FIRST → PR CI SECOND (early-fail on main in-flight short-
-      circuits PR query, matches current Aether subprocess invocation count).
+      circuits PR query). v1.65.0+ (#122): PR CI 查询是条件性的 — path coverage
+      decision=not_applicable 时跳过 (a) 查询 (subprocess 调用数 0 或 1); (b)
+      main in-flight 查询保持无条件执行, NIE 经 (b) 照常 propagate (SC-21)。
     """
     # Alias translation BEFORE merge with DEFAULT_CONFIG (Hard Constraint #9).
     # If we merged first, DEFAULT_CONFIG's new keys would always shadow user's
@@ -312,8 +351,17 @@ def gate_check(
             raw_message=precheck_err,
         )
 
+    # v1.65.0+ (#122): path coverage 评估 — precheck 之后、(a) PR CI 查询之前
+    # (SKILL.md §C.2.4 步骤 2.5)。评估失败 (decision=unknown) → 行为退回现状。
+    pc: dict[str, Any] | None = None
+    if cfg.get("path_coverage_enabled", True):
+        pc = evaluate_path_coverage(
+            main_branch=main_branch, pr_branch=pr_branch
+        )
+
     # Query order: main in-flight FIRST then PR CI SECOND (Rev1.1 corrected,
     # matches ground truth L309-329). Hard Constraint #7: NIE propagates.
+    # (b) 无条件执行 — not_applicable 只免 (a), NIE 经 (b) 照常传出 (SC-21/D3)。
     try:
         in_flight = backend.query_branch_in_flight(main_branch)
     except NotImplementedError:
@@ -325,6 +373,16 @@ def gate_check(
             in_flight_runs=[],
             primitive_used=backend.name,
             raw_message=str(exc),
+        )
+
+    if pc is not None and pc.get("decision") == "not_applicable":
+        # 跳过 (a) PR CI 查询与其 wait — 高置信零覆盖 (SC-9/10 assert_not_called)。
+        return compute_verdict(
+            main_in_flight_runs=in_flight.runs,
+            pr_ci_status="not_applicable",
+            backend_name=backend.name,
+            cfg=cfg,
+            path_coverage=pc,
         )
 
     try:
@@ -345,6 +403,7 @@ def gate_check(
         pr_ci_status=pr_status.state,
         backend_name=backend.name,
         cfg=cfg,
+        path_coverage=pc,
     )
 
 
