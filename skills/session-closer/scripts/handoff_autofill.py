@@ -158,7 +158,13 @@ def fill_sync_section(multi_remote):
 # --- §2 carry-forward 汇编 -----------------------------------------------------
 
 def grep_unchecked_tasks(changes_dir):
-    """新增轻量 grep(非既有 collector): 扫 active openspec/changes/*/tasks.md 原始 `- [ ]`。"""
+    """扫 active openspec/changes/*/ 残留任务 (§2 carry-forward 机械候选)。
+
+    tasks.md 原始 `- [ ]`; tasks.md 缺席时 fallback 到 detailed-tasks.yaml
+    (aria-plugin #121 — 镜像 #113 决策 6: 并存时 yaml 不看, 防陈旧 A.3 期 yaml 双计)。
+    已知盲区: Level 2 任务内联 proposal.md 的形态仍不可见 (spec 决策「范围」, 有
+    follow-up issue)。
+    """
     items = []
     if not os.path.isdir(changes_dir):
         return items
@@ -172,7 +178,87 @@ def grep_unchecked_tasks(changes_dir):
                 continue
             for m in _UNCHECKED_RE.findall(body):
                 items.append({"source": f"tasks.md:{name}", "item": m.strip()})
+            continue
+        items.extend(_yaml_fallback_items(os.path.join(changes_dir, name), name))
     return items
+
+
+# state-scanner 侧 #113 parser SOT 的仓内相对位置 (自 skills/ 根起)。
+_DT_SOT_RELPATH = ("state-scanner", "scripts", "lib", "detailed_tasks.py")
+
+
+def _load_detailed_tasks_api(sot_path=None):
+    """加载 #113 parser SOT (state-scanner/scripts/lib/detailed_tasks.py)。
+
+    importlib 文件直载 + 唯一模块名 — **零 sys.path 变更**, 不触碰顶层 `lib` 名
+    (state-scanner 下有两个物理 `lib/` 包, 绑定顺序敏感; 权威论证见
+    collectors/openspec.py:18-31。sys.path 方案在 post_spec R2 被证仍有
+    collectors/__init__ 链带出的残余顺序风险, 故弃)。可行性前提: detailed_tasks.py
+    仅 import stdlib `re`, 文件直载无依赖缺口。
+
+    成功返回 (parse_detailed_tasks, is_done_status); 任何异常返回 None —
+    调用方对 yaml-only spec 产 sentinel (宁噪音勿假绿), 不静默。
+    """
+    try:
+        import importlib.util
+        from pathlib import Path
+
+        if sot_path is None:
+            sot_path = str(Path(__file__).resolve().parents[2].joinpath(*_DT_SOT_RELPATH))
+        spec = importlib.util.spec_from_file_location("aria_sc_detailed_tasks", sot_path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return (mod.parse_detailed_tasks, mod.is_done_status)
+    except Exception:
+        return None
+
+
+def _yaml_sentinel(name, kind, reason):
+    """不可用 sentinel (#121 三形态: sot_load_failed / read_failed / parse_failed)。
+
+    source 带 `:unavailable` 机器判别后缀 — 下游/测试锚定后缀与 kind, 不断自由文本。
+    """
+    return {"source": f"detailed-tasks.yaml:{name}:unavailable",
+            "item": f"(unavailable: {kind} — {reason}) 需人工核对"}
+
+
+def _yaml_fallback_items(spec_dir, name):
+    """tasks.md 缺席 → detailed-tasks.yaml 残留。
+
+    存在性判断 = **open-attempt, 无 isfile() 前置闸门**: isfile 对目录等「在场但
+    不可读」形态返回 False, 会把它们静默送进双缺席分支报 0 — 以新机制复刻 #121
+    病根。FileNotFoundError/NotADirectoryError = 真缺席 (含断链 symlink, 指向物
+    不存在语义等同无文件); 其余 OSError → read_failed sentinel。`errors="replace"`
+    必带: UnicodeDecodeError 非 OSError 子类, 裸 open 会让它逃出三形态闭包。
+    """
+    path = os.path.join(spec_dir, "detailed-tasks.yaml")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    except OSError as e:
+        return [_yaml_sentinel(name, "read_failed", str(e))]
+    api = _load_detailed_tasks_api()
+    if api is None:
+        return [_yaml_sentinel(name, "sot_load_failed",
+                               "state-scanner detailed_tasks SOT 不可加载")]
+    parse_fn, done_fn = api
+    parsed = parse_fn(text)
+    if not parsed["parse_ok"]:
+        return [_yaml_sentinel(name, "parse_failed",
+                               parsed.get("reason") or "unparseable")]
+    out = []
+    for t in parsed["tasks"]:
+        if done_fn(t.get("raw_status")):
+            continue
+        tid = (t.get("id") or "").strip()
+        title = (t.get("title") or "").strip()
+        out.append({"source": f"detailed-tasks.yaml:{name}",
+                    "item": tid if not title else f"{tid} {title}"})
+    return out
 
 
 def _normalize_followup(f):

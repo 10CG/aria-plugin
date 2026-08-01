@@ -397,5 +397,130 @@ class TestRealSnapshotAdapter(unittest.TestCase):
         self.assertIsNotNone(out["four_dim"]["OpenSpec"]["active_changes"])
 
 
+class TestYamlDatasourceSC(unittest.TestCase):
+    """aria-plugin #121 (spec session-closer-autofill-yaml-datasource) SC-1~SC-9。
+
+    yaml-only spec 残留经 #113 parser SOT; 不可用三形态 sentinel (source 带
+    `:unavailable` 判别后缀); 存在性 = open-attempt (无 isfile 闸门)。
+    SC-1/SC-7 为 baseline-failing: 未修代码上必 FAIL (报 0)。
+    """
+
+    def _spec(self, root, name, yaml_text=None, tasks_md=None):
+        sp = os.path.join(root, name)
+        os.makedirs(sp)
+        if yaml_text is not None:
+            with open(os.path.join(sp, "detailed-tasks.yaml"), "w", encoding="utf-8") as f:
+                f.write(yaml_text)
+        if tasks_md is not None:
+            with open(os.path.join(sp, "tasks.md"), "w", encoding="utf-8") as f:
+                f.write(tasks_md)
+        return sp
+
+    def test_sc1_yaml_only_pending_reported_no_trailing_space(self):
+        # SC-1 (baseline-failing): 2 pending (其一 title 缺失) → 2 条; 走 helper 默认
+        # 路径 (真实仓布局解析 SOT) — 兼作 state-scanner lib 迁移红灯 (SC-6)。
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "yaml-only",
+                       "version: \"1.0\"\ntasks:\n"
+                       "  - id: TASK-001\n    title: \"first pending\"\n    status: pending\n"
+                       "  - id: TASK-002\n    status: pending\n")
+            items = grep_unchecked_tasks(d)
+            self.assertEqual(len(items), 2, f"yaml-only spec 应报 2 残留, 实得 {items}")
+            self.assertEqual(items[0]["source"], "detailed-tasks.yaml:yaml-only")
+            self.assertEqual(items[0]["item"], "TASK-001 first pending")
+            # title 缺失 → item == 裸 id, 无尾随空格
+            self.assertEqual(items[1]["item"], "TASK-002")
+
+    def test_sc2_tasks_md_precedence_yaml_not_consulted(self):
+        # SC-2: 并存 → 仅 tasks.md 条目 (#113 决策 6, 防双计)
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "both",
+                       yaml_text="tasks:\n  - id: TASK-009\n    status: pending\n",
+                       tasks_md="- [ ] md 残留\n- [x] done\n")
+            items = grep_unchecked_tasks(d)
+            self.assertEqual([i["item"] for i in items], ["md 残留"])
+            self.assertTrue(all(i["source"].startswith("tasks.md:") for i in items))
+
+    def test_sc3_done_family_not_reported(self):
+        # SC-3: 全 done/completed → 0 条
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "alldone",
+                       "tasks:\n"
+                       "  - id: TASK-001\n    status: done\n"
+                       "  - id: TASK-002\n    status: completed\n")
+            self.assertEqual(grep_unchecked_tasks(d), [])
+
+    def test_sc4_fail_closed_mixed_statuses(self):
+        # SC-4: 混排 — 仅非 done-family 计入 (fail-CLOSED: 未知 token/缺失也算残留)
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "mixed",
+                       "tasks:\n"
+                       "  - id: TASK-001\n    status: done\n"
+                       "  - id: TASK-002\n    status: deferred\n"
+                       "  - id: TASK-003\n    status: blocked\n"
+                       "  - id: TASK-004\n    status: in_progress\n"
+                       "  - id: TASK-005\n    status: someday-maybe\n"
+                       "  - id: TASK-006\n")
+            got = {i["item"] for i in grep_unchecked_tasks(d)}
+            self.assertEqual(got, {"TASK-002", "TASK-003", "TASK-004", "TASK-005", "TASK-006"})
+
+    def test_sc5a_consumer_degrades_to_sentinel_on_sot_load_failure(self):
+        # SC-5a: monkeypatch helper → None ⇒ sot_load_failed sentinel, 非静默 0
+        import handoff_autofill as ha
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "yaml-only", "tasks:\n  - id: TASK-001\n    status: pending\n")
+            orig = ha._load_detailed_tasks_api
+            ha._load_detailed_tasks_api = lambda sot_path=None: None
+            try:
+                items = grep_unchecked_tasks(d)
+            finally:
+                ha._load_detailed_tasks_api = orig
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["source"], "detailed-tasks.yaml:yaml-only:unavailable")
+            self.assertIn("sot_load_failed", items[0]["item"])
+
+    def test_sc5b_helper_returns_none_on_missing_sot_path(self):
+        # SC-5b: helper 直测 — 失败路径端到端可达
+        import handoff_autofill as ha
+        self.assertIsNone(ha._load_detailed_tasks_api(sot_path="/nonexistent/detailed_tasks.py"))
+        api = ha._load_detailed_tasks_api()  # 默认路径: 真实仓布局必须成功
+        self.assertIsNotNone(api)
+        self.assertTrue(callable(api[0]) and callable(api[1]))
+
+    def test_sc7_parse_failed_sentinel_with_reason(self):
+        # SC-7 (baseline-failing): parse_ok=False → parse_failed sentinel + reason 透传
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "no-ids", "tasks:\n  - plain item without id\n")
+            self._spec(d, "dup-tasks",
+                       "tasks:\n  - id: TASK-001\n    status: pending\ntasks:\n  - id: TASK-002\n    status: pending\n")
+            items = grep_unchecked_tasks(d)
+            self.assertEqual(len(items), 2)
+            for it in items:
+                self.assertTrue(it["source"].endswith(":unavailable"), it)
+                self.assertIn("parse_failed", it["item"])
+                # reason 透传: 模板为 "(unavailable: parse_failed — <reason>) 需人工核对"
+                self.assertIn("—", it["item"])
+                self.assertNotEqual(it["item"].split("—", 1)[1].strip(), ") 需人工核对")
+
+    def test_sc8_directory_as_yaml_read_failed_sentinel(self):
+        # SC-8: detailed-tasks.yaml 为目录 → open-attempt 必 IsADirectoryError → sentinel
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._spec(d, "dir-yaml")
+            os.makedirs(os.path.join(sp, "detailed-tasks.yaml"))
+            items = grep_unchecked_tasks(d)
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["source"], "detailed-tasks.yaml:dir-yaml:unavailable")
+            self.assertIn("read_failed", items[0]["item"])
+
+    def test_sc9_both_absent_and_broken_symlink_zero_no_sentinel(self):
+        # SC-9: 双缺席 → 0 条无 sentinel; 断链 symlink 归缺席 (open-attempt 边界)
+        with tempfile.TemporaryDirectory() as d:
+            self._spec(d, "empty-spec")
+            sp2 = self._spec(d, "broken-link")
+            os.symlink(os.path.join(d, "no-such-target.yaml"),
+                       os.path.join(sp2, "detailed-tasks.yaml"))
+            self.assertEqual(grep_unchecked_tasks(d), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

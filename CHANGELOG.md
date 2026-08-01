@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.65.1] - 2026-08-01
+
+### Fixed — session-closer handoff_autofill yaml-only spec 静默假绿 (aria-plugin #121)
+
+`grep_unchecked_tasks` 只扫 `tasks.md`, yaml-only spec (task-planner path B) 在 §2
+carry-forward 汇编报 0 未完成 — #113 同根因跨 skill 第四处消费方 (由 session-closer
+自身机械补漏机制在 #113 收尾时抓到)。
+
+- **yaml fallback 分支**: tasks.md 缺席时经 #113 parser SOT
+  (`state-scanner/scripts/lib/detailed_tasks.py`) 取残留; 并存时 yaml 不看 (镜像
+  #113 决策 6, 防陈旧 A.3 期 yaml 双计)。fail-CLOSED 残留判据 = 非 done-family
+  (`is_done_status` SOT 白名单) 全计入。
+- **SOT 加载 = importlib 文件直载** (`_load_detailed_tasks_api`, 唯一模块名
+  `aria_sc_detailed_tasks`): 零 sys.path 变更 — 规避 state-scanner 双 `lib` 包
+  顶层名绑定顺序风险 (post_spec R2 证 sys.path 方案有 collectors/__init__ 链残余
+  顺序隐患后改裁)。
+- **不可用三形态统一 sentinel** (`sot_load_failed` / `read_failed` /
+  `parse_failed`): source 带 `:unavailable` 机器判别后缀, item 模板
+  `(unavailable: {kind} — {reason}) 需人工核对` — 任何不可用形态都不静默回 0
+  (与病根同类的降级假绿被结构性堵死)。
+- **yaml 存在性 = open-attempt 语义** (无 `isfile()` 前置闸门): 目录/权限错等
+  「在场但不可读」→ sentinel; `FileNotFoundError`/断链 symlink → 缺席。
+  `errors="replace"` 防 `UnicodeDecodeError` 逃出 OSError 闭包。
+- 已知盲区 (spec 范围决策): Level 2 任务内联 proposal.md 的第三形态仍不可见 —
+  follow-up issue 另开。
+- Spec `session-closer-autofill-yaml-datasource` (post_spec R1→R3 CONVERGED:
+  R1 4 REVISE 1C+6M → R2 1 REVISE 1M → R3 5/5 PASS; 报告 15 份)。测试
+  SC-1~SC-9 (SC-1/SC-7 baseline-failing 已验 FAIL→PASS), session-closer 41→50,
+  state-scanner 1322 回归绿, 真数据 dogfood 零噪音。Rule #6: deterministic
+  script 变更 → SC 级结构化测试 substitute (rule6_note 见 spec)。
+
 ## [1.65.0] - 2026-07-31
 
 ### Added — C.2.4 路径覆盖感知 `not_applicable` 态 (aria-plugin #122)
