@@ -496,5 +496,81 @@ class RenameAndContextTests(_RepoFixtureMixin, unittest.TestCase):
         self.assertEqual(out, expected)
 
 
+class NonAsciiPathTests(_RepoFixtureMixin, unittest.TestCase):
+    """aria-plugin #124 — 非 ASCII 变更路径必须与 ASCII 路径判定一致。
+
+    缺 `-z` 时 git 按 `core.quotePath` (默认 true) 把非 ASCII 路径八进制转义并
+    加双引号 (`"skills/\\346\\265\\213/x.py"`), 该形态与任何 glob 恒不匹配 ⇒
+    变更被静默判为「不命中任何 paths」⇒ 假 not_applicable ⇒ **闸门误放行**。
+    """
+
+    WF = (
+        "on:\n  pull_request:\n    paths:\n      - 'skills/**'\n"
+        "jobs:\n  x:\n    runs-on: x\n"
+    )
+
+    def test_ascii_path_covered_control(self) -> None:
+        """对照组: ASCII 路径命中 → covered (修复前后均应绿)。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF}, {"skills/issue-triage/x.py": "p\n"}
+        )
+        _git(root, "config", "core.quotePath", "true")
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "covered")
+        self.assertEqual(out["reason"], "workflow-trigger-matched")
+
+    def test_non_ascii_path_covered_under_quotepath(self) -> None:
+        """#124 主用例: 非 ASCII 路径是**唯一**命中项, 必须同样判 covered。
+
+        唯一性是红窗的必要条件 —— 同批若还有一个 ASCII 命中项, 缺 `-z` 的实现
+        会靠那一项照样产出 covered, 本测试就抓不到缺陷。
+        """
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF}, {"skills/测试/x.py": "p\n"}
+        )
+        _git(root, "config", "core.quotePath", "true")
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "covered")
+        self.assertEqual(out["reason"], "workflow-trigger-matched")
+
+    def test_non_ascii_path_covered_with_quotepath_disabled(self) -> None:
+        """`core.quotePath=false` 下也须 covered — 评估不得依赖该 config 取值。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF}, {"skills/測試/y.py": "p\n"}
+        )
+        _git(root, "config", "core.quotePath", "false")
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "covered")
+
+    def test_non_ascii_path_not_applicable_when_truly_uncovered(self) -> None:
+        """反向对照: 非 ASCII 路径**不**命中时仍须 not_applicable (不许一律 covered)。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF}, {"docs/文档/a.md": "x"}
+        )
+        _git(root, "config", "core.quotePath", "true")
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "not_applicable")
+        self.assertEqual(out["reason"], "no-triggering-paths")
+
+    def test_changed_files_count_excludes_empty_tokens(self) -> None:
+        """`-z` 的尾随 NUL 不得产出空串元素 — 计数须等于真实文件数。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF},
+            {"a/1.txt": "1", "b/2.txt": "2", "c/3.txt": "3"},
+        )
+        out = self.evaluate(root)
+        self.assertEqual(out["changed_files_count"], 3)
+
+    def test_space_in_path_is_single_token(self) -> None:
+        """含空格的路径在 `-z` 下是一个 token, 不得被拆成两条 changed file。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF}, {"skills/my dir/x.py": "p\n"}
+        )
+        _git(root, "config", "core.quotePath", "true")
+        out = self.evaluate(root)
+        self.assertEqual(out["changed_files_count"], 1)
+        self.assertEqual(out["decision"], "covered")
+
+
 if __name__ == "__main__":
     unittest.main()
