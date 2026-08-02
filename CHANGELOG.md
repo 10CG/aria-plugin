@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.65.2] - 2026-08-02
+
+### Fixed — secret-guard 补 `nomad var put` 拦截 (Aria #170 第 3 环)
+
+`nomad var put` 在 **stdout 非 TTY 时** (Claude Code Bash 工具恒真) `-out` 默认切
+`json`, 渲染**含解密 `Items` 的完整变量**到 stdout; 而 `risky_patterns` 只列
+`nomad var (get|list)`, `put` **零覆盖** —— 这是 #170 中 T4 凭据 (`aria-build-bot-2026-Q3`)
+泄漏的第 3 环真实机制 (issue 原文归因为「回显走 stderr」, 经核实不符: stderr 是
+`-verbose` 档)。
+
+- **新增 pattern** `nomad[[:space:]]+var[[:space:]]+put([[:space:]]|$)` — 尾边界
+  必带 (无边界会误配 `nomad var putty`)。命中后走**既有** `has_filter` 闸门,
+  **零新增豁免机制**: `>/dev/null` / `&>/dev/null` 等既有 credit 继续放行安全形态;
+  `-out=none` 单独出现**不**豁免 (保守选择, 出路是补 redirect)。
+- **测试 347 → 366** (+19): 7 条 baseline-failing (未加 pattern 时必 FAIL) + 12 条
+  回归锁。含 `KNOWN-LIMIT` 用例锁定复合命令 credit 泄漏现状 (`a >/dev/null; b` 中
+  第二段零保护 —— 该用例转红即提示架构面已收口), 以及正/负锚点锁定 SOT 推荐的
+  `-out=json | jq '.Items | keys'` 放行而 `keys[]` 变体被拦。
+- **覆盖率上限 (诚实声明)**: 新 pattern 仅对**单命令**有效。hook 的全部判定都是
+  整命令字符串扫描, 复合命令中任一段携带 redirect 即令全段获 credit —— 含「一次写
+  多个 var」的日常形态。故本次是**部分覆盖**, 非「`put` 已受保护」。
+- **不做 issue 要求 2** (`/v1/var/` 读写分离): 经 Nomad 官方 API 文档核实, `PUT
+  /v1/var/` 的成功 response body **含解密 `Items`** ⇒ 无 redirect 的写向 PUT 确实
+  回显, 现行拦截**正确**, 该要求前提证伪, 零代码改动。
+- Spec `secret-guard-nomad-var-put-echo` (post_spec **R1→R4**; R2 后 owner 裁定缩至
+  最小范围, 架构面/stderr 假阴家族/`guard:ack` 文案实现不符/既有 pattern 尾边界与
+  FP 面/per-pattern 条件提示 共 6 项转出独立 issue)。
+- **co-land**: standards `secret-hygiene.md` v1.1.0→**v1.1.1** —— 4 个推荐位教用的
+  `nomad var get -out=keys` 经实机核验为**非法 flag 值** (三个子命令的合法枚举均无
+  `keys`), 且原写法 `… 2>/dev/null` 即便 flag 合法也会被本 hook 拦 (只挡 stderr)。
+  已订正为 `-out=json` 经 jq 投影, 并补两段警示 (含 `2>&1 >/dev/null` 顺序陷阱)。
+
 ## [1.65.1] - 2026-08-01
 
 ### Fixed — session-closer handoff_autofill yaml-only spec 静默假绿 (aria-plugin #121)
