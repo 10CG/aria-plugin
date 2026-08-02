@@ -70,21 +70,30 @@ def _result(
 
 
 def _run_git(args: list[str], cwd: str | None) -> tuple[bool, str, str]:
-    """Run git, return (ok, stdout, err_summary). Never raises."""
+    """Run git, return (ok, stdout, err_summary). Never raises.
+
+    stdout 以 bytes 取回后用 surrogateescape 解码 (#124): git 不保证路径是合法
+    UTF-8, `text=True` 的严格解码会抛 UnicodeDecodeError —— 那与本模块「永不
+    raise」的承诺冲突, 且异常会被上层兜底翻译成误导性的 git-diff-failed。
+    surrogateescape 保持往返可逆, 与 os.fsdecode 同语义。
+    """
     try:
         proc = subprocess.run(
             ["git"] + args,
             capture_output=True,
-            text=True,
             timeout=_GIT_TIMEOUT,
             cwd=cwd,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
         return False, "", f"{type(exc).__name__}: {exc}"
+
+    def _dec(raw: bytes | None) -> str:
+        return (raw or b"").decode("utf-8", errors="surrogateescape")
+
     if proc.returncode != 0:
-        summary = (proc.stderr or "").strip().splitlines()
+        summary = _dec(proc.stderr).strip().splitlines()
         return False, "", summary[0] if summary else f"git exit {proc.returncode}"
-    return True, proc.stdout or "", ""
+    return True, _dec(proc.stdout), ""
 
 
 def _repo_root() -> tuple[str | None, str]:
@@ -397,19 +406,24 @@ def _evaluate(
         if root is None:
             return _result("unknown", f"git-diff-failed: {err}")
 
-    # 规则 1: git diff (三点 merge-base, --no-renames 使 rename 呈 delete+add)。
+    # 规则 1: git diff (三点 merge-base, --no-renames 使 rename 呈 delete+add,
+    # -z 使路径 NUL 分隔且**不受 core.quotePath 转义**, #124)。
     ok, out, err = _run_git(
         [
             "diff",
             "--name-only",
             "--no-renames",
+            "-z",
             f"{main_branch}...{pr_branch}",
         ],
         cwd=root,
     )
     if not ok:
         return _result("unknown", f"git-diff-failed: {err}")
-    changed = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    # -z: NUL 分隔且非空输出带尾随 NUL。滤空串同时处置尾随 NUL 与空 diff 的 [""],
+    # 使空 diff 正确落规则 2。路径**不 strip** —— 前后空白是文件名的合法部分,
+    # 而 -z 下不再需要靠 strip 去掉行尾符 (#124)。
+    changed = [tok for tok in out.split("\0") if tok]
     n_changed = len(changed)
 
     workflow_files = _find_workflow_files(root)
