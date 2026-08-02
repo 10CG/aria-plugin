@@ -30,8 +30,14 @@ Spec SOT: openspec/changes/phase-c-gate-path-coverage-not-applicable/proposal.md
   7. 无 covered ∧ 有 parse 失败 → unknown,        reason=workflow-parse-failed: <files>
   8. 全解析成功且全不触发       → not_applicable, reason=no-triggering-paths
 
+横切 (规则序之外): 评估器自身内部异常 → unknown, reason=internal-error: <类型>: <摘要>
+  —— 自成一档, **不冒用 git-diff-failed** (#126)。后者在规则 1 有确切语义 (git diff
+  失败 / main ref 缺失 / shallow 缺 merge-base); 把 parser 的 bug 塞进它会让排查者去查
+  git 与 main ref, 而真因在别处。⇒ 终态 reason 封闭集共 9 个。
+
 stdlib-only (先例: state-scanner custom_checks minimal parser / lib/detailed_tasks)。
-本模块永不 raise — 内部全捕获, 失败落 unknown + reason。
+本模块永不 raise — 内部全捕获, 失败落 unknown + reason (该承诺的红窗见
+tests/test_path_coverage.py::InternalErrorReasonTests)。
 """
 
 from __future__ import annotations
@@ -329,9 +335,23 @@ def _extract_paths(sub_lines: list[str]) -> tuple[list[str] | None, bool]:
                     nraw = sub_lines[j]
                     nline = _strip_comment(nraw).strip()
                     if not nline:
+                        # 空行与纯注释行不终止值域 (#125): 它们既不参与判定,
+                        # 也不结束该键的 block list。
                         j += 1
                         continue
-                    if _indent_of(nraw) <= base_ind:
+                    is_item = nline.startswith("- ") or (
+                        nline.startswith("-") and len(nline) > 1
+                    )
+                    # #125: YAML 允许块序列项与父键**同缩进**, 故序列项的归属判据
+                    # 是 `>= base_ind` 而非 `> base_ind`。原 `<= base_ind: break`
+                    # 把同缩进序列项判出块 ⇒ items 空 ⇒ uncertain ⇒ 该 workflow
+                    # 恒 covered ⇒ #122 的 not_applicable 对这类仓完全未生效。
+                    # 非序列项仍用 `> base_ind` —— 同缩进的**兄弟键** (如 types:)
+                    # 必须终止值域。
+                    if is_item:
+                        if _indent_of(nraw) < base_ind:
+                            break
+                    elif _indent_of(nraw) <= base_ind:
                         break
                     if nline.startswith("- "):
                         items.append(_unquote(nline[2:]))
@@ -394,7 +414,12 @@ def evaluate_path_coverage(
     try:
         return _evaluate(main_branch, pr_branch, repo_root)
     except Exception as exc:  # 兜底: 评估器自身 bug 不得影响 gate (D2)
-        return _result("unknown", f"git-diff-failed: internal error {exc!r}")
+        # #126: reason 必须自成一档, 不得冒用 git-diff-failed —— 后者在判定规则里
+        # 有确切语义 (规则 1: git diff 失败 / main ref 缺失 / shallow 缺 merge-base)。
+        # 把 parser 的 bug 塞进它会让排查者去查 git 与 main ref, 而真因在别处, 且
+        # 内部 bug 通常确定性触发 ⇒ 每次都稳定地指向错误方向。
+        # gate 行为不变 (decision=unknown ⇒ 退回现状), 变的只是可辨性。
+        return _result("unknown", f"internal-error: {type(exc).__name__}: {exc}")
 
 
 def _evaluate(

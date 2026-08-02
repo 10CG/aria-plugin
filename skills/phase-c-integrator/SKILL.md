@@ -250,7 +250,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
    - `pr_ci_status == passing AND main_in_flight_runs == []` → `verdict=green`
    - `pr_ci_status == passing AND main_in_flight_runs != []` → `verdict=wait`
 6. **路由决策**:
-   - `green` → 调用 branch-manager merge action,进入 C.2.5。**v1.65.0+ surface 义务 (二者缺一不可)**: (a) green 来源为 not_applicable 时, AI **必须**在 workflow report 加警告行「C.2.4: 变更路径无 CI workflow 覆盖, PR CI wait 已跳过 (not_applicable), main in-flight 已核」; (b) `path_coverage.decision == unknown` 时 (gate 行为=现状, 但评估器自身失败), AI **必须** surface「C.2.4 path coverage 评估失败 (reason=`git-diff-failed`/`workflow-parse-failed` 等), 已按 covered 现状行为处理」— 评估器静默失效是本机制自己要防的恒红病, 不得吞
+   - `green` → 调用 branch-manager merge action,进入 C.2.5。**v1.65.0+ surface 义务 (二者缺一不可)**: (a) green 来源为 not_applicable 时, AI **必须**在 workflow report 加警告行「C.2.4: 变更路径无 CI workflow 覆盖, PR CI wait 已跳过 (not_applicable), main in-flight 已核」; (b) `path_coverage.decision == unknown` 时 (gate 行为=现状, 但评估器自身失败), AI **必须** surface「C.2.4 path coverage 评估失败 (reason=`git-diff-failed` / `workflow-parse-failed` / **`internal-error`**), 已按 covered 现状行为处理」— 评估器静默失效是本机制自己要防的恒红病, 不得吞。**v1.65.3+ (#126)**: `internal-error` 表示**评估器自身异常** (非 git 问题、非 workflow 解析问题), 文案须点明「请报 issue」—— 它与另两个 reason 的排查方向完全不同, 混为一谈会把人引向 git 与 main ref
    - `wait` → 输出 `wait_recoverable` 错误给 workflow-runner,触发 wait+retry 循环 (见 workflow-runner SKILL.md §wait_recoverable)
    - `fail` → BLOCK + 输出 verdict + raw_message,phase-c-integrator return failure
 
