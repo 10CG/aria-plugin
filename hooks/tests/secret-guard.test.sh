@@ -719,6 +719,66 @@ else
   echo "  [SKIP] zsh not installed — zsh end-to-end cases skipped (static assertions cover portability)"
 fi
 
+# ── Aria #170: Nomad var WRITE direction (spec secret-guard-nomad-var-put-echo) ──
+# Context: `nomad var put` renders the full variable (decrypted Items) as JSON
+# whenever stdout is not a TTY — always true under the Bash tool. Before this
+# spec the write direction had ZERO pattern coverage AND zero test coverage
+# (every pre-existing /v1/var/ case is read-direction).
+#
+# Design note: this spec adds NO new exemption. Safe forms rely on the existing
+# has_filter credits. `-out=none` alone is deliberately NOT exempted.
+
+# SC-1 — core: unprotected write forms must block (baseline-failing before fix)
+bash_case "put: -in=json @file"        2 'nomad var put -in=json nomad/jobs/build-x @/tmp/pv.json'
+bash_case "put: KEY=literal on argv"   2 'nomad var put nomad/jobs/build-x PAT=ghp_literalvalue'
+bash_case "put: -out=json"             2 'nomad var put -out=json nomad/jobs/build-x @/tmp/pv.json'
+bash_case "put: -out=table"            2 'nomad var put -out=table nomad/jobs/build-x @/tmp/pv.json'
+# -out=none renders nothing, but is NOT exempted here (no new exemption): the
+# operator must still discard stdout. Guards against a future "it looks safe"
+# exemption creeping in without a spec.
+bash_case "put: -out=none w/o redirect" 2 'nomad var put -out=none nomad/jobs/build-x @/tmp/pv.json'
+
+# SC-2 — existing has_filter credits still allow the safe forms
+bash_case "put: >/dev/null"            0 'nomad var put -in=json nomad/jobs/build-x @/tmp/pv.json >/dev/null'
+bash_case "put: &>/dev/null"           0 'nomad var put -in=json nomad/jobs/build-x @/tmp/pv.json &>/dev/null'
+bash_case "put: -out=none >/dev/null"  0 'nomad var put -out=none nomad/jobs/build-x @/tmp/pv.json >/dev/null'
+# `-o /dev/null` is a curl flag that nomad does not accept, yet the credit
+# predicate (:390) is not command-anchored so it still grants a pass. Locking
+# the REAL behaviour rather than claiming "N/A for nomad" (spec 转出 2).
+bash_case "put: -o /dev/null (credit not command-anchored)" 0 'nomad var put nomad/jobs/build-x @/tmp/pv.json -o /dev/null'
+
+# SC-3 — trailing boundary: `putty` is a different command, must not misfire
+bash_case "put: boundary vs putty"     0 'nomad var putty foo'
+
+# SC-4 — FP surface, asserted AS MEASURED (not as originally assumed).
+# The [[:space:]] boundary means a mention closed by a quote does NOT match, so
+# grep/echo of the literal string stay allowed; only a mention with a real
+# space after `put` is caught. Widening the char class would catch these too,
+# at the cost of a bigger FP surface — deliberately not done (spec 转出 4).
+bash_case "put: FP grep mention allowed"   0 "grep -rn 'nomad var put' aria/"
+bash_case "put: FP echo mention allowed"   0 'echo "改用 nomad var put"'
+bash_case "put: FP commit msg caught"      2 'git commit -m "fix: nomad var put 回显"'
+bash_case "put: positive control blocks"   2 'nomad var put nomad/jobs/build-x @/tmp/pv.json'
+
+# SC-8 — KNOWN-LIMIT: has_filter is evaluated per WHOLE command, so a redirect
+# in one segment credits every other segment. The second put below is the very
+# leak shape from #170 and is NOT protected. Locked at the current value so the
+# day 转出 1 (per-segment evaluation) lands, THIS CASE TURNS RED and forces an
+# update instead of drifting silently.
+bash_case "put: KNOWN-LIMIT compound credit leak" 0 'nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2'
+
+# SC-6 — read direction unchanged (no regression from the new write pattern)
+bash_case "var read: get still blocks"     2 'nomad var get nomad/jobs/build-x'
+bash_case "var read: list still blocks"    2 'nomad var list'
+# The projection form secret-hygiene.md §3.3/§3.4 now recommends must stay
+# allowed — these two anchors are what keeps the SOT and this hook from
+# drifting apart again (the old SOT taught `-out=keys`, which nomad rejects
+# outright AND which this hook blocked; see spec §附带修复).
+bash_case "var read: SOT projection allowed" 0 "nomad var get -out=json nomad/jobs/build-x | jq '.Items | keys'"
+# Negative anchor: the bracketed variant breaks the jq-filter recognition and
+# is blocked. Documented in the SOT so nobody "improves" the example into it.
+bash_case "var read: bracketed keys[] blocked" 2 "nomad var get -out=json nomad/jobs/build-x | jq -r '.Items | keys[]'"
+
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
 echo
