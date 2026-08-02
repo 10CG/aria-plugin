@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "scripts"))
@@ -570,6 +571,112 @@ class NonAsciiPathTests(_RepoFixtureMixin, unittest.TestCase):
         out = self.evaluate(root)
         self.assertEqual(out["changed_files_count"], 1)
         self.assertEqual(out["decision"], "covered")
+
+
+class SameIndentSequenceTests(_RepoFixtureMixin, unittest.TestCase):
+    """aria-plugin #125 — 与父键同缩进的块序列必须能解析出 paths。
+
+    YAML 允许块序列项与其父键同缩进 (PyYAML 实测解析成功)。`_extract_paths`
+    原用 `_indent_of(nraw) <= base_ind: break` 判出块 ⇒ items 空 ⇒ uncertain
+    ⇒ 该 workflow 恒 covered ⇒ **#122 的 not_applicable 机制对这类仓完全未生效**。
+    """
+
+    WF_SAME = (
+        "on:\n  pull_request:\n    paths:\n    - 'skills/**'\n"
+        "jobs:\n  x:\n    runs-on: x\n"
+    )
+    WF_NESTED = (
+        "on:\n  pull_request:\n    paths:\n      - 'skills/**'\n"
+        "jobs:\n  x:\n    runs-on: x\n"
+    )
+
+    def test_same_indent_not_applicable_when_uncovered(self) -> None:
+        """#125 主用例: 同缩进 paths + 不命中的变更 → not_applicable (非 covered)。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF_SAME}, {"docs/a.md": "x"}
+        )
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "not_applicable")
+        self.assertEqual(out["reason"], "no-triggering-paths")
+
+    def test_same_indent_covered_when_matched(self) -> None:
+        """反向对照: 同缩进 paths + 命中的变更 → covered (不许一律 not_applicable)。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF_SAME}, {"skills/a/x.py": "p\n"}
+        )
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "covered")
+        self.assertEqual(out["reason"], "workflow-trigger-matched")
+
+    def test_nested_indent_still_works(self) -> None:
+        """回归: 缩进更深的序列项 (本仓 4 份语料的形态) 行为不变。"""
+        root = self.build_repo(
+            {".forgejo/workflows/w.yml": self.WF_NESTED}, {"docs/a.md": "x"}
+        )
+        self.assertEqual(self.evaluate(root)["decision"], "not_applicable")
+
+    def test_blank_and_comment_lines_do_not_end_paths_block(self) -> None:
+        """paths 列表中夹空行与列 0 注释行, 不得终止该键的值域。"""
+        wf = (
+            "on:\n  pull_request:\n    paths:\n      - 'skills/**'\n"
+            "\n# a column-zero comment\n      - 'docs/**'\n"
+            "jobs:\n  x:\n    runs-on: x\n"
+        )
+        root = self.build_repo({".forgejo/workflows/w.yml": wf}, {"docs/a.md": "x"})
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "covered")
+        self.assertEqual(out["reason"], "workflow-trigger-matched")
+
+    def test_sibling_key_after_same_indent_sequence_ends_block(self) -> None:
+        """同缩进序列之后出现同级**非序列**键 ⇒ 值域结束, 后续键正常解析。"""
+        wf = (
+            "on:\n  pull_request:\n    paths:\n    - 'skills/**'\n"
+            "    types: [opened]\n"
+            "jobs:\n  x:\n    runs-on: x\n"
+        )
+        root = self.build_repo({".forgejo/workflows/w.yml": wf}, {"docs/a.md": "x"})
+        out = self.evaluate(root)
+        self.assertEqual(out["decision"], "not_applicable")
+
+
+class InternalErrorReasonTests(_RepoFixtureMixin, unittest.TestCase):
+    """aria-plugin #126 — 评估器内部异常不得冒用 git-diff-failed。
+
+    全捕获兜底原写 `f"git-diff-failed: internal error {exc!r}"` ⇒ parser 的 bug
+    上报成 git 问题 ⇒ 运维去查 git 与 main ref, 而真 bug 在别处, 且稳定复现却
+    永远指错方向。另: 「永不 raise」承诺此前**零测试覆盖**。
+    """
+
+    def test_internal_error_has_own_reason(self) -> None:
+        """#126 主用例: 内部异常 → reason 以 internal-error 开头, 不得是 git-diff-failed。"""
+        root = self.build_repo({}, {"docs/a.md": "x"})
+        with mock.patch.object(
+            pc, "_find_workflow_files", side_effect=RuntimeError("boom in parser")
+        ):
+            out = pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+        self.assertEqual(out["decision"], "unknown")
+        self.assertTrue(
+            out["reason"].startswith("internal-error"),
+            f"reason should start with internal-error, got: {out['reason']}",
+        )
+        self.assertFalse(out["reason"].startswith("git-diff-failed"))
+
+    def test_never_raises_on_internal_error(self) -> None:
+        """「永不 raise」承诺的唯一红窗 — 此前零覆盖。"""
+        root = self.build_repo({}, {"docs/a.md": "x"})
+        with mock.patch.object(
+            pc, "_find_workflow_files", side_effect=RuntimeError("boom")
+        ):
+            out = pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+        self.assertIn("decision", out)
+        self.assertEqual(out["decision"], "unknown")
+
+    def test_real_git_failure_still_reports_git_diff_failed(self) -> None:
+        """负控: 真的 git diff 失败仍须报 git-diff-failed (不许一律 internal-error)。"""
+        root = self.build_repo({}, {"docs/a.md": "x"})
+        out = pc.evaluate_path_coverage("no-such-ref", "feat/x", repo_root=root)
+        self.assertEqual(out["decision"], "unknown")
+        self.assertTrue(out["reason"].startswith("git-diff-failed"))
 
 
 if __name__ == "__main__":
