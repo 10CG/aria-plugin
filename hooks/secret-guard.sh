@@ -404,6 +404,16 @@ declare -a risky_patterns=(
   'curl[^|]*/v1/var/'
   '/v1/var/'                                # any HTTP client to Nomad var path
   'nomad[[:space:]]+var[[:space:]]+(get|list)'
+  # Aria #170: `var put` renders the FULL variable (decrypted Items) as JSON
+  # whenever stdout is not a TTY — which is always the case under the Bash
+  # tool. `-out` help: "Defaults to none when stdout is a terminal and json
+  # when the output is redirected." Existing has_filter credits (>/dev/null,
+  # &>/dev/null) still allow the safe forms; `-out=none` alone is NOT exempted
+  # (spec secret-guard-nomad-var-put-echo deliberately adds no new exemption).
+  # Trailing boundary is load-bearing: without it `nomad var putty` misfires.
+  # Widening that char class would also catch quoted textual mentions, at the
+  # cost of a larger FP surface — deliberately not done, see spec 转出 4.
+  'nomad[[:space:]]+var[[:space:]]+put([[:space:]]|$)'
   'nomad[[:space:]]+alloc[[:space:]]+fs'
   'nomad[[:space:]]+operator[[:space:]]+api[^|]*/var/'
 
