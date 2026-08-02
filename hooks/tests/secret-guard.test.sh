@@ -5,8 +5,10 @@
 # Expects: jq installed. Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: ~50 cases across Bash (block/allow), Read/Edit (block/allow),
-# guard:ack escapes, jq fail-closed paths, and Round 1 audit bypass attempts.
+# Coverage: 366 cases across Bash (block/allow), Read/Edit (block/allow),
+# guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
+# the Nomad var WRITE direction (#170). Keep this number in sync — a stale
+# count here has already misled one spec into planning against "~50".
 
 set -u
 

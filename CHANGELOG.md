@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.65.5] - 2026-08-02
+
+### Fixed — 陈旧计数同步 (v1.65.4 收尾, 零行为变更)
+
+- `hooks/tests/secret-guard.test.sh` 头部注释的 `Coverage: ~50 cases` 同步为实况
+  **366**, 并加一句「保持同步」的提醒。该陈旧数字**已经误导过一次**: #170 cycle 的
+  post_spec R1 据它把测试基线记成 ~50 (实为 347), 审计方实跑才发现。
+- 同批 co-land: standards `secret-hygiene.md` 三处同类陈旧计数 (208 / 251 ×2 → 366)。
+
 ## [1.65.4] - 2026-08-02
 
 ### Fixed — secret-guard 补 `nomad var put` 拦截 (Aria #170 第 3 环)
