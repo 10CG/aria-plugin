@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.65.2] - 2026-08-02
+
+### Fixed
+
+- **C.2.4 gate 对非 ASCII 变更路径误放行 (fail-OPEN, aria-plugin #124)** — `path_coverage.py`
+  的 `git diff --name-only --no-renames` 缺 `-z`, `core.quotePath` (git 默认 true) 把非 ASCII
+  路径八进制转义并加双引号 (`"skills/\346\265\213/x.py"`), 该形态与任何 glob 恒不匹配
+  ⇒ 变更被静默判为「不命中任何 paths」⇒ 假 `not_applicable` ⇒ **闸门在 CI 本该拦它时放行**。
+  同一 workflow 同一条 `paths`, ASCII 路径判 `covered` 而非 ASCII 判 `not_applicable`。
+  三处修法: (1) `git diff` 加 `-z` (对 quotePath 两种取值都正确, 评估不再依赖其值);
+  (2) 解析改 `split("\0")` 后滤空串 — 一步同时处置尾随 NUL 与空 diff 的 `[""]`, 空 diff 仍
+  正确落规则 2 `empty-diff`; 路径**不再 strip** (前后空白是文件名的合法部分);
+  (3) `_run_git` 改 bytes + `decode("utf-8", errors="surrogateescape")` — git 不保证路径是
+  合法 UTF-8, 原 `text=True` 严格解码会抛 `UnicodeDecodeError`, 与本模块「永不 raise」承诺
+  冲突且会被上层兜底翻译成误导性的 `git-diff-failed`。
+  TDD RED→GREEN: 新增 6 测试 (主用例修复前实测红; 红窗必要条件 = 非 ASCII 路径为变更集
+  **唯一**命中项, 否则缺 `-z` 的实现靠同批 ASCII 命中项照样绿)。phase-c 97→103, 跨 skill
+  `run_all_tests.sh` 9 OK / 0 FAIL (1690 tests), 独立复现脚本命中数 3/3 → 2/3。
+  **Rule #6**: 零 SKILL.md / 零 description 变更, 内容属判据表第一行「命令」勘正
+  ⇒ substitute SC 级 baseline-failing 结构化测试 (依据判据本体; 与 v1.64.1 #118/#119 纯脚本
+  修复无 AB 归档的先例一致)。
+
+### Known issues (v1.65.0 引入, 本版未修)
+
+- **#125** 同缩进块序列的 `paths:` 解析不出 (`_extract_paths` 用 `<= base_ind` 判出块) ⇒ 该类仓
+  #122 的 not_applicable 机制完全未生效, 恒 wait 原样存在。本仓 4 份语料全用缩进 6 序列项, 今天零代价。
+- **#126** 全捕获兜底把评估器内部异常上报为 `git-diff-failed` ⇒ 误导排查方向; 且「永不 raise」
+  承诺目前零测试覆盖。
+- 复现: `python3 .aria/repro/repro-aria-plugin-124-125-126.py aria/skills/phase-c-integrator/scripts/path_coverage.py` (主仓)
+
 ## [1.65.1] - 2026-08-01
 
 ### Fixed — session-closer handoff_autofill yaml-only spec 静默假绿 (aria-plugin #121)
