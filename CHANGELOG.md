@@ -10,6 +10,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.65.3] - 2026-08-02
+
+### Fixed
+
+- **同缩进块序列的 `paths:` 解析不出 (aria-plugin #125)** — YAML 允许块序列项与父键**同缩进**
+  (PyYAML 实测合法)。`_extract_paths` 原用 `_indent_of(nraw) <= base_ind: break` 判出块
+  ⇒ `items` 空 ⇒ `uncertain` ⇒ 该 workflow 恒 `covered` ⇒ **#122 的 not_applicable 机制对这类
+  仓完全未生效, 恒 wait 原样存在**。修法: 序列项归属判据改 `>= base_ind`; **非序列项仍
+  `> base_ind`** —— 同缩进的兄弟键 (如 `types:`) 必须终止值域, 该边界由 SC 负控钉死;
+  空行与纯注释行不终止值域。本仓 4 份语料全用缩进 6 序列项, 此前零代价, 对采用者非零。
+- **内部异常冒用 `git-diff-failed` (aria-plugin #126)** — 全捕获兜底原写
+  `f"git-diff-failed: internal error {exc!r}"`。该 reason 在判定规则里有确切语义 (规则 1:
+  git diff 失败 / main ref 缺失 / shallow 缺 merge-base) ⇒ 排查者去查 git 与 main ref, 而真
+  bug 在 parser 里; 内部 bug 通常确定性触发 ⇒ **每次都稳定地指向错误方向**。修法: reason
+  自成一档 `internal-error: <类型>: <摘要>`, 终态封闭集 **8 → 9**; docstring 契约与
+  SKILL.md §C.2.4 的 D9 surface 枚举同步。gate 行为不变 (`unknown` ⇒ 退回现状), 变的是可辨性。
+  附带: 「永不 raise」承诺此前**零测试覆盖**, 本版补上红窗。
+
+### Testing
+
+TDD RED→GREEN 8 条新测试, **3 条实测为红**; 另 5 条为负控与回归 (同缩进命中须 covered /
+更深缩进行为不变 / 空行注释不断块 / 真 git 失败仍报 git-diff-failed / 永不 raise)。
+phase-c 103 → **111**, 跨 skill `run_all_tests.sh` 9 OK / 0 FAIL (**1698 tests**),
+独立复现脚本 (主仓 `.aria/repro/`) **3/3 → 0/3**。
+
+### Rule #6
+
+本版**动了 SKILL.md** (D9 surface 的 reason 枚举 + 措辞指引) ⇒ 处方性 · 运行时指令面, 与
+v1.65.2 的纯脚本改动不同。但既有两个 AB 执行面**结构上覆盖不到**该行为 (parent 套件 3 个
+LLM eval 与 C.2.4 无关; pre-merge-gate 套件 6 fixture 无一碰到 `path_coverage.decision ==
+unknown` 分支) ⇒ 落判据表**第三行「套件覆盖外」**, 三条义务全做: 点名行为 + 新增定向 fixture
+`NEG-3-internal-error-surface` (套件升 **1.1.0**, 首个碰到 unknown 分支的 fixture) + 套件
+缺口 issue **#127**。
+
 ## [1.65.2] - 2026-08-02
 
 ### Fixed
