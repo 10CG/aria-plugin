@@ -77,6 +77,326 @@ fi
 
 set -uo pipefail   # NOT -e — we control exit codes
 
+# 复刻 `echo "$x" | grep -qE "$re"` 的记录语义: 按 \n 拆行, 任一行命中即真。
+# $1 = 正则 (不加引号代入 =~, 否则退化为字面匹配); $2 = 待判字符串 (段)
+_sg_line_match() {
+  local _re="$1" _s="$2" _l
+  while IFS= read -r _l || [[ -n "$_l" ]]; do
+    [[ "$_l" =~ $_re ]] && return 0
+  done <<< "$_s"
+  return 1
+}
+
+# _sg_safe_to_split() — §What.1: does $1 "look safe" to split on top-level
+# ; && ||? Return 0 = safe to split, return 1 = degrade (fall back to the
+# whole-command legacy verdict). Heuristic, NOT a complete parse — see
+# proposal.md §What.1 for the known-incomplete caveat (转出 8).
+#
+# Judged in this order (any hit ⇒ return 1 / degrade):
+#   1. Block chars (quote-aware char scan): { } ( ) ` [[ ]] << <<<
+#   2. Block-starting keyword (NOT quote-aware): for/while/until/if/case/select
+#      at a command position + word boundary. BLOCK_KW_RE text below is
+#      copied byte-for-byte from proposal.md §What.1 — do not edit it.
+#   3. Scope-establishing keyword/builtin (NOT quote-aware, same precision as
+#      #2): exec/time at a command position + word boundary.
+#   4. Bare background `&` (NOT quote-aware, independent char scan — TASK-029 /
+#      §What.1 row 4): a lone `&` that is not part of && / &> / >& / |& / <&.
+_sg_safe_to_split() {
+  local _cmd="$1"
+  local _n=${#_cmd}
+  local _i _c _prev _next
+  local _state=unquoted   # unquoted | single | double | dsingle ($'...')
+
+  # ── 1. Block chars — quote-aware char scan ────────────────────────────────
+  # Shared quote/escape state machine (TASK-001 ↔ TASK-003 contract): escape
+  # (\) takes priority, then single-quote, then double-quote, then $'...'.
+  _i=0
+  while (( _i < _n )); do
+    _c="${_cmd:_i:1}"
+    case "$_state" in
+      unquoted)
+        case "$_c" in
+          '\')
+            (( _i += 2 ))
+            continue
+            ;;
+          '$')
+            if [[ "${_cmd:_i+1:1}" == "'" ]]; then
+              _state=dsingle
+              (( _i += 2 ))
+              continue
+            fi
+            ;;
+          "'")
+            _state=single
+            ;;
+          '"')
+            _state=double
+            ;;
+          '{'|'}'|'('|')'|'`')
+            return 1
+            ;;
+          '[')
+            [[ "${_cmd:_i+1:1}" == "[" ]] && return 1
+            ;;
+          ']')
+            [[ "${_cmd:_i+1:1}" == "]" ]] && return 1
+            ;;
+          '<')
+            [[ "${_cmd:_i+1:1}" == "<" ]] && return 1
+            ;;
+        esac
+        ;;
+      single)
+        [[ "$_c" == "'" ]] && _state=unquoted
+        ;;
+      double)
+        if [[ "$_c" == '\' ]]; then
+          (( _i += 2 ))
+          continue
+        elif [[ "$_c" == '"' ]]; then
+          _state=unquoted
+        fi
+        ;;
+      dsingle)
+        if [[ "$_c" == '\' ]]; then
+          (( _i += 2 ))
+          continue
+        elif [[ "$_c" == "'" ]]; then
+          _state=unquoted
+        fi
+        ;;
+    esac
+    (( _i += 1 ))
+  done
+
+  # ── 2. Block-starting keyword (命令位置 且 词边界) ─────────────────────────
+  # Regulation-grade text, copied byte-for-byte from proposal.md §What.1 —
+  # do NOT rewrite, do NOT use bare ^, do NOT write (^|\n) (ERE \n is the
+  # letter n, not a newline). `nl` and `BLOCK_KW_RE` must be local to THIS
+  # function (SC-20 injection B probes exactly this scoping trap).
+  local nl=$'\n'
+  local BLOCK_KW_RE='(^|'"$nl"'|;|&&|\|\||\||&|!|do|then|else|elif)[[:space:]]*(for|while|until|if|case|select)\b'
+  [[ "$_cmd" =~ $BLOCK_KW_RE ]] && return 1
+
+  # ── 3. Scope-establishing keyword/builtin (exec/time), same precision ────
+  # Independent regex — deliberately NOT merged into BLOCK_KW_RE.
+  local SCOPE_KW_RE='(^|'"$nl"'|;|&&|\|\||\||&|!|do|then|else|elif)[[:space:]]*(exec|time)\b'
+  [[ "$_cmd" =~ $SCOPE_KW_RE ]] && return 1
+
+  # ── 4. Bare background `&` (TASK-029 / §What.1 row 4) ─────────────────────
+  # Independent char scan — deliberately NOT sharing a regex with block/scope
+  # keywords (SC-16 counterfactual classification depends on this judge
+  # staying its own character scan). Per-character neighbor test, excluding
+  # && / &> / >& / |& / <& ; a lone `&` left over ⇒ degrade.
+  _i=0
+  while (( _i < _n )); do
+    _c="${_cmd:_i:1}"
+    if [[ "$_c" == '&' ]]; then
+      _prev=""
+      (( _i > 0 )) && _prev="${_cmd:_i-1:1}"
+      _next="${_cmd:_i+1:1}"
+      if [[ "$_prev" == '&' || "$_next" == '&' ]]; then
+        : # && — excluded
+      elif [[ "$_next" == '>' ]]; then
+        : # &> — excluded
+      elif [[ "$_prev" == '>' || "$_prev" == '|' || "$_prev" == '<' ]]; then
+        : # >& / |& / <& — excluded
+      else
+        return 1
+      fi
+    fi
+    (( _i += 1 ))
+  done
+
+  return 0
+}
+
+# _sg_split_top() — §2: split $1 on top-level ; && || (quote/escape-aware,
+# same state machine as step 1 of _sg_safe_to_split — TASK-001 ↔ TASK-003
+# contract). Fills the global array _SG_SEGS. Does NOT split on: | (single
+# pipe — filter semantics), newline, bare &, \; (escaped). Empty and
+# whitespace-only segments are dropped; kept segment text is NOT trimmed.
+# Only called after _sg_safe_to_split has already returned 0 (safe).
+_sg_split_top() {
+  local _cmd="$1"
+  _SG_SEGS=()
+  local _n=${#_cmd}
+  local _i _c _seg
+  local _seg_start=0
+  local _state=unquoted   # unquoted | single | double | dsingle ($'...')
+
+  _i=0
+  while (( _i < _n )); do
+    _c="${_cmd:_i:1}"
+    case "$_state" in
+      unquoted)
+        case "$_c" in
+          '\')
+            (( _i += 2 ))
+            continue
+            ;;
+          '$')
+            if [[ "${_cmd:_i+1:1}" == "'" ]]; then
+              _state=dsingle
+              (( _i += 2 ))
+              continue
+            fi
+            ;;
+          "'")
+            _state=single
+            ;;
+          '"')
+            _state=double
+            ;;
+          ';')
+            _seg="${_cmd:_seg_start:_i-_seg_start}"
+            [[ -n "${_seg//[[:space:]]/}" ]] && _SG_SEGS+=("$_seg")
+            (( _i += 1 ))
+            _seg_start=$_i
+            continue
+            ;;
+          '&')
+            if [[ "${_cmd:_i+1:1}" == "&" ]]; then
+              _seg="${_cmd:_seg_start:_i-_seg_start}"
+              [[ -n "${_seg//[[:space:]]/}" ]] && _SG_SEGS+=("$_seg")
+              (( _i += 2 ))
+              _seg_start=$_i
+              continue
+            fi
+            ;;
+          '|')
+            if [[ "${_cmd:_i+1:1}" == "|" ]]; then
+              _seg="${_cmd:_seg_start:_i-_seg_start}"
+              [[ -n "${_seg//[[:space:]]/}" ]] && _SG_SEGS+=("$_seg")
+              (( _i += 2 ))
+              _seg_start=$_i
+              continue
+            fi
+            ;;
+        esac
+        ;;
+      single)
+        [[ "$_c" == "'" ]] && _state=unquoted
+        ;;
+      double)
+        if [[ "$_c" == '\' ]]; then
+          (( _i += 2 ))
+          continue
+        elif [[ "$_c" == '"' ]]; then
+          _state=unquoted
+        fi
+        ;;
+      dsingle)
+        if [[ "$_c" == '\' ]]; then
+          (( _i += 2 ))
+          continue
+        elif [[ "$_c" == "'" ]]; then
+          _state=unquoted
+        fi
+        ;;
+    esac
+    (( _i += 1 ))
+  done
+
+  _seg="${_cmd:_seg_start:_i-_seg_start}"
+  [[ -n "${_seg//[[:space:]]/}" ]] && _SG_SEGS+=("$_seg")
+}
+
+_sg_compute_credit() {
+  local seg="$1"
+  # ── Filter detection (only REDACTING filters count) ────────────────────────
+  # Round 1 removed: cat/tr/head/tail/fold (preserve content), > file / 2> / >>
+  # Round 2 fixes:
+  #   - R2-C-1: `jq -r .` raw-flag identity now also rejected
+  #   - R2-C-10: `2>/dev/null` (stderr-only) no longer counts (was: any `>`)
+  local has_filter=0
+
+  # jq filter detection — v1.3 (R3-C-1 fix): switched from "treat any non-`.`
+  # as projection" to "explicit safe-jq whitelist". Previously `.[]`, `values`,
+  # `..`, `tostring`, `@text`, `@base64`, `.Items` (returns full subobject),
+  # `.Items.password` (extracts value) all bypassed because regex only
+  # checked for literal `.`. R3 audit confirmed identity-equivalent expressions
+  # are unbounded.
+  #
+  # Safe jq patterns (allowlist):
+  #   jq keys         — returns field names only, no values
+  #   jq 'keys'
+  #   jq 'length'     — returns count
+  #   jq '. | length'
+  #   jq '. | keys'
+  #   jq '{<alias>: .<safe_field>}' — explicit allowlist projection
+  #   jq 'select(...)' — filter rows by predicate (semantic — operator knows)
+  #
+  # Everything else = no filter credit, fall through to risky_patterns check.
+  if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?(.+\|[[:space:]]*)?(keys|length|paths|leaf_paths)[\"']?[[:space:]]*(\$|\|)" "$seg"; then
+    has_filter=1
+  fi
+  # Whitelisted: `jq '{alias: .safe_field}'` — single-line allowlist projection.
+  # Recognize the `{...}` object-construction shape as projection allowlist.
+  if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?\{" "$seg"; then
+    has_filter=1
+  fi
+  # grep / sed / cut / awk — R4-C-2 fix: tighten to require actual redaction.
+  # Previously any 1-char arg counted as "filter" (`| grep .` / `| sed -n p` /
+  # `| awk 1` / `| cut -f1-` are identity-equivalent and leak full content).
+  # v1.4: require pattern that actually selects subset:
+  #   grep with anchored pattern (^ or $) OR -v/--invert OR -E/-F with content
+  #   sed with substitution (s///) OR delete (d) — not just `-n p` print-all
+  #   cut with -d AND -f<single-field> (not -f1- range)
+  #   awk with $N references (not just `1` for print-all)
+  if _sg_line_match '\|[[:space:]]*grep([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^[:space:]]*[\^\$]' "$seg"; then
+    has_filter=1   # grep with anchor (probably real filtering)
+  fi
+  if _sg_line_match '\|[[:space:]]*grep[[:space:]]+(-v|--invert-match)\b' "$seg"; then
+    has_filter=1   # grep -v inverts (probably filtering)
+  fi
+  if _sg_line_match '\|[[:space:]]*sed[[:space:]]+[^[:space:]]*([Ss]/[^/]*/|[0-9]+d|[Dd])' "$seg"; then
+    has_filter=1   # sed s/// or delete
+  fi
+  # cut requires single field (not range like -f1- which is all-fields identity)
+  if _sg_line_match '\|[[:space:]]*cut[[:space:]]+-[df][[:space:]]*[^[:space:]-]' "$seg"; then
+    has_filter=1   # cut -d= or -f1 (specific field)
+  fi
+  # awk content can contain spaces inside quotes; match `$N` anywhere in quoted arg
+  if _sg_line_match "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*\\\$[0-9]" "$seg"; then
+    has_filter=1   # awk '{print $N}'
+  fi
+  if _sg_line_match "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*/[^/]+/" "$seg"; then
+    has_filter=1   # awk '/regex/...'
+  fi
+  # R2-C-10 fix: only stdout-redirect to /dev/null counts. stderr-only (2>) and
+  # combined (&>) need separate handling.
+  #   `>/dev/null` and `>  /dev/null` — stdout discard, safe
+  #   `&>/dev/null` — both discard, safe (but rarely seen)
+  #   `2>/dev/null` — only stderr discard, stdout still flows: NOT a filter
+  if _sg_line_match '([^0-9&]|^)>[[:space:]]*/dev/null' "$seg"; then
+    has_filter=1
+  fi
+  if _sg_line_match '&>[[:space:]]*/dev/null' "$seg"; then
+    has_filter=1
+  fi
+  # curl -o /dev/null / --silent without explicit other output
+  if _sg_line_match '(-o[[:space:]]+/dev/null|--output[[:space:]]+/dev/null)' "$seg"; then
+    has_filter=1
+  fi
+  # wc / sha256sum / md5sum — emit count/hash, not content
+  if _sg_line_match '\|[[:space:]]*wc[[:space:]]+-[clw]' "$seg"; then
+    has_filter=1
+  fi
+  if _sg_line_match '\|[[:space:]]*(sha256sum|md5sum|sha1sum|sha512sum)\b' "$seg"; then
+    has_filter=1
+  fi
+
+  [[ $has_filter -eq 1 ]]
+}
+
+# Unit-test sourcing gate (#128): when sourced (not executed), stop here —
+# functions above are defined, no stdin is consumed, no verdict is emitted.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 # ── Fail-closed if jq missing ─────────────────────────────────────────────
 if ! command -v jq >/dev/null 2>&1; then
   cat >&2 <<'EOF'
@@ -313,89 +633,6 @@ if echo "$command" | grep -qE '#[[:space:]]*guard:ack[[:space:]]*$|#[[:space:]]*
   echo "[secret-guard] WARN: '# guard:ack' bypass used without reason." >&2
   echo "[secret-guard] WARN: Required form: '# guard:ack: <reason ≥ 8 NON-WHITESPACE chars>'" >&2
   exit 0
-fi
-
-# ── Filter detection (only REDACTING filters count) ────────────────────────
-# Round 1 removed: cat/tr/head/tail/fold (preserve content), > file / 2> / >>
-# Round 2 fixes:
-#   - R2-C-1: `jq -r .` raw-flag identity now also rejected
-#   - R2-C-10: `2>/dev/null` (stderr-only) no longer counts (was: any `>`)
-has_filter=0
-
-# jq filter detection — v1.3 (R3-C-1 fix): switched from "treat any non-`.`
-# as projection" to "explicit safe-jq whitelist". Previously `.[]`, `values`,
-# `..`, `tostring`, `@text`, `@base64`, `.Items` (returns full subobject),
-# `.Items.password` (extracts value) all bypassed because regex only
-# checked for literal `.`. R3 audit confirmed identity-equivalent expressions
-# are unbounded.
-#
-# Safe jq patterns (allowlist):
-#   jq keys         — returns field names only, no values
-#   jq 'keys'
-#   jq 'length'     — returns count
-#   jq '. | length'
-#   jq '. | keys'
-#   jq '{<alias>: .<safe_field>}' — explicit allowlist projection
-#   jq 'select(...)' — filter rows by predicate (semantic — operator knows)
-#
-# Everything else = no filter credit, fall through to risky_patterns check.
-if echo "$command" | grep -qE "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?(.+\|[[:space:]]*)?(keys|length|paths|leaf_paths)[\"']?[[:space:]]*(\$|\|)"; then
-  has_filter=1
-fi
-# Whitelisted: `jq '{alias: .safe_field}'` — single-line allowlist projection.
-# Recognize the `{...}` object-construction shape as projection allowlist.
-if echo "$command" | grep -qE "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?\{"; then
-  has_filter=1
-fi
-# grep / sed / cut / awk — R4-C-2 fix: tighten to require actual redaction.
-# Previously any 1-char arg counted as "filter" (`| grep .` / `| sed -n p` /
-# `| awk 1` / `| cut -f1-` are identity-equivalent and leak full content).
-# v1.4: require pattern that actually selects subset:
-#   grep with anchored pattern (^ or $) OR -v/--invert OR -E/-F with content
-#   sed with substitution (s///) OR delete (d) — not just `-n p` print-all
-#   cut with -d AND -f<single-field> (not -f1- range)
-#   awk with $N references (not just `1` for print-all)
-if echo "$command" | grep -qE '\|[[:space:]]*grep([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^[:space:]]*[\^\$]'; then
-  has_filter=1   # grep with anchor (probably real filtering)
-fi
-if echo "$command" | grep -qE '\|[[:space:]]*grep[[:space:]]+(-v|--invert-match)\b'; then
-  has_filter=1   # grep -v inverts (probably filtering)
-fi
-if echo "$command" | grep -qE '\|[[:space:]]*sed[[:space:]]+[^[:space:]]*([Ss]/[^/]*/|[0-9]+d|[Dd])'; then
-  has_filter=1   # sed s/// or delete
-fi
-# cut requires single field (not range like -f1- which is all-fields identity)
-if echo "$command" | grep -qE '\|[[:space:]]*cut[[:space:]]+-[df][[:space:]]*[^[:space:]-]'; then
-  has_filter=1   # cut -d= or -f1 (specific field)
-fi
-# awk content can contain spaces inside quotes; match `$N` anywhere in quoted arg
-if echo "$command" | grep -qE "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*\\\$[0-9]"; then
-  has_filter=1   # awk '{print $N}'
-fi
-if echo "$command" | grep -qE "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*/[^/]+/"; then
-  has_filter=1   # awk '/regex/...'
-fi
-# R2-C-10 fix: only stdout-redirect to /dev/null counts. stderr-only (2>) and
-# combined (&>) need separate handling.
-#   `>/dev/null` and `>  /dev/null` — stdout discard, safe
-#   `&>/dev/null` — both discard, safe (but rarely seen)
-#   `2>/dev/null` — only stderr discard, stdout still flows: NOT a filter
-if echo "$command" | grep -qE '([^0-9&]|^)>[[:space:]]*/dev/null'; then
-  has_filter=1
-fi
-if echo "$command" | grep -qE '&>[[:space:]]*/dev/null'; then
-  has_filter=1
-fi
-# curl -o /dev/null / --silent without explicit other output
-if echo "$command" | grep -qE '(-o[[:space:]]+/dev/null|--output[[:space:]]+/dev/null)'; then
-  has_filter=1
-fi
-# wc / sha256sum / md5sum — emit count/hash, not content
-if echo "$command" | grep -qE '\|[[:space:]]*wc[[:space:]]+-[clw]'; then
-  has_filter=1
-fi
-if echo "$command" | grep -qE '\|[[:space:]]*(sha256sum|md5sum|sha1sum|sha512sum)\b'; then
-  has_filter=1
 fi
 
 # ── Risky read patterns ────────────────────────────────────────────────────
@@ -655,13 +892,21 @@ declare -a risky_patterns=(
   'wget[[:space:]]+[^|]*--post-file=[^|]*'                                                           # wget --post-file=.env
 )
 
-for pat in "${risky_patterns[@]}"; do
-  # v1.26.0 O3 perf: bash builtin `=~` (POSIX ERE) replaces `echo | grep -qE`
-  # subprocess fork. ~100 patterns × ~3ms subprocess fork = ~300ms saved per
-  # hook invocation (the dominant cost). bash 3.2+ guaranteed (ubiquitous).
-  if [[ "$command" =~ $pat ]]; then
-    if [[ $has_filter -eq 0 ]]; then
-      cat >&2 <<EOF
+# _sg_judge_one() — evaluate one string (whole command in "whole" mode, or one
+# top-level segment in "segment" mode) against risky_patterns + credit. $1 =
+# string to judge, $2 = mode (whole|segment). Returns 0 = allow, 2 = blocked
+# (BLOCKED message already written to stderr; mode=whole reproduces canonical
+# stderr byte-for-byte, zero new lines).
+_sg_judge_one() {
+  local seg="$1" mode="$2" pat
+  local credit=""
+  for pat in "${risky_patterns[@]}"; do
+    if [[ "$seg" =~ $pat ]]; then
+      if [[ -z "$credit" ]]; then
+        if _sg_compute_credit "$seg"; then credit=1; else credit=0; fi
+      fi
+      if [[ "$credit" == "0" ]]; then
+        cat >&2 <<EOF
 [secret-guard] BLOCKED: command reads a secret-bearing source without a
 value-REDACTING filter. Matched pattern: $pat
 
@@ -690,9 +935,52 @@ Reviewed one-off bypass (logged to ~/.claude/logs/guard-bypass.log):
 
 Command was: $command
 EOF
-      exit 2
+        if [[ "$mode" == "segment" ]]; then
+          echo "Triggering segment: $seg" >&2
+        fi
+        return 2
+      fi
+      break
     fi
-  fi
-done
+  done
+  return 0
+}
 
-exit 0
+# _sg_per_segment_eval() — §What.3 fail-safe entry point: degrade to whole-
+# command legacy verdict when $1 doesn't look safe to split, else split on
+# top-level ; && || and judge each segment independently (credit computed
+# fresh per segment — §What.3 SFH-M2, no sticky global). $1 = whole command.
+# Returns 0 = allow, 2 = blocked, propagates _sg_judge_one's return code.
+_sg_per_segment_eval() {
+  local cmd="$1" seg rc
+  if ! _sg_safe_to_split "$cmd"; then
+    _sg_judge_one "$cmd" whole
+    return $?
+  fi
+  _sg_split_top "$cmd"
+  [[ ${#_SG_SEGS[@]} -eq 0 ]] && return 0
+  for seg in "${_SG_SEGS[@]}"; do
+    _sg_judge_one "$seg" segment
+    rc=$?
+    [[ $rc -ne 0 ]] && return "$rc"
+  done
+  return 0
+}
+
+# ── Per-segment verdict (#128) — the ENTIRE new logic runs inside one explicit
+# subshell: under `set -u` an unbound-variable death is an unconditional shell
+# termination that bypasses ERR traps / `||` / `if` guards (all only see
+# "command returned non-zero"); the subshell boundary is the only mechanism
+# that converts it into a plain non-zero status the parent can map to exit 2
+# (fail-closed). Verdict crosses the boundary via exit code only: 0=allow,
+# 2=block (message already on stderr), anything else=internal error.
+( _sg_per_segment_eval "$command" )
+_sg_rc=$?
+if [[ $_sg_rc -eq 0 ]]; then
+  exit 0
+fi
+if [[ $_sg_rc -eq 2 ]]; then
+  exit 2
+fi
+echo "[secret-guard] BLOCKED: internal error in per-segment evaluation (rc=$_sg_rc). Failing closed." >&2
+exit 2
