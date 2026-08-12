@@ -2,7 +2,10 @@
 # Regression test suite for secret-guard.sh PreToolUse hook.
 #
 # Run: bash aria/hooks/tests/secret-guard.test.sh  (from aria-plugin repo root)
-# Expects: jq installed. Outputs PASS/FAIL per case + summary at end.
+# Expects: jq installed. python3 installed (used only by the #128 SC-20
+# internal-error-injection cases to produce two on-the-fly modified hook
+# copies via precise text replacement — no other case depends on it).
+# Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
 # Coverage: 366 cases across Bash (block/allow), Read/Edit (block/allow),
@@ -50,6 +53,53 @@ edit_case() {
   local input
   input="$(jq -n --arg f "$file" '{tool_name: "Edit", tool_input: {file_path: $f}}')"
   run_case "$name" "$want" "$input"
+}
+
+# ── #128 unit-test helpers — direct assertions on sourceable internals ─────
+# secret-guard.sh's sourcing gate (search "Unit-test sourcing gate") makes it
+# safe to `source` the hook in a subshell: functions get defined, then the
+# gate returns 0 before any stdin is read or verdict emitted. Each call below
+# re-sources fresh in its own `$(...)` subshell, so there is no state leakage
+# between assertions.
+
+# sts_case — direct-assert _sg_safe_to_split()'s return value (SC-6/SC-13/
+# SC-14 all require this: end-to-end exit code is NOT sufficient discriminating
+# power, see SC-6 rationale — a hard-fallback stub passes exit-code-only tests
+# on 12 of these 18 fixtures).
+# want: "safe" (rc 0, split proceeds) | "degrade" (rc 1, falls back to legacy)
+sts_case() {
+  local name="$1" want="$2" cmd="$3"
+  local got
+  got="$(
+    source "$HOOK"
+    if _sg_safe_to_split "$cmd"; then echo safe; else echo degrade; fi
+  )"
+  if [[ "$got" == "$want" ]]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    failures+=("FAIL [$name]: want safe_to_split=$want, got $got for: $cmd")
+  fi
+}
+
+# split_case — direct-assert _sg_split_top()'s resulting _SG_SEGS array length
+# (SC-5, TASK-011). Only meaningful on inputs that are already safe to split;
+# split_top() itself does not re-check that (see secret-guard.sh comment on
+# _sg_split_top — that judgment belongs to the caller).
+split_case() {
+  local name="$1" want="$2" cmd="$3"
+  local got
+  got="$(
+    source "$HOOK"
+    _sg_split_top "$cmd"
+    echo "${#_SG_SEGS[@]}"
+  )"
+  if [[ "$got" == "$want" ]]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    failures+=("FAIL [$name]: want ${want} segment(s), got ${got} for: $cmd")
+  fi
 }
 
 # ── BLOCK cases (exit 2) — Nomad / Vault / cloud / managers ───────────────
@@ -670,7 +720,11 @@ bash_case "review setsid env"           2 'setsid env'
 bash_case "review ./do env script FP"   0 'bash ./do env'
 # code-review R1 Minor-3: printenv assignment must not FP.
 bash_case "review printenv=1 var FP"    0 'printenv=1 make'
-bash_case "FP-fix timeout run-env"      0 'timeout 5 ./run-env-check'
+# SC-17 (#128 dedup): a byte-identical "FP-fix timeout run-env" case used to
+# be duplicated here (this line and :691, both 'timeout 5 ./run-env-check').
+# The line at :691 (grouped with its FP-fix siblings) is the canonical one;
+# this orphaned second copy is removed rather than kept, since it carried no
+# distinct fixture or comment explaining its presence at this location.
 
 # ── NUL-in-field bypass (v1.55.3, dev-claude spec Critical-2) — must BLOCK ──
 # A JSON \u0000 escape in the command value is decoded by the hook's jq into a
@@ -762,12 +816,17 @@ bash_case "put: FP echo mention allowed"   0 'echo "改用 nomad var put"'
 bash_case "put: FP commit msg caught"      2 'git commit -m "fix: nomad var put 回显"'
 bash_case "put: positive control blocks"   2 'nomad var put nomad/jobs/build-x @/tmp/pv.json'
 
-# SC-8 — KNOWN-LIMIT: has_filter is evaluated per WHOLE command, so a redirect
-# in one segment credits every other segment. The second put below is the very
-# leak shape from #170 and is NOT protected. Locked at the current value so the
-# day 转出 1 (per-segment evaluation) lands, THIS CASE TURNS RED and forces an
-# update instead of drifting silently.
-bash_case "put: KNOWN-LIMIT compound credit leak" 0 'nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2'
+# SC-8 — formerly KNOWN-LIMIT, now CLOSED (aria-plugin #128, per-segment
+# evaluation): has_filter used to be evaluated per WHOLE command, so a
+# redirect in one segment credited every other segment. The second put below
+# is the exact leak shape from #170. Per-segment evaluation has landed (see
+# secret-guard-per-segment-evaluation SC-1 #3 / SC-9a category 1, same
+# fixture) — has_filter is now computed fresh per segment (function-scoped
+# local in _sg_compute_credit), so the second segment gets no credit from the
+# first segment's redirect and is judged independently. This case's expected
+# value flipped 0 -> 2 exactly as the original comment below said it would;
+# this IS that forced update, not a drift.
+bash_case "put: per-segment eval closes the former compound-credit KNOWN-LIMIT" 2 'nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2'
 
 # SC-6 — read direction unchanged (no regression from the new write pattern)
 bash_case "var read: get still blocks"     2 'nomad var get nomad/jobs/build-x'
@@ -780,6 +839,426 @@ bash_case "var read: SOT projection allowed" 0 "nomad var get -out=json nomad/jo
 # Negative anchor: the bracketed variant breaks the jq-filter recognition and
 # is blocked. Documented in the SOT so nobody "improves" the example into it.
 bash_case "var read: bracketed keys[] blocked" 2 "nomad var get -out=json nomad/jobs/build-x | jq -r '.Items | keys[]'"
+
+# ══════════════════════════════════════════════════════════════════════════
+# aria-plugin #128 — per-segment evaluation (secret-guard-per-segment-evaluation)
+# TASK-011..019 — see openspec/changes/secret-guard-per-segment-evaluation/
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── TASK-011 (SC-5): _sg_split_top() array-cardinality unit assertions ─────
+# Direct assertion on the resulting _SG_SEGS array length — quote/escape-aware
+# splitter, splits only on top-level ; && || ; never on | & &> or inside quotes.
+split_case "split: a; b -> 2 segs"                 2 'a; b'
+split_case "split: a && b -> 2 segs"                2 'a && b'
+split_case "split: a || b -> 2 segs"                2 'a || b'
+split_case "split: a | b -> 1 seg (pipe not split)" 1 'a | b'
+split_case "split: ; inside quotes -> 1 seg"        1 'echo "a;b"'
+split_case "split: \; escaped -> 1 seg"             1 'echo a\;b'
+split_case "split: newline -> 1 seg (not a split point)" 1 "$(printf 'a\nb')"
+split_case "split: a & b -> 1 seg (bare & not split)"     1 'a & b'
+split_case "split: a &> f -> 1 seg (redirect not split)"  1 'a &> f'
+# split_top() splits purely on ;  — it does not parse case syntax; the `;;`
+# after the pattern arm yields 2 segments. safe_to_split() is what stops this
+# reaching split_top() in practice (BLOCK_CHARS catches the bare `)`); the two
+# layers are not to be conflated (R3-M-3).
+split_case "split: case ;; arm -> 2 segs (split_top layer only)" 2 'case x in a) ;; esac'
+
+# ── TASK-012 (SC-6): fail-safe degrade family — 18 items, direct sts_case ──
+# Every item asserts _sg_safe_to_split()'s return value directly (not just
+# end-to-end exit) — SC-6's own rationale: exit-code-only assertion has ZERO
+# discriminating power against a hard-fallback stub for 5 of these 12 items
+# (fallback and correct implementation produce the same exit code whenever
+# the command degrades to the legacy whole-command verdict).
+# Denominator is fixed at /18 for every count derived from this family.
+
+# -- block-char type (7 of 18, expect degrade — quote-aware char scan) --
+sts_case "SC-6 1/18 blockchar { }"        degrade '{ cat /opt/.env; }'
+sts_case "SC-6 2/18 blockchar ( )"        degrade '(cat /opt/.env)'
+sts_case "SC-6 3/18 blockchar [[ && ]]"   degrade '[[ -f /opt/.env && -r /opt/.env ]]'
+sts_case "SC-6 4/18 blockchar for((;;))"  degrade 'for ((i=0; i<3; i++)); do cat /opt/.env; done'
+sts_case "SC-6 5/18 blockchar backtick"   degrade 'echo `cat /opt/.env`'
+sts_case 'SC-6 6/18 blockchar $()'        degrade 'echo $(cat /opt/.env)'
+sts_case "SC-6 7/18 blockchar heredoc <<" degrade 'cat <<EOF'
+
+# -- keyword type (5 of 18, expect degrade — EXACT fixtures from proposal
+#    SC-6 table; the naive "while [[ ]]"/"if [[ ]]" idiom would be caught by
+#    BLOCK_CHARS first and give a structurally-vacuous pass, per R6 TL6-F4 --
+#    these 5 deliberately contain NO block chars) --
+sts_case "SC-6 8/18 keyword for"    degrade 'for f in a b; do cat /opt/.env; done >/dev/null'
+sts_case "SC-6 9/18 keyword while"  degrade 'while read -r l; do cat /opt/.env; done >/dev/null'
+sts_case "SC-6 10/18 keyword if"    degrade 'if true; then cat /opt/.env; fi >/dev/null'
+sts_case "SC-6 11/18 keyword until" degrade 'until nomad var put secret/x @f >/dev/null; do sleep 1; done'
+sts_case "SC-6 12/18 keyword select" degrade 'select e in prod dev; do nomad var get secret/$e; done'
+
+# -- ! (bang) position type (1 of 18, expect degrade — R5.5 TL-1) --
+sts_case "SC-6 13/18 bang position" degrade '! for f in a; do cat /opt/.env; done >/dev/null'
+
+# -- newline position type (1 of 18, expect degrade — R4 backend CRITICAL-2) --
+sts_case "SC-6 14/18 newline position" degrade "$(printf 'cd /tmp\nfor f in a b; do cat /opt/.env; done >/dev/null')"
+
+# -- bare-& background token type (1 of 18, expect degrade — v10 / TASK-029) --
+sts_case "SC-6 15/18 background token &" degrade 'nomad var put p @f & echo hi; true >/dev/null'
+
+# -- isolated unit assertion (1 of 18): bare token stream, NO block chars, so
+#    this exercises BLOCK_KW_RE's keyword recognition in isolation. A real
+#    `case ... esac` fixture cannot be used here: the pattern-arm `)` is a
+#    BLOCK_CHARS member and would catch it first, making any real case
+#    fixture structurally vacuous for this purpose (R5 qa-engineer C-2). --
+sts_case "SC-6 16/18 case isolated (bare token, bypasses BLOCK_CHARS)" degrade 'case x in'
+
+# -- end-to-end true (2 of 18, expect safe — these must NOT degrade) --
+sts_case "SC-6 17/18 e2e true: benign compound" safe 'ls -la; pwd'
+sts_case "SC-6 18/18 e2e true: leak form (segments split, judged independently)" safe 'cat /opt/.env; echo hi >/dev/null'
+
+# ── TASK-013 (SC-14): judge-token over-triggering — A group (5) + B group (2) ──
+# Two groups, two DIFFERENT acceptance formulas — collapsing them into one
+# formula gets the direction backwards for one group (v5's documented error).
+# A group (no risky segment, locks "must not over-block"): safe_to_split=true
+# AND exit stays unchanged at 0.
+sts_case "SC-14 A-1 echo for: safe"  safe 'ls; echo for >/dev/null'
+bash_case "SC-14 A-1 echo for: exit unchanged" 0 'ls; echo for >/dev/null'
+sts_case "SC-14 A-2 echo if: safe"   safe 'ls; echo if >/dev/null'
+bash_case "SC-14 A-2 echo if: exit unchanged"  0 'ls; echo if >/dev/null'
+sts_case "SC-14 A-3 add case: safe"  safe 'git commit -m "add case handling"'
+bash_case "SC-14 A-3 add case: exit unchanged" 0 'git commit -m "add case handling"'
+# A-4: dedicated (^|\n) mis-hit lock — "run" ends in n, which a literal
+# `(^|\n)` implementation (ERE \n = letter n, not newline) would misread as a
+# position token immediately preceding "for".
+sts_case "SC-14 A-4 run for: safe (^|\\n) mis-hit lock" safe 'ls; echo run for >/dev/null'
+bash_case "SC-14 A-4 run for: exit unchanged" 0 'ls; echo run for >/dev/null'
+# A-5: dedicated `in`-deletion lock (v7 removed `in` from the position list)
+# that also incidentally re-triggers the (^|\n) mis-hit direction ("in" also
+# ends in n).
+sts_case "SC-14 A-5 in for: safe (in-deletion + (^|\\n) dual lock)" safe 'ls; echo in for >/dev/null'
+bash_case "SC-14 A-5 in for: exit unchanged" 0 'ls; echo in for >/dev/null'
+
+# B group (real risky segment present, locks "must not under-block"):
+# safe_to_split=true AND exit flips from 0 (pre-change) to 2 (post-change).
+sts_case "SC-14 B-1 echo runtime: safe" safe 'echo runtime; cat /opt/.env; true >/dev/null'
+bash_case "SC-14 B-1 echo runtime: exit flips 0->2" 2 'echo runtime; cat /opt/.env; true >/dev/null'
+sts_case "SC-14 B-2 timeout 5 curl: safe" safe 'timeout 5 curl x; cat /opt/.env; true >/dev/null'
+bash_case "SC-14 B-2 timeout 5 curl: exit flips 0->2" 2 'timeout 5 curl x; cat /opt/.env; true >/dev/null'
+
+# ── TASK-014 (SC-15): credit multi-line positive/negative + 28-branch coverage ──
+# nl = a real newline character, used to build multi-line command fixtures
+# via double-quoted interpolation (avoids escaping inner single quotes).
+nl=$'\n'
+
+# -- Dimension 1: 13 credit sites x 2 (positive = clause split across a
+#    newline -> _sg_line_match must NOT join lines -> no credit -> BLOCK;
+#    negative = irrelevant leading line + complete clause on its own line ->
+#    credit correctly found -> ALLOW). This directly exercises the
+#    _sg_line_match() grep-per-record replication (Task 1.3b / §What.4). --
+
+# site :332 jq safe keys/length/paths/leaf_paths (using "keys")
+bash_case "SC-15 dim1 site1 jq-keys: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | jq${nl}keys"
+bash_case "SC-15 dim1 site1 jq-keys: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | jq keys"
+
+# site :337 jq { allowlist projection
+bash_case "SC-15 dim1 site2 jq-brace: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | jq${nl}{db_user: .Items.db_user}"
+bash_case "SC-15 dim1 site2 jq-brace: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | jq '{db_user: .Items.db_user}'"
+
+# site :348 grep anchor ^ or $ (using ^)
+bash_case "SC-15 dim1 site3 grep-anchor: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | grep${nl}^NODE_ENV="
+bash_case "SC-15 dim1 site3 grep-anchor: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | grep ^NODE_ENV="
+
+# site :351 grep -v / --invert-match
+bash_case "SC-15 dim1 site4 grep-v: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | grep${nl}-v secret"
+bash_case "SC-15 dim1 site4 grep-v: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | grep -v secret"
+
+# site :354 sed s/// or [0-9]+d or [Dd]
+bash_case "SC-15 dim1 site5 sed-sub: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | sed${nl}s/.*/REDACTED/"
+bash_case "SC-15 dim1 site5 sed-sub: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | sed s/.*/REDACTED/"
+
+# site :358 cut -d/-f specific field
+bash_case "SC-15 dim1 site6 cut-df: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | cut${nl}-d= -f1"
+bash_case "SC-15 dim1 site6 cut-df: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | cut -d= -f1"
+
+# site :362 awk $N (this is proposal's own canonical worked example)
+bash_case "SC-15 dim1 site7 awk-\$N: split across lines (canonical BEGIN{}) -> no credit -> BLOCK" \
+  2 "cat /opt/.env | awk 'BEGIN{}${nl}{print \$1}'"
+bash_case "SC-15 dim1 site7 awk-\$N: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | awk '{print \$1}'"
+
+# site :365 awk /regex/
+bash_case "SC-15 dim1 site8 awk-regex: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | awk${nl}/SECRET/{print}"
+bash_case "SC-15 dim1 site8 awk-regex: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | awk '/SECRET/{print}'"
+
+# site :373 >/dev/null stdout discard
+bash_case "SC-15 dim1 site9 redirect: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env >${nl}/dev/null"
+bash_case "SC-15 dim1 site9 redirect: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env >/dev/null"
+
+# site :376 &>/dev/null
+bash_case "SC-15 dim1 site10 both-discard: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env &>${nl}/dev/null"
+bash_case "SC-15 dim1 site10 both-discard: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env &>/dev/null"
+
+# site :380 curl -o / --output /dev/null
+bash_case "SC-15 dim1 site11 curl-o: split across lines -> no credit -> BLOCK" \
+  2 "curl http://nomad/v1/var/x -o${nl}/dev/null"
+bash_case "SC-15 dim1 site11 curl-o: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}curl http://nomad/v1/var/x -o /dev/null"
+
+# site :384 wc -c/-l/-w
+bash_case "SC-15 dim1 site12 wc: split across lines -> no credit -> BLOCK" \
+  2 "cat /opt/.env | wc${nl}-c"
+bash_case "SC-15 dim1 site12 wc: leading line + complete clause -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | wc -c"
+
+# site :387 sha256sum/md5sum/sha1sum/sha512sum (proposal's own canonical worked example)
+bash_case "SC-15 dim1 site13 sha256sum: split across lines (canonical) -> no credit -> BLOCK" \
+  2 "cat /opt/.env |${nl}sha256sum"
+bash_case "SC-15 dim1 site13 sha256sum: leading line + complete clause (canonical) -> credit -> ALLOW" \
+  0 "echo start${nl}cat /opt/.env | sha256sum"
+
+# -- SC-15's own 3 explicit end-to-end regression locks + the migration-style
+#    backslash-continuation fixture (site9's positive fixture above already
+#    IS the 3rd of these 3 -- the "awk BEGIN{}" canonical -- so only the 2
+#    genuinely-distinct ones are added here, plus the line-continuation lock). --
+bash_case "SC-15 lock: jq keys + trailing unrelated line -> stays ALLOW" \
+  0 "curl http://nomad/v1/var/x | jq keys${nl}echo done"
+bash_case "SC-15 lock: leading + jq keys + trailing unrelated line -> stays ALLOW" \
+  0 "cd /tmp${nl}curl http://nomad/v1/var/x | jq keys${nl}echo finished"
+bash_case "SC-15 lock: backslash-continuation (spec's own recommended migration style) -> ALLOW" \
+  0 "cat /opt/.env \\\\${nl}  >/dev/null"
+
+# -- Dimension 2: 14 zero-coverage alternation branches (from
+#    corpus_census.py branches.branch_table, coverage=="zero" -- taken
+#    verbatim from the tool's own output, not hand-counted). Each gets >=1
+#    positive fixture (credit correctly granted -> ALLOW). --
+bash_case "SC-15 dim2 jq 'length' (zero-coverage branch)"        0 "curl http://nomad/v1/var/x | jq 'length'"
+bash_case "SC-15 dim2 jq 'paths' (zero-coverage branch)"         0 "curl http://nomad/v1/var/x | jq 'paths'"
+bash_case "SC-15 dim2 jq 'leaf_paths' (zero-coverage branch)"    0 "curl http://nomad/v1/var/x | jq 'leaf_paths'"
+bash_case 'SC-15 dim2 grep $ anchor (zero-coverage branch)'      0 "curl http://nomad/v1/var/x | grep 'value\$'"
+bash_case "SC-15 dim2 grep --invert-match (zero-coverage branch)" 0 'curl http://nomad/v1/var/x | grep --invert-match secret'
+bash_case "SC-15 dim2 sed uppercase S/// (zero-coverage branch)" 0 'curl http://nomad/v1/var/x | sed S/x/y/'
+bash_case "SC-15 dim2 sed [0-9]+d numeric delete (zero-coverage branch)" 0 'curl http://nomad/v1/var/x | sed 3d'
+bash_case "SC-15 dim2 awk /regex/ (zero-coverage branch)"        0 "curl http://nomad/v1/var/x | awk '/SECRET/{print}'"
+bash_case "SC-15 dim2 curl --output (zero-coverage branch)"      0 'curl http://nomad/v1/var/x --output /dev/null'
+bash_case "SC-15 dim2 wc -c (zero-coverage branch)"               0 'cat /opt/.env | wc -c'
+bash_case "SC-15 dim2 wc -w (zero-coverage branch)"               0 'cat /opt/.env | wc -w'
+bash_case "SC-15 dim2 md5sum (zero-coverage branch)"              0 'cat /opt/.env | md5sum'
+bash_case "SC-15 dim2 sha1sum (zero-coverage branch)"             0 'cat /opt/.env | sha1sum'
+bash_case "SC-15 dim2 sha512sum (zero-coverage branch)"           0 'cat /opt/.env | sha512sum'
+
+# ── TASK-015 (SC-1/SC-2/SC-4/SC-11/SC-12): end-to-end + quote-aware + ack ──
+
+# SC-1 (baseline-failing, core): 5 leak forms, all exit=0 pre-change / exit=2
+# post-change (verified against af87cae, the direct pre-#128 parent commit).
+# #2/#3/#5 deliberately put the credit-bearing segment BEFORE the risky one --
+# the only shape that can catch a has_filter that leaks across segments
+# instead of resetting per segment (the Aria#170 root cause itself).
+bash_case "SC-1 #1 ; risk-then-credit"            2 'cat /opt/.env; echo hi >/dev/null'
+bash_case "SC-1 #2 ; credit-then-risk (sticky lock)" 2 'echo hi >/dev/null; cat /opt/.env'
+bash_case "SC-1 #3 ; Aria#170 leak body (sticky lock)" 2 'nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2'
+bash_case "SC-1 #4 && cross-pattern-family"       2 'vault read secret/x && nomad var put p @f >/dev/null'
+bash_case "SC-1 #5 || credit-then-risk (sticky lock)" 2 'echo hi >/dev/null || nomad var get secret/x'
+
+# SC-4 (quote-aware, counterfactually falsifiable): the ; inside the
+# single-quoted perl regex has no block-char marker, so a quote-BLIND
+# splitter would slice it into two individually-harmless halves and wrongly
+# ALLOW (0); the quote-aware splitter never splits inside the quote and the
+# whole segment still matches the perl risky pattern -> BLOCK (2).
+bash_case "SC-4 quote-aware: perl regex containing literal ;" 2 "perl -ne 'print if /a;b/' /opt/.env"
+
+# SC-12 (guard:ack command-level lock): ack recognition runs on the whole
+# $command BEFORE segmentation (canonical positions, still true post-change)
+# -- a compound command with an ack comment anywhere must stay allowed, not
+# get re-judged per segment (which would drop the ack for segments that
+# don't carry the comment text themselves).
+bash_case "SC-12 ack: compound command stays exit=0 (not sunk to segment level)" \
+  0 'cat /opt/.env; echo hi  # guard:ack: verified-by-owner-2026'
+
+# ── TASK-017 (SC-20/SC-21): internal-error injection + BLOCKED segment assert ──
+
+# SC-20: inject two runtime errors into copies of the CURRENT hook and assert
+# exit is EXACTLY 2 for both (not merely "in {0,2}" -- an implementation that
+# returns 0 OR 1 on internal failure is equally fail-open and must be judged
+# red; only a hard "== 2" check catches both directions).
+sc20_hook_dir="$(mktemp -d)"
+python3 - "$HOOK" "$sc20_hook_dir" <<'PYEOF'
+import sys
+hook_path, outdir = sys.argv[1], sys.argv[2]
+with open(hook_path) as f:
+    text = f.read()
+
+# Injection A: _sg_line_match called with its 2nd arg dropped at the wc
+# call site (chosen for its short, low-escaping regex text) -> $2 unbound
+# under `set -u` inside _sg_line_match.
+marker_a = '''  if _sg_line_match '\\|[[:space:]]*wc[[:space:]]+-[clw]' "$seg"; then
+    has_filter=1
+  fi'''
+replacement_a = '''  if _sg_line_match '\\|[[:space:]]*wc[[:space:]]+-[clw]'; then
+    has_filter=1
+  fi'''
+assert text.count(marker_a) == 1, f"injection A marker count = {text.count(marker_a)}, expected 1"
+with open(f"{outdir}/inject_a.sh", "w") as f:
+    f.write(text.replace(marker_a, replacement_a, 1))
+
+# Injection B: safe_to_split()'s $nl reference orphaned by renaming its own
+# declaration -- BLOCK_KW_RE/SCOPE_KW_RE's "$nl" splice becomes unbound.
+marker_b = "  local nl=$'\\n'\n"
+assert text.count(marker_b) == 1, f"injection B marker count = {text.count(marker_b)}, expected 1"
+with open(f"{outdir}/inject_b.sh", "w") as f:
+    f.write(text.replace(marker_b, "  local nl_TYPO=$'\\n'\n", 1))
+PYEOF
+chmod +x "$sc20_hook_dir/inject_a.sh" "$sc20_hook_dir/inject_b.sh"
+
+sc20_trigger='cat /opt/.env'
+sc20_input="$(jq -n --arg c "$sc20_trigger" '{tool_name: "Bash", tool_input: {command: $c}}')"
+
+sc20_a_exit="$(echo "$sc20_input" | "$sc20_hook_dir/inject_a.sh" 2>/dev/null; echo "exit=$?")"
+sc20_a_exit="${sc20_a_exit##*exit=}"
+if [[ "$sc20_a_exit" == "2" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-20 injection A: _sg_line_match missing \$2 must exit EXACTLY 2]: got exit=$sc20_a_exit")
+fi
+
+sc20_b_exit="$(echo "$sc20_input" | "$sc20_hook_dir/inject_b.sh" 2>/dev/null; echo "exit=$?")"
+sc20_b_exit="${sc20_b_exit##*exit=}"
+if [[ "$sc20_b_exit" == "2" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-20 injection B: safe_to_split \$nl orphaned must exit EXACTLY 2]: got exit=$sc20_b_exit")
+fi
+
+rm -rf "$sc20_hook_dir"
+
+# SC-21: BLOCKED stderr must contain BOTH (a) the existing "Command was: "
+# line with the full original command, and (b) a NEW "Triggering segment: "
+# line whose content is EXACTLY the matched segment -- byte-exact string
+# equality, not grep containment (a mis-implementation that just re-echoes
+# the whole command a second time would pass a "contains" check since the
+# segment is trivially a substring of the whole command).
+sc21_cmd='cat /opt/.env; echo hi >/dev/null'
+sc21_input="$(jq -n --arg c "$sc21_cmd" '{tool_name: "Bash", tool_input: {command: $c}}')"
+sc21_stderr="$(echo "$sc21_input" | "$HOOK" 2>&1 >/dev/null)"
+
+sc21_cmd_line="$(printf '%s\n' "$sc21_stderr" | grep '^Command was: ')"
+sc21_want_cmd_line="Command was: $sc21_cmd"
+if [[ "$sc21_cmd_line" == "$sc21_want_cmd_line" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-21a: Command-was line exact match]: got [$sc21_cmd_line] want [$sc21_want_cmd_line]")
+fi
+
+sc21_seg_line="$(printf '%s\n' "$sc21_stderr" | grep '^Triggering segment: ')"
+sc21_got_seg="${sc21_seg_line#Triggering segment: }"
+sc21_want_seg="cat /opt/.env"
+if [[ "$sc21_got_seg" == "$sc21_want_seg" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-21b: Triggering-segment exact string equality]: got [$sc21_got_seg] want [$sc21_want_seg]")
+fi
+
+# ── TASK-018 (SC-9a): dogfood — 5 categories / 6 commands, canonical direct-call gate ──
+# Every command asserts BOTH the pre-change exit AND the post-change exit --
+# a script that only checks the post-change value cannot tell "was already
+# correct" apart from "the fix actually worked" (SC-9a's own explicit
+# rationale). Pre-change values come from af87cae, the direct pre-#128 parent
+# commit, fetched live via git so this stays a real assertion rather than a
+# hand-copied constant. If git history access is unavailable (e.g. a shallow
+# export with that commit missing), the pre-change half is skipped with a
+# clear note rather than either failing hard or silently passing; the
+# post-change half (the one that matters for regression purposes) always runs.
+sc9a_repo_root="$(cd "$(dirname "$HOOK")/.." && pwd)"
+sc9a_old_hook=""
+sc9a_old_tmp="$(mktemp -d)"
+if git -C "$sc9a_repo_root" show af87cae:hooks/secret-guard.sh > "$sc9a_old_tmp/secret-guard.OLD.sh" 2>/dev/null; then
+  chmod +x "$sc9a_old_tmp/secret-guard.OLD.sh"
+  sc9a_old_hook="$sc9a_old_tmp/secret-guard.OLD.sh"
+else
+  echo "  [SKIP] SC-9a pre-change comparison: af87cae not reachable via git show (shallow clone?) — post-change assertions still run below"
+fi
+
+sc9a_case() {
+  local name="$1" want_old="$2" want_new="$3" cmd="$4"
+  local input got new_exit
+  input="$(jq -n --arg c "$cmd" '{tool_name: "Bash", tool_input: {command: $c}}')"
+  if [[ -n "$sc9a_old_hook" ]]; then
+    got="$(echo "$input" | "$sc9a_old_hook" 2>/dev/null; echo "exit=$?")"
+    local old_exit="${got##*exit=}"
+    if [[ "$old_exit" == "$want_old" ]]; then
+      pass=$((pass + 1))
+    else
+      fail=$((fail + 1))
+      failures+=("FAIL [$name (pre-change)]: want exit=$want_old, got exit=$old_exit")
+    fi
+  fi
+  got="$(echo "$input" | "$HOOK" 2>/dev/null; echo "exit=$?")"
+  new_exit="${got##*exit=}"
+  if [[ "$new_exit" == "$want_new" ]]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    failures+=("FAIL [$name (post-change)]: want exit=$want_new, got exit=$new_exit")
+  fi
+}
+
+# category 1: the Aria#170 leak form itself (this spec's whole reason to exist)
+sc9a_case "SC-9a cat1 Aria170-leak-form" 0 2 \
+  'nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2'
+# category 2: migration-writing validity -- the fix the CHANGELOG recommends
+# (redirect EVERY segment) must itself keep working, or the migration advice
+# is wrong
+sc9a_case "SC-9a cat2 migration-writing-validity" 0 0 \
+  'nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2 >/dev/null'
+# category 3: credit boundary -- risky segment AFTER the credited one
+sc9a_case "SC-9a cat3 credit-boundary-risk-after" 0 2 \
+  'echo hi >/dev/null; cat /opt/.env'
+# category 4a: block-structure fallback via block keyword path
+sc9a_case "SC-9a cat4a block-fallback-keyword-path" 0 0 \
+  'for f in a b; do cat /opt/.env; done >/dev/null'
+# category 4b: block-structure fallback via scope keyword (exec), NO block
+# chars at all -- this is the one known instance of the "judge class isn't
+# closed" caveat in §What.1
+sc9a_case "SC-9a cat4b block-fallback-scope-exec-no-blockchars" 0 0 \
+  'exec >/dev/null; nomad var get x'
+# category 5: guard:ack must stay command-level, not sink to segment level
+sc9a_case "SC-9a cat5 ack-command-level" 0 0 \
+  'cat /opt/.env; echo hi # guard:ack: verified-by-owner-2026'
+
+rm -rf "$sc9a_old_tmp"
+
+# ── TASK-019 (SC-17): self-check — no duplicate case names in this file ────
+# Covers every *_case() helper defined above (bash/read/edit/run/crlf/static/
+# zsh/sts/split/sc9a) — not just the original three — since the new helpers
+# added alongside #128 (sts_case/split_case/sc9a_case) could just as easily
+# grow their own name collisions over time. Excludes the "$name" boilerplate
+# that appears verbatim inside bash_case()/read_case()/edit_case()'s own
+# bodies (each dispatches to `run_case "$name" ...`, which is a variable
+# reference, not a literal duplicate case name — grep can't tell those apart
+# without this exclusion, and without it this self-check is permanently
+# red on the unmodified file).
+dup_case_names="$(grep -oE '(bash|read|edit|run|crlf|static|zsh|sts|split|sc9a)_case "[^"]*"' "$0" | grep -v '"\$name"' | sort | uniq -d)"
+if [[ -z "$dup_case_names" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-17: no duplicate case names]: found $(echo "$dup_case_names" | wc -l) duplicate name(s): $(echo "$dup_case_names" | tr '\n' '; ')")
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
