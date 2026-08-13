@@ -1242,6 +1242,300 @@ sc9a_case "SC-9a cat5 ack-command-level" 0 0 \
 
 rm -rf "$sc9a_old_tmp"
 
+# ── TASK-016 (SC-19 + SC-7): cross-segment fail-open probe family ─────────
+# SC-19 measures this spec's ONLY fail-open behavior class (proposal.md
+# Impact table, 第 2 类: 2->0) across all 82 spanning patterns / 57 families
+# (corpus_census.py families.family_table is the authoritative grouping --
+# see census invocation in the self-check below). Each probe is a cross-
+# segment command engineered so the WHOLE string hits some family's pattern
+# (canonical/af87cae exit=2, verified live below) while EVERY top-level
+# segment individually misses it. Most transition 2->0 (the fail-open this
+# spec introduces); a handful are legitimate REVERSE examples where exit
+# stays 2 after the change -- either because the pattern's own trigger token
+# (exec/while) is itself a safe_to_split degrade keyword, or because the
+# pattern needs only a single '|' (never a split boundary) to stay self-
+# contained within one segment. Family coverage asks only 'was this family
+# exercised', not 'did it flip' -- reverse examples count same as flips.
+#
+# Every probe below was verified empirically (both pre-change/canonical and
+# post-change exit codes actually run, not inferred) via a one-off harness
+# using corpus_census.py's own bash_regex_match()/family extraction so the
+# family tag on each probe is checked against real ERE evaluation, not
+# hand-guessed. Before-values are recorded in the comment above each case
+# (canonical = af87cae, the direct pre-#128 parent) for audit; the bash_case
+# assertion itself is the post-change value only, matching the file's
+# existing convention (compare sc9a_case, which is the one helper in this
+# file that already asserts both halves for a different SC).
+
+# ── 12 SC-19-mandated probes (proposal.md SC-19 table, rows 1-12; row 12 is
+# the deliberately-kept redis-cli reverse example, not a gap) ──────────────
+# family='ssh' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:ssh cross-seg .env" 0 \
+  'ssh myhost cat /tmp/a.txt; echo /srv/app.env'
+# family='kubectl' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:kubectl cross-seg env" 0 \
+  'kubectl exec mypod --namespace prod; echo -- env'
+# family='psql' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:psql cross-seg password" 0 \
+  'psql -c "SELECT 1"; echo password rotated'
+# family='tar' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:tar cross-seg ssh-pipe" 0 \
+  'tar czf /tmp/x.tgz /home/u/.ssh/config; cat /tmp/list.txt | ssh myhost tee /tmp/o'
+# family='rsync' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:rsync cross-seg .env" 0 \
+  'rsync -av /srv/app.env /backup/; echo user@example.invalid'
+# family='docker' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:docker cross-seg env" 0 \
+  'docker exec web uptime; echo env'
+# family='base64' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:base64 cross-seg pipe-sh" 0 \
+  'base64 -d /tmp/a.b64 > /tmp/out; cat /tmp/out | sh'
+# family='gh' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:gh cross-seg variables" 0 \
+  'gh api /repos/o/r; echo /variables'
+# family='GRP:(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:proc-reader-grp cross-seg /proc" 0 \
+  'cat /tmp/a.txt; echo /proc/self/environ'
+# family='wget' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:wget cross-seg post-file" 0 \
+  'wget -q https://example.invalid/a; echo --post-file=/srv/app.env'
+# family='python3' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:python3 cross-seg .env" 0 \
+  'python3 -c pass; echo /srv/app.env'
+# family='redis-cli' | canonical(af87cae)=2 verified-live | REVERSE (stays 2)
+bash_case "SC-19 fam:redis-cli REVERSE self-contained" 2 \
+  'redis-cli GET mykey; echo password'
+
+# ── 44 new probes covering the remaining families ───────────────────────────
+# family='.' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:dot-source cross-seg .env" 0 \
+  '. /tmp/setup; echo /srv/app.env'
+# family='.env' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:dotenv-xargs cross-seg pipe-xargs" 0 \
+  'echo /srv/app.env; true | xargs cat'
+# family='<' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:redir-lt cross-seg run-secrets" 0 \
+  'read x < /tmp/a; echo /run/secrets/db'
+# family='EMPTY:\b(echo|printf|find|ls)[^|]*\.env[^|]*\|[[:space:]]*xargs' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:empty-echo-env-xargs cross-seg" 0 \
+  'find /srv -name app.env; true | xargs -n1 echo'
+# family='EMPTY:\bcp[[:space:]]+[^|]*(\.ssh/id_[A-Za-z0-9_]+|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)([[:space:]]|$)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:empty-cp-keyfile cross-seg" 0 \
+  'cp /tmp/a /tmp/b; echo id_rsa'
+# family='EMPTY:\bcp[[:space:]]+[^|]*\.env[[:space:]]+/dev/(stdout|tty)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:empty-cp-env-devtty cross-seg" 0 \
+  'cp /tmp/a /tmp/b; echo x.env /dev/tty'
+# family='GRP:(\bod\b)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:grp-od cross-seg .env" 0 \
+  'od /tmp/a; echo x.env'
+# family='GRP:(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:grp-rcfile-readers cross-seg" 0 \
+  'grep foo /tmp/a; echo /etc/profile'
+# family='GRP:(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:grp-keyfile-readers cross-seg" 0 \
+  'head /tmp/a; echo id_rsa'
+# family='GRP:(diff|cmp|comm)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:grp-diffcmp cross-seg" 0 \
+  'diff /tmp/a /tmp/b; echo x.env'
+# family='GRP:(head|tail|less|more)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:grp-headtail cross-seg" 0 \
+  'tail /tmp/a; echo x.env'
+# family='GRP:(rev|tac|nl|expand|unexpand|shuf|sort|uniq|split|csplit)' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:grp-coreutils cross-seg" 0 \
+  'sort /tmp/a; echo x.env'
+# family='IFS=' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:ifs-read cross-seg .env" 0 \
+  'IFS= read -d x; true < /tmp/a.env'
+# family='awk' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:awk cross-seg .env" 0 \
+  'awk x y; echo z.env'
+# family='cat' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:cat cross-seg .env" 0 \
+  'cat /tmp/a; echo x.env'
+# family='crictl' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:crictl cross-seg env" 0 \
+  'crictl exec mypod /bin/sh; echo env'
+# family='ctr' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:ctr cross-seg env" 0 \
+  'ctr exec mycontainer /bin/sh; echo env'
+# family='curl' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:curl cross-seg data-env" 0 \
+  'curl -s http://x; echo -d @a.env'
+# family='dd' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:dd cross-seg .env" 0 \
+  'dd if=/tmp/a; echo x.env'
+# family='exec' | canonical(af87cae)=2 verified-live | REVERSE (stays 2)
+bash_case "SC-19 fam:exec REVERSE degrade-scope-kw" 2 \
+  'exec 3< /tmp/secrets.env; echo hi'
+# family='find' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:find cross-seg -exec-cat" 0 \
+  'find /srv -name x.env; echo -exec cat'
+# family='forgejo' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:forgejo cross-seg variables" 0 \
+  'forgejo GET /repos/o/r; echo /variables'
+# family='hexdump' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:hexdump cross-seg .env" 0 \
+  'hexdump /tmp/x; echo config.env'
+# family='lua' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:lua cross-seg secrets" 0 \
+  'lua -e 1; echo /secrets/db'
+# family='lxc' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:lxc cross-seg dashdash-env" 0 \
+  'lxc exec mycontainer -- ls; echo -- env'
+# family='machinectl' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:machinectl cross-seg env" 0 \
+  'machinectl shell myvm true; echo env'
+# family='mapfile' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:mapfile cross-seg .env" 0 \
+  'mapfile arr < /tmp/a; echo x.env'
+# family='nc' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:nc cross-seg .env" 0 \
+  'nc example.invalid 9 < /tmp/a; echo x.env'
+# family='node' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:node cross-seg secrets" 0 \
+  'node -e 1; echo /secrets/db'
+# family='nomad' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:nomad-operator-api cross-seg var" 0 \
+  'nomad operator api /tmp; echo /var/x'
+# family='nsenter' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:nsenter cross-seg env" 0 \
+  'nsenter -t 1 -m true; echo env'
+# family='openssl' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:openssl cross-seg -in-pem" 0 \
+  'openssl rsa -noout; echo -in x.pem'
+# family='perl' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:perl cross-seg .env" 0 \
+  'perl -e 1; echo x.env'
+# family='podman' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:podman cross-seg env" 0 \
+  'podman exec mycontainer true; echo env'
+# family='readarray' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:readarray cross-seg .env" 0 \
+  'readarray arr < /tmp/a; echo x.env'
+# family='scp' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:scp cross-seg .env-at" 0 \
+  'scp /tmp/a.env /tmp/b; echo user@host'
+# family='set' | canonical(af87cae)=2 verified-live | REVERSE (stays 2)
+bash_case "SC-19 fam:set REVERSE self-contained pipe-grep" 2 \
+  'true; set | grep pass'
+# family='source' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:source cross-seg .env" 0 \
+  'source /tmp/setup; echo /srv/app.env'
+# family='strings' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:strings cross-seg .env" 0 \
+  'strings /tmp/a; echo x.env'
+# family='tee' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:tee cross-seg .env" 0 \
+  'tee /tmp/out < /tmp/a; echo x.env'
+# family='while' | canonical(af87cae)=2 verified-live | REVERSE (stays 2)
+bash_case "SC-19 fam:while REVERSE degrade-block-kw" 2 \
+  'while read x < /tmp/a.env; true'
+# family='xargs' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:xargs cross-seg .env" 0 \
+  'xargs cat; echo x.env'
+# family='xxd' | canonical(af87cae)=2 verified-live | 2->0 (fail-open)
+bash_case "SC-19 fam:xxd cross-seg .env" 0 \
+  'xxd /tmp/a; echo x.env'
+# family='|' | canonical(af87cae)=2 verified-live | REVERSE (stays 2)
+bash_case "SC-19 fam:pipe-jq REVERSE self-contained" 2 \
+  'true; cat /tmp/a.json | jq values'
+
+# ── TASK-016 (SC-7): posix env-dump cousin -- 4-way judgment table ─────────
+# proposal.md SC-7 requires classifying (not just pass/fail) two hand-written
+# forms, because a naive "assert exit==0" would silently misclassify an
+# OVER-ACHIEVED result (implementation accidentally re-closed the whole
+# cross-segment surface -- itself out-of-spec-scope and requiring owner
+# review, not a bug) as identical to a real FAIL, and would also misclassify
+# a mixed result (only one form fixed -- the exact defect shape R3-M-4 named)
+# as the same failure mode as an internal-error result. Both forms currently
+# land in PASS (both exit=0, verified live via the same $HOOK this whole file
+# already tests against). This still runs the full 4-way table so a future
+# regression in either direction is classified correctly instead of just
+# failing opaquely.
+sc7_run() {
+  local cmd="$1" input got
+  input="$(jq -n --arg c "$cmd" '{tool_name: "Bash", tool_input: {command: $c}}')"
+  got="$(echo "$input" | "$HOOK" 2>/dev/null; echo "exit=$?")"
+  echo "${got##*exit=}"
+}
+sc7_e1="$(sc7_run 'set -o posix; set | grep foo')"
+sc7_e2="$(sc7_run 'set -o posix && set | grep buildid')"
+
+if [[ "$sc7_e1" == "0" && "$sc7_e2" == "0" ]]; then
+  sc7_verdict="PASS"
+elif [[ "$sc7_e1" == "2" && "$sc7_e2" == "2" ]]; then
+  sc7_verdict="OVER-ACHIEVED"
+elif { [[ "$sc7_e1" == "0" && "$sc7_e2" == "2" ]] || [[ "$sc7_e1" == "2" && "$sc7_e2" == "0" ]]; }; then
+  sc7_verdict="FAIL-MIXED"
+else
+  sc7_verdict="FAIL-INTERNAL"
+fi
+
+case "$sc7_verdict" in
+  PASS)
+    pass=$((pass + 1))
+    ;;
+  OVER-ACHIEVED)
+    # Non-failure per proposal.md SC-7's own table, but out-of-spec-scope and
+    # needs owner review (it would also invalidate SC-19's 2->0 tally above,
+    # per that SC's own reverse-example note) -- surfaced loudly, not
+    # silently folded into an ordinary pass.
+    pass=$((pass + 1))
+    echo "  [NOTE] SC-7 landed OVER-ACHIEVED (both forms still exit=2) -- implementation appears to have re-closed the cross-segment surface beyond spec scope; this would also invalidate SC-19's 2->0 counts above and needs owner review (see TASK-016 report), not a self-resolved pass/fail" >&2
+    ;;
+  *)
+    fail=$((fail + 1))
+    failures+=("FAIL [SC-7: 4-way judgment landed in $sc7_verdict]: semicolon-form ('set -o posix; set | grep foo') exit=$sc7_e1, andand-form ('set -o posix && set | grep buildid') exit=$sc7_e2 -- want both 0 for the expected PASS branch")
+    ;;
+esac
+
+# ── TASK-016 (SC-19): 57-family completeness self-check ────────────────────
+# Hard criterion (proposal.md SC-19 "完备判据"): every family in
+# corpus_census.py's families.family_table must have >=1 probe among the two
+# blocks above. Family names come from a LIVE census run (never hand-copied)
+# and are cross-checked against this file's own source via the
+# `# family='<exact census key>'` comment convention placed immediately above
+# every bash_case in both probe blocks -- grep -F / literal-string match,
+# since family names are themselves regex fragments (e.g.
+# 'GRP:(cat|head|...)', or containing literal backslashes) and treating one
+# as a live regex here would be self-defeating.
+#
+# KNOWN, INVESTIGATED GAP -- family 'printf' (sole member: pattern idx88,
+# `printf ... -v ... [^|]*\$\([[:space:]]*<...\.env`) requires a LITERAL '('
+# to trigger the pattern at all. Machine gate (d) (see the header comment
+# above the first probe block, and TASK-016's execution notes) forbids any
+# block character in an SC-19 probe's command, even inside quotes -- so no
+# rule-5-compliant probe can exist for this one family. This was verified,
+# not assumed: a quoted variant technically dodges the hook's own quote-
+# aware block-char scanner (parens inside "..." are skipped by
+# _sg_safe_to_split's state machine), but rule 5 explicitly forbids relying
+# on that as an implementation detail the way the python3/print(1) example
+# in the header already forbids it. Per SC-19's own "不达标时的处置路径":
+# Phase B/QA must NOT self-narrow the family target, NOT rule this family
+# "not applicable", and NOT ship a rule-5-violating probe just to force a
+# pass -- the only legal action is to report the gap for owner review. This
+# check therefore asserts the TRUE, un-narrowed 57, and is EXPECTED to be
+# red on 'printf' until an owner decision changes either rule 5 or pattern
+# idx88's own text -- see TASK-016 QA report for the full writeup.
+sc19_census_json="$(python3 "$(dirname "$0")/corpus_census.py" 2>/dev/null)"
+sc19_family_count="$(echo "$sc19_census_json" | jq -r '.families.family_count // "ERR"')"
+sc19_families="$(echo "$sc19_census_json" | jq -r '.families.family_table | keys[]' 2>/dev/null)"
+sc19_missing=()
+while IFS= read -r sc19_fam; do
+  [[ -z "$sc19_fam" ]] && continue
+  grep -qF "# family='${sc19_fam}'" "$0" || sc19_missing+=("$sc19_fam")
+done <<< "$sc19_families"
+
+if [[ "$sc19_family_count" != "57" ]]; then
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-19: census family_count]: want 57, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
+elif [[ ${#sc19_missing[@]} -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-19: 57-family completeness]: ${#sc19_missing[@]}/${sc19_family_count} family(ies) with zero probe: $(IFS='; '; echo "${sc19_missing[*]}"). If this list is exactly ['printf']: known, investigated, structurally-forced gap (pattern idx88 needs a literal '(' that rule 5 forbids) -- see TASK-016 QA report, do not self-narrow the target or add a rule-5-violating probe. Any OTHER family name appearing here is a real, unexplained regression.")
+fi
+
 # ── TASK-019 (SC-17): self-check — no duplicate case names in this file ────
 # Covers every *_case() helper defined above (bash/read/edit/run/crlf/static/
 # zsh/sts/split/sc9a) — not just the original three — since the new helpers
