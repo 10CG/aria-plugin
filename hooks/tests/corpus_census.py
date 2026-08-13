@@ -228,7 +228,25 @@ def extract_bash_cases(corpus_path: Path):
     etc.) -- those are simply never included in the extraction script."""
     text = corpus_path.read_text(encoding='utf-8')
     lines = text.split('\n')
-    case_lines = [ln for ln in lines if ln.startswith('bash_case "')]
+    # Merge bash backslash line-continuations (`foo \<NL>bar` is ONE logical
+    # line to bash). Batch-2 (#128 test family) added multi-line bash_case
+    # calls (e.g. SC-12); the old single-line filter miscounted (triples !=
+    # source lines -> RuntimeError). NOTE: the corpus-face counts (65/49/16...)
+    # are a property of the PRE-CHANGE 305-case baseline; for SC-18 pass
+    # `--corpus <git show af87cae:hooks/tests/secret-guard.test.sh>` so the
+    # corpus face is measured against that baseline, not the live (growing)
+    # test file. This merge only keeps the extractor from crashing on the live
+    # file; it does not make live-file corpus counts meaningful for SC-18.
+    case_lines = []
+    _i = 0
+    while _i < len(lines):
+        _ln = lines[_i]
+        if _ln.startswith('bash_case "'):
+            while _ln.endswith('\\') and _i + 1 < len(lines):
+                _i += 1
+                _ln = _ln[:-1] + lines[_i]
+            case_lines.append(_ln)
+        _i += 1
     stub = "bash_case() { printf '%s\\x00%s\\x00%s\\x00' \"$1\" \"$2\" \"$3\"; }\n"
     script = stub + '\n'.join(case_lines) + '\n'
     p = subprocess.run(['bash', '-c', script], capture_output=True)
