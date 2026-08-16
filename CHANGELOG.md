@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.66.1] - 2026-08-16
+
+### Changed — aria-plugin #128 secret-guard 逐段 fail-safe 判定
+
+复合命令 (`a; b` / `a && b` / `a || b`) 从整条判定改为**逐段独立判定**, 根治 Aria#170 段间 credit 残留 (前段的 `>/dev/null` 豁免漏给后段真泄漏)。实现: `safe_to_split()` 块结构 fail-safe 降级 + `split_top()` 引号感知切顶层 `;`/`&&`/`||` + `_sg_line_match()` 逐行 helper 复刻 grep 记录语义使 13 处 credit 判据零 fork + 判定循环先 pattern 后 credit 且**每段重置 has_filter** + 子 shell 隔离 fail-closed。541 回归全绿; 五档性能 min-based 均 ≤50% (最坏档 +12~34%)。
+
+> **版本顺延**: 起草基线 1.65.5, ship 时并发轨已 ship v1.66.0 (#137 main 分支存在性核验), 故 1.65.6 顺延重算为 **1.66.1** (TASK-023 re-check SOT 机制)。
+
+**两类行为变更 (发版须知)**:
+
+**第 1 类 — 收紧 (`0 → 2`)**: 可安全分段的复合命令中, 单段命中危险 pattern 且该段无 value-redacting filter 时现在会拦 (以前整条的 filter 会遮蔽后段)。**迁移写法 (逐段补 redirect)**:
+- `cat /opt/.env; echo hi >/dev/null` → `cat /opt/.env >/dev/null; echo hi >/dev/null` (或对读 .env 段加 `| jq keys` / `| sha256sum` 等 redacting filter, 或 `# guard:ack: <理由>`)
+- `nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2` → 每段各补 redirect: `nomad var put p1 @f1 >/dev/null; nomad var put p2 @f2 >/dev/null`
+
+**第 2 类 — 跨段放宽 (`2 → 0`, 唯一 fail-open 方向)**: 依赖**跨** `;`/`&&`/`||` 上下文才能匹配的 pattern 逐段化后失配 → 今天拦得住的命令改后放行。工作面 = 82 条可跨段 pattern / 56 个可跨段家族, 实测 51 族 `2→0` (5 族结构性反例仍拦; printf 族因唯一 pattern 要求块字符→必降级, 天然不可跨段, 豁免)。**不需迁移写法** (是防护缩了, 发布须知); 根治见 [aria-plugin#128](https://forgejo.10cg.pub/10CG/aria-plugin/issues/128) 转出 1 (需完整 shell 语法解析, 另 spec)。含块结构 (`{ }`/`for…done`/`$()`/反引号/heredoc) 的命令维持现状 (fail-safe 降级为整条判定), 非本版引入。
+
 ## [1.66.0] - 2026-08-16
 
 ### Fixed
