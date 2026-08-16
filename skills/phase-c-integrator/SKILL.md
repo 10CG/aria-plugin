@@ -164,7 +164,9 @@ C.2.4 - Pre-Merge Precondition Gate (v1.3.0+):
     - 即将调用 branch-manager merge action (auto_merge=true 或 user-triggered continue)
     - 配置 phase_c_integrator.pre_merge_gate.enabled: true (默认)
   primitive 调用:
-    - aether ci status --branch main --in-flight --json (查 main 是否有 in-flight)
+    - aether ci status --branch <MAIN_BRANCH> --in-flight --json (查主干是否有 in-flight)
+      ⚠️ <MAIN_BRANCH> 取本项目主干的真实名字 — **本项目是 `master`, 不是 `main`**。
+      照抄字面 main 正是 aria-plugin #137: 查一个不存在的分支返回「没有在跑的」⇒ 恒放行。
     - aether ci status --branch <PR_BRANCH> --json (查本 PR CI 状态)
     - aria 端 verdict 计算 (aether-pre-merge-check skill 从未实施, P0-B not shipped)
   三态结果:
@@ -246,7 +248,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 2.2. **Main 分支存在性核验** (aria-plugin #137): 在上面两道早退与 precheck 之后、path coverage 评估之前, 先确认 `main_branch` 在目标 remote 上**确实存在**。判据是**解析出的 ref 名列表中的精确字符串比对**, ⛔ 不看退出码 (零命中亦返 0), ⛔ 不用 glob/pattern (会把 `mast*` 当成命中 `master`)。不存在 → `verdict=fail` + `gate_error.kind=main-branch-not-found`; 核验本身没做成 (远端不可达等) → `main-branch-verify-failed`, 二者不可混。**为什么必须有这一步**: backend 结构上无法区分「分支不存在」与「分支没有正在跑的构建」, 两者都返空 runs ⇒ 判 green ⇒ 主干名写错时 Rule #8 这条腿恒真、等于不存在 (本项目主干是 `master` 而缺省值是 `main`, #137 即此)
 
 2.5. **Path coverage 评估** (v1.65.0+, aria-plugin #122; `path_coverage_enabled=true` 默认): `evaluate_path_coverage(main_branch, pr_branch)` 解析仓内 workflow (`.forgejo/.gitea/.github` 三目录) 的 `on:` push/pull_request 触发 paths, 与 `git diff --name-only --no-renames <main>...<pr>` 变更集求交, 三值 decision: `covered` (会/无法排除会触发) / `not_applicable` (高置信零覆盖) / `unknown` (评估失败)。**fail-toward-covered**: 一切不确定 (解析失败 / git 失败 / 未建模构造) → 行为退回现状。**执行上下文契约**: 在执行 C.2 合并的目标仓根内调用 (子模块合并 → 子模块根); `main_branch` 显式传真值 (本项目 `master`), 不依赖 CLI default
-3. **Query main in-flight**: `aether ci status --branch main --in-flight --json` → parse `data.runs[]` — **无条件执行, 不因 not_applicable 免除** ((b) 轴保留; stub backend 的 NotImplementedError 亦经此步照常 propagate)
+3. **Query main in-flight**: `aether ci status --branch <MAIN_BRANCH> --in-flight --json` → parse `data.runs[]` (⚠️ `<MAIN_BRANCH>` 取本项目主干真实名字 —— **本项目是 `master`**; 照抄字面 `main` 即 #137: 查不存在的分支返回「没有在跑的」⇒ 恒放行。步骤 2.2 的核验就是为了让这种错当场暴露) — **无条件执行, 不因 not_applicable 免除** ((b) 轴保留; stub backend 的 NotImplementedError 亦经此步照常 propagate)
 4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending`。**v1.65.0+: decision=not_applicable 时本步跳过** (零覆盖路径不存在可等的 PR CI), `pr_ci_status` 置 `not_applicable`
 5. **Verdict 计算** (aria 端):
    - `pr_ci_status in [failing, error]` → `verdict=fail`
