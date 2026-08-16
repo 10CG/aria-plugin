@@ -1791,6 +1791,22 @@ fi
 
 rm -rf "$sc8_tmp"
 
+# ── TASK-021 (SC-16): 正则可移植性 — bash [[ =~ ]] 下无 (?:, \b\s\w 记 GNU 依赖 ──
+# hook 所有正则 (risky_patterns 141 + BLOCK_KW_RE/SCOPE_KW_RE + 13 处 credit) 运行时
+# 都经 [[ =~ ]]; 回归全绿已间接证明可编译 (含 (?: 会 rc=2 编译失败使 hook 静默走 else)。
+# 本 SC 显式断言, 防未来混入 (?: + 记 \b\s\w 为已知 GNU 依赖 (非 glibc 平台行为差异归
+# 转出 9): (1) hook 源码无字面 (?: (原型 Python 正则的坑, R4 code-reviewer C-1 勘正);
+# (2)(3) \b GNU 词边界扩展工作 —— 命中真词边界, 不误命中词内子串。
+sc16_noncap="$(grep -cF '(?:' "$HOOK")"
+if [[ "$sc16_noncap" == "0" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-16: 无 (?: 非捕获组]: hook 含 $sc16_noncap 处字面 (?: —— bash POSIX ERE 不支持, [[ =~ ]] 会 rc=2 编译失败静默走 else (假阴)。改用普通分组 (…)。")
+fi
+bash_case "SC-16: \\b GNU 词边界命中真边界 (pg_dump 拦)" 2 'pg_dump mydb > /tmp/dump.sql'
+bash_case "SC-16: \\b GNU 词边界不误命中词内子串 (pg_dumpling 放行)" 0 'pg_dumpling --help'
+
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
 echo
