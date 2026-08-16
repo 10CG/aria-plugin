@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 366 cases across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 541 cases across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1806,6 +1806,20 @@ else
 fi
 bash_case "SC-16: \\b GNU 词边界命中真边界 (pg_dump 拦)" 2 'pg_dump mydb > /tmp/dump.sql'
 bash_case "SC-16: \\b GNU 词边界不误命中词内子串 (pg_dumpling 放行)" 0 'pg_dumpling --help'
+
+# ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
+# 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,
+# 使 pass+fail+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
+# 顶部 "Coverage: N cases") 与本断言会一起提醒同步。secret-hygiene.md 三处 + 本 spec
+# SC-11 正文的一致由 TASK-020/026 回填时机械 grep 确认 (跨仓, 不在本 test 内断言)。
+sc13_header_n="$(grep -oE 'Coverage: [0-9]+ cases' "$0" | grep -oE '[0-9]+' | head -1)"
+sc13_total_expected=$((pass + fail + 1))
+if [[ "$sc13_header_n" == "$sc13_total_expected" ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-13: 头注释计数同步]: 顶部 'Coverage: $sc13_header_n cases' != 本次实跑总数 $sc13_total_expected -- 回填 secret-guard.test.sh 顶部 Coverage 数 (+ secret-hygiene.md 三处 + proposal SC-11 正文, 权威值=实跑 N)。")
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 total=$((pass + fail))
