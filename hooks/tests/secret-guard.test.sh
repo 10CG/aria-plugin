@@ -1489,7 +1489,7 @@ case "$sc7_verdict" in
     ;;
 esac
 
-# ── TASK-016 (SC-19): 57-family completeness self-check ────────────────────
+# ── TASK-016 (SC-19): family completeness self-check (56 spanning; printf owner-exempted 2026-08-16) ──
 # Hard criterion (proposal.md SC-19 "完备判据"): every family in
 # corpus_census.py's families.family_table must have >=1 probe among the two
 # blocks above. Family names come from a LIVE census run (never hand-copied)
@@ -1500,7 +1500,7 @@ esac
 # 'GRP:(cat|head|...)', or containing literal backslashes) and treating one
 # as a live regex here would be self-defeating.
 #
-# KNOWN, INVESTIGATED GAP -- family 'printf' (sole member: pattern idx88,
+# OWNER-EXEMPTED FAMILY (owner 2026-08-16) -- family 'printf' (sole member: pattern idx88,
 # `printf ... -v ... [^|]*\$\([[:space:]]*<...\.env`) requires a LITERAL '('
 # to trigger the pattern at all. Machine gate (d) (see the header comment
 # above the first probe block, and TASK-016's execution notes) forbids any
@@ -1510,19 +1510,26 @@ esac
 # aware block-char scanner (parens inside "..." are skipped by
 # _sg_safe_to_split's state machine), but rule 5 explicitly forbids relying
 # on that as an implementation detail the way the python3/print(1) example
-# in the header already forbids it. Per SC-19's own "不达标时的处置路径":
-# Phase B/QA must NOT self-narrow the family target, NOT rule this family
-# "not applicable", and NOT ship a rule-5-violating probe just to force a
-# pass -- the only legal action is to report the gap for owner review. This
-# check therefore asserts the TRUE, un-narrowed 57, and is EXPECTED to be
-# red on 'printf' until an owner decision changes either rule 5 or pattern
-# idx88's own text -- see TASK-016 QA report for the full writeup.
+# in the header already forbids it. The gap was reported for owner review
+# (per SC-19's "不达标时的处置路径"), and owner 2026-08-16 EXEMPTED the printf
+# family: its sole pattern requires a block char, so any command matching it
+# is degraded by _sg_safe_to_split and re-judged whole (still exit=2 post-
+# change, main-loop verified) -- i.e. printf is structurally non-spanning and
+# is covered by SC-6's block-char degrade family, not SC-19. The check below
+# therefore excludes printf and asserts full coverage of the remaining 56
+# spanning families. census family_count is still asserted ==57 (total
+# families, unchanged -- verifies grouping hasn't drifted).
 sc19_census_json="$(python3 "$(dirname "$0")/corpus_census.py" 2>/dev/null)"
 sc19_family_count="$(echo "$sc19_census_json" | jq -r '.families.family_count // "ERR"')"
 sc19_families="$(echo "$sc19_census_json" | jq -r '.families.family_table | keys[]' 2>/dev/null)"
 sc19_missing=()
 while IFS= read -r sc19_fam; do
   [[ -z "$sc19_fam" ]] && continue
+  # owner 2026-08-16: printf family exempted (structurally non-spanning -- its
+  # sole pattern requires a block char, so matching commands are always
+  # degraded + re-judged whole; see comment block above). Excluded from the
+  # required-probe target set.
+  [[ "$sc19_fam" == "printf" ]] && continue
   grep -qF "# family='${sc19_fam}'" "$0" || sc19_missing+=("$sc19_fam")
 done <<< "$sc19_families"
 
@@ -1533,7 +1540,7 @@ elif [[ ${#sc19_missing[@]} -eq 0 ]]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
-  failures+=("FAIL [SC-19: 57-family completeness]: ${#sc19_missing[@]}/${sc19_family_count} family(ies) with zero probe: $(IFS='; '; echo "${sc19_missing[*]}"). If this list is exactly ['printf']: known, investigated, structurally-forced gap (pattern idx88 needs a literal '(' that rule 5 forbids) -- see TASK-016 QA report, do not self-narrow the target or add a rule-5-violating probe. Any OTHER family name appearing here is a real, unexplained regression.")
+  failures+=("FAIL [SC-19: spanning-family completeness]: ${#sc19_missing[@]} spanning family(ies) with zero probe: $(IFS='; '; echo "${sc19_missing[*]}"). printf is owner-exempted (excluded above); any family name here is a real, unexplained coverage regression.")
 fi
 
 # ── TASK-019 (SC-17): self-check — no duplicate case names in this file ────
