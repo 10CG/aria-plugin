@@ -235,6 +235,10 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 | phase-c-integrator C.2.4 | pre-merge gate 三态判定 | gate (本段) |
 | branch-manager (C.2.4-C.2.5) | wait approval + merge API call | gate green 后 |
 
+> 📌 **改这段代码前先读**: [`references/pre-merge-gate-empirical-traps.md`](./references/pre-merge-gate-empirical-traps.md)
+> —— 半页, 7 条实测踩出来的坑 (ls-remote 零命中返 rc=0 · 参数被当 glob · `UnicodeDecodeError` 不是
+> `OSError` 子类 · 核验插入点 · 测试隔离接缝 …)。每一条都不能靠读代码想出来。
+
 **执行流程**:
 
 1. **Aether binary pre-flight check**: `aether --help | grep -q "in-flight"` 验证 binary 含 P0-A flag,缺失 → fail-fast 提示 "请升级 aether ≥ commit f29abee (2026-05-06)"
