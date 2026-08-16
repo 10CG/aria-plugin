@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import time
 import warnings
 from typing import Any
 
@@ -39,6 +41,8 @@ from ci_backends import (
     CIBackend,
     cached_probe,
 )
+# #137: 重试轴复用既有先例, ⛔ 不在本模块另造一套 backoff (memory fix-the-class)。
+from ci_backends.aether import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF
 # v1.65.0+ (#122): path coverage 评估器。模块级符号, 测试经
 # mock.patch.object(gate, "evaluate_path_coverage") 打桩 (镜像 resolve_ci_backend 先例)。
 from path_coverage import evaluate_path_coverage  # noqa: E402
@@ -237,6 +241,7 @@ def _build_output(
     raw_message: str = "",
     primitive_version_sha: str = "",
     path_coverage: dict[str, Any] | None = None,
+    gate_error: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical output dict per SKILL.md §C.2.4 Output schema.
 
@@ -244,6 +249,11 @@ def _build_output(
     且流程走到 compute_verdict 最终路径时在场 (path_coverage 非 None); 各早退
     分支 (enabled:false / no-backend / precheck 失败 / backend query 失败) 保持
     既有六键不变。
+
+    #137: `gate_error` 亦为 additive 可选键 — 仅 main 分支存在性核验判 fail 时
+    在场 (`{"kind": ..., "message": ...}`), 无 path_coverage。它是**副本通道**:
+    同一段文字必定同时写入 `raw_message` (主通道), 消费方只读 raw_message 亦
+    不丢信息。
     """
     # For Aether backend, populate primitive_version_sha from module constant.
     # For other backends, leave empty (or future: backend-specific version).
@@ -260,7 +270,86 @@ def _build_output(
     }
     if path_coverage is not None:
         out["path_coverage"] = path_coverage
+    if gate_error is not None:
+        out["gate_error"] = gate_error
     return out
+
+
+# --- main-branch existence verification (aria-plugin #137) --------------------
+#
+# 症状: 后端结构上无法区分「分支不存在」与「分支没有 in-flight run」—— 两者都
+# 产出 InFlightStatus(runs=[]) ⇒ 判 green。于是把 --main-branch 写成一个远端上
+# 不存在的名字 (本项目主干是 master, 而缺省值是 main), 这条腿恒真。
+#
+# ⛔ 三条实测得出的禁令, 违反任一条都会让核验重新变成摆设:
+#   1. 不得读退出码 —— `git ls-remote` 零命中亦返 rc=0;
+#   2. 不得用 `--exit-code` —— 无命中返 rc=2, 会被 catch-all 误分类成"核验失败";
+#   3. 不得用 pattern/glob 匹配 —— ls-remote 把参数当 glob, 'mast*' 会命中 master。
+# 判据只能落在**解析出的 ref 名列表**上做精确字符串比对。
+_LS_REMOTE_TIMEOUT = 30
+
+
+def _sanitize_for_json(text: str) -> str:
+    """剥掉孤立代理码位, 使字符串能过 json.dumps / encode(strict)。
+
+    stderr 用 errors="surrogateescape" 解码 (它永不抛), 但可能留下孤立代理码位;
+    那些码位会在 **json.dumps 时**炸 UnicodeEncodeError —— 离现场很远。故在出口
+    就地净化。
+    """
+    return text.encode("utf-8", "replace").decode("utf-8")
+
+
+def _verify_main_branch_exists(
+    main_branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
+) -> tuple[str, str]:
+    """核验 `main_branch` 在 `remote` 上确实存在。返回 (status, detail)。
+
+    status ∈ {"ok", "not-found", "verify-failed"} —— 「分支不存在」与「核验本身
+    没做成」必须分开, 二者混为一谈正是本 bug 的形状。
+
+    轴复用 (⛔ 不再造第三份): 异常轴取 path_coverage.py 的
+    `(TimeoutExpired, FileNotFoundError, OSError)` 元组; 重试轴取
+    ci_backends/aether.py 的 `RETRY_BACKOFF`。
+    ⚠️ 只有 TimeoutExpired 重试 —— FileNotFoundError/OSError 是确定性失败, 重试
+    只是白等; rc!=0 同理 (SC-A7 逐字要求"未重试")。
+    ⚠️ ⛔ 不传 `text=True`: 那会让 subprocess 自己解码, 于是 UnicodeDecodeError
+    直接裸抛穿过 gate_check() (且它**不是** OSError 的子类, 上面的元组接不住)。
+    我们自己用 surrogateescape 解码, 该异常结构上不可能发生。
+    ⚠️ 不传 `cwd=`: 继承进程 cwd, 使 `origin` 按调用者所在仓解析。
+    """
+    target = "refs/heads/" + main_branch
+    last_detail = ""
+    for attempt in range(MAX_RETRY_ATTEMPTS):
+        try:
+            proc = subprocess.run(
+                ["git", "ls-remote", "--heads", remote, main_branch],
+                capture_output=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            last_detail = f"{type(exc).__name__}: {exc}"
+            if attempt < MAX_RETRY_ATTEMPTS - 1:
+                time.sleep(RETRY_BACKOFF[attempt])
+                continue
+            return "verify-failed", last_detail
+        except (FileNotFoundError, OSError) as exc:
+            return "verify-failed", f"{type(exc).__name__}: {exc}"
+
+        if proc.returncode != 0:
+            stderr = (proc.stderr or b"").decode("utf-8", errors="surrogateescape")
+            return "verify-failed", (
+                f"git ls-remote rc={proc.returncode}: {stderr.strip()}"
+            )
+
+        stdout = (proc.stdout or b"").decode("utf-8", errors="surrogateescape")
+        ref_names = [
+            line.split("\t", 1)[1].strip()
+            for line in stdout.splitlines()
+            if "\t" in line
+        ]
+        return ("ok" if target in ref_names else "not-found"), ""
+
+    return "verify-failed", last_detail
 
 
 def _no_ci_output(no_ci_fallback: str) -> dict[str, Any]:
@@ -299,6 +388,7 @@ def gate_check(
     pr_branch: str,
     main_branch: str = "main",
     config: dict[str, Any] | None = None,
+    remote: str = "origin",
 ) -> dict[str, Any]:
     """Run the pre-merge gate end-to-end. Return SKILL.md §C.2.4 output dict.
 
@@ -349,6 +439,36 @@ def gate_check(
             in_flight_runs=[],
             primitive_used=backend.name,
             raw_message=precheck_err,
+        )
+
+    # #137: main 分支存在性核验 —— 必须落在上面三道早退 (enabled=false /
+    # no-backend / precheck 失败) **之后**, path coverage 评估**之前**。
+    # ⚠️ 位置是承重的: 放在 path coverage 之后, 一个不存在的分支会先走完覆盖评估;
+    # 放进下面那个 `if cfg.get("path_coverage_enabled", True):` 块内, 则关掉覆盖
+    # 评估的调用方会连这道核验一起失去 —— 那是最自然的误植位置。
+    mb_status, mb_detail = _verify_main_branch_exists(
+        main_branch=main_branch,
+        remote=remote,
+        timeout=int(cfg.get("primitive_call_timeout_seconds", _LS_REMOTE_TIMEOUT)),
+    )
+    if mb_status != "ok":
+        if mb_status == "not-found":
+            kind = "main-branch-not-found"
+            msg = f"main branch '{main_branch}' not found on remote '{remote}'"
+        else:
+            kind = "main-branch-verify-failed"
+            msg = (
+                f"could not verify main branch '{main_branch}' on remote "
+                f"'{remote}': {mb_detail}"
+            )
+        msg = _sanitize_for_json(msg)
+        return _build_output(
+            verdict=VERDICT_FAIL,
+            pr_ci_status="pending",
+            in_flight_runs=[],
+            primitive_used=backend.name,
+            raw_message=msg,
+            gate_error={"kind": kind, "message": msg},
         )
 
     # v1.65.0+ (#122): path coverage 评估 — precheck 之后、(a) PR CI 查询之前
@@ -426,14 +546,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pr-branch", required=True, help="PR feature branch name")
     parser.add_argument("--main-branch", default="main", help="Main branch to check (default: main)")
     parser.add_argument(
+        "--remote",
+        default="origin",
+        help="Remote to verify --main-branch exists on (default: origin)",
+    )
+    parser.add_argument(
         "--config-file",
         default=".aria/config.json",
         help="Path to .aria/config.json (default: .aria/config.json)",
     )
     args = parser.parse_args(argv)
     config = _load_config_from_file(args.config_file)
+    # ⚠️ `remote=args.remote` 这一行是承重的: 只加 add_argument 而漏这行, CLI 上
+    # 传 --remote 会被静默忽略, 核验仍查默认 origin ⇒ 看起来加了参数其实没接线。
     output = gate_check(
-        pr_branch=args.pr_branch, main_branch=args.main_branch, config=config
+        pr_branch=args.pr_branch,
+        main_branch=args.main_branch,
+        config=config,
+        remote=args.remote,
     )
     sys.stdout.write(json.dumps(output, ensure_ascii=False) + "\n")
     sys.stdout.flush()

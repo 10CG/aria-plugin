@@ -62,6 +62,14 @@ class _ProbeCacheResetMixin:
 
     v1.65.0+ (#122): 同时统一 patch gate.evaluate_path_coverage (QA-3 隔离方法论)
     — 既有测试不因 path_coverage_enabled 默认 true 触发真实 git 子进程 (SC-22)。
+
+    #137: 同一先例原样推广到 gate._verify_main_branch_exists —— 该核验对每次
+    gate_check 发一次 `git ls-remote <remote> <branch>`, 实测单次 **8.7 秒**
+    (SSH 到远端), 28 处打桩 backend 的既有测试都会走到它 ⇒ 不统一打桩则套件由
+    1.6 秒变成分钟级, 且判决随网络可达性漂移。
+    ⚠️ 打桩点是**这一处**, ⛔ 不逐条改 28 个测试 (那会把「同一形状散在 28 处」
+    这个病复制一遍); 需要验真实核验的测试自行用 self.mb_verify 改返回值或
+    stop 掉这个 patcher。
     """
 
     def setUp(self) -> None:  # type: ignore[override]
@@ -74,6 +82,11 @@ class _ProbeCacheResetMixin:
         )
         self.pc_eval = patcher.start()
         self.addCleanup(patcher.stop)
+        mb_patcher = mock.patch.object(
+            gate, "_verify_main_branch_exists", return_value=("ok", "")
+        )
+        self.mb_verify = mb_patcher.start()
+        self.addCleanup(mb_patcher.stop)
 
     def tearDown(self) -> None:  # type: ignore[override]
         reset_probe_cache()
@@ -742,6 +755,183 @@ class PathCoverageGateTests(_ProbeCacheResetMixin, unittest.TestCase):
         )
         self.assertEqual(out_wait["verdict"], "wait")
         self.assertIn("(b)-axis", out_wait["raw_message"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# #137 — main 分支存在性核验
+#
+# 症状: 后端结构上无法区分「分支不存在」与「分支没有 in-flight run」, 两者都返
+# InFlightStatus(runs=[]) ⇒ 判 green。本项目主干是 master 而 --main-branch 缺省
+# "main" ⇒ Rule #8 的这条腿恒真, 等于不存在。
+#
+# ⛔ 本组**不打桩核验入口 / 不打桩 ls-remote** —— 打了就退化成恒真, 什么都没测。
+# 用真实 `git ls-remote` + 受控裸仓。backend 仍打桩 (否则要么依赖本机装没装
+# aether, 要么在无 backend 时走 :339 早退, 两种都测不到核验)。
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _make_bare_repo(tmpdir: str, name: str, branches: list[str]) -> str:
+    """建一个受控裸仓, 只含指定分支。返回其路径。"""
+    import subprocess as sp
+
+    work = os.path.join(tmpdir, name + "-work")
+    bare = os.path.join(tmpdir, name + ".git")
+    os.makedirs(work)
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    run = lambda *a, **k: sp.run(a, cwd=work, env=env, check=True,
+                                 capture_output=True, **k)
+    run("git", "init", "-q")
+    with open(os.path.join(work, "f"), "w") as fh:
+        fh.write("x")
+    run("git", "add", "f")
+    run("git", "commit", "-qm", "init")
+    first = branches[0]
+    run("git", "branch", "-M", first)
+    for b in branches[1:]:
+        run("git", "branch", b)
+    sp.run(["git", "init", "--bare", "-q", bare], check=True, capture_output=True)
+    run("git", "remote", "add", "origin", bare)
+    for b in branches:
+        run("git", "push", "-q", "origin", b)
+    return bare
+
+
+class MainBranchExistenceTests(unittest.TestCase):
+    """#137 的承重测试组。真实 ls-remote, 受控裸仓。
+
+    ⚠️ **刻意不继承 `_ProbeCacheResetMixin`** —— 它会统一打桩掉核验入口, 而本组
+    要测的正是那个入口。这里自己做隔离: 重置 probe cache + 只打桩 path coverage。
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        reset_probe_cache()
+        self.addCleanup(reset_probe_cache)
+        p = mock.patch.object(
+            gate, "evaluate_path_coverage", return_value=dict(_PC_COVERED_STUB)
+        )
+        p.start()
+        self.addCleanup(p.stop)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _stub_backend(self, in_flight_runs=None):
+        """可解析的 backend —— 使流程越过三道早退真正走到核验。"""
+        b = mock.MagicMock()
+        b.name = "aether-ci-cli"
+        b.probe.return_value = True
+        b.precheck.return_value = (True, "")
+        b.query_branch_in_flight.return_value = InFlightStatus(
+            runs=in_flight_runs or []
+        )
+        b.query_pr_ci_status.return_value = "success"
+        return b
+
+    def _gate(self, remote: str, main_branch: str, backend=None):
+        with mock.patch.object(
+            gate, "resolve_ci_backend", return_value=backend or self._stub_backend()
+        ):
+            return gate.gate_check(
+                pr_branch="feature/x", main_branch=main_branch, remote=remote
+            )
+
+    # --- 承重: bug 本体 ------------------------------------------------------
+
+    def test_absent_main_branch_now_fails_instead_of_green(self):
+        """#137 本体: 远端只有 wip/master, 传 master ⇒ 必须 fail, 不得 green。"""
+        bare = _make_bare_repo(self._tmp.name, "r", ["wip/master"])
+        out = self._gate(bare, "master")
+        self.assertEqual(out["verdict"], "fail")
+        self.assertEqual(out["gate_error"]["kind"], "main-branch-not-found")
+        # raw_message 是主通道, 必须自带分支名与 remote 名 (只写 gate_error 不够)
+        self.assertIn("master", out["raw_message"])
+        self.assertIn(bare, out["raw_message"])
+
+    def test_zero_hit_returns_rc0_so_exit_code_must_not_be_the_criterion(self):
+        """零命中时 ls-remote 仍返 rc=0 —— 读退出码的实现会在这里判 green。"""
+        bare = _make_bare_repo(self._tmp.name, "r", ["master"])
+        import subprocess as sp
+        probe = sp.run(["git", "ls-remote", "--heads", bare, "develop"],
+                       capture_output=True)
+        self.assertEqual(probe.returncode, 0)          # 前提: rc=0
+        self.assertEqual(probe.stdout.strip(), b"")    # 前提: 零行输出
+        out = self._gate(bare, "develop")
+        self.assertEqual(out["verdict"], "fail")
+        self.assertEqual(out["gate_error"]["kind"], "main-branch-not-found")
+
+    def test_glob_pattern_must_not_count_as_a_hit(self):
+        """ls-remote 把参数当 glob —— 'mast*' 会命中 master。判据须是精确比对。"""
+        bare = _make_bare_repo(self._tmp.name, "r", ["master"])
+        for pat in ("mast*", "m[a]ster", "maste?"):
+            with self.subTest(pattern=pat):
+                out = self._gate(bare, pat)
+                self.assertEqual(out["verdict"], "fail", f"{pat} 被当成命中了")
+                self.assertEqual(
+                    out["gate_error"]["kind"], "main-branch-not-found"
+                )
+
+    # --- 负控: 不得改变正常路径判决 -----------------------------------------
+
+    def test_existing_branch_does_not_change_the_verdict(self):
+        """分支确实存在时, 核验必须放行, 判决仍由 in-flight 决定 (此处 wait)。"""
+        bare = _make_bare_repo(self._tmp.name, "r", ["master"])
+        backend = self._stub_backend(
+            in_flight_runs=[{"run_id": "1", "branch": "master",
+                             "started_at": "", "elapsed_seconds": 1}]
+        )
+        out = self._gate(bare, "master", backend=backend)
+        self.assertEqual(out["verdict"], "wait")
+        self.assertNotIn("gate_error", out)
+
+    # --- 核验本身失败 ≠ 分支不存在 ------------------------------------------
+
+    def test_unreachable_remote_is_verify_failed_not_not_found(self):
+        """指向不存在路径的 remote ⇒ rc=128 ⇒ 核验失败, 且不得误报成「分支不存在」。"""
+        out = self._gate("/tmp/does-not-exist-repo-xyz", "master")
+        self.assertEqual(out["verdict"], "fail")
+        self.assertEqual(out["gate_error"]["kind"], "main-branch-verify-failed")
+
+    def test_verify_failure_is_not_retried(self):
+        """rc!=0 是确定性失败, 重试只是白等 —— 断言只调用一次。"""
+        with mock.patch.object(gate.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=128, stdout=b"", stderr=b"boom")
+            self._gate("nope", "master")
+        self.assertEqual(run.call_count, 1)
+
+    # --- 出口净化: 孤立代理码位不得炸在 json.dumps ---------------------------
+
+    def test_output_survives_strict_encode(self):
+        """stderr 含孤立代理码位时, 返回的字符串仍须能过 encode(strict)/json。"""
+        with mock.patch.object(gate.subprocess, "run") as run:
+            run.return_value = mock.Mock(
+                returncode=128, stdout=b"", stderr=b"fatal: \xff\xfe bad"
+            )
+            out = self._gate("nope", "master")
+        out["raw_message"].encode("utf-8", "strict")
+        out["gate_error"]["message"].encode("utf-8", "strict")
+        json.dumps(out, ensure_ascii=False)
+
+    # --- CLI 接线 ------------------------------------------------------------
+
+    def test_cli_remote_flag_is_actually_wired(self):
+        """只加 add_argument 而漏 remote=args.remote 的实现会在这里红。"""
+        bare = _make_bare_repo(self._tmp.name, "r", ["wip/master"])
+        with mock.patch.object(
+            gate, "resolve_ci_backend", return_value=self._stub_backend()
+        ), mock.patch.object(
+            gate, "evaluate_path_coverage", return_value=dict(_PC_COVERED_STUB)
+        ), mock.patch.object(gate.sys.stdout, "write") as w:
+            rc = gate.main(["--pr-branch", "feature/x",
+                            "--main-branch", "master", "--remote", bare])
+        self.assertEqual(rc, 0)
+        payload = json.loads("".join(c.args[0] for c in w.call_args_list))
+        self.assertEqual(payload["verdict"], "fail")
+        self.assertEqual(payload["gate_error"]["kind"], "main-branch-not-found")
 
 
 if __name__ == "__main__":
