@@ -10,6 +10,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.66.0] - 2026-08-16
+
+### Fixed
+
+- **`phase-c-integrator`: main 分支存在性核验 — 关掉 Rule #8 那条恒真的腿** (aria-plugin #137)
+  - 症状: 后端**结构上无法区分**「分支不存在」与「分支没有 in-flight run」—— 两者都返
+    `InFlightStatus(runs=[])` ⇒ 判 `green`。而 `--main-branch` 缺省 `main` 而本项目主干是
+    `master` ⇒ **这条腿恒真, 等于不存在**。
+  - 实证: `--main-branch main` 由恒 `green` 变 `fail` + `kind=main-branch-not-found`;
+    传 `master` 仍 `green` (正常路径不受影响)。
+  - **两份实现都已加固**: `gate_check()` 新增核验步 (§C.2.4 步骤 2.2); SKILL.md 散文流程里
+    两处写死的 `--branch main` 换成 `<MAIN_BRANCH>` 占位符 + 就地写明取值来源。
+  - ⚠️ 判据是**解析出的 ref 名列表上的精确字符串比对**: ⛔ 不读退出码 (零命中亦返 rc=0) ·
+    ⛔ 不用 `--exit-code` (无命中返 rc=2, 会被误分类) · ⛔ 不用 glob (`mast*` 会命中 `master`)。
+
+### Added
+
+- **`gate_check(..., remote: str = "origin")`** —— 带默认值, 25 处既有调用零改动; `main()` 新增
+  `--remote` **并接线**。
+- **`gate_error`** additive 可选输出键 (`{kind, message}`) —— `raw_message` 仍是主通道, 同文双写。
+- **`skills/phase-c-integrator/references/pre-merge-gate-empirical-traps.md`** —— 半页, 7 条实测坑
+  (改这段代码前先读)。九轮审计 2838 行规格里真正救过命的就是这些。
+
+### Testing
+
+- **111 → 119 passed**, 零回归。8 条新用例走**真实 `ls-remote` + 受控裸仓** (⛔ 不打桩核验入口)。
+- **红窗**: 8 条在修复前全红。**拒绝能力对抗验证**: 坏实现「读退出码」被 4 条拒、「子串宽松匹配」被 2 条拒。
+- 测试隔离照抄 #122 先例, 在 `_ProbeCacheResetMixin` **一处**统一打桩 (单次 `ls-remote` 实测 **8.7 秒** × 28 处测试)。
+
+### Rule #6
+
+照跑 AB, **不申请任何豁免**。通过率 **10/10 (100%) vs 基线 6/10 (60%), +40pp**。
+⚠️ 既有两套件覆盖不到 §C.2.4 (在案 issue #127) ⇒ 按判据表第三行补建定向 fixture (旧版 1/4 / 新版 4/4)。
+结果: `aria-plugin-benchmarks/ab-results/2026-08-16-v1.66.0-137-rule6/`。
+
+⚠️ **本次不构成 #137 闭环的全部**: 散文流程与 helper 仍是两份实现 (只是都对了); 彻底收敛是后续可选项。
+
 ## [1.65.5] - 2026-08-02
 
 ### Fixed — 陈旧计数同步 (v1.65.4 收尾, 零行为变更)
