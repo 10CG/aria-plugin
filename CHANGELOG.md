@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.66.2] - 2026-08-19
+
+### Fixed — 两件 #128 转出修复 (aria-plugin #147 / #145)
+
+**#147 UnicodeDecodeError 类级修复**: `issubclass(UnicodeDecodeError, OSError) == False` (ValueError 族) — `text=True` 调用点的 `(OSError, TimeoutExpired)` 形状 except 元组接不住解码异常。修类不修实例: 11 个生产调用点 / 8 文件统一加 `errors="replace"` (解码永不抛; U+FFFD JSON-safe, 无 surrogateescape 出口净化负担; canonical 先例 `coordination_ref.py` #61), 新增 repo-wide AST 守卫 `tests/test_subprocess_decode_guard.py` (生产面每个 `text=True` 调用点必须 `errors=` kwarg 或 ValueError 族 except; 修复前 RED 恰 11 点位)。普查勘正: issue 初筛的 `coordination_ref.py:255` 是假阳性 (已带 `errors="replace"`), 判据须含 `errors=` 维度。
+
+**#145 BLOCKED 回显值脱敏 (Rule #7)**: exit-2 stderr 被 harness 回喂 AI (chat-visible), 内联真值时拦截回显本身成泄漏面。`Command was:` (先于 v1.66.1 存在) 与 `Triggering segment:` (v1.66.1 新增) 两发射点**同改**, 经 `_sg_redact_echo` 结构保留脱敏: `key=value` (引号感知) 与 ≥20 字符 `[A-Za-z0-9+=_-]` 裸 token → `[REDACTED]`; 类不含 `/` 保路径诊断价值; 宁过度脱敏, 无 `=` 短位置参数为已知残余 (全解析属 #138)。SC-22 5 断言 baseline-failing; SC-21 无值 fixture 逐字节不变 (契约演进为脱敏后形态 exact match)。
+
+**SC-13 恒红修类**: 总数随 zsh 在场与否变化, 单一钉死值在无 zsh 机恒红 (实测 541 vs 535 零信息)。头注释改双值 `546 cases (540 without zsh)`, 断言接受任一。secret-hygiene.md 三处计数已同步 (standards `c8ff650`)。
+
+回归: secret-guard 540/540 (本机无 zsh) + guard 3/3 + issue-triage 115 + phase-c-integrator 119 + state-scanner 1312 全绿 (`test_collision`/`test_coordination_ref_lib` 收集错误 = #134 在案, master 基线同在)。rule6_note: 纯 .py/hook 运行时变更, 零 SKILL.md 指令面/description 变更 → AB 不适用; substitute = 上述两组 baseline-failing 结构化测试。
+
 ## [1.66.1] - 2026-08-16
 
 ### Changed — aria-plugin #128 secret-guard 逐段 fail-safe 判定
