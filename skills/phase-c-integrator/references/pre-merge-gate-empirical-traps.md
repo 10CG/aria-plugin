@@ -19,7 +19,7 @@
 
 | # | 坑 | 后果 |
 |---|---|---|
-| 4 | **`UnicodeDecodeError` 不是 `OSError` 的子类** (`issubclass(...)` = `False`) | 传 `text=True` 让 subprocess 自己解码时, 远端返回非 UTF-8 stderr ⇒ 该异常**裸抛穿过** `gate_check()`, 而 `(TimeoutExpired, FileNotFoundError, OSError)` 这个元组接不住 |
+| 4 | **`UnicodeDecodeError` 不是 `OSError` 的子类** (`issubclass(...)` = `False`) | 传 `text=True` 让 subprocess 自己解码时, 远端返回非 UTF-8 stderr ⇒ 该异常**裸抛穿过** `gate_check()`, 而 `(TimeoutExpired, FileNotFoundError, OSError)` 这个元组接不住。#147 起有 repo-wide 守卫 `tests/test_subprocess_decode_guard.py`: 新增 `text=True` 调用点若无 `errors=` 又没接 ValueError 族即红 |
 | 5 | **`errors="surrogateescape"` 解码永不抛, 但会留下孤立代理码位** | 那些码位在**下游 `json.dumps` 时**才炸 `UnicodeEncodeError` —— 离现场很远, 极难定位 |
 
 **⇒ 自己用 `capture_output=True` 取 bytes + `surrogateescape` 解码 (⛔ 不传 `text=True`), 并在出口做净化**

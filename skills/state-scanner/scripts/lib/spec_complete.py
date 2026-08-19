@@ -864,6 +864,7 @@ def _grep_symbol_occurrences(
             ["git", "-C", str(project_root), "grep", "-n", "-I", "-F", "--recurse-submodules", "--", symbol],
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
             timeout=30,
         )
         if proc.returncode in (0, 1):  # 0=found, 1=no matches — both authoritative
@@ -875,6 +876,7 @@ def _grep_symbol_occurrences(
             ["grep", "-rn", "-I", "--exclude-dir=.git", "-F", "--", symbol, str(project_root)],
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
             timeout=30,
         )
         # grep exit: 0=found / 1=no match (both authoritative); ≥2=error → partial/degraded

@@ -151,6 +151,7 @@ class AetherBackend(CIBackend):
                     [self.binary, "ci", "status", "--help"],
                     capture_output=True,
                     text=True,
+                    errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
                     timeout=10,
                 )
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -174,6 +175,7 @@ class AetherBackend(CIBackend):
                     [self.binary] + args,
                     capture_output=True,
                     text=True,
+                    errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
                     timeout=self.timeout,
                 )
                 return result.returncode, result.stdout or "", result.stderr or ""

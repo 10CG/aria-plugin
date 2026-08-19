@@ -345,6 +345,7 @@ def _run_check(
             shell=True,  # schema documents `command` as a shell script; see module docstring
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
             timeout=effective_timeout,
             check=False,
         )

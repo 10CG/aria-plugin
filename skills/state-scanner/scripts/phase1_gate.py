@@ -241,6 +241,7 @@ def _is_git_repo(path: Path) -> bool:
             ["git", "-C", str(path), "rev-parse", "--git-dir"],
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
             timeout=10,
         )
         return result.returncode == 0

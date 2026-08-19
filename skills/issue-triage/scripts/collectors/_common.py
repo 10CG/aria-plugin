@@ -41,6 +41,7 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 10) -> tuple[int, str, str]:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
             timeout=timeout,
             check=False,
         )

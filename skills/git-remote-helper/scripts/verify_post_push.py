@@ -64,7 +64,7 @@ def get_configured_remotes(repo: str) -> list[str]:
     try:
         result = subprocess.run(
             ["git", "-C", repo, "remote"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, errors="replace", timeout=10
         )
         if result.returncode != 0:
             return []
@@ -90,6 +90,7 @@ def ls_remote(
             ["git", "-C", repo, "ls-remote", remote, f"refs/heads/{branch}"],
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
             timeout=timeout,
         )
         if result.returncode == 128:

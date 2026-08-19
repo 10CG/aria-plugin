@@ -131,6 +131,7 @@ def _run_scan(project_root: Path, offline: bool = False) -> dict:
         [sys.executable, str(SCAN_SCRIPT), "--project-root", str(project_root)],
         capture_output=True,
         text=True,
+        errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
         timeout=60,
         check=False,
         env=env,

@@ -119,6 +119,7 @@ def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str, str]:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            errors="replace",  # #147: decode never raises (UnicodeDecodeError is ValueError-family)
         )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:

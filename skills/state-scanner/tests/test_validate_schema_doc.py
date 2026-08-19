@@ -43,8 +43,8 @@ class TestRunScanOfflineFlag(unittest.TestCase):
     def test_offline_true_sets_env_var(self):
         captured = {}
 
-        def fake_run(cmd, capture_output, text, timeout, check, env):
-            captured["env"] = env
+        def fake_run(cmd, **kwargs):  # kwargs-style: robust to call-shape growth (#147 added errors=)
+            captured["env"] = kwargs["env"]
             return _fake_completed({"a": 1})
 
         with mock.patch.object(vsd.subprocess, "run", side_effect=fake_run):
@@ -59,8 +59,8 @@ class TestRunScanOfflineFlag(unittest.TestCase):
         env is passed through verbatim, just not augmented)."""
         captured = {}
 
-        def fake_run(cmd, capture_output, text, timeout, check, env):
-            captured["env"] = env
+        def fake_run(cmd, **kwargs):  # kwargs-style: robust to call-shape growth (#147 added errors=)
+            captured["env"] = kwargs["env"]
             return _fake_completed({"a": 1})
 
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -77,8 +77,8 @@ class TestRunScanOfflineFlag(unittest.TestCase):
         silently start skipping network validation."""
         captured = {}
 
-        def fake_run(cmd, capture_output, text, timeout, check, env):
-            captured["env"] = env
+        def fake_run(cmd, **kwargs):  # kwargs-style: robust to call-shape growth (#147 added errors=)
+            captured["env"] = kwargs["env"]
             return _fake_completed({"a": 1})
 
         with mock.patch.dict(os.environ, {}, clear=False):
