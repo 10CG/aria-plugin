@@ -892,6 +892,24 @@ declare -a risky_patterns=(
   'wget[[:space:]]+[^|]*--post-file=[^|]*'                                                           # wget --post-file=.env
 )
 
+# _sg_redact_echo() — value-shaped token redaction for BLOCKED stderr echoes
+# (aria-plugin #145, Rule #7: exit-2 stderr is fed back to the AI = chat-visible;
+# an inlined literal value in the blocked command would otherwise be echoed
+# verbatim — the guard itself becoming the leak). Structure-preserving:
+#   (a) key=value / key="v v" / key='v v'  ->  key=[REDACTED]
+#   (b) bare runs of >=20 chars in [A-Za-z0-9+=_-] (base64/hex/token shapes)
+#       -> [REDACTED]; `/` deliberately NOT in the class so filesystem paths
+#       keep their diagnostic value.
+# Over-redaction is acceptable (fail toward redaction); short positional
+# secrets without `=` are a known residual — full-parse precision is #138's
+# domain. Runs only on the (rare) block path: one sed fork, outside the
+# SC-8-measured judgement hot path.
+_sg_redact_echo() {
+  printf '%s' "$1" | LC_ALL=C sed -E \
+    -e "s/=(\"[^\"]*\"|'[^']*'|[^[:space:]]+)/=[REDACTED]/g" \
+    -e "s/[A-Za-z0-9+=_-]{20,}/[REDACTED]/g"
+}
+
 # _sg_judge_one() — evaluate one string (whole command in "whole" mode, or one
 # top-level segment in "segment" mode) against risky_patterns + credit. $1 =
 # string to judge, $2 = mode (whole|segment). Returns 0 = allow, 2 = blocked
@@ -933,10 +951,10 @@ NOT acceptable (Round 1/2 audit found these create silent bypasses):
 Reviewed one-off bypass (logged to ~/.claude/logs/guard-bypass.log):
   ... # guard:ack: <reason ≥ 8 NON-WHITESPACE chars describing why>
 
-Command was: $command
+Command was: $(_sg_redact_echo "$command")
 EOF
         if [[ "$mode" == "segment" ]]; then
-          echo "Triggering segment: $seg" >&2
+          echo "Triggering segment: $(_sg_redact_echo "$seg")" >&2
         fi
         return 2
       fi

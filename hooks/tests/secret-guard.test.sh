@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 541 cases across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 546 cases (540 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1173,6 +1173,65 @@ else
   failures+=("FAIL [SC-21b: Triggering-segment exact string equality]: got [$sc21_got_seg] want [$sc21_want_seg]")
 fi
 
+# ── SC-22 (aria-plugin #145): BLOCKED stderr echoes are value-REDACTED ──
+# Both emission sites (Command-was heredoc line + Triggering-segment echo)
+# route through _sg_redact_echo: key=value (bare/quoted) -> key=[REDACTED],
+# bare >=20-char [A-Za-z0-9+=_-] runs -> [REDACTED]. Exit-2 stderr is fed
+# back to the AI (chat-visible), so an inlined literal value must never
+# survive into it. All literals below are FAKE placeholders, not secrets.
+# SC-21 (value-free fixture, byte-exact full echo) pins the negative side:
+# redaction must be a no-op when nothing is value-shaped.
+
+# SC-22a: key=value on both lines (segment mode via trailing safe segment)
+sc22a_cmd='nomad var put secret/demo value=FAKE_PLACEHOLDER_NOT_A_SECRET_9x9; echo hi >/dev/null'
+sc22a_input="$(jq -n --arg c "$sc22a_cmd" '{tool_name: "Bash", tool_input: {command: $c}}')"
+sc22a_stderr="$(echo "$sc22a_input" | "$HOOK" 2>&1 >/dev/null)"
+if printf '%s' "$sc22a_stderr" | grep -q 'FAKE_PLACEHOLDER_NOT_A_SECRET_9x9'; then
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-22a: inlined value leaked into BLOCKED stderr]")
+else
+  pass=$((pass + 1))
+fi
+sc22a_cmd_line="$(printf '%s\n' "$sc22a_stderr" | grep '^Command was: ')"
+if [[ "$sc22a_cmd_line" == *'value=[REDACTED]'* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-22a: Command-was line missing value=[REDACTED]]: got [$sc22a_cmd_line]")
+fi
+sc22a_seg_line="$(printf '%s\n' "$sc22a_stderr" | grep '^Triggering segment: ')"
+if [[ "$sc22a_seg_line" == *'value=[REDACTED]'* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-22a: Triggering-segment line missing value=[REDACTED] — the second emission site must redact too, not only Command-was]: got [$sc22a_seg_line]")
+fi
+
+# SC-22b: bare >=20-char positional token (no `=`) is redacted
+sc22b_cmd='cat /opt/.env FAKEPOSITIONALTOKENABCDEFGHIJ'
+sc22b_input="$(jq -n --arg c "$sc22b_cmd" '{tool_name: "Bash", tool_input: {command: $c}}')"
+sc22b_stderr="$(echo "$sc22b_input" | "$HOOK" 2>&1 >/dev/null)"
+if printf '%s' "$sc22b_stderr" | grep -q 'FAKEPOSITIONALTOKENABCDEFGHIJ'; then
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-22b: >=20-char bare token leaked into BLOCKED stderr]")
+else
+  pass=$((pass + 1))
+fi
+
+# SC-22c: double-quoted value (with spaces) fully redacted, quotes included
+sc22c_cmd='nomad var put p value="FAKE spaced value"'
+sc22c_input="$(jq -n --arg c "$sc22c_cmd" '{tool_name: "Bash", tool_input: {command: $c}}')"
+sc22c_stderr="$(echo "$sc22c_input" | "$HOOK" 2>&1 >/dev/null)"
+if printf '%s' "$sc22c_stderr" | grep -q 'FAKE spaced'; then
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-22c: quoted spaced value leaked into BLOCKED stderr]")
+elif printf '%s\n' "$sc22c_stderr" | grep '^Command was: ' | grep -q 'value=\[REDACTED\]'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failures+=("FAIL [SC-22c: Command-was line missing value=[REDACTED] for quoted value]")
+fi
+
 # ── TASK-018 (SC-9a): dogfood — 5 categories / 6 commands, canonical direct-call gate ──
 # Every command asserts BOTH the pre-change exit AND the post-change exit --
 # a script that only checks the post-change value cannot tell "was already
@@ -1812,9 +1871,13 @@ bash_case "SC-16: \\b GNU 词边界不误命中词内子串 (pg_dumpling 放行)
 # 使 pass+fail+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
 # 顶部 "Coverage: N cases") 与本断言会一起提醒同步。secret-hygiene.md 三处 + 本 spec
 # SC-11 正文的一致由 TASK-020/026 回填时机械 grep 确认 (跨仓, 不在本 test 内断言)。
+# #145 sync 时修类: 总数随 zsh 在场与否变化 (§#154 e2e 条件组), 单一钉死值在
+# 另一类机器上**恒红** (基线实测: 无 zsh 机上 541 vs 535 恒 FAIL, 零信息)。头注释
+# 改为双值 "N cases (M without zsh)", 本断言接受二者之一 == 实跑总数。
 sc13_header_n="$(grep -oE 'Coverage: [0-9]+ cases' "$0" | grep -oE '[0-9]+' | head -1)"
+sc13_header_nozsh="$(grep -oE '\([0-9]+ without zsh\)' "$0" | grep -oE '[0-9]+' | head -1)"
 sc13_total_expected=$((pass + fail + 1))
-if [[ "$sc13_header_n" == "$sc13_total_expected" ]]; then
+if [[ "$sc13_header_n" == "$sc13_total_expected" || "${sc13_header_nozsh:-}" == "$sc13_total_expected" ]]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
