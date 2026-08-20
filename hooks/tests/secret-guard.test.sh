@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 546 cases (540 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 558 cases (552 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1173,6 +1173,29 @@ else
   failures+=("FAIL [SC-21b: Triggering-segment exact string equality]: got [$sc21_got_seg] want [$sc21_want_seg]")
 fi
 
+# ── #153 (L1): Forgejo credential-RESPONSE endpoints ──────────────────────
+# Command shape is harmless — the credential arrives in the RESPONSE
+# (2026-08-20 registration-token incident). Request-side prevention because
+# PostToolUse cannot redact (#91). Endpoint-anchored per Aria#179 problem-2.
+bash_case "153 forgejo reg-token bare" 2 \
+  'forgejo GET /repos/10CG/aria-plugin/actions/runners/registration-token'
+bash_case "153 forgejo reg-token devnull" 0 \
+  'forgejo GET /repos/10CG/aria-plugin/actions/runners/registration-token >/dev/null'
+bash_case "153 forgejo reg-token wc" 0 \
+  'forgejo GET /repos/10CG/aria-plugin/actions/runners/registration-token | wc -c'
+bash_case "153 curl internal reg-token" 2 \
+  'curl -s http://192.168.69.200:3000/api/v1/admin/runners/registration-token'
+bash_case "153 forgejo PAT create" 2 \
+  'forgejo POST /users/alice/tokens -d @/tmp/t.json'
+bash_case "153 forgejo PAT delete" 2 \
+  'forgejo DELETE /users/alice/tokens/123'
+bash_case "153 forgejo oauth2" 2 \
+  'forgejo GET /user/applications/oauth2'
+bash_case "153 negative: benign issues endpoint" 0 \
+  'forgejo GET /repos/10CG/Aria/issues'
+bash_case "153 negative: tokens substring boundary" 0 \
+  'forgejo GET /users/alice/tokensmith'
+
 # ── SC-22 (aria-plugin #145): BLOCKED stderr echoes are value-REDACTED ──
 # Both emission sites (Command-was heredoc line + Triggering-segment echo)
 # route through _sg_redact_echo: key=value (bare/quoted) -> key=[REDACTED],
@@ -1575,9 +1598,10 @@ esac
 # is degraded by _sg_safe_to_split and re-judged whole (still exit=2 post-
 # change, main-loop verified) -- i.e. printf is structurally non-spanning and
 # is covered by SC-6's block-char degrade family, not SC-19. The check below
-# therefore excludes printf and asserts full coverage of the remaining 56
-# spanning families. census family_count is still asserted ==57 (total
-# families, unchanged -- verifies grouping hasn't drifted).
+# therefore excludes printf and asserts full coverage of the remaining
+# spanning families. census family_count is asserted ==60: 57 was the #128
+# baseline; +3 = the #153 Forgejo credential-endpoint patterns (2026-08-20,
+# deliberate additions -- each carries its own SC-19 probe below).
 sc19_census_json="$(python3 "$(dirname "$0")/corpus_census.py" 2>/dev/null)"
 sc19_family_count="$(echo "$sc19_census_json" | jq -r '.families.family_count // "ERR"')"
 sc19_families="$(echo "$sc19_census_json" | jq -r '.families.family_table | keys[]' 2>/dev/null)"
@@ -1592,15 +1616,29 @@ while IFS= read -r sc19_fam; do
   grep -qF "# family='${sc19_fam}'" "$0" || sc19_missing+=("$sc19_fam")
 done <<< "$sc19_families"
 
-if [[ "$sc19_family_count" != "57" ]]; then
+if [[ "$sc19_family_count" != "60" ]]; then
   fail=$((fail + 1))
-  failures+=("FAIL [SC-19: census family_count]: want 57, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
+  failures+=("FAIL [SC-19: census family_count]: want 60, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
 elif [[ ${#sc19_missing[@]} -eq 0 ]]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
   failures+=("FAIL [SC-19: spanning-family completeness]: ${#sc19_missing[@]} spanning family(ies) with zero probe: $(IFS='; '; echo "${sc19_missing[*]}"). printf is owner-exempted (excluded above); any family name here is a real, unexplained coverage regression.")
 fi
+
+# ── #153 additions to the SC-19 spanning set (3 new families, 2026-08-20) ──
+# Same engineered shape as the 51 probes above: whole string hits the family's
+# pattern, every top-level segment individually misses it -- per-segment allows
+# (exit 0) = the documented cross-segment fail-open class (#138 tracks the cure).
+# family='EMPTY:\b(forgejo|curl)\b[^|]*runners/registration-token' | 2->0 by construction (#153 pattern is new; no canonical/af87cae baseline exists)
+bash_case "SC-19 fam:forgejo-regtoken cross-seg" 0 \
+  'forgejo GET /repos/o/r/issues; echo runners/registration-token'
+# family='EMPTY:\b(forgejo|curl)\b[^|]*/users/[^[:space:]|/]+/tokens([[:space:]?/]|$)' | 2->0 by construction (#153, no pre-#153 baseline)
+bash_case "SC-19 fam:forgejo-pat-create cross-seg" 0 \
+  'forgejo GET /repos/o/r/issues; echo /users/alice/tokens x'
+# family='EMPTY:\b(forgejo|curl)\b[^|]*/user/applications/oauth2' | 2->0 by construction (#153, no pre-#153 baseline)
+bash_case "SC-19 fam:forgejo-oauth2 cross-seg" 0 \
+  'forgejo GET /repos/o/r/issues; echo /user/applications/oauth2'
 
 # ── TASK-019 (SC-17): self-check — no duplicate case names in this file ────
 # Covers every *_case() helper defined above (bash/read/edit/run/crlf/static/

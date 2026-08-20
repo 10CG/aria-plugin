@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.66.3] - 2026-08-20
+
+### Security — #153 (L1) Forgejo 凭据响应端点族进 secret-guard
+
+**背景 (2026-08-20 实发事故)**: `forgejo GET …/actions/runners/registration-token` 命令形状无害, 凭据在**响应**里 — 原样进入 chat-visible 通道。PreToolUse 只看命令文本故此前放行; PostToolUse 不能 redact (#91 在案) ⇒ 唯一防线是请求侧拦截。与 `nomad inspect` (v1.23.0) / Aria#170 同类。
+
+新增 3 pattern (端点锚定, 控 #179 问题二那类裸词误报): `runners/registration-token` (repo/org/admin 三作用域) / `/users/{u}/tokens` (POST 建 PAT 返明文 sha1; DELETE 同拦, 维护走 `# guard:ack:`) / `/user/applications/oauth2` (返 client_secret)。`forgejo` 与 `curl` 双命令面。已知残余 FP: bash heredoc/字符串里**引用**这些端点路径会命中 — 讨论文本用 Write 工具或运行时拼装 (同 secret-guard-fp 既有口径)。
+
+测试 +12: 5 block (基线红) + 4 负向/filter credit + 3 SC-19 跨段探针 (新 pattern 同属可跨段族, 2→0 类照 #138 口径申报); census `family_count` 基线 57→60 显式过账。**558 (552 无 zsh) 全绿**; secret-hygiene.md 三处计数同步 (standards `faaede2`)。分层: L2 wrapper 响应侧脱敏 = Aether#317, L3 PostToolUse tripwire = #154。
+
+rule6_note: hook pattern 变更非 skill 指令面, AB 不覆盖; substitute = 上述 baseline-failing block 用例 (5/5 修复前 exit 0)。
+
 ## [1.66.2] - 2026-08-19
 
 ### Fixed — 两件 #128 转出修复 (aria-plugin #147 / #145)

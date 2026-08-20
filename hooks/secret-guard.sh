@@ -890,6 +890,14 @@ declare -a risky_patterns=(
   '\bcp[[:space:]]+[^|]*(\.ssh/id_[A-Za-z0-9_]+|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)([[:space:]]|$)'  # cp key dest (also matches key as final EOL arg)
   'tar[[:space:]]+[^|]*\.ssh([^a-zA-Z]|$)[^|]*\|[[:space:]]*(ssh|nc|curl|wget)'                      # tar ~/.ssh | ssh evil (.ssh boundary so .sshconfig doesn't FP)
   'wget[[:space:]]+[^|]*--post-file=[^|]*'                                                           # wget --post-file=.env
+  # ── Forgejo credential-RESPONSE endpoints (aria-plugin #153, 2026-08-20 事故) ──
+  # 命令形状无害, 凭据在响应里 (registration-token 实泄); PostToolUse 不能 redact
+  # (#91), 只能请求侧拦。锚定「命令名 + 端点路径」(Aria#179 问题二: 裸词匹配过火)。
+  # 已知残余 FP: 在 bash heredoc/字符串里引用这些端点路径会命中 —— 讨论文本请用
+  # Write 工具或运行时拼装 (同 secret-guard-fp 既有口径)。同族 L2/L3 见 Aether#317/#154。
+  '\b(forgejo|curl)\b[^|]*runners/registration-token'                                                # runner 注册 token (repo/org/admin 三作用域)
+  '\b(forgejo|curl)\b[^|]*/users/[^[:space:]|/]+/tokens([[:space:]?/]|$)'                            # POST 建 PAT 返明文 sha1 (DELETE 同拦, 用 guard:ack 走维护)
+  '\b(forgejo|curl)\b[^|]*/user/applications/oauth2'                                                 # oauth2 app 返 client_secret
 )
 
 # _sg_redact_echo() — value-shaped token redaction for BLOCKED stderr echoes
