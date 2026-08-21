@@ -20,10 +20,12 @@
 | # | 坑 | 后果 |
 |---|---|---|
 | 4 | **`UnicodeDecodeError` 不是 `OSError` 的子类** (`issubclass(...)` = `False`) | 传 `text=True` 让 subprocess 自己解码时, 远端返回非 UTF-8 stderr ⇒ 该异常**裸抛穿过** `gate_check()`, 而 `(TimeoutExpired, FileNotFoundError, OSError)` 这个元组接不住。#147 起有 repo-wide 守卫 `tests/test_subprocess_decode_guard.py`: 新增 `text=True` 调用点若无 `errors=` 又没接 ValueError 族即红 |
-| 5 | **`errors="surrogateescape"` 解码永不抛, 但会留下孤立代理码位** | 那些码位在**下游 `json.dumps` 时**才炸 `UnicodeEncodeError` —— 离现场很远, 极难定位 |
+| 5 | **`errors="surrogateescape"` 解码永不抛, 但会留下孤立代理码位** | 那些码位在 **utf-8 encode sink** 才炸 `UnicodeEncodeError` —— 即 `json.dumps(..., ensure_ascii=False)` 后 encode、或直接文件写入; **`json.dumps` 默认路径 (ensure_ascii=True) 不炸** (实测, 2026-08-20 subprocess-decode-hardening spec 三 sink 逐一验证, post_spec 两轮审计复现) —— 离现场很远, 极难定位 |
 
 **⇒ 自己用 `capture_output=True` 取 bytes + `surrogateescape` 解码 (⛔ 不传 `text=True`), 并在出口做净化**
-(`s.encode("utf-8","replace").decode("utf-8")`), 使返回值能过 `encode(strict)` / `json.dumps`。
+(`s.encode("utf-8","replace").decode("utf-8")`), 使返回值能过 `encode(strict)` / 各类 encode sink。
+无需保留坏字节语义时, 更简单的等效做法是**单步安全解码** (`errors="replace"`, #147 修复采用 / 或
+`errors="backslashreplace"` 保留字节信息) —— 解码时即不产生代理码位, 无出口净化环节。
 
 ## 三、位置与结构
 
