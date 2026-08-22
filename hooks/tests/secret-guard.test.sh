@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 598 cases (592 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 599 cases (593 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1990,6 +1990,7 @@ bash_case "#179 SC-5 守卫 (A2): cat \${PREFIX}/etc/profile (shell-rc 行 /-根
 bash_case "#179 SC-1 变体 (I-2): cat ~/.claude/./settings.json" 2 'cat ~/.claude/./settings.json'
 bash_case "#179 SC-1 变体 (I-2): cat ~/.claude//settings.json" 2 'cat ~/.claude//settings.json'
 read_case "#179 SC-2 变体 (I-2): Read ~/.claude/./settings.json" 2 '/home/u/.claude/./settings.json'
+read_case "#179 SC-2 变体 (I-2): Read ~/.claude//settings.json" 2 '/home/u/.claude//settings.json'
 
 # ── #179 段结束 ──
 
