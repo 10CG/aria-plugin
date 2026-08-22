@@ -66,6 +66,10 @@ DEFAULT_CONFIG = {
     # v1.65.0+ (#122): 路径覆盖感知默认开启 (owner sign-off 2026-07-27 单独批
     # 默认 true)。fail-toward-covered: 评估不确定时行为与关闭时逐字段一致。
     "path_coverage_enabled": True,
+    # v1.66.5+ (#152): pr_ci_status="not_found" (远端零 run) 连续观测多少次后
+    # 才提示用户人工核验; int ≥2 (不提供 1 —— 单次零 run 太常见于新分支首推,
+    # 阈值 1 会把正常瞬时态当异常提示)。校验见 _effective_prompt_threshold。
+    "no_run_prompt_after_observations": 3,
 }
 
 # Legacy key alias map for soft-deprecation (Hard Constraint #3).
@@ -123,6 +127,88 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
                 )
                 out[new] = _translate_value(old, out.pop(old))
     return out
+
+
+def _effective_prompt_threshold(cfg: dict[str, Any] | None) -> int:
+    """no_run_prompt_after_observations 的有效值 (aria-plugin#152 唯一校验点)。
+
+    cfg=None → 取 DEFAULT_CONFIG 自身; 键缺失 (`.get` 返回 None) → 回落默认值
+    3, **不** warn (未显式配置是正常态, 不是配置错误)。值非 int / 是 bool
+    (bool 是 int 子类, 须先排除, 否则 True 被当成合法整数 1 放行) / <2 → warn
+    一次 (stacklevel=2, 指向调用方而非本函数) 并回落默认值; 阈值 1 未提供 ——
+    单次零 run 在新分支首推场景太常见 (aria-plugin#152 探针), 阈值 1 会把正常
+    瞬时态当异常提示。
+    """
+    source = cfg if cfg is not None else DEFAULT_CONFIG
+    value = source.get("no_run_prompt_after_observations")
+    default = DEFAULT_CONFIG["no_run_prompt_after_observations"]
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+        warnings.warn(
+            f"no_run_prompt_after_observations invalid ({value!r}); "
+            f"must be int >= 2; falling back to {default}",
+            stacklevel=2,
+        )
+        return default
+    return value
+
+
+def _no_run_gate_error(
+    path_coverage: dict[str, Any] | None, threshold: int
+) -> dict[str, Any]:
+    """gate_error 载荷 (aria-plugin#152, pr_ci_status="not_found" 唯一产出点)。
+
+    message 按 `(decision, reason 前缀)` 封闭表, 每档以 "no-run-for-branch: "
+    开头 (使所有档含该子串, 供上游速判/grep)。封闭表 + 显式兜底 —— 不让
+    KeyError 逃出 (理论不可达组合, 如 decision=not_applicable, 也落兜底档而
+    非炸)。⛔ 渲染禁用 `str.format` (后续 dispatch 行含 JSON 花括号会炸);
+    用 f-string/拼接。
+    """
+    if path_coverage is None:
+        message = "no-run-for-branch: 远端零 run; 路径覆盖评估已关闭"
+    else:
+        decision = path_coverage.get("decision")
+        reason = path_coverage.get("reason") or ""
+        if decision == "covered" and reason == "workflow-trigger-matched":
+            matched = path_coverage.get("matched_workflows") or []
+            message = (
+                f"no-run-for-branch: 变更 path-matched {', '.join(matched)} "
+                "但远端零 run — 符合 aria-plugin#152 (新分支首推 × paths 过滤, "
+                "Forgejo 不建 run), 或 run 尚未被 runner 领走, 或 workflow "
+                "branches 过滤不含本分支"
+            )
+        elif decision == "covered" and reason == "workflow-files-changed":
+            message = (
+                "no-run-for-branch: 变更含 workflow 文件本身 (按 covered) 但"
+                "远端零 run — 同 aria-plugin#152 形态, 或 run 尚未被 runner "
+                "领走, 或 workflow branches 过滤不含本分支"
+            )
+        elif decision == "covered" and reason == "empty-diff":
+            message = (
+                "no-run-for-branch: main...PR 三点 diff 为空, 无变更可跑; "
+                "远端零 run"
+            )
+        elif decision == "unknown" and reason.startswith(
+            ("git-diff-failed", "workflow-parse-failed", "internal-error")
+        ):
+            message = (
+                f"no-run-for-branch: 远端零 run; 路径覆盖未判定 (reason={reason})"
+            )
+            if reason.startswith("internal-error"):
+                message += " — 评估器自身异常, 请报 issue"
+        else:
+            # 兜底: 封闭表外的任何组合 (含理论不可达的 not_applicable) —— 显式
+            # 兜底而非 KeyError/IndexError 逃出。
+            message = (
+                f"no-run-for-branch: 远端零 run (path_coverage "
+                f"decision={decision}, reason={reason})"
+            )
+    return {
+        "kind": "no-run-for-branch",
+        "message": message,
+        "prompt_after_observations": threshold,
+    }
 
 
 def resolve_ci_backend(config: dict[str, Any]) -> CIBackend | None:
@@ -191,9 +277,15 @@ def compute_verdict(
     Note: Returns dict for v1.31.0+ to consolidate the verdict + output_build
     code path that gate_check used to do in two steps. Old `compute_verdict`
     that returned str is replaced — Hard Constraint #10 locks new signature.
+
+    v1.66.5+ (aria-plugin#152): `pr_ci_status == "not_found"` (远端零 run) →
+    verdict=wait + `gate_error={"kind": "no-run-for-branch", ...}` (副本通道
+    #137: 同一段文字同时写进 raw_message)。不论 main in-flight 与否都是 wait
+    ((a) 轴本身就未判定, 无法与 (b) 轴的 green 状态叠加)。
     """
     # Verdict computation (preserved logic from pre_merge_gate.py L217-228).
     raw_message = ""
+    gate_error: dict[str, Any] | None = None
     if pr_ci_status in ("failing", "error"):
         verdict = VERDICT_FAIL
     elif pr_ci_status == "pending":
@@ -216,6 +308,18 @@ def compute_verdict(
                 f"(reason={pc_reason}); PR CI wait skipped (not_applicable); "
                 "main in-flight clear"
             )
+    elif pr_ci_status == "not_found":
+        # v1.66.5+ (#152): 必须落在 not_applicable 之后、main_in_flight_runs
+        # 之前 —— ⚠️ 位置是承重的: 若放到 `elif main_in_flight_runs:` 之后,
+        # (not_found, main 非空) 组合会先被那支 truthy 分支命中 (它不检查
+        # pr_ci_status), gate_error 被悄悄吞掉, 只剩裸 wait 无诊断信息。
+        # 不论 main in-flight 与否都是 wait —— (a) 轴本身未判定, 没有可与
+        # (b) 轴 green 叠加的基础。
+        verdict = VERDICT_WAIT
+        gate_error = _no_run_gate_error(
+            path_coverage, _effective_prompt_threshold(cfg)
+        )
+        raw_message = gate_error["message"]  # 副本通道 #137: 同文同写
     elif main_in_flight_runs:
         # pr_ci_status == "passing" + main has in-flight runs → wait
         verdict = VERDICT_WAIT
@@ -230,6 +334,7 @@ def compute_verdict(
         primitive_used=backend_name,
         raw_message=raw_message,
         path_coverage=path_coverage,
+        gate_error=gate_error,
     )
 
 
@@ -250,10 +355,13 @@ def _build_output(
     分支 (enabled:false / no-backend / precheck 失败 / backend query 失败) 保持
     既有六键不变。
 
-    #137: `gate_error` 亦为 additive 可选键 — 仅 main 分支存在性核验判 fail 时
-    在场 (`{"kind": ..., "message": ...}`), 无 path_coverage。它是**副本通道**:
-    同一段文字必定同时写入 `raw_message` (主通道), 消费方只读 raw_message 亦
-    不丢信息。
+    #137/#152: `gate_error` 亦为 additive 可选键 — 三类在场: (1) main 分支存在性
+    核验判 fail (`main-branch-not-found` / `main-branch-verify-failed`, 无
+    path_coverage); (2) pr-branch 存在性核验判 fail (`pr-branch-not-found`,
+    TASK-006 落地, 未在本次实现); (3) pr_ci_status="not_found" 的 wait 态
+    (`no-run-for-branch`, 带 `prompt_after_observations`, 可与 path_coverage
+    同时在场)。它始终是**副本通道**: 同一段文字必定同时写入 `raw_message`
+    (主通道), 消费方只读 raw_message 亦不丢信息。
     """
     # For Aether backend, populate primitive_version_sha from module constant.
     # For other backends, leave empty (or future: backend-specific version).
