@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.66.4] - 2026-08-22
+
+### Security — Aria#179 secret-guard: claude 配置文件双平面入清单 + 误报收敛
+
+**背景 (2026-08-09 实发事故)**: `jq -c '{model, env: (.env // {})}' ~/.claude/settings.json` 放行, `env` 节点里的 API token 明文进对话 — 该文件不在任何清单 (Bash 面 reader 列表亦无 `jq`; Read/Edit 面 :546 同缺)。同日另一方向: 敏感名出现在正则 alternation 字面量位置 (`grep -oE '(\.bashrc|…)' <hook自身>`) 被误拦。
+
+**漏报修复 (双平面)**: 新 pattern 行 (12 reader + `jq`) + `python3 -c`/`node -e` 源组扩展; Read/Edit 面 +3 分支; 名组容忍 `./` `//` 分隔变体。**credit 收紧 (claude-config 作用域)**: `| jq '{…}'` 形状 credit 纯形状不查字段名, 对真 JSON 源直接泄 `env` — 收紧模式下仅名字面 (`keys`/`length`/`paths`) / `wc` / `sha*` / `>/dev/null` 族有效, 行级过滤 (grep 锚/`-v`/sed/cut/awk) 一并排除; 判定对 `$seg` 重匹配源名组, 混合源恒收紧无顺序依赖。非 claude-config 源 credit 规则零变化。
+
+**误报收敛**: 前置字符白名单两族 — 全名型 `(^|[[:space:]"'=/])` (shell-rc / claude-config) 与后缀型 (+词字符 `*` `.` `-`, 保 `prod.env` `*.env`), 形态 `READER[[:space:]]+([^|]*PP)?(NAMES)` (可选组解单空格裸名争用), 应用 14 行; `/`-根名 (`/etc/profile` `/.aws/credentials` …) 不套白名单 (前一字符是路径前缀末字符非 basename 边界 — 对抗 review 抓出首版 `cat ${HOME}/.aws/credentials` 漏报回归, 已修)。**行为变更申报**: 新拦截 claude-config 三条目 + 收紧 credit (收紧向); 新放行 = 敏感名在非路径前缀位置 (`(` `|` `\` `{` …) 以及全名型前为词字符 (`x.profile` 不是 `.profile`)。已知限三类 (prose 位置完整路径文本 / 引号定界裸名 / bare-filename·glob 变体) 入 hook 头注释, 走 `# guard:ack:`。
+
+测试 +41 (SC-1..5 baseline-failing 红绿留痕 + 7 条 review 守卫 + SC-19 新族跨段探针, census `family_count` 60→61 过账): **599 (593 无 zsh) 全绿**; SC-8 五档 min 增幅 -83%..+9.2%。Spec: 主仓 `openspec/changes/secret-guard-manifest-precision` (post_spec 2 轮 + post_planning 1 轮收敛, Amendment-1/2)。
+
+rule6_note: hook bash 代码 + 测试 + 文档计数, 零 SKILL.md 指令面变更 → substitute = 上述 baseline-failing 结构化测试。
+
 ## [1.66.3] - 2026-08-20
 
 ### Security — #153 (L1) Forgejo 凭据响应端点族进 secret-guard
