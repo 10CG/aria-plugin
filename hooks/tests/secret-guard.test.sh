@@ -1960,7 +1960,21 @@ bash_case "#179 SC-4 多行: heredoc 内含正则字面量" 0 $'cat <<EOF > /tmp
 # (v2: 原形态把 .env 放在管道后段, [^|]* 不可达恒绿; 活体误拦的真实形状是同段内 reader 之后的 prose/注释字面量)
 bash_case "#179 SC-4 .env 面: 前缀 \\ 同段注释字面量 (活体误拦行 :687)" 0 "head -n 5 hooks/secret-guard.sh # rows like (\\.env|\\.envrc)"
 
-# ── #179 后续段 (TASK-003) 追加于此之下 ──
+# ── TASK-003 (SC-3): claude-config 作用域 credit 收紧 (What.1b) ──
+# 基线 = TASK-002 独立 commit 46a374f 的树 (P2-1 可引用中间态):
+#   RED 三类 = jq '{' 形状 / 行级过滤 ×2 / 混合源 (46a374f 上获 credit exit 0);
+#   GREEN = keys / wc / >/dev/null / 直读无管道 (TASK-002 已拦) / .env 对照 (通用面不动)
+bash_case "#179 SC-3 名字面 credit 有效: | jq 'keys'" 0 "cat ~/.claude/settings.json | jq 'keys'"
+bash_case "#179 SC-3 核心: | jq '{env: .env}' 形状 credit 不适用" 2 "cat ~/.claude/settings.json | jq '{env: .env}'"
+bash_case "#179 SC-3 计数 credit 有效: | wc -c" 0 'cat ~/.claude/settings.json | wc -c'
+bash_case "#179 SC-3 丢弃 credit 有效: jq '{model}' f >/dev/null" 0 "jq '{model}' ~/.claude/settings.json >/dev/null"
+bash_case "#179 SC-3 直读无管道无 credit" 2 "jq '{model}' ~/.claude/settings.json"
+bash_case "#179 SC-3 行级过滤排除: | grep '^  \"model\"'" 2 "cat ~/.claude/settings.json | grep '^  \"model\"'"
+bash_case "#179 SC-3 行级过滤排除: | cut -d: -f1" 2 'cat ~/.claude/settings.json | cut -d: -f1'
+bash_case "#179 SC-3 混合源恒收紧 (无顺序依赖): cat ~/.env settings.json | jq '{env}'" 2 "cat ~/.env ~/.claude/settings.json | jq '{env: .env}'"
+bash_case "#179 SC-3 对照组 (.env 通用面不动): cat ~/.env | jq '{env}'" 0 "cat ~/.env | jq '{env: .env}'"
+
+# ── #179 段结束 ──
 
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
 # 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,
