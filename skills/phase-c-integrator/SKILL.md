@@ -52,6 +52,7 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `phase_c_integrator.pre_merge_gate.primitive_call_timeout_seconds` | `30` | 单次 aether subprocess 调用 timeout |
 | `phase_c_integrator.pre_merge_gate.poll_chunk_seconds` | `5` | Ctrl-C polling chunk 大小 |
 | `phase_c_integrator.pre_merge_gate.path_coverage_enabled` | `true` | **v1.65.0+** 路径覆盖感知 (aria-plugin #122): 变更路径结构性无 CI workflow 覆盖时产 `not_applicable`, 跳过 (a) PR CI wait ((b) main in-flight 照查)。见 §C.2.4 步骤 2.5 |
+| `phase_c_integrator.pre_merge_gate.no_run_prompt_after_observations` | `3` | **v1.66.5+** (#152) 远端零 run (`pr_ci_status=not_found`) 连续观测达此次数才 prompt; int ≥2, 不提供 1; 非法值 warn + 回落 3 |
 
 当 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时，C.2 合并前触发 audit-engine (pre_merge 检查点)。
 旧配置 `experiments.agent_team_audit=true` 且 `"pre_merge" in agent_team_audit_points` 自动映射到新配置。
@@ -172,15 +173,16 @@ C.2.4 - Pre-Merge Precondition Gate (v1.3.0+):
   三态结果:
     green:  本 PR CI passing + main 无 in-flight CI → 继续 branch-manager merge
             (v1.65.0+ 亦含: path coverage not_applicable + main 无 in-flight, 带警告放行)
-    wait:   main 有 in-flight CI run OR PR CI pending → 进入 wait+retry (workflow-runner wait_recoverable)
+    wait:   main 有 in-flight CI run OR PR CI pending → 进入 wait+retry (workflow-runner wait_recoverable) OR PR CI not_found (远端零 run, v1.66.5+ #152)
     fail:   PR CI failing OR primitive 错误 → BLOCK + 报告
   output:
     pre_merge_verdict: "green" | "wait" | "fail"
     in_flight_runs: [{run_id, branch, started_at, elapsed_seconds}]   # wait 时
-    pr_ci_status: "passing" | "failing" | "pending" | "not_applicable"   # not_applicable = gate 层产生 (v1.65.0+)
+    pr_ci_status: "passing" | "failing" | "pending" | "not_applicable" | "not_found"   # not_applicable = gate 层产生 (v1.65.0+); not_found = backend 层零 run, v1.66.5+
     primitive_used: "aether-ci-cli" | "manual"
     primitive_version_sha: "f29abee"   # aether-cli #116 baseline
-    path_coverage: {decision, workflows_scanned, matched_workflows, changed_files_count, reason}   # v1.65.0+, 评估执行时在场
+    path_coverage: {decision, workflows_scanned, matched_workflows, changed_files_count, reason, dispatchable_workflows}   # v1.65.0+, 评估执行时在场; dispatchable_workflows v1.66.5+
+    gate_error: {kind, message, prompt_after_observations?}   # v1.66.5+ 三类在场, 见 Output schema
 
 C.2.4.5 - Submodule Pointer Regression Gate (v1.28.0+):
   触发条件:
@@ -245,21 +247,30 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 
 1. **Aether binary pre-flight check**: `aether --help | grep -q "in-flight"` 验证 binary 含 P0-A flag,缺失 → fail-fast 提示 "请升级 aether ≥ commit f29abee (2026-05-06)"
 2. **Backend resolution** (v1.31.0+): `resolve_ci_backend(cfg)` 按 config 显式 `ci_backends` 顺序探测,或 fallback 到 BACKENDS list 静态顺序 (Aether-first, GHA-stub-second);所有 backend probe=False → 按 `no_ci_fallback` 配置降级。详见 §C.2.4.X CI Backends
-2.2. **Main 分支存在性核验** (aria-plugin #137): 在上面两道早退与 precheck 之后、path coverage 评估之前, 先确认 `main_branch` 在目标 remote 上**确实存在**。判据是**解析出的 ref 名列表中的精确字符串比对**, ⛔ 不看退出码 (零命中亦返 0), ⛔ 不用 glob/pattern (会把 `mast*` 当成命中 `master`)。不存在 → `verdict=fail` + `gate_error.kind=main-branch-not-found`; 核验本身没做成 (远端不可达等) → `main-branch-verify-failed`, 二者不可混。**为什么必须有这一步**: backend 结构上无法区分「分支不存在」与「分支没有正在跑的构建」, 两者都返空 runs ⇒ 判 green ⇒ 主干名写错时 Rule #8 这条腿恒真、等于不存在 (本项目主干是 `master` 而缺省值是 `main`, #137 即此)
+2.2. **分支存在性核验: main 恒查 (#137); PR 仅 `pr_ci_status=not_found` 时查 (#152, 第七个早退 `pr-branch-not-found` → fail)**: 在上面两道早退与 precheck 之后、path coverage 评估之前, 先确认 `main_branch` 在目标 remote 上**确实存在** (无条件执行)。PR 分支存在性核验则延后 —— 仅当 (a) 腿 `pr_ci_status` 返回 `not_found` (远端零 run) 时才补一次 (第七个早退, 见步骤 5)。判据是**解析出的 ref 名列表中的精确字符串比对**, ⛔ 不看退出码 (零命中亦返 0), ⛔ 不用 glob/pattern (会把 `mast*` 当成命中 `master`)。main 不存在 → `verdict=fail` + `gate_error.kind=main-branch-not-found`; 核验本身没做成 (远端不可达等) → `main-branch-verify-failed`; PR 分支 (仅 `not_found` 后核验) 不存在 → `verdict=fail` + `gate_error.kind=pr-branch-not-found`; PR 侧核验本身没做成则不早退, 继续 wait, 但 message 末尾附加核验失败详情。以上均不可混。**为什么必须有这一步**: backend 结构上无法区分「分支不存在」与「分支没有正在跑的构建」, 两者都返空 runs ⇒ 判 green ⇒ 主干名写错时 Rule #8 这条腿恒真、等于不存在 (本项目主干是 `master` 而缺省值是 `main`, #137 即此); PR 侧同理 (#152 F5): 「PR 分支不存在」与「存在但零 run」在 backend 出口逐字节同形
 
 2.5. **Path coverage 评估** (v1.65.0+, aria-plugin #122; `path_coverage_enabled=true` 默认): `evaluate_path_coverage(main_branch, pr_branch)` 解析仓内 workflow (`.forgejo/.gitea/.github` 三目录) 的 `on:` push/pull_request 触发 paths, 与 `git diff --name-only --no-renames <main>...<pr>` 变更集求交, 三值 decision: `covered` (会/无法排除会触发) / `not_applicable` (高置信零覆盖) / `unknown` (评估失败)。**fail-toward-covered**: 一切不确定 (解析失败 / git 失败 / 未建模构造) → 行为退回现状。**执行上下文契约**: 在执行 C.2 合并的目标仓根内调用 (子模块合并 → 子模块根); `main_branch` 显式传真值 (本项目 `master`), 不依赖 CLI default
 3. **Query main in-flight**: `aether ci status --branch <MAIN_BRANCH> --in-flight --json` → parse `data.runs[]` (⚠️ `<MAIN_BRANCH>` 取本项目主干真实名字 —— **本项目是 `master`**; 照抄字面 `main` 即 #137: 查不存在的分支返回「没有在跑的」⇒ 恒放行。步骤 2.2 的核验就是为了让这种错当场暴露) — **无条件执行, 不因 not_applicable 免除** ((b) 轴保留; stub backend 的 NotImplementedError 亦经此步照常 propagate)
-4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending`。**v1.65.0+: decision=not_applicable 时本步跳过** (零覆盖路径不存在可等的 PR CI), `pr_ci_status` 置 `not_applicable`
+4. **Query PR CI status**: `aether ci status --branch <PR_BRANCH> --json` → parse 最近 run 的 `status` 字段 → 映射为 `passing` / `failing` / `pending` / `not_found` (零 run, v1.66.5+ #152)。**v1.65.0+: decision=not_applicable 时本步跳过** (零覆盖路径不存在可等的 PR CI), `pr_ci_status` 置 `not_applicable`
 5. **Verdict 计算** (aria 端):
    - `pr_ci_status in [failing, error]` → `verdict=fail`
    - `pr_ci_status == pending` → `verdict=wait` (PR CI 尚未完成)
+   - `pr_ci_status == not_found` → `verdict=wait` + `gate_error.kind=no-run-for-branch` (不论 main in-flight; v1.66.5+)
+   - PR 分支在 remote 不存在 (`not_found` 后核验) → `verdict=fail` + `gate_error.kind=pr-branch-not-found`
    - `pr_ci_status == not_applicable AND main_in_flight_runs == []` → `verdict=green` + raw_message 留痕 (v1.65.0+)
    - `pr_ci_status == not_applicable AND main_in_flight_runs != []` → `verdict=wait` (仅 (b) 轴驱动, v1.65.0+)
    - `pr_ci_status == passing AND main_in_flight_runs == []` → `verdict=green`
    - `pr_ci_status == passing AND main_in_flight_runs != []` → `verdict=wait`
 6. **路由决策**:
    - `green` → 调用 branch-manager merge action,进入 C.2.5。**v1.65.0+ surface 义务 (二者缺一不可)**: (a) green 来源为 not_applicable 时, AI **必须**在 workflow report 加警告行「C.2.4: 变更路径无 CI workflow 覆盖, PR CI wait 已跳过 (not_applicable), main in-flight 已核」; (b) `path_coverage.decision == unknown` 时 (gate 行为=现状, 但评估器自身失败), AI **必须** surface「C.2.4 path coverage 评估失败 (reason=`git-diff-failed` / `workflow-parse-failed` / **`internal-error`**), 已按 covered 现状行为处理」— 评估器静默失效是本机制自己要防的恒红病, 不得吞。**v1.65.3+ (#126)**: `internal-error` 表示**评估器自身异常** (非 git 问题、非 workflow 解析问题), 文案须点明「请报 issue」—— 它与另两个 reason 的排查方向完全不同, 混为一谈会把人引向 git 与 main ref
-   - `wait` → 输出 `wait_recoverable` 错误给 workflow-runner,触发 wait+retry 循环 (见 workflow-runner SKILL.md §wait_recoverable)
+   - `wait` → 输出 `wait_recoverable` 错误给 workflow-runner,触发 wait+retry 循环 (见 workflow-runner SKILL.md §wait_recoverable)。`gate_error.kind == no-run-for-branch` 时 AI **必须** surface `gate_error.message` 原文 (不得只写「CI pending, 等待中」); 处方段 (**本文唯一定义处**, workflow-runner §wait_recoverable Exit condition 2.5 只引用不复制):
+
+     > 🔴 C.2.4: `<gate_error.message 原文>`。已连续 `<record.no_run_observations>` 次观测到零 run (~`<record.elapsed_seconds>`s)。处方 (择一, 由你执行; AI 不自动执行):
+     > (a) dispatch 命令行 — 已由 gate 渲染进 `gate_error.message` (trigger-matched 档, 受 `DISPATCH_VIABLE` 常量与 `dispatchable_workflows` 非空控制), AI 只填 `<owner>/<repo>`; message 无此行则 (a) 不出现。⚠️ 活体实测一次 dispatch 产生成对 run 且 `started_at` 相同 (见 references/pre-merge-gate-empirical-traps.md §六), gate 取最近 run 时 tie 可能读到 failure — 人核按 run id / 状态综合看
+     > (b) 推一个碰 CI 触发路径的实质 commit 到 `<pr_branch>` (`workflow-trigger-matched`: matched workflow 声明的 paths; `workflow-files-changed`: 被改 workflow 自己声明的 paths) — 第二次 push 是普通 diff, paths 正常评; 若 workflow 有 `branches` 过滤且不含本分支, 推 commit 无效 → 改分支名或走 (a)/(c) (path_coverage 不建模 branches, 人核) [`unknown` / `empty-diff` / pc=None 档不出现本行]
+     > (c) 继续等待 (`continue`) / 放弃 (`abort`)
+
+     prompt 由 workflow-runner §wait_recoverable Exit condition 2.5 按观测计数触发; 交互式直调 §C.2.4 (无 workflow-runner) 时**无计数**, 读者自行按 message 与上方处方处置。
    - `fail` → BLOCK + 输出 verdict + raw_message,phase-c-integrator return failure
 
 **Subprocess 调用规范**:
@@ -273,21 +284,28 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 ```json
 {
   "verdict": "green" | "wait" | "fail",
-  "pr_ci_status": "passing" | "failing" | "pending" | "not_applicable",
+  "pr_ci_status": "passing" | "failing" | "pending" | "not_applicable" | "not_found",
   "in_flight_runs": [
     {"run_id": 3161, "branch": "main", "started_at": "2026-05-09T12:45:00Z", "elapsed_seconds": 459}
   ],
   "primitive_used": "aether-ci-cli",
   "primitive_version_sha": "f29abee",
   "raw_message": "...",
-  "path_coverage": {"decision": "covered|not_applicable|unknown", "workflows_scanned": 1, "matched_workflows": [], "changed_files_count": 2, "reason": "no-triggering-paths"},
-  "gate_error": {"kind": "main-branch-not-found|main-branch-verify-failed", "message": "..."}
+  "path_coverage": {"decision": "covered|not_applicable|unknown", "workflows_scanned": 1, "matched_workflows": [], "changed_files_count": 2, "reason": "no-triggering-paths", "dispatchable_workflows": []},
+  "gate_error": {"kind": "main-branch-not-found|main-branch-verify-failed|pr-branch-not-found|no-run-for-branch", "message": "...", "prompt_after_observations": 3}
 }
 ```
 
-枚举归层注记 (v1.65.0+): `not_applicable` 由 **gate 层**产生 (path coverage 短路, 从不来自 backend); backend `CIStatus.state` Literal 另含 `not_found` (backend 层值, gate 输出目前不产生, 列此消除文档与 `ci_backends/base.py:29` 的历史漂移)。`path_coverage` 为 additive 可选键 — 仅评估已执行且流程走到最终 verdict 路径时在场; 各早退分支 (no-backend / precheck 失败 / backend query 失败 / enabled:false) 保持六键不变。
+枚举归层注记 (v1.65.0+): `not_applicable` 由 **gate 层**产生 (path coverage 短路, 从不来自 backend); backend `CIStatus.state` Literal 另含 `not_found` (backend 层值, 远端零 run; **v1.66.5+ 起 gate 输出会产生**, 见下方 `gate_error.kind` 消歧表, 列此消除文档与 `ci_backends/base.py:29` 的历史漂移)。`path_coverage` 为 additive 可选键 — 仅评估已执行且流程走到最终 verdict 路径时在场; 各早退分支 (no-backend / precheck 失败 / backend query 失败 / enabled:false) 保持六键不变。
 
-`gate_error` 为 additive 可选键 (aria-plugin #137) — **仅 main 分支存在性核验判 fail 时在场**, 形如 `{"kind": ..., "message": ...}`, **无 `path_coverage`**。它是**副本通道**: 同一段文字必定同时写进 `raw_message` (主通道), 只读 `raw_message` 的消费方不丢信息。⚠️ 该早退分支**不属于**上一段那四类 —— 它是**第五类**, 且是唯一一个**不保持六键不变**的 (它多一个 `gate_error`)。
+`gate_error` 为 additive 可选键 (aria-plugin #137 / #152) — 三类在场: (i) main 分支存在性核验判 fail (`main-branch-not-found` / `main-branch-verify-failed`, `verdict=fail`, 无 `path_coverage`); (ii) PR 分支存在性核验判 fail (`pr-branch-not-found`, `verdict=fail`, `path_coverage` 在场 ⇔ `path_coverage_enabled`); (iii) `pr_ci_status=not_found` 的 wait 态 (`no-run-for-branch`, `verdict=wait`, 同上, 带 `prompt_after_observations` —— 仅此类带该字段)。`kind` 是**封闭集 4 项**, 四个都是**副本通道**: 同一段文字必定同时写进 `raw_message` (主通道), 只读 `raw_message` 的消费方不丢信息。⚠️ 这些早退分支都**不保持六键不变** (多一个 `gate_error`)。
+
+`kind` 二维消歧表 (分支存在性 × run 存在性; `not_found` 为 backend 态·主语是 *run*, `*-branch-not-found` 为 `kind`·主语是*分支*, 二者同词根异义):
+
+| | run 存在 (有 run) | run 不存在 (零 run, 含存在性未知/核验失败) |
+|---|---|---|
+| 分支存在 | (无 `gate_error`, 正常 passing/pending/failing 路径) | `no-run-for-branch` (`verdict=wait`; 存在性未知/核验失败归此象限, `message` 末尾带附注后缀) |
+| 分支不存在 | — (结构不可达) | `main-branch-not-found` / `pr-branch-not-found` (`verdict=fail`) |
 
 **配置参数**:
 | 参数 | 默认 | 说明 |
@@ -300,6 +318,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 | `primitive_call_timeout_seconds` | `30` | 单次 subprocess 调用 timeout |
 | `poll_chunk_seconds` | `5` | Ctrl-C polling chunk |
 | `path_coverage_enabled` | `true` | **v1.65.0+** 路径覆盖感知开关 (#122, owner sign-off 2026-07-27 单独批默认 true)。false → 不评估, 输出无 `path_coverage` 键, 行为=v1.64.x |
+| `no_run_prompt_after_observations` | `3` | **v1.66.5+** (#152) 远端零 run (`pr_ci_status=not_found`) 连续观测达此次数才 prompt; int ≥2, 不提供 1; 非法值 warn + 回落 3 |
 
 **降级行为**:
 - `enabled: false` → 完全跳过 C.2.4 (与 v1.2.0 行为 100% 一致)

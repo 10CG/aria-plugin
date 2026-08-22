@@ -54,6 +54,11 @@
 
 > 本节由该 spec 的 TASK-001 (TASK-0a 活体探针) 建节; F3/F4/(b) 轴/F6 四行由 TASK-011 在本行上方补入, SC-13 证据行由 TASK-014 在末尾追加。证据行不计入「N 条坑」。
 
+- **F3 — `pull_request` 触发面结构性死亡**: aria-plugin 自 2026-07-20 起按 CLAUDE.md 硬约束 1 本地合并不开 PR (最近 PR #115, 07-19) ⇒ `pull_request` 触发面结构性死亡, 只剩 `push`; #152 现场「新分支首推零 run」已观测一次, 复现条件未定 (见下方副产品)。
+- **F4 — `/actions/tasks` 只列已被领走的任务**: backend 查的 `/actions/tasks` **只列已被 runner 领走的任务**, 返回全量历史无截断 (三仓 returned==total_count) ⇒ 「零 run」有第二来源 = run 已建未被领 (瞬态), 不能判 fail; 且 episode 内 `not_found` 单调 (有过 task 就不会回零) — 这是连续观测计数能工作的前提。
+- **(b) 轴同形盲区** (另案, 本 spec 不改): `query_branch_in_flight` 共用 `/actions/tasks`, 同样把「main 无 in-flight」与「main 刚 push、run 已建未被领」折叠成空 runs ⇒ 分钟级 fail-open (PR passing + main 未领 ⇒ green); 它没有 `not_found` 出口 (空 = clear = 放行), 需另一种消歧 → Phase D 立案。
+- **F6 — Forgejo 路由: `/actions/runs`·`/actions/workflows` 404, dispatch 按 basename 寻址**: 本 Forgejo (11.0.6+gitea-1.22.0) `/actions/runs` 与 `/actions/workflows` **404**; `POST …/actions/workflows/{file}/dispatches` 路由存在, **按文件名 (basename) 寻址** — 逐字拼 `.forgejo/workflows/x.yml` 进 URL 会 404 (处方 (a) 用 basename 的原因)。
+
 - **TASK-0a 结果 (2026-08-22, 探针分支 `probe/152-dispatch` @ `eb876de`, 基于 master tip `9e6a17c`, path-matched `skills/issue-triage/PROBE-152.md`)**: `dispatch_viable = true` —
   `POST /repos/10CG/aria-plugin/actions/workflows/issue-triage-tests.yml/dispatches -d '{"ref":"probe/152-dispatch"}'` → **HTTP 204**; 2s 后 `/actions/tasks` 出现两条 `workflow_dispatch` 任务 (31968 success / 31969 **failure**, `created_at == run_started_at == 2026-08-22T20:35:54Z`, 领取 Δt ≈ 2s)。
   ⚠️ **一次 dispatch 产生了成对 run, 且 `started_at` 相同** — `_normalize_pr_ci_status` 按 `started_at` 降序取 [0] 时是 tie, 可能读到 failure 那条 ⇒ 处方 (a) 执行后 gate 有几率判 `fail`; 人核时按 run id / 状态综合看, 不要只信 gate 的单值。

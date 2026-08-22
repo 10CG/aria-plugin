@@ -33,7 +33,8 @@ Spec SOT: openspec/changes/phase-c-gate-path-coverage-not-applicable/proposal.md
 横切 (规则序之外): 评估器自身内部异常 → unknown, reason=internal-error: <类型>: <摘要>
   —— 自成一档, **不冒用 git-diff-failed** (#126)。后者在规则 1 有确切语义 (git diff
   失败 / main ref 缺失 / shallow 缺 merge-base); 把 parser 的 bug 塞进它会让排查者去查
-  git 与 main ref, 而真因在别处。⇒ 终态 reason 封闭集共 9 个。
+  git 与 main ref, 而真因在别处。⇒ 终态 reason 封闭集共 8 个 (7 条规则终态 +
+  internal-error; 旧文「9 个」是既有计数错, #152 勘正)。
 
 `dispatchable_workflows` (aria-plugin#152 TASK-007b, additive 键): 仅规则 6
 (workflow-trigger-matched) 会非空, 是 matched_workflows 的子集 —— 命中触发的
