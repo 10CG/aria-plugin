@@ -258,10 +258,13 @@ Gate 强制执行逻辑、手动/自动模式切换、失败恢复详见 [refere
       {"run_id": 3161, "branch": "main", "started_at": "ISO 8601", "elapsed_seconds": 459}
     ],
     "primitive_used": "aether-ci-cli",
-    "raw_message": ""
+    "raw_message": "",
+    "no_run_observations": 0
   }
 }
 ```
+
+`no_run_observations` (v1.66.5+ #152): 本 episode 连续带 `gate_error.kind == "no-run-for-branch"` 的观测次数,含初次;某轮非该 kind → 归零。
 
 完整 schema 见 [references/workflow-state-schema.md §1.1.gate_state](./references/workflow-state-schema.md)。Schema migration `format_version 1.0 → 1.1` 见 §8.3 默认 `gate_state: null`。
 
@@ -311,6 +314,7 @@ recovery:
 
 **触发场景**:
 - phase-c-integrator C.2.4 返回 `verdict=wait` (main 分支有 in-flight CI 或 PR CI pending)
+- phase-c-integrator C.2.4 `pr_ci_status="not_found"` (远端零 run,产 `gate_error.kind="no-run-for-branch"`) → 同样归为 `verdict=wait` (v1.66.5+ #152)
 - 未来扩展: 任何 pre-action gate 返回 wait 状态 (eg pre_release / pre_deploy)
 
 **配置**:
@@ -323,33 +327,37 @@ on_phase_error:
         sub_step: "C.2.4"
         verdict: "wait"
     behavior:
-      - log: "main 分支有 in-flight CI,等待 X 完成"
+      - log: "main 分支有 in-flight CI,等待 X 完成"  # gate_error.kind=no-run-for-branch 态改用 gate_error.message (v1.66.5+ #152)
       - persist: workflow-state.json 写 gate_state block
       - sleep: wait_check_intervals[retry_count] (默认指数退避)
       - re-invoke: phase-c-integrator C.2.4 重新检查
 ```
 
-**Exit conditions** (优先级 first-match-wins, R2 patch CR-4):
+**Exit conditions** (优先级 first-match-wins, R2 patch CR-4;v1.66.5+ #152 扩为五条,新增 2.5):
 1. **user Ctrl-C** → 转 manual mode (workflow-state 标 `session.status: suspended`,允许 resume) [最高]
-2. **retry_count > max OR elapsed > wait_timeout_seconds** → user prompt (continue / abort)
-3. **verdict=fail** → 转为 stop (fatal)
-4. **verdict=green** → 继续 merge (正常路径) [最低]
+2. **retry_count > max OR elapsed > wait_timeout_seconds** → user prompt (continue / abort);`continue` ⇒ CLI `reset --retry-count --observations` (两者归零,且 `reset --retry-count` 同时置 `started_at=now` — exit 2 实际只由 elapsed 触发,不重置 `started_at` 则 continue 后每 30s 再弹)
+2.5 **(v1.66.5+ #152 新增)** `out.gate_error.kind == "no-run-for-branch"` AND `record.should_prompt` → **no-run prompt**(定义见 [phase-c-integrator SKILL.md §C.2.4 步骤 6](../phase-c-integrator/SKILL.md) 处方段,本文只引用不复制;措辞要点: `🔴 C.2.4: <gate_error.message 原文>。已连续 <record.no_run_observations> 次观测到零 run (~<record.elapsed_seconds>s)。` 处方择一由用户执行 — (a) dispatch 命令行已由 gate 渲染进 message,AI 只填 `<owner>/<repo>`,message 无此行则 (a) 不出现 / (b) 推一个碰 CI 触发路径的实质 commit (若 workflow 有 `branches` 过滤且不含本分支则无效) / (c) continue / abort);`continue` ⇒ CLI `reset --observations` 回 loop (retry_count/started_at 继续累计,exit 2 上界不变);`abort` ⇒ verdict=fail 语义(session failed,保留 gate_state 给 audit trail)
+3. **verdict=fail** → 转为 stop (fatal) [不变]
+4. **verdict=green** → 继续 merge (正常路径) [最低,不变]
+
+> 时间轴: 默认阈值 3 + intervals `[30,60,120,…]` ⇒ 首次 gate 后 ~90s 交人 (非等满 1800s);continue 后第二次 prompt ≈810s。
 
 **实施步骤**:
 
 ```
 当 phase-c-integrator C.2.4 返回 verdict=wait:
   1. 读 .aria/config.json 加载 phase_c_integrator.pre_merge_gate.* 配置
-  2. 写入 workflow-state.json gate_state block (atomic write 协议见 schema §4)
-     - status: "waiting"
-     - started_at / retry_count / next_check_at / in_flight_runs[] 全部填充
+  2. 首个 wait verdict → 创建 gate_state 也经 CLI record (同 3c' 全旗标; is_first ⇒ retry_count=0, obs=1 若带 kind)  # 非 AI 手写 JSON
+     所有 CLI 调用显式传 --state-file <主仓根绝对路径>/.aria/workflow-state.json (helper 默认相对 cwd, 子模块 cwd 下会静默另起 state + 分区)
   3. 进入 polling loop:
      a. 计算本轮 sleep 时长: wait_check_intervals[min(retry_count, len-1)]
      b. polling sleep chunk 模式 (CR-5): sleep 拆分 5s 块
         - 每块结束 check `.aria/.workflow-interrupt` flag file
         - flag 存在 → 立即 break,转 suspended
-     c. sleep 结束 → 重新调 phase-c-integrator C.2.4 gate
-     d. 处理 verdict 按 exit conditions 优先级
+     c. sleep 结束 → 重调 phase-c-integrator C.2.4 gate → 得 out
+     c'. record = python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/workflow-runner/scripts/gate_state_helper.py" record --state-file <主仓 .aria/workflow-state.json 绝对路径> --name pre_merge --verdict out.verdict --intervals <json(cfg.wait_check_intervals)> --in-flight-runs <json(out.in_flight_runs)> --raw-message <out.raw_message> --source production [--gate-error-kind out.gate_error.kind --threshold out.gate_error.prompt_after_observations]
+        # 两旗标仅 out.gate_error.kind == "no-run-for-branch" 时传 (fail 类 kind 无 threshold 键); in_flight_runs / raw_message 必须透传; 先自增, 后求值
+     d. 按 exit conditions 处理 (输入 = out + record); CLI 退出码 2 → surface 错误 → 直接 abort (终止分支; 不再调 reset — reset 同样会退 2), 禁止回退手写 JSON
   4. 退出 polling 后:
      - verdict=green → 调 branch-manager merge,清理 gate_state
      - verdict=fail → workflow-state.session.status=failed,保留 gate_state 给 audit trail
@@ -386,7 +394,7 @@ on_phase_error:
    - 未过期 → 等待至 `next_check_at` 后再调
 3. **gate verdict 处理**:
    - `green` → **跳过** C.2 push/create-PR (已完成,PR_NUMBER 已持久化),直接调 branch-manager merge call (idempotent — 若 PR 已 merged 则 branch-manager 报告 success 不重复操作)
-   - `wait` → 增量更新 `gate_state.retry_count` + `next_check_at`,继续 polling
+   - `wait` → 增量更新 `gate_state.retry_count` + `next_check_at`(若 `gate_error.kind=no-run-for-branch` 则同步累计 `no_run_observations`),继续 polling
    - `fail` → workflow report 含 PR_NUMBER + 失败 verdict,转 stop
 4. **不重跑 Phase C 整段**,只 re-run gate + merge call (避免重复推送 / 重复创建 PR)
 

@@ -285,6 +285,13 @@ phase_c_integrator.pre_merge_gate.path_coverage_enabled:
   default: true
   # v1.65.0+ — aria-plugin #122 路径覆盖感知 not_applicable 态,
   # 详见 aria/skills/phase-c-integrator/SKILL.md §C.2.4 步骤 2.5
+
+phase_c_integrator.pre_merge_gate.no_run_prompt_after_observations:
+  type: integer
+  range: [2, null]  # int >= 2 (阈值 1 会把新分支首推的单次瞬时零 run 当异常提示)
+  default: 3
+  # v1.66.5+ — aria-plugin #152 pr_ci_status="not_found" (远端零 run) 连续观测达此次数
+  # 才提示用户人工核验; 详见 aria/skills/phase-c-integrator/SKILL.md §C.2.4 步骤 6
 ```
 
 ## 旧配置兼容层
