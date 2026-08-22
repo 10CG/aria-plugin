@@ -358,7 +358,7 @@ def _build_output(
     #137/#152: `gate_error` 亦为 additive 可选键 — 三类在场: (1) main 分支存在性
     核验判 fail (`main-branch-not-found` / `main-branch-verify-failed`, 无
     path_coverage); (2) pr-branch 存在性核验判 fail (`pr-branch-not-found`,
-    TASK-006 落地, 未在本次实现); (3) pr_ci_status="not_found" 的 wait 态
+    TASK-006 已实现); (3) pr_ci_status="not_found" 的 wait 态
     (`no-run-for-branch`, 带 `prompt_after_observations`, 可与 path_coverage
     同时在场)。它始终是**副本通道**: 同一段文字必定同时写入 `raw_message`
     (主通道), 消费方只读 raw_message 亦不丢信息。
@@ -383,7 +383,7 @@ def _build_output(
     return out
 
 
-# --- main-branch existence verification (aria-plugin #137) --------------------
+# --- 分支存在性核验 (main: #137 / PR: #152 仅 not_found 时) --------------------
 #
 # 症状: 后端结构上无法区分「分支不存在」与「分支没有 in-flight run」—— 两者都
 # 产出 InFlightStatus(runs=[]) ⇒ 判 green。于是把 --main-branch 写成一个远端上
@@ -407,10 +407,12 @@ def _sanitize_for_json(text: str) -> str:
     return text.encode("utf-8", "replace").decode("utf-8")
 
 
-def _verify_main_branch_exists(
-    main_branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
+def _verify_branch_exists(
+    branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
 ) -> tuple[str, str]:
-    """核验 `main_branch` 在 `remote` 上确实存在。返回 (status, detail)。
+    """核验 `branch` 在 `remote` 上确实存在。返回 (status, detail)。main 与 PR
+    两处共用 (aria-plugin#152: 原 `_verify_main_branch_exists` 搬迁改名, 旧名
+    保留为对本函数的位置参数包装, 见 `_verify_main_branch_exists`)。
 
     status ∈ {"ok", "not-found", "verify-failed"} —— 「分支不存在」与「核验本身
     没做成」必须分开, 二者混为一谈正是本 bug 的形状。
@@ -425,12 +427,12 @@ def _verify_main_branch_exists(
     我们自己用 surrogateescape 解码, 该异常结构上不可能发生。
     ⚠️ 不传 `cwd=`: 继承进程 cwd, 使 `origin` 按调用者所在仓解析。
     """
-    target = "refs/heads/" + main_branch
+    target = "refs/heads/" + branch
     last_detail = ""
     for attempt in range(MAX_RETRY_ATTEMPTS):
         try:
             proc = subprocess.run(
-                ["git", "ls-remote", "--heads", remote, main_branch],
+                ["git", "ls-remote", "--heads", remote, branch],
                 capture_output=True,
                 timeout=timeout,
             )
@@ -458,6 +460,15 @@ def _verify_main_branch_exists(
         return ("ok" if target in ref_names else "not-found"), ""
 
     return "verify-failed", last_detail
+
+
+def _verify_main_branch_exists(
+    main_branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
+) -> tuple[str, str]:
+    """旧名包装: 保关键字签名与默认值, 委托给 `_verify_branch_exists`
+    (aria-plugin#152 搬迁改名)。`:449` 调用字面不改, 测试 mixin 对旧名打桩
+    继续有效。"""
+    return _verify_branch_exists(main_branch, remote, timeout)
 
 
 def _no_ci_output(no_ci_fallback: str) -> dict[str, Any]:
@@ -514,6 +525,7 @@ def gate_check(
       circuits PR query). v1.65.0+ (#122): PR CI 查询是条件性的 — path coverage
       decision=not_applicable 时跳过 (a) 查询 (subprocess 调用数 0 或 1); (b)
       main in-flight 查询保持无条件执行, NIE 经 (b) 照常 propagate (SC-21)。
+      (a) 腿返 not_found 时再做一次 PR 分支存在性核验 (第七个早退, #152)。
     """
     # Alias translation BEFORE merge with DEFAULT_CONFIG (Hard Constraint #9).
     # If we merged first, DEFAULT_CONFIG's new keys would always shadow user's
@@ -626,13 +638,49 @@ def gate_check(
             raw_message=str(exc),
         )
 
-    return compute_verdict(
+    verify_note = ""  # 哨兵: 非 not_found 路径也可读 (R3 #3)
+    if pr_status.state == "not_found":
+        # #152 F5: 「PR 分支不存在」与「存在但零 run」在 backend 出口逐字节同形
+        # —— 仅此时多付一次 ls-remote。
+        st, detail = _verify_branch_exists(
+            pr_branch,
+            remote=remote,
+            timeout=int(cfg.get("primitive_call_timeout_seconds", _LS_REMOTE_TIMEOUT)),
+        )
+        if st == "not-found":
+            msg = _sanitize_for_json(
+                f"PR branch '{pr_branch}' not found on remote '{remote}'"
+            )
+            return _build_output(
+                verdict=VERDICT_FAIL,
+                pr_ci_status="not_found",
+                in_flight_runs=in_flight.runs,
+                primitive_used=backend.name,
+                raw_message=msg,
+                path_coverage=pc,  # pc 在场 ⇔ enabled (pc 为 None 时 _build_output 自动不带键)
+                gate_error={"kind": "pr-branch-not-found", "message": msg},
+            )
+        if st != "ok":
+            verify_note = _sanitize_for_json(
+                f" (PR 分支存在性核验失败: {detail})"
+            )  # detail 是 git stderr, 必须消毒
+
+    out = compute_verdict(
         main_in_flight_runs=in_flight.runs,
         pr_ci_status=pr_status.state,
         backend_name=backend.name,
         cfg=cfg,
         path_coverage=pc,
     )
+    if out.get("gate_error"):
+        # gate_check 知道分支名: 回填占位 (TASK-007b 渲染的 dispatch 行含
+        # <pr_branch>) + 核验失败附注; 副本通道重同步。
+        m = out["gate_error"]["message"].replace(
+            "<pr_branch>", _sanitize_for_json(pr_branch)
+        ) + verify_note
+        out["gate_error"]["message"] = m
+        out["raw_message"] = m
+    return out
 
 
 def _load_config_from_file(path: str) -> dict[str, Any]:
@@ -656,7 +704,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--remote",
         default="origin",
-        help="Remote to verify --main-branch exists on (default: origin)",
+        help=(
+            "Remote to verify --main-branch (always) and --pr-branch (only "
+            "when PR CI returns not_found) exist on (default: origin)"
+        ),
     )
     parser.add_argument(
         "--config-file",
