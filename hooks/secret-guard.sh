@@ -104,8 +104,10 @@
 #             Regex/alternation literal contexts (`(`, `|`, `\`, `{`, `[`)
 #             are never a trigger position either family — fixes the issue
 #             self-match FP (`grep -oE '(\.bashrc|...)' <this file>`).
-#             Applied to 14 risky_patterns rows (12 pre-existing sibling
-#             rows + the 2 new claude-config rows above); see
+#             Applied to 14 risky_patterns rows (13 pre-existing sibling
+#             rows + the 1 new claude-config row above; the python3/node
+#             rows count among the 13). `/`-rooted names inside those rows
+#             stay on a plain [^|]* branch (Amendment-2). See
 #             .aria/notes/secret-guard-179-pattern-rows.md for the full
 #             row-by-row rationale of what's in/out of scope.
 #         3 known residual gaps of (3) listed above under "Coverage gaps".
@@ -360,7 +362,7 @@ _sg_split_top() {
 # _sg_compute_credit 收紧模式检测; 两处字面量漂移是 spec What.1b 点名的风险) ──
 # ~/.claude/settings.json / .claude/settings.local.json 的 env 节点是 Claude Code
 # 存放 API token 的标准位置; ~/.claude.json 是 legacy 全局配置 (含 MCP token)。
-_SG_CLAUDE_CFG='\.claude/settings\.json|\.claude/settings\.local\.json|\.claude\.json'
+_SG_CLAUDE_CFG='\.claude/+(\./+)*settings\.json|\.claude/+(\./+)*settings\.local\.json|\.claude\.json'
 
 # ── Aria #179 What.3 + Amendment-1: 前置字符白名单 (两族, 各自单一白名单) ──
 # Used as `READER[[:space:]]+([^|]*${PP})?(NAMES)`: the optional group lets a
@@ -372,10 +374,14 @@ _SG_CLAUDE_CFG='\.claude/settings\.json|\.claude/settings\.local\.json|\.claude\
 #     start / whitespace / quotes / `=` / `/` / `~`
 #   SUFFIX family (names that can be a basename tail: .env .pem .key id_rsa…):
 #     the NAME set + word chars + `*` + `.` + `-` (prod.env / *.env / a.b.env)
-# `~` is in both: names that start with `/` (/etc/profile, /.aws/credentials)
-# are legitimately preceded by `~`.
-_SG_PP_NAME="(^|[[:space:]\"'=/~])"
-_SG_PP_SUFFIX="(^|[[:space:]\"'=/~*A-Za-z0-9_.-])"
+# Names that START with `/` (/etc/profile, /.aws/credentials, /.kube/config …)
+# are NOT whitelisted at all: the char before their leading `/` is the tail of
+# a path prefix (`~`, `}`, `)`, a word char …), not a basename boundary, so
+# they keep the plain `[^|]*` branch (Amendment-2, Phase B review C-1 — the
+# first TASK-010 cut whitelisted them and let `cat ${HOME}/.aws/credentials`
+# through).
+_SG_PP_NAME="(^|[[:space:]\"'=/])"
+_SG_PP_SUFFIX="(^|[[:space:]\"'=/*A-Za-z0-9_.-])"
 
 _sg_compute_credit() {
   local seg="$1"
@@ -632,7 +638,7 @@ case "$tool" in
     # secret file paths a future-Claude might Read without realizing.
     # Note: lowercased file_path for the match.
     lower_path="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
-    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/settings\.json$|/\.claude/settings\.local\.json$|/\.claude\.json$'; then
+    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/+(\./+)*settings\.json$|/\.claude/+(\./+)*settings\.local\.json$|/\.claude\.json$'; then
       # (last three branches: Aria #179 — Claude Code config files, env node
       #  holds API tokens; mirrors the Bash-face claude-config row)
       # R3-C-9 fix: SECRET_GUARD_ACK_PATH cannot be unset across processes
@@ -788,7 +794,7 @@ declare -a risky_patterns=(
   #      .docker/config.json (base64 registry auth). Standard id_rsa/ed25519/ecdsa
   #      still match anywhere (backward-compat); non-standard names anchored to .ssh/
   #      to keep FP low (`cat id_number.txt` must not block).
-  "(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)[[:space:]]+([^|]*${_SG_PP_SUFFIX})?(id_rsa|id_ed25519|id_ecdsa|\.ssh/id_[A-Za-z0-9_]+|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig|/\.docker/config\.json)(\b|/|$|[[:space:]])"
+  "(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)[[:space:]]+(([^|]*${_SG_PP_SUFFIX})?(id_rsa|id_ed25519|id_ecdsa|\.ssh/id_[A-Za-z0-9_]+|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate)|[^|]*(/\.aws/(credentials|config)|/\.kube/config|/kubeconfig|/\.docker/config\.json))(\b|/|$|[[:space:]])"
 
   # 2026-07-01 incident: shell rc / login-env files commonly hold
   # `export SECRET=...` lines (e.g. FORGEJO_TOKEN in ~/.bashrc). A plain
@@ -797,8 +803,8 @@ declare -a risky_patterns=(
   # above, AND .bashrc/.profile/etc were not in the file list. Mirror the .env
   # treatment: block reads of these files by any common reader (ack-overridable
   # for legit non-secret reads via SECRET_GUARD_ACK_PATH). `grep` added here.
-  "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)[[:space:]]+([^|]*${_SG_PP_NAME})?(\.bashrc|\.bash_profile|\.bash_login|\.zshrc|\.zprofile|\.profile|\.bash_aliases|/etc/environment|/etc/profile)(\b|/|$|[[:space:]])"
-  "ssh[^|]*(cat|grep|head|tail|less|more|strings|awk)([^|]*${_SG_PP_NAME})?(\.bashrc|\.bash_profile|\.zshrc|\.profile|/etc/environment|/etc/profile)"
+  "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)[[:space:]]+(([^|]*${_SG_PP_NAME})?(\.bashrc|\.bash_profile|\.bash_login|\.zshrc|\.zprofile|\.profile|\.bash_aliases)|[^|]*(/etc/environment|/etc/profile))(\b|/|$|[[:space:]])"
+  "ssh[^|]*(cat|grep|head|tail|less|more|strings|awk)(([^|]*${_SG_PP_NAME})?(\.bashrc|\.bash_profile|\.zshrc|\.profile)|[^|]*(/etc/environment|/etc/profile))"
 
   # Aria #179 (2026-08-09 incident): Claude Code's own config files hold API
   # tokens in their `env` node and were in NO manifest (Bash or Read/Edit).

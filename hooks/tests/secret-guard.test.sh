@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 591 cases (585 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 598 cases (592 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1931,6 +1931,7 @@ read_case "#179 SC-2 Read legacy .claude.json" 2 '/home/u/.claude.json'
 # ACK 成对 (P3-M1): 无 nonce → 2 (baseline RED: 路径未入清单走不到 ack 块, exit 0);
 # 有 nonce → 0 (baseline 恒绿; 判定价值在 TASK-006 后 = 新条目接入逃生舱)
 _sg179_ack_path_bak="${SECRET_GUARD_ACK_PATH:-}"; _sg179_ack_nonce_bak="${SECRET_GUARD_ACK_NONCE:-}"
+[[ -n "${SECRET_GUARD_ACK_PATH+x}" ]] && _sg179_ack_path_was_set=1; [[ -n "${SECRET_GUARD_ACK_NONCE+x}" ]] && _sg179_ack_nonce_was_set=1
 export SECRET_GUARD_ACK_PATH="/home/u/.claude/settings.json"
 unset SECRET_GUARD_ACK_NONCE
 read_case "#179 SC-2 ACK_PATH 无 nonce → REJECT" 2 '/home/u/.claude/settings.json'
@@ -1939,8 +1940,8 @@ touch "/tmp/secret-guard-ack-${USER:-anon}-${_sg179_nonce}.nonce"
 export SECRET_GUARD_ACK_NONCE="$_sg179_nonce"
 read_case "#179 SC-2 ACK_PATH 有 nonce → ALLOW once" 0 '/home/u/.claude/settings.json'
 rm -f "/tmp/secret-guard-ack-${USER:-anon}-${_sg179_nonce}.nonce"
-if [[ -n "$_sg179_ack_path_bak" ]]; then export SECRET_GUARD_ACK_PATH="$_sg179_ack_path_bak"; else unset SECRET_GUARD_ACK_PATH; fi
-if [[ -n "$_sg179_ack_nonce_bak" ]]; then export SECRET_GUARD_ACK_NONCE="$_sg179_ack_nonce_bak"; else unset SECRET_GUARD_ACK_NONCE; fi
+if [[ -n "${_sg179_ack_path_was_set+x}" ]]; then export SECRET_GUARD_ACK_PATH="$_sg179_ack_path_bak"; else unset SECRET_GUARD_ACK_PATH; fi
+if [[ -n "${_sg179_ack_nonce_was_set+x}" ]]; then export SECRET_GUARD_ACK_NONCE="$_sg179_ack_nonce_bak"; else unset SECRET_GUARD_ACK_NONCE; fi
 
 # ── TASK-008 (SC-5): 误杀守卫 — 真实读取形态在前置白名单落地后必须仍拦 ──
 # baseline GREEN (这些今天就拦; 守卫价值 = TASK-010 写错方向时翻红)。先于 pattern 改动落地 (INV-1)。
@@ -1956,7 +1957,7 @@ bash_case "#179 SC-5 守卫 (Amendment-1): find -name '*.env' -exec cat (glob �
 
 # ── TASK-009 (SC-4): 误报收敛 — 敏感名在非路径前缀位置不触发 ──
 # baseline RED (400f0bc/46a374f: 六条全 exit 2 误拦)
-bash_case "#179 SC-4 issue 复现: 正则 alternation 位置 (grep -oE '(\\.bashrc|...)' 读 hook 自身)" 0 "grep -oE '\\(\\\\.bashrc\\|[^)]*\\)' hooks/secret-guard.sh"
+bash_case "#179 SC-4 issue 复现: 正则 alternation 位置 (转义后敏感名前缀为 \\, 读 hook 自身)" 0 "grep -oE '\\(\\\\.bashrc\\|[^)]*\\)' hooks/secret-guard.sh"
 bash_case "#179 SC-4 变体: 前缀 ( (无转义)" 0 "grep -E '(.bashrc|.zshrc)' hooks/secret-guard.sh"
 # (v2: 原「前缀 |」变体因既有 [^|]* 结构性不可达 — 基线恒绿, 反事实失败, 换 { 前缀)
 bash_case "#179 SC-4 变体: 前缀 { (sed 脚本内字面量)" 0 "sed -n 's/{.bashrc}/X/p' README.md"
@@ -1978,6 +1979,17 @@ bash_case "#179 SC-3 行级过滤排除: | grep '^  \"model\"'" 2 "cat ~/.claude
 bash_case "#179 SC-3 行级过滤排除: | cut -d: -f1" 2 'cat ~/.claude/settings.json | cut -d: -f1'
 bash_case "#179 SC-3 混合源恒收紧 (无顺序依赖): cat ~/.env settings.json | jq '{env}'" 2 "cat ~/.env ~/.claude/settings.json | jq '{env: .env}'"
 bash_case "#179 SC-3 对照组 (.env 通用面不动): cat ~/.env | jq '{env}'" 0 "cat ~/.env | jq '{env: .env}'"
+
+# ── Phase B 对抗审查 (code-reviewer C-1 / I-2) 补守卫: `/`-根敏感名的前一字符是路径前缀末字符,
+#    不是 basename 前缀 — 白名单不得套在它们身上 (Amendment-2)。基线 400f0bc 全 2; TASK-010 首版放走 (假绿)。
+bash_case "#179 SC-5 守卫 (A2): cat \${HOME}/.aws/credentials (} 前缀)" 2 'cat ${HOME}/.aws/credentials'
+bash_case "#179 SC-5 守卫 (A2): cat \"\${HOME}/.kube/config\"" 2 'cat "${HOME}/.kube/config"'
+bash_case "#179 SC-5 守卫 (A2): cat \$(echo ~)/.aws/credentials ( ) 前缀)" 2 'cat $(echo ~)/.aws/credentials'
+bash_case "#179 SC-5 守卫 (A2): cat \${PREFIX}/etc/profile (shell-rc 行 /-根名)" 2 'cat ${PREFIX}/etc/profile'
+# I-2: 路径分隔变体 ./ 与 // 不得逃逸 (新名组双平面)
+bash_case "#179 SC-1 变体 (I-2): cat ~/.claude/./settings.json" 2 'cat ~/.claude/./settings.json'
+bash_case "#179 SC-1 变体 (I-2): cat ~/.claude//settings.json" 2 'cat ~/.claude//settings.json'
+read_case "#179 SC-2 变体 (I-2): Read ~/.claude/./settings.json" 2 '/home/u/.claude/./settings.json'
 
 # ── #179 段结束 ──
 
