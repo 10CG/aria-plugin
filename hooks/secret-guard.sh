@@ -35,6 +35,25 @@
 #     or content-scan PostToolUse hook for true safety.
 #   - Adversarial shell quoting (`c""at .env`, alias overrides) is out of
 #     scope — Claude doesn't typically emit such constructs.
+#   - Claude-config manifest (Aria #179) has 3 known residual gaps, same
+#     "regex has no positional/argument parsing" root cause as above, all
+#     unfixed by #179 (need #138 for a real fix):
+#       (a) prose-position full-path text — a heredoc/string literal that
+#           merely CONTAINS the text `cat ~/.bashrc` (discussion, not a real
+#           read) is indistinguishable from a real read at the regex layer;
+#           use `# guard:ack:` for these.
+#       (b) quote-delimited bare sensitive name — `grep '.bashrc' f`: the
+#           char right before the name is `'`, which IS in the prefix
+#           whitelist (see note above `_sg_compute_credit`), so this form
+#           is NOT relieved by the #179 whitelist fix — it still triggers
+#           as a false positive same as before; only a discussion-vs-real-
+#           read distinction (needs #138) would fix it.
+#       (c) bare-filename/glob variants with no path prefix — `cat
+#           settings.json` (relative bare name) or `cat
+#           ~/.claude/settings.*` (glob) fall outside every manifest-style
+#           row's matching surface, exactly like the pre-existing .bashrc/
+#           .env rows already do; not a regression introduced by #179, just
+#           the manifest approach's inherent ceiling.
 #
 # Why this is still worth shipping:
 #   The 2026-05-16 incident was a TYPICAL pattern — raw curl to Nomad var
@@ -56,6 +75,40 @@
 #         insensitive + .aws/credentials/kubeconfig/.tfstate/.key/.p12;
 #         malformed tool_name → fail-closed; command length cap; SECRET_GUARD_
 #         ACK_PATH one-shot via timestamp; pg/source/. .env readers)
+#   Aria #179 (2026-08-22): claude-config manifest gap, dual-plane fix.
+#         (1) Manifest: ~/.claude/settings.json / settings.local.json /
+#             ~/.claude.json (legacy global config, holds MCP tokens) added
+#             on BOTH planes — Bash-face reader/name pattern row (existing 12
+#             readers + `jq`, the natural JSON reader; the real 2026-08-09
+#             leak command was `jq -c '{model, env: (.env // {})}'
+#             ~/.claude/settings.json`) AND Read/Edit-face :546 path regex;
+#             python3 -c / node -e source groups (:785/:786) extended with
+#             the same names, kept on those narrow rows (not merged into the
+#             generic reader alternation, to avoid reopening prose FPs).
+#         (2) Credit tightening (claude-config sources only, detected by
+#             re-matching $_SG_CLAUDE_CFG against the segment, not by "which
+#             pattern fired"): the `jq '{...}'` shape-credit and every line/
+#             column filter credit (grep anchor, grep -v, sed, cut, awk) no
+#             longer apply — shape/line-level filtering isn't reliable
+#             redaction for JSON (values can span or share a line). Only
+#             name-literal (`keys`/`length`/`paths`), count (`wc -[clw]`),
+#             hash (sha*/md5sum), and discard (`>/dev/null` etc.) credits
+#             still count. Non-claude-config sources: unchanged.
+#         (3) Prefix whitelist (FP fix): a sensitive name only triggers the
+#             match when the char immediately before it is whitelisted —
+#             NAME family $_SG_PP_NAME (full basenames: shell-rc files,
+#             claude-config): start/whitespace/`"`/`'`/`=`/`/`/`~`; SUFFIX
+#             family $_SG_PP_SUFFIX (names that can be a basename tail:
+#             .env/.envrc/.pem/.key/.p12/id_rsa/…): NAME set + word chars/
+#             `*`/`.`/`-` (so `prod.env`, `*.env`, `a.b.env` still match).
+#             Regex/alternation literal contexts (`(`, `|`, `\`, `{`, `[`)
+#             are never a trigger position either family — fixes the issue
+#             self-match FP (`grep -oE '(\.bashrc|...)' <this file>`).
+#             Applied to 14 risky_patterns rows (12 pre-existing sibling
+#             rows + the 2 new claude-config rows above); see
+#             .aria/notes/secret-guard-179-pattern-rows.md for the full
+#             row-by-row rationale of what's in/out of scope.
+#         3 known residual gaps of (3) listed above under "Coverage gaps".
 #
 # Operator bypass (logged to ~/.claude/logs/guard-bypass.log):
 #   Bash:        ... # guard:ack: <reason ≥ 8 non-whitespace chars describing why>
