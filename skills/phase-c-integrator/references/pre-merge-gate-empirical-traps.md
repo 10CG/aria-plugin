@@ -49,3 +49,12 @@
 
 ⚠️ **本次修复只加固了 `gate_check()` 这一份实现。** SKILL.md §C.2.4 里那条「AI 照着敲命令」的散文流程
 是**同一算法的第二份实现**, 它没有这道核验。⇒ **不得据本次修复认为 #137 已闭环。**
+
+## 六、零 run 不是一种状态, 是几种世界的折叠 (spec `pre-merge-gate-no-run-for-branch`, aria-plugin#152)
+
+> 本节由该 spec 的 TASK-001 (TASK-0a 活体探针) 建节; F3/F4/(b) 轴/F6 四行由 TASK-011 在本行上方补入, SC-13 证据行由 TASK-014 在末尾追加。证据行不计入「N 条坑」。
+
+- **TASK-0a 结果 (2026-08-22, 探针分支 `probe/152-dispatch` @ `eb876de`, 基于 master tip `9e6a17c`, path-matched `skills/issue-triage/PROBE-152.md`)**: `dispatch_viable = true` —
+  `POST /repos/10CG/aria-plugin/actions/workflows/issue-triage-tests.yml/dispatches -d '{"ref":"probe/152-dispatch"}'` → **HTTP 204**; 2s 后 `/actions/tasks` 出现两条 `workflow_dispatch` 任务 (31968 success / 31969 **failure**, `created_at == run_started_at == 2026-08-22T20:35:54Z`, 领取 Δt ≈ 2s)。
+  ⚠️ **一次 dispatch 产生了成对 run, 且 `started_at` 相同** — `_normalize_pr_ci_status` 按 `started_at` 降序取 [0] 时是 tie, 可能读到 failure 那条 ⇒ 处方 (a) 执行后 gate 有几率判 `fail`; 人核时按 run id / 状态综合看, 不要只信 gate 的单值。
+- **同一探针的副产品 — #152 盲区没有复现**: 该新分支**首推**就建了 `push` 事件 run (31967, 首推后 13s, success)。与 #152 现场 (`fix/147-*` 首推零 run) 的差异条件**未定** (两者都是 master 上起的新分支 + path-matched 变更); 可能的变量: 推送时 runner 忙闲 (F4: tasks 只列已领任务, 当时零 task 可能是「未被领」而非「未建 run」) / 首推携带的 commit 数 / Forgejo 对 `before=0000…` 的 diff 基准。⇒ 「每条新分支首推恒中」**降级为「已观测一次 (#152), 复现条件未定」**; 本 spec 的机制 (零 run 显影 + 交人) 对零 run 的任一来源都成立, 不依赖盲区恒在。
