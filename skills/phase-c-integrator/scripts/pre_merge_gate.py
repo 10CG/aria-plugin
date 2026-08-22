@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -51,6 +52,15 @@ from path_coverage import evaluate_path_coverage  # noqa: E402
 VERDICT_GREEN = "green"
 VERDICT_WAIT = "wait"
 VERDICT_FAIL = "fail"
+
+# aria-plugin#152 TASK-007b (spec §7 checklist 1): 是否可对 dispatchable
+# workflow 渲染人工 dispatch 处方 (a) 行。TASK-0a 2026-08-22 活体实测: POST
+# /repos/10CG/aria-plugin/actions/workflows/issue-triage-tests.yml/dispatches
+# → HTTP 204, run 2s 内建立 (31968); 见
+# references/pre-merge-gate-empirical-traps.md §六。false ⇒ 不渲染处方 (a) 行。
+# 读取方式 = 裸全局引用 (可 monkeypatch), ⛔ 不用默认参捕获 (spec §7 checklist 1
+# —— 默认参在 import 时求值一次, monkeypatch 全局符号后不生效)。
+DISPATCH_VIABLE = True
 
 # v1.31.0+ default config (Hard Constraint #8: ci_backends list order is
 # the explicit precedence; absent vs [] disambiguation per AC-4.5).
@@ -164,6 +174,12 @@ def _no_run_gate_error(
     KeyError 逃出 (理论不可达组合, 如 decision=not_applicable, 也落兜底档而
     非炸)。⛔ 渲染禁用 `str.format` (后续 dispatch 行含 JSON 花括号会炸);
     用 f-string/拼接。
+
+    workflow-trigger-matched 档 (aria-plugin#152 TASK-007b, spec §4): 当模块级
+    `DISPATCH_VIABLE` 为真且 path_coverage.dispatchable_workflows 非空时, 逐个
+    dispatchable workflow 在 message 末尾追加一行「处方 (a)」dispatch 命令
+    (basename 而非全路径, F6; `<owner>/<repo>` 与 `<pr_branch>` 占位符留给渲染
+    层/gate_check 回填); 其余档不渲染。
     """
     if path_coverage is None:
         message = "no-run-for-branch: 远端零 run; 路径覆盖评估已关闭"
@@ -178,6 +194,24 @@ def _no_run_gate_error(
                 "Forgejo 不建 run), 或 run 尚未被 runner 领走, 或 workflow "
                 "branches 过滤不含本分支"
             )
+            # TASK-007b (spec §4/§7 checklist 1): DISPATCH_VIABLE 读裸全局
+            # (不用默认参 —— 默认参在 import 期求值一次, monkeypatch 全局符号
+            # 后不生效)。dispatchable 在函数体内读, 非默认参捕获。
+            dispatchable = path_coverage.get("dispatchable_workflows") or []
+            if DISPATCH_VIABLE and dispatchable:
+                for f in dispatchable:
+                    # ⛔ 不用 str.format: JSON 花括号 {"ref":...} 会被当成
+                    # format 占位符炸掉。basename 而非全路径 (F6, 逐字拼
+                    # .forgejo/workflows/x.yml 到 URL 会 404)。<owner>/<repo>
+                    # 与 <pr_branch> 占位符统一尖括号 —— 前者留给上游渲染 prompt
+                    # 填, 后者由 gate_check 既有 `.replace("<pr_branch>", ...)`
+                    # 回填 (:678-680)。
+                    message += (
+                        "\n处方 (a): forgejo POST /repos/<owner>/<repo>/"
+                        "actions/workflows/"
+                        + os.path.basename(f)
+                        + "/dispatches -d '{\"ref\":\"<pr_branch>\"}'"
+                    )
         elif decision == "covered" and reason == "workflow-files-changed":
             message = (
                 "no-run-for-branch: 变更含 workflow 文件本身 (按 covered) 但"

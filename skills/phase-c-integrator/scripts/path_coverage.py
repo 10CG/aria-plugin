@@ -35,6 +35,11 @@ Spec SOT: openspec/changes/phase-c-gate-path-coverage-not-applicable/proposal.md
   失败 / main ref 缺失 / shallow 缺 merge-base); 把 parser 的 bug 塞进它会让排查者去查
   git 与 main ref, 而真因在别处。⇒ 终态 reason 封闭集共 9 个。
 
+`dispatchable_workflows` (aria-plugin#152 TASK-007b, additive 键): 仅规则 6
+(workflow-trigger-matched) 会非空, 是 matched_workflows 的子集 —— 命中触发的
+workflow 里那些 `on:` 含 `workflow_dispatch` 的, 供上游渲染人工 dispatch 处方;
+其余 7 处终态调用点恒 []。不改变上述 8 档判定规则本身。
+
 stdlib-only (先例: state-scanner custom_checks minimal parser / lib/detailed_tasks)。
 本模块永不 raise — 内部全捕获, 失败落 unknown + reason (该承诺的红窗见
 tests/test_path_coverage.py::InternalErrorReasonTests)。
@@ -65,6 +70,7 @@ def _result(
     workflows_scanned: int = 0,
     matched_workflows: list[str] | None = None,
     changed_files_count: int = 0,
+    dispatchable_workflows: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "decision": decision,
@@ -72,6 +78,9 @@ def _result(
         "matched_workflows": matched_workflows or [],
         "changed_files_count": changed_files_count,
         "reason": reason,
+        # aria-plugin#152 TASK-007b additive 键: matched_workflows 的子集
+        # (那些 workflow_dispatch 可用的), 只有规则 6 调用点会传非空值。
+        "dispatchable_workflows": dispatchable_workflows or [],
     }
 
 
@@ -191,12 +200,18 @@ _ON_SCALAR_RE = re.compile(r"^(?:\"on\"|'on'|on):\s*(.+)$")
 def _parse_workflow(text: str) -> dict[str, Any]:
     """最小 YAML 触发子集解析: 只认 `on:` 块的结构。
 
-    返回 {"parse_ok": bool, "covered_uncertain": bool, "triggers": [...]}:
+    返回 {"parse_ok": bool, "covered_uncertain": bool, "triggers": [...],
+    "dispatchable": bool}:
     - covered_uncertain=True — 含未建模自动触发键 / paths-ignore / 无法辨识的
       构造级内容 → 该 workflow 按 covered (per-workflow 级不确定, D2)。
     - triggers: [{"key": "push"|"pull_request", "paths": [glob,...] | None}]
       paths=None 表示该触发无 paths 过滤 (→ 全触发, covered)。
     - parse_ok=False — 文件级结构解析失败 (读不出 on: 块) → parse_failed。
+    - dispatchable (aria-plugin#152 TASK-007b, additive 键): `on:` 是否含
+      `workflow_dispatch` 键, 标量 / flow 列表 / 块映射三形均覆盖;
+      `workflow_dispatch` 仍属 NON_AUTO_TRIGGER_KEYS, 对 triggers/
+      covered_uncertain 零贡献 (不改既有三键语义)。parse_ok=False 早返时恒
+      False。
     """
     lines = text.splitlines()
     # 定位 0 缩进 on: 行 (标量 / flow 列表 / 块映射三形, D6)。
@@ -214,10 +229,16 @@ def _parse_workflow(text: str) -> dict[str, Any]:
             on_idx, scalar_val = i, None
             break
     if on_idx is None:
-        return {"parse_ok": False, "covered_uncertain": False, "triggers": []}
+        return {
+            "parse_ok": False,
+            "covered_uncertain": False,
+            "triggers": [],
+            "dispatchable": False,
+        }
 
     triggers: list[dict[str, Any]] = []
     covered_uncertain = False
+    dispatchable = False
 
     if scalar_val is not None:
         # 标量形 `on: push` / flow 列表形 `on: [push, pull_request]` — 无 paths 过滤。
@@ -230,6 +251,8 @@ def _parse_workflow(text: str) -> dict[str, Any]:
             k = _unquote(k)
             if not k:
                 continue
+            if k == "workflow_dispatch":
+                dispatchable = True
             if k in AUTO_TRIGGER_KEYS:
                 triggers.append({"key": k, "paths": None})
             elif k not in NON_AUTO_TRIGGER_KEYS:
@@ -238,6 +261,7 @@ def _parse_workflow(text: str) -> dict[str, Any]:
             "parse_ok": True,
             "covered_uncertain": covered_uncertain,
             "triggers": triggers,
+            "dispatchable": dispatchable,
         }
 
     # 块映射形: on: 块延伸到下一个 0 缩进顶层键 (或 EOF)。
@@ -280,6 +304,8 @@ def _parse_workflow(text: str) -> dict[str, Any]:
                 break
             sub.append(nraw)
             j += 1
+        if key == "workflow_dispatch":
+            dispatchable = True
         if key in AUTO_TRIGGER_KEYS:
             paths, sub_uncertain = _extract_paths(sub)
             if sub_uncertain:
@@ -294,6 +320,7 @@ def _parse_workflow(text: str) -> dict[str, Any]:
         "parse_ok": True,
         "covered_uncertain": covered_uncertain,
         "triggers": triggers,
+        "dispatchable": dispatchable,
     }
 
 
@@ -469,8 +496,11 @@ def _evaluate(
             "not_applicable", "no-workflow-files", 0, [], n_changed
         )
 
-    # 规则 5: 逐 workflow 解析 (中间步骤)。
+    # 规则 5: 逐 workflow 解析 (中间步骤)。matched_parsed 记下每个 matched
+    # workflow 的解析结果, 供规则 6 抽取 dispatchable 子集 (aria-plugin#152
+    # TASK-007b) —— 其余 7 处终态调用点不需要它, 恒 [] (见 _result docstring)。
     matched: list[str] = []
+    matched_parsed: dict[str, dict[str, Any]] = {}
     parse_failed: list[str] = []
     for rel in workflow_files:
         try:
@@ -487,11 +517,22 @@ def _evaluate(
             continue
         if _workflow_covers(parsed, changed):
             matched.append(rel)
+            matched_parsed[rel] = parsed
 
     # 规则 6: covered 优先于 parse_failed (真实覆盖是更强信号, BA-4)。
+    # workflow-files-changed (规则 3) 下 dispatchable_workflows 恒 [] 是设计
+    # 限制 —— 那条路径根本没跑 workflow 解析循环 (n_wf 未必与实际改动重叠),
+    # ⛔ 禁扩成全量 workflow 列表 (会把「未验证过 dispatchable」的项也报出去)。
     if matched:
         return _result(
-            "covered", "workflow-trigger-matched", n_wf, matched, n_changed
+            "covered",
+            "workflow-trigger-matched",
+            n_wf,
+            matched,
+            n_changed,
+            dispatchable_workflows=[
+                w for w in matched if matched_parsed[w]["dispatchable"]
+            ],
         )
     # 规则 7: 无 covered ∧ 有解析失败 — 没读懂的 workflow 可能覆盖。
     if parse_failed:
