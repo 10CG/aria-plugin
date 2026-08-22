@@ -1937,7 +1937,30 @@ rm -f "/tmp/secret-guard-ack-${USER:-anon}-${_sg179_nonce}.nonce"
 if [[ -n "$_sg179_ack_path_bak" ]]; then export SECRET_GUARD_ACK_PATH="$_sg179_ack_path_bak"; else unset SECRET_GUARD_ACK_PATH; fi
 if [[ -n "$_sg179_ack_nonce_bak" ]]; then export SECRET_GUARD_ACK_NONCE="$_sg179_ack_nonce_bak"; else unset SECRET_GUARD_ACK_NONCE; fi
 
-# ── #179 后续段 (TASK-008/009/003) 追加于此之下 ──
+# ── TASK-008 (SC-5): 误杀守卫 — 真实读取形态在前置白名单落地后必须仍拦 ──
+# baseline GREEN (这些今天就拦; 守卫价值 = TASK-010 写错方向时翻红)。先于 pattern 改动落地 (INV-1)。
+bash_case "#179 SC-5 守卫: cat ~/.bashrc (/ 前缀)" 2 'cat ~/.bashrc'
+bash_case "#179 SC-5 守卫: grep X ~/.zshrc" 2 'grep FORGEJO ~/.zshrc'
+bash_case "#179 SC-5 守卫: sed -n 1p /etc/profile (绝对路径)" 2 'sed -n 1p /etc/profile'
+bash_case "#179 SC-5 守卫: cat .bashrc (单空格裸文件名, 争用形态)" 2 'cat .bashrc'
+bash_case "#179 SC-5 守卫: cat \"\$HOME/.bashrc\" (引号+/ 前缀)" 2 'cat "$HOME/.bashrc"'
+bash_case "#179 SC-5 守卫: 多行 heredoc 中段真实读取" 2 $'echo start\ncat ~/.bashrc\necho end'
+# Amendment-1 后缀族守卫: 词字符 / glob 前缀的合法 env 文件名不得被白名单放走
+bash_case "#179 SC-5 守卫 (Amendment-1): cat prod.env (词字符前缀)" 2 'cat prod.env'
+bash_case "#179 SC-5 守卫 (Amendment-1): find -name '*.env' -exec cat (glob 前缀)" 2 "find . -name '*.env' -exec cat {} \\;"
+
+# ── TASK-009 (SC-4): 误报收敛 — 敏感名在非路径前缀位置不触发 ──
+# baseline RED (400f0bc/46a374f: 六条全 exit 2 误拦)
+bash_case "#179 SC-4 issue 复现: 正则 alternation 位置 (grep -oE '(\\.bashrc|...)' 读 hook 自身)" 0 "grep -oE '\\(\\\\.bashrc\\|[^)]*\\)' hooks/secret-guard.sh"
+bash_case "#179 SC-4 变体: 前缀 ( (无转义)" 0 "grep -E '(.bashrc|.zshrc)' hooks/secret-guard.sh"
+# (v2: 原「前缀 |」变体因既有 [^|]* 结构性不可达 — 基线恒绿, 反事实失败, 换 { 前缀)
+bash_case "#179 SC-4 变体: 前缀 { (sed 脚本内字面量)" 0 "sed -n 's/{.bashrc}/X/p' README.md"
+bash_case "#179 SC-4 变体: 前缀 \\ (转义点)" 0 "grep -c '\\.bash_profile' hooks/secret-guard.sh"
+bash_case "#179 SC-4 多行: heredoc 内含正则字面量" 0 $'cat <<EOF > /tmp/x.txt\npattern=(\\\\.bashrc|\\\\.zshrc)\nEOF'
+# (v2: 原形态把 .env 放在管道后段, [^|]* 不可达恒绿; 活体误拦的真实形状是同段内 reader 之后的 prose/注释字面量)
+bash_case "#179 SC-4 .env 面: 前缀 \\ 同段注释字面量 (活体误拦行 :687)" 0 "head -n 5 hooks/secret-guard.sh # rows like (\\.env|\\.envrc)"
+
+# ── #179 后续段 (TASK-003) 追加于此之下 ──
 
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
 # 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,
