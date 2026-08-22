@@ -1090,6 +1090,70 @@ class NotFoundVerdictTests(unittest.TestCase):
         self.assertIn("gate_error", out)
         self.assertEqual(out["gate_error"]["kind"], "no-run-for-branch")
 
+    # ── TASK-007a RED, aria-plugin#152 §4/§2.3: DISPATCH_VIABLE +
+    # dispatchable_workflows → dispatch 处方行渲染契约 (TASK-007b 待落地) ──
+
+    _PC_DISPATCHABLE = {
+        "decision": "covered",
+        "reason": "workflow-trigger-matched",
+        "matched_workflows": [".forgejo/workflows/x.yml"],
+        "dispatchable_workflows": [".forgejo/workflows/x.yml"],
+        "workflows_scanned": 1,
+        "changed_files_count": 1,
+    }
+
+    def test_sc2_dispatch_line_when_viable_and_dispatchable(self) -> None:
+        """它怎么会红: 当前 `_no_run_gate_error` 的 trigger-matched 分支消息
+        从不追加 dispatches 处方行, 也从不产出字面 "<pr_branch>" 占位符 ——
+        即便调用方在 path_coverage 里塞了 dispatchable_workflows。
+        `mock.patch.object(gate, "DISPATCH_VIABLE", True, create=True)` 用
+        create=True 是因为基线模块压根没有这个符号 (TASK-007b 待新增的裸
+        全局); `assertIn("workflows/x.yml/dispatches", msg)` 与
+        `assertIn("<pr_branch>", msg)` 在基线均 AssertionError (非
+        AttributeError, patch 已把符号 stub 出来了)。"""
+        with mock.patch.object(gate, "DISPATCH_VIABLE", True, create=True):
+            out = gate.compute_verdict(
+                [], "not_found", cfg=None, path_coverage=self._PC_DISPATCHABLE
+            )
+        msg = out["raw_message"]
+        self.assertIn("workflows/x.yml/dispatches", msg)
+        self.assertNotIn(".forgejo/workflows/x.yml/dispatches", msg)
+        self.assertIn("<pr_branch>", msg)
+        self.assertIn('{"ref":"<pr_branch>"}', msg)
+        self.assertEqual(out["raw_message"], out["gate_error"]["message"])
+
+    def test_sc2_dispatch_line_guards(self) -> None:
+        """GUARD 三变体 —— 在当前基线本就绿 (渲染逻辑压根不存在, 三者都不会
+        产出 "dispatches" 子串), 留作 TASK-007b 落地后的负控: 证明
+        DISPATCH_VIABLE=False / dispatchable_workflows=[] / 非 trigger-matched
+        档这三个条件任一不满足都必须**不**渲染, 而非"恒渲染"或"恒不渲染"
+        两种都能让当前占位测试通过的退化实现。"""
+        pc_no_dispatchable = {
+            **self._PC_DISPATCHABLE, "dispatchable_workflows": []
+        }
+        pc_files_changed = {
+            "decision": "covered",
+            "reason": "workflow-files-changed",
+            "matched_workflows": [],
+            "dispatchable_workflows": [".forgejo/workflows/x.yml"],
+            "workflows_scanned": 1,
+            "changed_files_count": 1,
+        }
+        cases = [
+            ("dispatch_viable_false", self._PC_DISPATCHABLE, False),
+            ("no_dispatchable_workflows", pc_no_dispatchable, True),
+            ("not_trigger_matched_reason", pc_files_changed, True),
+        ]
+        for label, pcv, viable in cases:
+            with self.subTest(case=label):
+                with mock.patch.object(
+                    gate, "DISPATCH_VIABLE", viable, create=True
+                ):
+                    out = gate.compute_verdict(
+                        [], "not_found", cfg=None, path_coverage=pcv
+                    )
+                self.assertNotIn("dispatches", out["raw_message"], label)
+
 
 class ThresholdTests(unittest.TestCase):
     """SC-3: gate._effective_prompt_threshold 契约 (aria-plugin#152)。
@@ -1444,6 +1508,29 @@ class GateCheckNotFoundTests(_ProbeCacheResetMixin, unittest.TestCase):
             direct["gate_error"]["prompt_after_observations"],
         )
         self.assertEqual(out["gate_error"]["prompt_after_observations"], 4)
+
+    def test_c2_dispatch_line_backfilled_with_real_branch(self) -> None:
+        """SC-5 (c2), TASK-007b 契约 (spec §4): gate_check 路径下 message 里
+        的 dispatches 行必须带真实 pr_branch (经既有 `<pr_branch>` 回填逻辑
+        :677-682 顺带处理, dispatches 渲染本身只须产出字面占位符), 不得让
+        `<pr_branch>` 裸奔到用户可见文案。它怎么会红: 当前 `_no_run_gate_error`
+        对 trigger-matched 档从不追加 dispatches 行、也不产出 "<pr_branch>"
+        占位符 —— message 里既不含 "feat/x" (没有占位符可回填) 也不含
+        "dispatches", 两条 assertIn 均 AssertionError。"""
+        self.pc_eval.return_value = {
+            **_PC_COVERED_STUB,
+            "matched_workflows": [".forgejo/workflows/stub.yml"],
+            "dispatchable_workflows": [".forgejo/workflows/stub.yml"],
+        }
+        backend = self._make_backend(pr_state="not_found")
+        with mock.patch.object(gate, "DISPATCH_VIABLE", True, create=True), \
+                mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out = gate.gate_check(pr_branch="feat/x")
+        msg = out["gate_error"]["message"]
+        self.assertIn("feat/x", msg)
+        self.assertNotIn("<pr_branch>", msg)
+        self.assertIn("workflows/stub.yml/dispatches", msg)
+        self.assertEqual(out["raw_message"], msg)
 
 
 class PrBranchVerifyTests(_ProbeCacheResetMixin, unittest.TestCase):
