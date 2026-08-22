@@ -549,7 +549,9 @@ case "$tool" in
     # secret file paths a future-Claude might Read without realizing.
     # Note: lowercased file_path for the match.
     lower_path="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
-    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key'; then
+    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/settings\.json$|/\.claude/settings\.local\.json$|/\.claude\.json$'; then
+      # (last three branches: Aria #179 — Claude Code config files, env node
+      #  holds API tokens; mirrors the Bash-face claude-config row)
       # R3-C-9 fix: SECRET_GUARD_ACK_PATH cannot be unset across processes
       # (env var lives in the parent shell, hook subprocess can't unset it).
       # Previously hook just emitted "consumed" NOTE which was dead code.
