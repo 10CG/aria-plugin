@@ -240,7 +240,7 @@ C.2.6 - UPM Milestone Sub-progress Append (optional):
 | branch-manager (C.2.4-C.2.5) | wait approval + merge API call | gate green 后 |
 
 > 📌 **改这段代码前先读**: [`references/pre-merge-gate-empirical-traps.md`](./references/pre-merge-gate-empirical-traps.md)
-> —— 半页, 7 条实测踩出来的坑 (ls-remote 零命中返 rc=0 · 参数被当 glob · `UnicodeDecodeError` 不是
+> —— 一页, 11 条实测踩出来的坑 (§一~§五 7 条 + §六 4 条 零 run 折叠, aria-plugin#152; 活体证据行不计) (ls-remote 零命中返 rc=0 · 参数被当 glob · `UnicodeDecodeError` 不是
 > `OSError` 子类 · 核验插入点 · 测试隔离接缝 …)。每一条都不能靠读代码想出来。
 
 **执行流程**:
