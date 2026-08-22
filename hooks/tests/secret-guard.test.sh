@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 590 cases (584 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 591 cases (585 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1601,7 +1601,8 @@ esac
 # therefore excludes printf and asserts full coverage of the remaining
 # spanning families. census family_count is asserted ==60: 57 was the #128
 # baseline; +3 = the #153 Forgejo credential-endpoint patterns (2026-08-20,
-# deliberate additions -- each carries its own SC-19 probe below).
+# deliberate additions -- each carries its own SC-19 probe below); +1 = the
+# Aria #179 claude-config reader row (2026-08-22, GRP: ... |jq), probe below.
 sc19_census_json="$(python3 "$(dirname "$0")/corpus_census.py" 2>/dev/null)"
 sc19_family_count="$(echo "$sc19_census_json" | jq -r '.families.family_count // "ERR"')"
 sc19_families="$(echo "$sc19_census_json" | jq -r '.families.family_table | keys[]' 2>/dev/null)"
@@ -1616,9 +1617,9 @@ while IFS= read -r sc19_fam; do
   grep -qF "# family='${sc19_fam}'" "$0" || sc19_missing+=("$sc19_fam")
 done <<< "$sc19_families"
 
-if [[ "$sc19_family_count" != "60" ]]; then
+if [[ "$sc19_family_count" != "61" ]]; then
   fail=$((fail + 1))
-  failures+=("FAIL [SC-19: census family_count]: want 60, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
+  failures+=("FAIL [SC-19: census family_count]: want 61, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
 elif [[ ${#sc19_missing[@]} -eq 0 ]]; then
   pass=$((pass + 1))
 else
@@ -1639,6 +1640,10 @@ bash_case "SC-19 fam:forgejo-pat-create cross-seg" 0 \
 # family='EMPTY:\b(forgejo|curl)\b[^|]*/user/applications/oauth2' | 2->0 by construction (#153, no pre-#153 baseline)
 bash_case "SC-19 fam:forgejo-oauth2 cross-seg" 0 \
   'forgejo GET /repos/o/r/issues; echo /user/applications/oauth2'
+# ── #179 addition to the SC-19 spanning set (1 new family, 2026-08-22) ──
+# family='GRP:(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)' | 2->0 by construction (#179 row is new; no pre-#179 baseline)
+bash_case "SC-19 fam:claude-config-reader cross-seg" 0 \
+  'cat notes.txt; echo ~/.claude/settings.json'
 
 # ── TASK-019 (SC-17): self-check — no duplicate case names in this file ────
 # Covers every *_case() helper defined above (bash/read/edit/run/crlf/static/
