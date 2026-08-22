@@ -318,6 +318,21 @@ _sg_compute_credit() {
   #   - R2-C-10: `2>/dev/null` (stderr-only) no longer counts (was: any `>`)
   local has_filter=0
 
+  # ── Aria #179 What.1b: claude-config 收紧模式 ─────────────────────────────
+  # Detected by re-matching the source-name group against $seg (NOT by "which
+  # risky_pattern fired" — this function has no such channel), so a mixed
+  # segment (`cat ~/.env ~/.claude/settings.json | ...`) is always tightened,
+  # with no ordering dependence. In tight mode only NAME-ONLY / COUNT / HASH /
+  # DISCARD credits count: the `jq '{...}'` shape credit is pure shape (no
+  # field-name check) and would hand back the exact `env` node these files
+  # exist to protect; line/column filters (grep anchor, grep -v, sed, cut, awk)
+  # are unreliable redaction for JSON (values span/nest lines). Non-claude
+  # sources keep every existing credit rule unchanged.
+  local tight=0
+  if [[ "$seg" =~ ($_SG_CLAUDE_CFG) ]]; then
+    tight=1
+  fi
+
   # jq filter detection — v1.3 (R3-C-1 fix): switched from "treat any non-`.`
   # as projection" to "explicit safe-jq whitelist". Previously `.[]`, `values`,
   # `..`, `tostring`, `@text`, `@base64`, `.Items` (returns full subobject),
@@ -340,7 +355,7 @@ _sg_compute_credit() {
   fi
   # Whitelisted: `jq '{alias: .safe_field}'` — single-line allowlist projection.
   # Recognize the `{...}` object-construction shape as projection allowlist.
-  if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?\{" "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?\{" "$seg"; then
     has_filter=1
   fi
   # grep / sed / cut / awk — R4-C-2 fix: tighten to require actual redaction.
@@ -351,24 +366,24 @@ _sg_compute_credit() {
   #   sed with substitution (s///) OR delete (d) — not just `-n p` print-all
   #   cut with -d AND -f<single-field> (not -f1- range)
   #   awk with $N references (not just `1` for print-all)
-  if _sg_line_match '\|[[:space:]]*grep([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^[:space:]]*[\^\$]' "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match '\|[[:space:]]*grep([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^[:space:]]*[\^\$]' "$seg"; then
     has_filter=1   # grep with anchor (probably real filtering)
   fi
-  if _sg_line_match '\|[[:space:]]*grep[[:space:]]+(-v|--invert-match)\b' "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match '\|[[:space:]]*grep[[:space:]]+(-v|--invert-match)\b' "$seg"; then
     has_filter=1   # grep -v inverts (probably filtering)
   fi
-  if _sg_line_match '\|[[:space:]]*sed[[:space:]]+[^[:space:]]*([Ss]/[^/]*/|[0-9]+d|[Dd])' "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match '\|[[:space:]]*sed[[:space:]]+[^[:space:]]*([Ss]/[^/]*/|[0-9]+d|[Dd])' "$seg"; then
     has_filter=1   # sed s/// or delete
   fi
   # cut requires single field (not range like -f1- which is all-fields identity)
-  if _sg_line_match '\|[[:space:]]*cut[[:space:]]+-[df][[:space:]]*[^[:space:]-]' "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match '\|[[:space:]]*cut[[:space:]]+-[df][[:space:]]*[^[:space:]-]' "$seg"; then
     has_filter=1   # cut -d= or -f1 (specific field)
   fi
   # awk content can contain spaces inside quotes; match `$N` anywhere in quoted arg
-  if _sg_line_match "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*\\\$[0-9]" "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*\\\$[0-9]" "$seg"; then
     has_filter=1   # awk '{print $N}'
   fi
-  if _sg_line_match "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*/[^/]+/" "$seg"; then
+  if [[ $tight -eq 0 ]] && _sg_line_match "\|[[:space:]]*awk[[:space:]]+['\"][^'\"]*/[^/]+/" "$seg"; then
     has_filter=1   # awk '/regex/...'
   fi
   # R2-C-10 fix: only stdout-redirect to /dev/null counts. stderr-only (2>) and
