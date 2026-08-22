@@ -309,6 +309,21 @@ _sg_split_top() {
 # 存放 API token 的标准位置; ~/.claude.json 是 legacy 全局配置 (含 MCP token)。
 _SG_CLAUDE_CFG='\.claude/settings\.json|\.claude/settings\.local\.json|\.claude\.json'
 
+# ── Aria #179 What.3 + Amendment-1: 前置字符白名单 (两族, 各自单一白名单) ──
+# Used as `READER[[:space:]]+([^|]*${PP})?(NAMES)`: the optional group lets a
+# single-space bare form (`cat .bashrc`) match via the mandatory whitespace
+# alone (R1 A1-M2 争用), while any other char directly before the sensitive
+# name must be in the whitelist — regex/alternation literal contexts
+# (`(`, `|`, `\`, `{`, `[`) are therefore never a trigger position.
+#   NAME family  (full basenames: shell rc files, claude config):
+#     start / whitespace / quotes / `=` / `/` / `~`
+#   SUFFIX family (names that can be a basename tail: .env .pem .key id_rsa…):
+#     the NAME set + word chars + `*` + `.` + `-` (prod.env / *.env / a.b.env)
+# `~` is in both: names that start with `/` (/etc/profile, /.aws/credentials)
+# are legitimately preceded by `~`.
+_SG_PP_NAME="(^|[[:space:]\"'=/~])"
+_SG_PP_SUFFIX="(^|[[:space:]\"'=/~*A-Za-z0-9_.-])"
+
 _sg_compute_credit() {
   local seg="$1"
   # ── Filter detection (only REDACTING filters count) ────────────────────────
@@ -705,9 +720,9 @@ declare -a risky_patterns=(
   'glab[[:space:]]+variable[[:space:]]+get'               # GitLab CLI
 
   # Plain env-file reads (cat / head / tail / less / more)
-  'cat[[:space:]]+[^|]*\.env(\b|/|$|[[:space:]])'
-  'cat[[:space:]]+[^|]*\.envrc'
-  '(head|tail|less|more)[[:space:]]+[^|]*\.env'
+  "cat[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.env(\b|/|$|[[:space:]])"
+  "cat[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.envrc"
+  "(head|tail|less|more)[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.env"
 
   # v1.25.0 O4 (closes v1.24.0 known-limit (c) F2): Local key-file reads via
   # plain Bash readers — mirrors Read|Edit branch file_path regex at line 153
@@ -720,7 +735,7 @@ declare -a risky_patterns=(
   #      .docker/config.json (base64 registry auth). Standard id_rsa/ed25519/ecdsa
   #      still match anywhere (backward-compat); non-standard names anchored to .ssh/
   #      to keep FP low (`cat id_number.txt` must not block).
-  '(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)[[:space:]]+[^|]*(id_rsa|id_ed25519|id_ecdsa|\.ssh/id_[A-Za-z0-9_]+|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig|/\.docker/config\.json)(\b|/|$|[[:space:]])'
+  "(cat|head|tail|less|more|strings|hexdump|od|xxd|base64)[[:space:]]+([^|]*${_SG_PP_SUFFIX})?(id_rsa|id_ed25519|id_ecdsa|\.ssh/id_[A-Za-z0-9_]+|\.pem|\.key|\.p12|\.pfx|\.jks|\.gpg|\.age|\.tfstate|/\.aws/(credentials|config)|/\.kube/config|/kubeconfig|/\.docker/config\.json)(\b|/|$|[[:space:]])"
 
   # 2026-07-01 incident: shell rc / login-env files commonly hold
   # `export SECRET=...` lines (e.g. FORGEJO_TOKEN in ~/.bashrc). A plain
@@ -729,8 +744,8 @@ declare -a risky_patterns=(
   # above, AND .bashrc/.profile/etc were not in the file list. Mirror the .env
   # treatment: block reads of these files by any common reader (ack-overridable
   # for legit non-secret reads via SECRET_GUARD_ACK_PATH). `grep` added here.
-  '(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)[[:space:]]+[^|]*(\.bashrc|\.bash_profile|\.bash_login|\.zshrc|\.zprofile|\.profile|\.bash_aliases|/etc/environment|/etc/profile)(\b|/|$|[[:space:]])'
-  'ssh[^|]*(cat|grep|head|tail|less|more|strings|awk)[^|]*(\.bashrc|\.bash_profile|\.zshrc|\.profile|/etc/environment|/etc/profile)'
+  "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)[[:space:]]+([^|]*${_SG_PP_NAME})?(\.bashrc|\.bash_profile|\.bash_login|\.zshrc|\.zprofile|\.profile|\.bash_aliases|/etc/environment|/etc/profile)(\b|/|$|[[:space:]])"
+  "ssh[^|]*(cat|grep|head|tail|less|more|strings|awk)([^|]*${_SG_PP_NAME})?(\.bashrc|\.bash_profile|\.zshrc|\.profile|/etc/environment|/etc/profile)"
 
   # Aria #179 (2026-08-09 incident): Claude Code's own config files hold API
   # tokens in their `env` node and were in NO manifest (Bash or Read/Edit).
@@ -738,7 +753,7 @@ declare -a risky_patterns=(
   # leak command was `jq -c '{model, env: (.env // {})}' ~/.claude/settings.json`.
   # python3/node readers are covered by extending the :785/:786 source groups.
   # Source-name group lives in $_SG_CLAUDE_CFG (shared with credit tightening).
-  "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)[[:space:]]+[^|]*(${_SG_CLAUDE_CFG})(\b|/|$|[[:space:]])"
+  "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)[[:space:]]+([^|]*${_SG_PP_NAME})?(${_SG_CLAUDE_CFG})(\b|/|$|[[:space:]])"
 
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
@@ -752,11 +767,11 @@ declare -a risky_patterns=(
   '\.env[^|]*\|[[:space:]]*xargs[[:space:]]+(cat|head|tail|less|more|strings|hexdump|od|dd)'   # echo /x.env | xargs cat
   '\b(echo|printf|find|ls)[^|]*\.env[^|]*\|[[:space:]]*xargs'
   'dd[[:space:]]+if=[^|]*\.env'
-  'strings[[:space:]]+[^|]*\.env'
-  'hexdump[[:space:]]+[^|]*\.env'
-  '(\bod\b)[[:space:]]+[^|]*\.env'
-  'awk[[:space:]]+[^|]*[[:space:]]+[^|]*\.env'
-  'perl[[:space:]]+-[a-zA-Z]*[ne][^|]*\.env'
+  "strings[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.env"
+  "hexdump[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.env"
+  "(\bod\b)[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.env"
+  "awk[[:space:]]+[^|]*[[:space:]]+([^|]*${_SG_PP_SUFFIX})?\.env"
+  "perl[[:space:]]+-[a-zA-Z]*[ne]([^|]*${_SG_PP_SUFFIX})?\.env"
 
   # R2-C-7 fix: bash file-readers that don't shell out to cat
   'tee[[:space:]]+[^|]*<[[:space:]]*[^|]*\.env'
@@ -816,8 +831,8 @@ declare -a risky_patterns=(
   # Aria #179: + claude-config source group (python3 -c / node -e inline scripts
   # reading ~/.claude/settings.json etc.). Kept on the narrow `-c`/`-e` rows —
   # NOT merged into the generic reader alternation (prose-FP surface).
-  "python3?[[:space:]]+-c[^|]*(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
-  "node[[:space:]]+-e[^|]*(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
+  "python3?[[:space:]]+-c([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
+  "node[[:space:]]+-e([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
 
   # Decryption tools — assume targeted at secret files
   'sops[[:space:]]+(-d|--decrypt)'
