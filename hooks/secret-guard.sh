@@ -303,6 +303,12 @@ _sg_split_top() {
   [[ -n "${_seg//[[:space:]]/}" ]] && _SG_SEGS+=("$_seg")
 }
 
+# ── Aria #179: claude-config 源名组 (单一定义, 两处消费: risky_patterns 行 +
+# _sg_compute_credit 收紧模式检测; 两处字面量漂移是 spec What.1b 点名的风险) ──
+# ~/.claude/settings.json / .claude/settings.local.json 的 env 节点是 Claude Code
+# 存放 API token 的标准位置; ~/.claude.json 是 legacy 全局配置 (含 MCP token)。
+_SG_CLAUDE_CFG='\.claude/settings\.json|\.claude/settings\.local\.json|\.claude\.json'
+
 _sg_compute_credit() {
   local seg="$1"
   # ── Filter detection (only REDACTING filters count) ────────────────────────
@@ -709,6 +715,14 @@ declare -a risky_patterns=(
   '(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed)[[:space:]]+[^|]*(\.bashrc|\.bash_profile|\.bash_login|\.zshrc|\.zprofile|\.profile|\.bash_aliases|/etc/environment|/etc/profile)(\b|/|$|[[:space:]])'
   'ssh[^|]*(cat|grep|head|tail|less|more|strings|awk)[^|]*(\.bashrc|\.bash_profile|\.zshrc|\.profile|/etc/environment|/etc/profile)'
 
+  # Aria #179 (2026-08-09 incident): Claude Code's own config files hold API
+  # tokens in their `env` node and were in NO manifest (Bash or Read/Edit).
+  # `jq` added to the reader group — it is the natural JSON reader and the real
+  # leak command was `jq -c '{model, env: (.env // {})}' ~/.claude/settings.json`.
+  # python3/node readers are covered by extending the :785/:786 source groups.
+  # Source-name group lives in $_SG_CLAUDE_CFG (shared with credit tightening).
+  "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)[[:space:]]+[^|]*(${_SG_CLAUDE_CFG})(\b|/|$|[[:space:]])"
+
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
   '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/(var/)?run/secrets/'
@@ -782,8 +796,11 @@ declare -a risky_patterns=(
   # Indirection bypasses
   'base64[[:space:]]+(-d|--decode)[^|]*\|[[:space:]]*(bash|sh|zsh|dash)'
   '\|[[:space:]]*base64[[:space:]]+(-d|--decode)[[:space:]]*\|[[:space:]]*(bash|sh|zsh|dash)'
-  'python3?[[:space:]]+-c[^|]*(/v1/var/|secretsmanager|/secrets/|\.env|provider_key)'
-  'node[[:space:]]+-e[^|]*(/v1/var/|secretsmanager|/secrets/|\.env|provider_key)'
+  # Aria #179: + claude-config source group (python3 -c / node -e inline scripts
+  # reading ~/.claude/settings.json etc.). Kept on the narrow `-c`/`-e` rows —
+  # NOT merged into the generic reader alternation (prose-FP surface).
+  "python3?[[:space:]]+-c[^|]*(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
+  "node[[:space:]]+-e[^|]*(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
 
   # Decryption tools — assume targeted at secret files
   'sops[[:space:]]+(-d|--decrypt)'
