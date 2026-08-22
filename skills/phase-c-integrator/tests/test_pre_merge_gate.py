@@ -70,6 +70,16 @@ class _ProbeCacheResetMixin:
     ⚠️ 打桩点是**这一处**, ⛔ 不逐条改 28 个测试 (那会把「同一形状散在 28 处」
     这个病复制一遍); 需要验真实核验的测试自行用 self.mb_verify 改返回值或
     stop 掉这个 patcher。
+
+    #152 (TASK-005/006): 同一先例第三次推广到 gate._verify_branch_exists ——
+    TASK-006 契约 (spec §2.1) 里 pr_ci_status="not_found" 分支会对 PR 分支再发
+    一次 ls-remote 核验, 调用的是**新名** `_verify_branch_exists` (旧名
+    `_verify_main_branch_exists` 保留为对新名的位置参数包装, 见
+    OldNameWrapperTests)。基线代码里这个新名符号尚不存在 ——
+    `create=True` 是必须的, 否则 setUp 里 mock.patch.object 直接抛
+    AttributeError, 使整个继承本 mixin 的套件退化成 error 而非 fail (掩盖真实
+    红因)。不打桩这一处的测试 (见 OldNameWrapperTests, 它刻意不继承本 mixin)
+    会走真实 `git ls-remote`。
     """
 
     def setUp(self) -> None:  # type: ignore[override]
@@ -87,6 +97,11 @@ class _ProbeCacheResetMixin:
         )
         self.mb_verify = mb_patcher.start()
         self.addCleanup(mb_patcher.stop)
+        pr_patcher = mock.patch.object(
+            gate, "_verify_branch_exists", return_value=("ok", ""), create=True
+        )
+        self.pr_verify = pr_patcher.start()
+        self.addCleanup(pr_patcher.stop)
 
     def tearDown(self) -> None:  # type: ignore[override]
         reset_probe_cache()
@@ -1269,6 +1284,259 @@ class EarlyExitContractTests(_ProbeCacheResetMixin, unittest.TestCase):
         self.assertNotIn("gate_error", out)
         self.assertIn("path_coverage", out)
         self.assertEqual(out["verdict"], "green")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GateCheckNotFoundTests / PrBranchVerifyTests / OldNameWrapperTests
+# (TASK-005, aria-plugin#152) — RED against baseline e95b202 for the
+# TASK-006 PR-branch existence verification + `<pr_branch>` backfill contract
+# (spec §2.1):
+#
+#   pr_status = backend.query_pr_ci(pr_branch)
+#   verify_note = ""
+#   if pr_status.state == "not_found":
+#       st, detail = _verify_branch_exists(pr_branch, remote=remote, timeout=...)
+#       if st == "not-found":
+#           → verdict=fail, gate_error.kind="pr-branch-not-found"
+#       if st != "ok":
+#           verify_note = " (PR 分支存在性核验失败: {detail})"
+#   out = compute_verdict(...)
+#   if out.get("gate_error"):
+#       out["gate_error"]["message"] = message.replace("<pr_branch>", pr_branch) + verify_note
+#       out["raw_message"] = out["gate_error"]["message"]
+#
+# TASK-006 (另一 agent) 实现生产代码; 本组只钉规格。SC-5 (占位符回填 +
+# raw_message 同步 + gate_check 真接线核验调用, 非仅结果字段) / SC-10 (PR 分支
+# 不存在 → verdict=fail, kind="pr-branch-not-found") / SC-3 末句 (阈值跨路径
+# 一致, GUARD)。
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class GateCheckNotFoundTests(_ProbeCacheResetMixin, unittest.TestCase):
+    """gate_check 端到端: pr_ci_status="not_found" 分支下 PR 分支核验的接线
+    契约 (TASK-006, spec §2.1)。backend mock 与 GateCheckTests._make_aether_
+    backend_mock 同形, 局部改名避免与那边的 fixture 撞车。"""
+
+    def _make_backend(
+        self, pr_state: str = "not_found", main_runs: list[dict] | None = None
+    ):
+        b = mock.MagicMock(spec=AetherBackend)
+        b.name = "aether-ci-cli"
+        b.precheck.return_value = (True, "")
+        b.query_branch_in_flight.return_value = InFlightStatus(
+            runs=main_runs or [], checked_at="2026-08-22T00:00:00Z"
+        )
+        b.query_pr_ci.return_value = CIStatus(
+            state=pr_state, checked_at="2026-08-22T00:00:00Z"
+        )
+        return b
+
+    @staticmethod
+    def _pr_verify_branch_arg(call_args) -> str | None:
+        """契约允许 `_verify_branch_exists(pr_branch, remote=..., timeout=...)`
+        (pr_branch 位置参数) 或未来实现改用关键字 branch= —— 两种形态都接受,
+        断言的是"传的分支名对不对", 不是"用了哪种传参形态"。"""
+        if call_args.args:
+            return call_args.args[0]
+        return call_args.kwargs.get("branch")
+
+    def test_a_enabled_calls_pr_verify_and_keeps_no_run_gate_error(self) -> None:
+        """(a) 它怎么会红: 基线 gate_check 从不调用 gate._verify_branch_exists
+        (TASK-006 未落地) —— self.pr_verify.assert_called_once() 处红
+        (call_count==0)。verdict/pr_ci_status/gate_error.kind/path_coverage/
+        六基础键这几条本身在基线已绿 (TASK-003 已把 compute_verdict 接进
+        gate_check), 红点精确落在"核验是否被调用"上。"""
+        backend = self._make_backend(pr_state="not_found")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(out["verdict"], gate.VERDICT_WAIT)
+        self.assertEqual(out["pr_ci_status"], "not_found")
+        self.assertEqual(out["gate_error"]["kind"], "no-run-for-branch")
+        self.assertIn("path_coverage", out)
+        for key in (
+            "verdict",
+            "pr_ci_status",
+            "in_flight_runs",
+            "primitive_used",
+            "primitive_version_sha",
+            "raw_message",
+        ):
+            self.assertIn(key, out)
+        self.pr_verify.assert_called_once()
+        self.assertEqual(
+            self._pr_verify_branch_arg(self.pr_verify.call_args), "feat/x"
+        )
+
+    def test_b_path_coverage_disabled_no_path_coverage_key(self) -> None:
+        """(b) 可能基线已绿 (path_coverage_enabled=False 时 gate_check 从不
+        调 evaluate_path_coverage, compute_verdict 早已对 path_coverage=None
+        产出"路径覆盖评估已关闭"文案, TASK-003 已覆盖这条) —— 仍留作守卫:
+        钉住 TASK-006 新插入的 PR 分支核验分支不会意外把 path_coverage 键
+        塞回输出里。"""
+        backend = self._make_backend(pr_state="not_found")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out = gate.gate_check(
+                pr_branch="feat/x", config={"path_coverage_enabled": False}
+            )
+        self.assertIn("gate_error", out)
+        self.assertNotIn("path_coverage", out)
+        self.assertIn("路径覆盖评估已关闭", out["gate_error"]["message"])
+
+    def test_c1_no_placeholder_literal_and_raw_message_synced(self) -> None:
+        """(c1) GUARD, 三变体 ((a) 默认 / (b) path_coverage 关闭 / (d)
+        verify-failed 后缀) 逐一断言 message 不含字面 "<pr_branch>" 且
+        raw_message 与 gate_error.message 同步。可能基线已绿 (基线从不产出
+        该占位符字面量, TASK-003 起两字段已同步) —— 仍有守卫价值: 防止
+        TASK-006 的 `.replace("<pr_branch>", ...)` 接线在某条路径漏做替换,
+        让占位符裸奔到用户可见的 message/raw_message。"""
+        backend = self._make_backend(pr_state="not_found")
+
+        def _get(config=None, pr_verify_return=None):
+            self.pr_verify.return_value = pr_verify_return or ("ok", "")
+            with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+                return gate.gate_check(pr_branch="feat/x", config=config)
+
+        variants = [
+            ("a_enabled", None, None),
+            ("b_pc_disabled", {"path_coverage_enabled": False}, None),
+            ("d_verify_failed", None, ("verify-failed", "boom")),
+        ]
+        for label, config, pr_verify_return in variants:
+            with self.subTest(variant=label):
+                out = _get(config=config, pr_verify_return=pr_verify_return)
+                self.assertNotIn("<pr_branch>", out["gate_error"]["message"])
+                self.assertEqual(out["raw_message"], out["gate_error"]["message"])
+
+    def test_d_verify_failed_appends_suffix_to_message(self) -> None:
+        """(d) 它怎么会红: 基线从不调用 pr_verify, 其 return_value 对输出零
+        影响 —— message 里不会出现 "核验失败: boom" 这个后缀, assertIn 处红
+        (基线 message 就是 _no_run_gate_error 的原文, 没有追加段)。"""
+        self.pr_verify.return_value = ("verify-failed", "boom")
+        backend = self._make_backend(pr_state="not_found")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out = gate.gate_check(pr_branch="feat/x")
+        self.assertEqual(out["verdict"], gate.VERDICT_WAIT)
+        self.assertEqual(out["gate_error"]["kind"], "no-run-for-branch")
+        self.assertIn("核验失败: boom", out["gate_error"]["message"])
+        self.assertEqual(out["raw_message"], out["gate_error"]["message"])
+
+    def test_sc3_threshold_consistent_across_gate_check_and_compute_verdict(
+        self,
+    ) -> None:
+        """SC-3 末句 GUARD: 已在基线绿 (TASK-003 早已把 gate_check 接到
+        compute_verdict, 阈值透传跨路径一致) —— 仍留作守卫: 防止 TASK-006 在
+        gate_check 里对 gate_error 做 .replace() 后处理时意外重建/覆盖整个
+        字典, 连带丢了 prompt_after_observations。"""
+        backend = self._make_backend(pr_state="not_found")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out = gate.gate_check(
+                pr_branch="feat/x",
+                config={"no_run_prompt_after_observations": 4},
+            )
+        direct = gate.compute_verdict(
+            [],
+            "not_found",
+            cfg={"no_run_prompt_after_observations": 4},
+            path_coverage=dict(_PC_COVERED_STUB),
+        )
+        self.assertEqual(
+            out["gate_error"]["prompt_after_observations"],
+            direct["gate_error"]["prompt_after_observations"],
+        )
+        self.assertEqual(out["gate_error"]["prompt_after_observations"], 4)
+
+
+class PrBranchVerifyTests(_ProbeCacheResetMixin, unittest.TestCase):
+    """SC-10: PR 分支在远端确不存在时的 verdict=fail + kind=
+    "pr-branch-not-found" 契约 (TASK-006, spec §2.1)。它怎么会红 (整体): 基线
+    gate_check 从不调用 gate._verify_branch_exists, self.pr_verify 的
+    return_value 对输出零影响 —— pr_ci_status="not_found" 一律落基线既有的
+    compute_verdict wait 分支 (kind="no-run-for-branch"), 不是这里要的
+    fail/"pr-branch-not-found"。"""
+
+    def _make_backend(
+        self, pr_state: str = "not_found", main_runs: list[dict] | None = None
+    ):
+        b = mock.MagicMock(spec=AetherBackend)
+        b.name = "aether-ci-cli"
+        b.precheck.return_value = (True, "")
+        b.query_branch_in_flight.return_value = InFlightStatus(
+            runs=main_runs or [], checked_at="2026-08-22T00:00:00Z"
+        )
+        b.query_pr_ci.return_value = CIStatus(
+            state=pr_state, checked_at="2026-08-22T00:00:00Z"
+        )
+        return b
+
+    def test_pr_branch_not_found_routes_fail(self) -> None:
+        """RED: 基线第一条 assertEqual(verdict, ...) 即红 —— 基线给的是
+        "wait" (kind="no-run-for-branch"), 断言要的是 "fail"
+        (kind="pr-branch-not-found")。gate_error 键集断言 (仅 {"kind",
+        "message"}, 无 prompt_after_observations) 在基线同样红: 基线
+        gate_error 恰好带着那第三个键。两个 path_coverage 开/关变体都覆盖。"""
+        self.pr_verify.return_value = ("not-found", "")
+        backend = self._make_backend(pr_state="not_found")
+
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out = gate.gate_check(
+                pr_branch="feat/x", main_branch="master", remote="origin"
+            )
+        self.assertEqual(out["verdict"], gate.VERDICT_FAIL)
+        self.assertEqual(out["gate_error"]["kind"], "pr-branch-not-found")
+        self.assertEqual(out["raw_message"], out["gate_error"]["message"])
+        self.assertIn("feat/x", out["gate_error"]["message"])
+        self.assertIn("origin", out["gate_error"]["message"])
+        self.assertEqual(out["pr_ci_status"], "not_found")
+        self.assertIn("path_coverage", out)
+        self.assertEqual(set(out["gate_error"].keys()), {"kind", "message"})
+
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            out2 = gate.gate_check(
+                pr_branch="feat/x",
+                main_branch="master",
+                remote="origin",
+                config={"path_coverage_enabled": False},
+            )
+        self.assertEqual(out2["verdict"], gate.VERDICT_FAIL)
+        self.assertNotIn("path_coverage", out2)
+        self.assertEqual(set(out2["gate_error"].keys()), {"kind", "message"})
+
+    def test_pr_ci_passing_never_triggers_pr_branch_verify(self) -> None:
+        """GUARD: 基线本就绿 (pr_verify 目前在任何路径都未接线, passing 状态
+        更不会碰它); TASK-006 落地后仍须只在 pr_ci_status=="not_found" 时才
+        调用 —— 钉的是"仅 not_found 分支触发"这条因果关系 (assert_not_called
+        为机制断言, 非仅结果字段), 防止未来实现误把核验挪到无条件调用。"""
+        backend = self._make_backend(pr_state="passing")
+        with mock.patch.object(gate, "resolve_ci_backend", return_value=backend):
+            gate.gate_check(pr_branch="feat/x")
+        self.pr_verify.assert_not_called()
+
+
+class OldNameWrapperTests(unittest.TestCase):
+    """SC-10 附属契约: 旧名 gate._verify_main_branch_exists 须瘦身成对新名
+    gate._verify_branch_exists(main_branch, remote, timeout) 的位置参数包装
+    (TASK-006 契约倒数第二段)。刻意**不继承** _ProbeCacheResetMixin —— mixin
+    对 `_verify_main_branch_exists` 的统一打桩会整个替换掉这个函数, 掩盖它
+    "是否委托给新名"这件事本身; 本组要观测的正是这层委托关系, 必须调用真实
+    (未被替换的) 旧名函数体。"""
+
+    def test_old_name_delegates_to_new_name_positionally(self) -> None:
+        """它怎么会红: 基线 _verify_main_branch_exists 是完整实现 (不是薄
+        包装), 对不存在的 remote 名跑真实 `git ls-remote --heads
+        no-such-remote-152 mb` —— 实测该调用秒级失败 (rc=128, fatal: 不是
+        git repo, 不建立网络连接), 返回它自己算出的 ("verify-failed", ...),
+        不等于打桩返回的 ("ok", "sentinel") —— 第一条 assertEqual 处红。"""
+        with mock.patch.object(
+            gate,
+            "_verify_branch_exists",
+            return_value=("ok", "sentinel"),
+            create=True,
+        ) as m:
+            result = gate._verify_main_branch_exists(
+                main_branch="mb", remote="no-such-remote-152", timeout=5
+            )
+        self.assertEqual(result, ("ok", "sentinel"))
+        m.assert_called_once_with("mb", "no-such-remote-152", 5)
 
 
 if __name__ == "__main__":
