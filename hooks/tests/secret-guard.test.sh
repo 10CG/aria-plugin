@@ -1904,6 +1904,41 @@ fi
 bash_case "SC-16: \\b GNU 词边界命中真边界 (pg_dump 拦)" 2 'pg_dump mydb > /tmp/dump.sql'
 bash_case "SC-16: \\b GNU 词边界不误命中词内子串 (pg_dumpling 放行)" 0 'pg_dumpling --help'
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Aria #179 — secret-guard-manifest-precision (claude 配置文件双平面入清单 +
+# claude-config credit 收紧 + 前置字符白名单误报收敛)。spec:
+# openspec/changes/secret-guard-manifest-precision/{proposal.md,detailed-tasks.yaml}
+# 基线 aria 400f0bc。每段标注 baseline RED/GREEN 语义 (TDD 留痕)。
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── TASK-001 (SC-1): Bash 面漏报 — claude 配置文件被常见 reader 直读必拦 ──
+# baseline RED (400f0bc: 四条全 exit 0 — manifest 无 claude 配置, reader 无 jq)
+bash_case "#179 SC-1 真实泄露形态: jq 直读 settings.json env 节点" 2 "jq -c '{model, env: (.env // {})}' ~/.claude/settings.json"
+bash_case "#179 SC-1 变体: cat settings.json" 2 'cat ~/.claude/settings.json'
+bash_case "#179 SC-1 变体: grep settings.local.json" 2 'grep TOKEN ~/.claude/settings.local.json'
+bash_case "#179 SC-1 变体: python3 -c 读 legacy .claude.json (经 :785 源组扩展)" 2 "python3 -c 'import json;print(json.load(open(\"/home/u/.claude.json\")))'"
+
+# ── TASK-005 (SC-2): Read/Edit 面漏报 — 路径清单三条目 + ACK-PATH-ONESHOT 成对 ──
+# baseline RED (400f0bc: :546 无 claude 条目, 三条 exit 0)
+read_case "#179 SC-2 Read settings.json" 2 '/home/u/.claude/settings.json'
+read_case "#179 SC-2 Read settings.local.json" 2 '/home/u/.claude/settings.local.json'
+read_case "#179 SC-2 Read legacy .claude.json" 2 '/home/u/.claude.json'
+# ACK 成对 (P3-M1): 无 nonce → 2 (baseline RED: 路径未入清单走不到 ack 块, exit 0);
+# 有 nonce → 0 (baseline 恒绿; 判定价值在 TASK-006 后 = 新条目接入逃生舱)
+_sg179_ack_path_bak="${SECRET_GUARD_ACK_PATH:-}"; _sg179_ack_nonce_bak="${SECRET_GUARD_ACK_NONCE:-}"
+export SECRET_GUARD_ACK_PATH="/home/u/.claude/settings.json"
+unset SECRET_GUARD_ACK_NONCE
+read_case "#179 SC-2 ACK_PATH 无 nonce → REJECT" 2 '/home/u/.claude/settings.json'
+_sg179_nonce="t179_$(date +%s%N)"
+touch "/tmp/secret-guard-ack-${USER:-anon}-${_sg179_nonce}.nonce"
+export SECRET_GUARD_ACK_NONCE="$_sg179_nonce"
+read_case "#179 SC-2 ACK_PATH 有 nonce → ALLOW once" 0 '/home/u/.claude/settings.json'
+rm -f "/tmp/secret-guard-ack-${USER:-anon}-${_sg179_nonce}.nonce"
+if [[ -n "$_sg179_ack_path_bak" ]]; then export SECRET_GUARD_ACK_PATH="$_sg179_ack_path_bak"; else unset SECRET_GUARD_ACK_PATH; fi
+if [[ -n "$_sg179_ack_nonce_bak" ]]; then export SECRET_GUARD_ACK_NONCE="$_sg179_ack_nonce_bak"; else unset SECRET_GUARD_ACK_NONCE; fi
+
+# ── #179 后续段 (TASK-008/009/003) 追加于此之下 ──
+
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
 # 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,
 # 使 pass+fail+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
