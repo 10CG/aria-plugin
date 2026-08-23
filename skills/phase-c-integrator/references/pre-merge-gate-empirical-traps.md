@@ -49,3 +49,21 @@
 
 ⚠️ **本次修复只加固了 `gate_check()` 这一份实现。** SKILL.md §C.2.4 里那条「AI 照着敲命令」的散文流程
 是**同一算法的第二份实现**, 它没有这道核验。⇒ **不得据本次修复认为 #137 已闭环。**
+
+## 六、零 run 不是一种状态, 是几种世界的折叠 (spec `pre-merge-gate-no-run-for-branch`, aria-plugin#152)
+
+> 本节由该 spec 的 TASK-001 (TASK-0a 活体探针) 建节; F3/F4/(b) 轴/F6 四行由 TASK-011 在本行上方补入, SC-13 证据行由 TASK-014 在末尾追加。证据行不计入「N 条坑」。
+
+- **F3 — `pull_request` 触发面结构性死亡**: aria-plugin 自 2026-07-20 起按 CLAUDE.md 硬约束 1 本地合并不开 PR (最近 PR #115, 07-19) ⇒ `pull_request` 触发面结构性死亡, 只剩 `push`; #152 现场「新分支首推零 run」已观测一次, 复现条件未定 (见下方副产品)。
+- **F4 — `/actions/tasks` 只列已被领走的任务**: backend 查的 `/actions/tasks` **只列已被 runner 领走的任务**, 返回全量历史无截断 (三仓 returned==total_count) ⇒ 「零 run」有第二来源 = run 已建未被领 (瞬态), 不能判 fail; 且 episode 内 `not_found` 单调 (有过 task 就不会回零) — 这是连续观测计数能工作的前提。
+- **(b) 轴同形盲区** (另案, 本 spec 不改): `query_branch_in_flight` 共用 `/actions/tasks`, 同样把「main 无 in-flight」与「main 刚 push、run 已建未被领」折叠成空 runs ⇒ 分钟级 fail-open (PR passing + main 未领 ⇒ green); 它没有 `not_found` 出口 (空 = clear = 放行), 需另一种消歧 → Phase D 立案。
+- **F6 — Forgejo 路由: `/actions/runs`·`/actions/workflows` 404, dispatch 按 basename 寻址**: 本 Forgejo (11.0.6+gitea-1.22.0) `/actions/runs` 与 `/actions/workflows` **404**; `POST …/actions/workflows/{file}/dispatches` 路由存在, **按文件名 (basename) 寻址** — 逐字拼 `.forgejo/workflows/x.yml` 进 URL 会 404 (处方 (a) 用 basename 的原因)。
+
+- **TASK-0a 结果 (2026-08-22, 探针分支 `probe/152-dispatch` @ `eb876de`, 基于 master tip `9e6a17c`, path-matched `skills/issue-triage/PROBE-152.md`)**: `dispatch_viable = true` —
+  `POST /repos/10CG/aria-plugin/actions/workflows/issue-triage-tests.yml/dispatches -d '{"ref":"probe/152-dispatch"}'` → **HTTP 204**; 2s 后 `/actions/tasks` 出现两条 `workflow_dispatch` 任务 (31968 success / 31969 **failure**, `created_at == run_started_at == 2026-08-22T20:35:54Z`, 领取 Δt ≈ 2s)。
+  ⚠️ **一次 dispatch 产生了成对 run, 且 `started_at` 相同** — `_normalize_pr_ci_status` 按 `started_at` 降序取 [0] 时是 tie, 可能读到 failure 那条 ⇒ 处方 (a) 执行后 gate 有几率判 `fail`; 人核时按 run id / 状态综合看, 不要只信 gate 的单值。
+- **同一探针的副产品 — #152 盲区没有复现**: 该新分支**首推**就建了 `push` 事件 run (31967, 首推后 13s, success)。与 #152 现场 (`fix/147-*` 首推零 run) 的差异条件**未定** (两者都是 master 上起的新分支 + path-matched 变更); 可能的变量: 推送时 runner 忙闲 (F4: tasks 只列已领任务, 当时零 task 可能是「未被领」而非「未建 run」) / 首推携带的 commit 数 / Forgejo 对 `before=0000…` 的 diff 基准。⇒ 「每条新分支首推恒中」**降级为「已观测一次 (#152), 复现条件未定」**; 本 spec 的机制 (零 run 显影 + 交人) 对零 run 的任一来源都成立, 不依赖盲区恒在。
+- **SC-13 活体证据 (2026-08-22, TASK-014; 证据行, 不计入坑数)**: 两个 throwaway 分支, 基于 feature HEAD `c19c284`, gate 在 aria-plugin 子模块根跑, state 文件 = 主仓 `/home/dev/Aria/.aria/workflow-state.json` 绝对路径, `--source production`, intervals 临时 `[5,5,5]`。
+  - **ep1 `probe/152-live` (path-matched `skills/issue-triage/PROBE-152-live.md` 首推)**: 首推后 ≈8s 第一次观测已是 `pending` (run 已建且被领), t≈20s `passing → green` — **#152 盲区第二次未复现** (与 TASK-0a 同); 零 run 窗口 < 8s, 机制对它不可见也无需可见。
+  - **ep2 `probe/152-live2` (只加一个 `branches: [master]` 的 workflow 文件 ⇒ 既有 workflow paths 不匹配 + 新 workflow 分支不匹配 = 结构性零 run; `path_coverage` 走 `covered/workflow-files-changed` 档, `dispatchable_workflows=[]`)**: OBS1/2/3 (t=7s 首推后 +0/+17/+34s) 全部 `pr_ci_status=not_found` + `gate_error.kind=no-run-for-branch` + `prompt_after_observations=3`; CLI `record` 回 `no_run_observations` 1 → 2 → 3, **第 3 次 `should_prompt=true`** (elapsed 35s, t≈55s ⇒ 交人, 非 1800s); 处置 (b) 推一个碰 `skills/issue-triage/**` 的 commit → `reset --observations` → 下一次观测 (Δt≈15s) `pending` (run 31987 已建且被领), `no_run_observations` 归 0, `retry_count` 续计 3。telemetry 7 行 `source=production` (ep1 3 + ep2 4), 最后一行 `{"verdict":"wait","kind":null,"no_run_observations":0,"should_prompt":false}`。
+  - 观测到的两件「读代码想不出来」: ① 一次 gate 调用实测 **≈17s** (main/PR 两次 `ls-remote` 到 Forgejo + 两次 `aether ci status`), 所以 `wait_check_intervals` 的前几档 (30/60) 实际节奏 ≈ 47/77s, 「~90s 交人」按配置间隔算, 实际 ≈ 140s; ② `branches` 过滤导致的零 run 是**结构性**的 — (c) 继续等永远不会自愈, 只有 (a)/(b)/改分支名有效; 这正是处方 (b) 那句「若 workflow 有 branches 过滤且不含本分支, 推 commit 无效」的反面: 被过滤的是**新 workflow 自己**, 而 (b) 推的 commit 碰的是**既有** workflow 的 paths, 所以有效。

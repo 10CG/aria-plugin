@@ -639,6 +639,271 @@ class SameIndentSequenceTests(_RepoFixtureMixin, unittest.TestCase):
         self.assertEqual(out["decision"], "not_applicable")
 
 
+class DispatchableTests(_RepoFixtureMixin, unittest.TestCase):
+    """SC-8/SC-9 — aria-plugin#152 TASK-007b `dispatchable` / `dispatchable_
+    workflows` additive 契约 (spec §4 + §2.3)。TASK-007a 先落 RED, TASK-007b
+    落地生产代码 (另一 agent) 后应转绿; 本类只改测试, 不改 scripts/。
+
+    背景 (2026-08-22 当前树): `_parse_workflow` 只返回三键
+    {"parse_ok","covered_uncertain","triggers"} (path_coverage.py:191-298);
+    `_result()` 只返回五键 (:62-75), 8 个 reason 终态调用点均未传
+    dispatchable_workflows。两组测试的基线值均来自本任务实测 (probe 脚本:
+    scratchpad/probe_sc9.py + 独立 `_parse_workflow` 直调), 供 (a) GUARD 层
+    锁定既有判定规则本身不被 007b 顺手改动。
+    """
+
+    # ── SC-8: _parse_workflow 四形态 dispatchable 判定 ──
+
+    def test_sc8_parse_workflow_dispatchable_four_forms(self) -> None:
+        """它怎么会红: `out["dispatchable"]` 对当前三键字典是 KeyError
+        (_parse_workflow 尚未加这个键)。triggers/covered_uncertain/parse_ok
+        三键同时逐字断言基线值 (本任务 additive 承诺不改这三键, 2026-08-22
+        对当前树实测), 与 dispatchable 的 RED 断言分开, 使红因可辨: 若未来
+        某改动误动了这三键之一, GUARD 断言会先于 dispatchable 断言报错。"""
+        cases = [
+            # (label, yaml text, expect_dispatchable,
+            #  expect_parse_ok, expect_covered_uncertain, expect_triggers)
+            (
+                "i_scalar_workflow_dispatch",
+                "on: workflow_dispatch\n",
+                True,
+                True,
+                False,
+                [],
+            ),
+            (
+                "ii_flow_list_push_and_dispatch",
+                "on: [push, workflow_dispatch]\n",
+                True,
+                True,
+                False,
+                [{"key": "push", "paths": None}],
+            ),
+            (
+                "iii_block_paths_and_dispatch",
+                'on:\n  push:\n    paths:\n      - "src/**"\n  workflow_dispatch:\n',
+                True,
+                True,
+                False,
+                [{"key": "push", "paths": ["src/**"]}],
+            ),
+            (
+                "iv_no_dispatch",
+                "on:\n  push:\n",
+                False,
+                True,
+                False,
+                [{"key": "push", "paths": None}],
+            ),
+        ]
+        for (
+            label,
+            text,
+            expect_dispatchable,
+            expect_parse_ok,
+            expect_covered_uncertain,
+            expect_triggers,
+        ) in cases:
+            with self.subTest(case=label):
+                out = pc._parse_workflow(text)
+                # (a) GUARD: additive 不改这三键。
+                self.assertEqual(out["parse_ok"], expect_parse_ok, label)
+                self.assertEqual(
+                    out["covered_uncertain"], expect_covered_uncertain, label
+                )
+                self.assertEqual(out["triggers"], expect_triggers, label)
+                # (b) RED: dispatchable 键当前不存在。
+                self.assertEqual(out["dispatchable"], expect_dispatchable, label)
+
+    # ── SC-9: evaluate_path_coverage 8-reason 终态 + 1 分离例 ──
+
+    def _eval_no_workflow_files(self) -> dict:
+        root = self.build_repo({}, {"docs/x.md": "x"})
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_empty_diff(self) -> dict:
+        wf = "on:\n  push:\njobs:\n  x:\n    runs-on: x\n"
+        root = self.build_repo(
+            {".forgejo/workflows/a.yml": wf}, {}, empty_pr=True
+        )
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_workflow_files_changed(self) -> dict:
+        wf = "on:\n  push:\njobs:\n  x:\n    runs-on: x\n"
+        root = self.build_repo(
+            {".forgejo/workflows/a.yml": wf},
+            {".forgejo/workflows/a.yml": wf + "# tamper\n"},
+        )
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_trigger_matched_dispatchable(self) -> dict:
+        wf = (
+            "on:\n  push:\n    paths:\n      - 'src/**'\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n  x:\n    runs-on: x\n"
+        )
+        root = self.build_repo(
+            {".forgejo/workflows/a.yml": wf}, {"src/a.py": "x"}
+        )
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_trigger_matched_not_dispatchable(self) -> dict:
+        wf = "on:\n  push:\n    paths:\n      - 'src/**'\njobs:\n  x:\n    runs-on: x\n"
+        root = self.build_repo(
+            {".forgejo/workflows/a.yml": wf}, {"src/a.py": "x"}
+        )
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_workflow_parse_failed(self) -> dict:
+        root = self.build_repo(
+            {".forgejo/workflows/bad.yml": "jobs:\n  x:\n    runs-on: x\n"},
+            {"src/x.py": "x"},
+        )
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_no_triggering_paths(self) -> dict:
+        wf = "on:\n  push:\n    paths:\n      - 'docs/**'\njobs:\n  x:\n    runs-on: x\n"
+        root = self.build_repo(
+            {".forgejo/workflows/a.yml": wf}, {"src/x.py": "x"}
+        )
+        return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def _eval_git_diff_failed(self) -> dict:
+        root = self.build_repo({}, {"docs/x.md": "x"})
+        return pc.evaluate_path_coverage(
+            "master", "no-such-branch", repo_root=root
+        )
+
+    def _eval_internal_error(self) -> dict:
+        root = self.build_repo({}, {"docs/x.md": "x"})
+        with mock.patch.object(
+            pc, "_find_workflow_files", side_effect=RuntimeError("boom")
+        ):
+            return pc.evaluate_path_coverage("master", "feat/x", repo_root=root)
+
+    def test_sc9_dispatchable_workflows_across_reasons(self) -> None:
+        """它怎么会红: `"dispatchable_workflows" in out` 对当前五键 `_result()`
+        输出恒 False (:62-75 未加此键) —— 用 `assertIn` 而非直接下标, 使 RED
+        断言产出 AssertionError(缺键) 而非提前于 (a) GUARD 断言的 KeyError,
+        令两层断言在失败报告里能分别定位。decision/reason/matched_workflows
+        基线值来自 2026-08-22 对当前树的实测 (probe 脚本见 scratchpad/
+        probe_sc9.py), (a) 层锁定既有判定规则不被 007b 顺手改动;
+        workflow_trigger_matched_no_dispatch 一档单独验证 dispatchable 与
+        matched 可分 (workflow 命中但不含 workflow_dispatch → 前者空/后者非空)。
+        """
+        cases = [
+            # (label, eval_fn, expect_decision, expect_reason,
+            #  reason_is_exact, expect_matched, expect_dispatch_workflows)
+            (
+                "no_workflow_files",
+                self._eval_no_workflow_files,
+                "not_applicable",
+                "no-workflow-files",
+                True,
+                [],
+                [],
+            ),
+            (
+                "empty_diff",
+                self._eval_empty_diff,
+                "covered",
+                "empty-diff",
+                True,
+                [],
+                [],
+            ),
+            (
+                "workflow_files_changed",
+                self._eval_workflow_files_changed,
+                "covered",
+                "workflow-files-changed",
+                True,
+                [],
+                [],
+            ),
+            (
+                "workflow_trigger_matched",
+                self._eval_trigger_matched_dispatchable,
+                "covered",
+                "workflow-trigger-matched",
+                True,
+                [".forgejo/workflows/a.yml"],
+                [".forgejo/workflows/a.yml"],
+            ),
+            (
+                "workflow_parse_failed",
+                self._eval_workflow_parse_failed,
+                "unknown",
+                "workflow-parse-failed:",
+                False,
+                [],
+                [],
+            ),
+            (
+                "no_triggering_paths",
+                self._eval_no_triggering_paths,
+                "not_applicable",
+                "no-triggering-paths",
+                True,
+                [],
+                [],
+            ),
+            (
+                "git_diff_failed",
+                self._eval_git_diff_failed,
+                "unknown",
+                "git-diff-failed:",
+                False,
+                [],
+                [],
+            ),
+            (
+                "internal_error",
+                self._eval_internal_error,
+                "unknown",
+                "internal-error:",
+                False,
+                [],
+                [],
+            ),
+            (
+                "workflow_trigger_matched_no_dispatch",
+                self._eval_trigger_matched_not_dispatchable,
+                "covered",
+                "workflow-trigger-matched",
+                True,
+                [".forgejo/workflows/a.yml"],
+                [],
+            ),
+        ]
+        for (
+            label,
+            eval_fn,
+            expect_decision,
+            expect_reason,
+            reason_is_exact,
+            expect_matched,
+            expect_dispatch,
+        ) in cases:
+            with self.subTest(case=label):
+                out = eval_fn()
+                # (a) GUARD: decision/reason/matched_workflows 与基线逐字同。
+                self.assertEqual(out["decision"], expect_decision, label)
+                if reason_is_exact:
+                    self.assertEqual(out["reason"], expect_reason, label)
+                else:
+                    self.assertTrue(
+                        out["reason"].startswith(expect_reason),
+                        f"{label}: {out['reason']!r}",
+                    )
+                self.assertEqual(out["matched_workflows"], expect_matched, label)
+                # (b) RED: dispatchable_workflows 键当前不存在。
+                self.assertIn("dispatchable_workflows", out, label)
+                self.assertEqual(
+                    out["dispatchable_workflows"], expect_dispatch, label
+                )
+
+
 class InternalErrorReasonTests(_RepoFixtureMixin, unittest.TestCase):
     """aria-plugin #126 — 评估器内部异常不得冒用 git-diff-failed。
 

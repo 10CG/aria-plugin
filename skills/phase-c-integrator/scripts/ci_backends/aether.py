@@ -215,15 +215,17 @@ class AetherBackend(CIBackend):
 
     @staticmethod
     def _normalize_pr_ci_status(runs: list[dict[str, Any]]) -> str:
-        """Map aether CIRun list → passing | failing | pending.
+        """Map aether CIRun list → passing | failing | pending | not_found.
 
         Preserves _normalize_pr_ci_status from pre_merge_gate.py L160-185.
         Selects the most recent run by `started_at` (descending) rather than
         relying on aether's list ordering. Conservative mapping: unknown
         statuses route to pending so the caller waits rather than races.
+        空 runs = 远端零 run (未建 / 未被领 / 分支不存在 — 后者由 gate_check 消歧),
+        aria-plugin#152: 与"有 run 但状态未知" (pending) 分区, 不再混同。
         """
         if not runs:
-            return "pending"
+            return "not_found"
 
         def _started_key(run: dict[str, Any]) -> str:
             return run.get("started_at") or ""

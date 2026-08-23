@@ -50,7 +50,8 @@
       }
     ],
     "primitive_used": "string (aether-ci-cli | manual)",
-    "raw_message": "string"
+    "raw_message": "string",
+    "no_run_observations": "integer (>=0)"
   },
 
   "phase_results": {
@@ -122,7 +123,8 @@ Distinct from `gates.*` which are quality-gate booleans (passed/not-passed). `ga
 | `next_check_at` | string | yes | ISO 8601 wall clock of next scheduled gate check. Used on resume to decide immediate-recheck vs wait-remainder. |
 | `in_flight_runs` | array | yes | Snapshot of upstream in-flight CI runs from last check. Empty array when `status=green`. |
 | `primitive_used` | string | yes | Source of the gate query: `aether-ci-cli` (normal) or `manual` (no-aether fallback path). |
-| `raw_message` | string | no | Human-readable annotation, esp. on `fail` to surface upstream error. May be empty string. v1.65.0+ (aria-plugin #122): gate 的 path coverage `not_applicable` 放行场景下, 该字段在 `green` 态也常态化携带警告文案 (非仅 fail); `unknown` 态诊断经 gate 输出的 `path_coverage.reason` 传递。 |
+| `raw_message` | string | no | Human-readable annotation, esp. on `fail` to surface upstream error. May be empty string. v1.65.0+ (aria-plugin #122): gate 的 path coverage `not_applicable` 放行场景下, 该字段在 `green` 态也常态化携带警告文案 (非仅 fail); `unknown` 态诊断经 gate 输出的 `path_coverage.reason` 传递。v1.66.5+ (aria-plugin #152): `waiting` 态下该字段可携带处方文案, 是 `gate_error.message` 的副本通道 (non-authoritative — gate_error 本体不落 gate_state, 见 `no_run_observations`)。 |
+| `no_run_observations` | integer | yes (v1.66.5+) | 本 episode 连续带 `gate_error.kind == "no-run-for-branch"` 的观测次数, 含初次 (从 1 起数); 默认 `0`; 任一轮 `gate_error.kind` 非该值 (或 verdict 非 `waiting`) 即归零。由 `gate_state_helper.py record` CLI 维护, 不由 AI 手写。spec: `pre-merge-gate-no-run-for-branch` (aria-plugin#152)。schema `format_version` 不变 (仍 `1.1`, additive field)。 |
 
 **Defensive access**: All consumers MUST use `state.get("gate_state") or {}` rather than `state["gate_state"]` to handle v1.0 state files migrated to v1.1 runtime (where field defaults to `null`).
 
