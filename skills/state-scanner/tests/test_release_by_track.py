@@ -574,11 +574,6 @@ class TestPhase1GateLinkedIssueCli(unittest.TestCase):
         out = json.loads(proc.stdout)
         self.assertNotIn("linked_issue_overlap", out)  # additive: 未给参数不出现
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 # ---------------------------------------------------------------------------
 # OpenSpec linked-issue-normalization (Aria, Phase B TASK-001..006)
 # SC scenarios run through the PRODUCTION linked_issue_overlaps (proposal
@@ -728,3 +723,7 @@ class TestNormalizeLinkedIssueContract(unittest.TestCase):
     def test_sc12_module_level_public_name(self):
         from lib import collision
         self.assertTrue(callable(collision.normalize_linked_issue))
+
+
+if __name__ == "__main__":
+    unittest.main()
