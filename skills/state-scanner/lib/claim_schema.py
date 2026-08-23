@@ -107,7 +107,10 @@ class ClaimRecord:
     linked_issue : Optional[str]
         Optional semantic-overlap signal (Part B1, coordination-claim-lifecycle-
         and-overlap): free-form issue reference (e.g. "10CG/Aria#160"). Two
-        active claims with the SAME linked_issue but DIFFERENT track_id trigger
+        non-terminal claims (status not in done/abandoned/unknown — note that
+        ``yielded`` IS compared) whose linked_issue normalize to the SAME key
+        ``(repo_basename, number)`` (org ignored; see
+        collision.normalize_linked_issue) but with DIFFERENT track_id trigger
         an advisory overlap warning (collision.linked_issue_overlaps) — the
         "same issue, two names" collision that pure track_id string matching
         cannot see. Additive: absent in pre-B1 claims; never affects reconcile
