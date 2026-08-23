@@ -40,6 +40,7 @@ Deps:  lib/claim_schema.py (ClaimRecord), lib/reconcile.py (reconcile_all)
 from __future__ import annotations
 
 from datetime import datetime
+import sys
 from typing import Optional
 
 from .claim_schema import ClaimRecord
@@ -174,6 +175,58 @@ def classify_claims(claims: "list[ClaimRecord]") -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def normalize_linked_issue(value: str) -> "Optional[tuple[str, int]]":
+    """Normalize a ``linked_issue`` string to its comparison key.
+
+    Key = ``(repo_basename, number)`` where ``repo_basename`` is the last
+    ``/``-segment of the part before the LAST ``#``, with every segment
+    ``strip()``-ed, ``.``/``_`` translated to ``-`` inside the basename, and
+    ``casefold()`` applied.  ``number`` is the decimal ``int`` of the part
+    after the last ``#``.  ``org`` (anything before the basename) is NOT part
+    of the key (fail-toward-reporting; see OpenSpec linked-issue-normalization).
+
+    Returns ``None`` for every unparseable value — exactly three classes:
+    (i) no ``#``; (ii) ``number_str`` not ``isascii() and isdigit()`` (or
+    exceeding ``sys.get_int_max_str_digits()`` when that limit is > 0, or
+    ``int()`` raising ``ValueError``); (iii) empty ``repo_basename``.
+    Callers must fall back to raw-string equality on ``None`` — never treat
+    ``None`` as "no match".
+    """
+    if not isinstance(value, str) or "#" not in value:
+        return None  # (i) existence guard BEFORE any split/unpack
+    left, number_str = value.rsplit("#", 1)
+    left = left.strip()
+    number_str = number_str.strip()
+    if not (number_str.isascii() and number_str.isdigit()):
+        return None  # (ii)
+    limit = sys.get_int_max_str_digits()
+    if limit > 0 and len(number_str) > limit:
+        return None  # (ii) length bound; 0 means "unlimited"
+    try:
+        number = int(number_str)
+    except ValueError:
+        return None  # (ii)
+    if "/" in left:
+        repo_basename = left.rsplit("/", 1)[1].strip()
+    else:
+        repo_basename = left
+    if not repo_basename:
+        return None  # (iii)
+    repo_basename = repo_basename.replace(".", "-").replace("_", "-").casefold()
+    return (repo_basename, number)
+
+
+def _linked_issue_matches(
+    own_key: "Optional[tuple[str, int]]", own_raw: str, other_raw: str
+) -> bool:
+    """Rule 4/5: exact key equality when BOTH parse, else exact raw equality."""
+    if own_key is not None:
+        other_key = normalize_linked_issue(other_raw)
+        if other_key is not None:
+            return own_key == other_key
+    return own_raw == other_raw
+
+
 def linked_issue_overlaps(
     claims: "list[ClaimRecord]",
     own_track_id: str,
@@ -185,7 +238,12 @@ def linked_issue_overlaps(
     (``reconcile_all`` groups by track_id), so two sessions naming the same
     work differently (e.g. ``secret-guard-bash3-multiline-hardening`` vs
     ``carry-secretguard-fieldparse-anchor``) never collide.  When both claims
-    carry the same ``linked_issue``, this function surfaces the overlap.
+    carry ``linked_issue`` values that normalize to the same ``<repo>#<n>``
+    key (``normalize_linked_issue``: basename casefolded with ``./_`` → ``-``,
+    decimal number; ``org`` does NOT take part — fail-toward-reporting), this
+    function surfaces the overlap.  Unparseable values fall back to exact
+    raw-string equality.  Known limit: truncated aliases (``aria-orch`` vs
+    ``aria-orchestrator``) are NOT unified.
 
     ADVISORY-ONLY: the result is a warning list for the orchestration layer /
     CLI JSON (additive key).  It never feeds winner determination and never
@@ -208,13 +266,14 @@ def linked_issue_overlaps(
         return []
 
     _TERMINAL = ("done", "abandoned", "unknown")
+    own_key = normalize_linked_issue(own_linked_issue)
     out: "list[dict]" = []
     for c in claims or []:
         if c.status in _TERMINAL:
             continue
         if not getattr(c, "linked_issue", None):
             continue
-        if c.linked_issue != own_linked_issue:
+        if not _linked_issue_matches(own_key, own_linked_issue, c.linked_issue):
             continue
         if c.track_id == own_track_id:
             continue  # same-name collision — reconcile's job, not ours

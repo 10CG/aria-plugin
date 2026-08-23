@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.67.0] - 2026-08-23
+
+### Added — state-scanner: `linked_issue` 跨格式归一比较 (Aria spec `linked-issue-normalization`, Aria#177 相关)
+
+**症状**: `lib/collision.py::linked_issue_overlaps` 用裸字符串 `!=` 比较 `linked_issue`, 而生产 claim 里三个格式族并存 (`aria-plugin#122` / `10CG/aria-plugin#122` / `10CG/aria-plugin #122`) ⇒ 跨格式认领同一 issue 互相认不出, 返回 `[]` 与「真没人在做」不可区分 (已 ship ≠ 能用)。
+
+**改动** (`lib/collision.py`):
+- 新增导出 `normalize_linked_issue(value) -> (repo_basename, int) | None`: 按最后一个 `#` 拆; 各段 `strip()`; basename 取 `/` 后最后一段, `.`/`_` → `-`, `casefold()`; number 按十进制 `int` (前导零不影响); `org` 不参与 (fail-toward-reporting)。不可解析三类 (无 `#` / `number_str` 非 `isascii()+isdigit()` 或超 `sys.get_int_max_str_digits()` (limit>0) / basename 空) → `None`。
+- `linked_issue_overlaps`: 双方可解析 ⇒ 归一键相等; 否则回落原串精确相等 (绝不因解析失败静默放行); 一条畸形 `linked_issue` 不再毒死整批 (存在性守卫先于 unpack)。签名 / 返回 schema / 原串回显不变。
+- **已知限 (不冒充覆盖)**: 截断型别名 (`aria-orch` vs `aria-orchestrator`) **不**归一; `a.b` 与 `a-b` 恰为两个真仓时会误配 (advisory 多一行告警, 人工凭回显原串甄别)。
+
+**文档**: `claim_schema.py` 字段文档 (归一键 + 终态集 `done/abandoned/unknown` 不含 `yielded`); `SKILL.md:176` 括注补比较规则 (仓名最后一段 / 大小写与首尾空白不影响 / `./_` 视同 `-` / org 不参与 / 回落)。
+
+**测试**: state-scanner `test_release_by_track.py` +19 方法 (SC-1..15 经生产 `linked_issue_overlaps` 取证, 基线 RED/GREEN 分布与 Spec 表一致; SC-12 导出契约); 既有 34 个 test 方法零改动; `run_all_tests.sh` 7 OK / 0 FAIL。
+
+rule6_note: `collision.py` / `claim_schema.py` docstring 走 substitute (冻结报告 `.aria/repro/archive/sc-baseline-linked-issue-normalization-REPORT.md`, 基线 16/16); `SKILL.md:176` 括注**照跑 AB** (state-scanner 全套件 11 条零回归 + 定向 eval-12 基线 2/5→3/5 vs 新版 4/5→5/5, `aria-plugin-benchmarks/ab-results/2026-08-23-v1.67.0-linked-issue-rule6/`); 门范围披露 (未跑 Tier 1 全量) 见 Aria `.aria/decisions/2026-08-23-rule6-ab-scope-single-skill-disclosure.md`, 套件缺口 #157, convention aria-standards#17。
+
 ## [1.66.5] - 2026-08-23
 
 ### Fixed — aria-plugin#152 pre-merge gate: 「零 run」显影为 `not_found` + `no-run-for-branch` 提前交人, 不放行

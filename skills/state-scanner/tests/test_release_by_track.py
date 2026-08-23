@@ -35,7 +35,7 @@ from lib.claim_lifecycle import (  # noqa: E402
     release_claim_by_track,
 )
 from lib.claim_schema import parse_claim, serialize_claim, ClaimRecord  # noqa: E402
-from lib.collision import linked_issue_overlaps  # noqa: E402
+from lib.collision import linked_issue_overlaps, normalize_linked_issue  # noqa: E402
 from lib.gc import archive_done_claims, sweep_stale_active  # noqa: E402
 from lib.track_id import derive_track_id  # noqa: E402
 from lib.identity import Identity  # noqa: E402
@@ -577,3 +577,154 @@ class TestPhase1GateLinkedIssueCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# OpenSpec linked-issue-normalization (Aria, Phase B TASK-001..006)
+# SC scenarios run through the PRODUCTION linked_issue_overlaps (proposal
+# baseline table: evidence = 实跑生产 linked_issue_overlaps). Each SC is one
+# test method; multi-pair SCs use subTest so the scenario count is countable
+# per SC (metadata.test_counting_contract — never derive from `Ran N`).
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedIssueNormalizationSC(unittest.TestCase):
+    """linked-issue-normalization SC-1..SC-15 via production predicate."""
+
+    @staticmethod
+    def _claim(track, container, linked, status="active"):
+        return ClaimRecord(
+            schema_version="1",
+            track_id=track,
+            owner="o",
+            container=container,
+            session="s-" + container,
+            phase="B",
+            status=status,
+            claimed_at="2026-08-23T00:00:00Z",
+            heartbeat_at="2026-08-23T00:00:00Z",
+            linked_issue=linked,
+        )
+
+    def _hits(self, own, theirs):
+        """Return True iff a claim carrying `theirs` is surfaced when we pass `own`."""
+        claims = [self._claim("theirs", "cB", theirs)]
+        return [d["track_id"] for d in linked_issue_overlaps(claims, "mine", own)] == ["theirs"]
+
+    def _assert_pair(self, a, b, expect_hit):
+        # 两两互相: both directions must agree with expectation
+        for own, theirs in ((a, b), (b, a)):
+            with self.subTest(own=own, theirs=theirs):
+                self.assertEqual(self._hits(own, theirs), expect_hit)
+
+    # ---- TASK-001: SC-1 / 1b / 2 / 3 / 4 ----
+
+    def test_sc1_four_families_pairwise_hit(self):
+        fam = ["aria-plugin#122", "10CG/aria-plugin#122", "10CG/aria-plugin #122", "aria-plugin #122"]
+        pairs = [(fam[i], fam[j]) for i in range(4) for j in range(i + 1, 4)]
+        self.assertEqual(len(pairs), 6)
+        for a, b in pairs:
+            self._assert_pair(a, b, True)
+
+    def test_sc1b_slash_split_and_outer_whitespace_hit(self):
+        ref = "10CG/aria-plugin#122"
+        for v in ("10CG / aria-plugin#122", " 10CG/aria-plugin#122 ", "10CG/ aria-plugin #122"):
+            self._assert_pair(v, ref, True)
+
+    def test_sc2_same_org_same_number_different_repo_no_hit(self):
+        self._assert_pair("10CG/Aria#147", "10CG/aria-plugin#147", False)
+
+    def test_sc3_org_not_part_of_key_hit(self):
+        self._assert_pair("10CG/aria-plugin#1", "otherorg/aria-plugin#1", True)
+
+    def test_sc4_decimal_int_and_segment_strip_hit(self):
+        self._assert_pair("aria-plugin#007", "aria-plugin#7", True)
+        self._assert_pair("aria-plugin# 122", "aria-plugin#122", True)
+
+    # ---- TASK-002: SC-5 / 5b / 5c ----
+
+    def test_sc5_truncated_alias_no_hit(self):
+        self._assert_pair("10CG/aria-orch#5", "10CG/aria-orchestrator#5", False)
+
+    def test_sc5b_separator_alias_hit(self):
+        fam = ["10CG/10cg.local#20", "10CG/10cg-local#20", "10CG/10cg_local#20"]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                self._assert_pair(fam[i], fam[j], True)
+
+    def test_sc5c_inner_space_not_translated_no_hit(self):
+        self._assert_pair("10CG/aria plugin#1", "10CG/aria-plugin#1", False)
+
+    # ---- TASK-003: SC-6 / 6b / 10 ----
+
+    def test_sc6_unparseable_falls_back_to_raw_string_equality(self):
+        self._assert_pair("#5", "#5", True)
+        self._assert_pair("#5", "#7", False)
+        self._assert_pair("10CG/#7", "otherorg/#7", False)
+        self._assert_pair("no-hash-here", "no-hash-here", True)
+        self._assert_pair("repo#abc", "repo#abc", True)
+
+    def test_sc6b_number_str_boundary_pairs(self):
+        lefts = ["aria-plugin#+7", "aria-plugin#1_0", "aria-plugin#１２３", "aria-plugin#²"]
+        rights = ["aria-plugin#7", "aria-plugin#10", "aria-plugin#123", "aria-plugin#2"]
+        for left, right in zip(lefts, rights):
+            self._assert_pair(left, right, False)
+        for left in lefts:
+            self._assert_pair(left, left, True)
+        big = "aria-plugin#" + "9" * 4301
+        self._assert_pair(big, big, True)
+
+    def test_sc10_one_malformed_claim_does_not_poison_batch(self):
+        claims = [
+            # A/B 与查询方逐字同形 (baseline GREEN 护栏; 跨族归一由 SC-1 钉, 不在本条)
+            self._claim("tA", "cA", "aria-plugin#122"),
+            self._claim("tX", "cX", "no-hash-here"),
+            self._claim("tB", "cB", "aria-plugin#122"),
+        ]
+        out = linked_issue_overlaps(claims, "mine", "aria-plugin#122")
+        self.assertEqual([d["track_id"] for d in out], ["tA", "tB"])
+
+    # ---- TASK-004: SC-11 / 13 / 15 / 14 ----
+
+    def test_sc11_split_on_last_hash(self):
+        self._assert_pair("repo#7#8", "repo#7#008", True)
+        self._assert_pair("repo#7#8", "repo#8", False)
+
+    def test_sc13_casefold_dimension_hit(self):
+        self._assert_pair("10CG/Aria-Plugin#122", "10CG/aria-plugin#122", True)
+        self._assert_pair("ARIA-PLUGIN#5", "aria-plugin#5", True)
+
+    def test_sc15_basename_is_last_slash_segment_hit(self):
+        self._assert_pair("10CG/sub/aria-plugin#5", "aria-plugin#5", True)
+        self._assert_pair("10CG/sub/aria-plugin#5", "othergroup/aria-plugin#5", True)
+
+    def test_sc14_number_equality_is_necessary_no_hit(self):
+        self._assert_pair("aria-plugin#122", "aria-plugin#7", False)
+        self._assert_pair("aria-plugin#122", "aria-plugin#123", False)
+
+    # ---- TASK-005: SC-9 ----
+
+    def test_sc9_hit_echoes_raw_unnormalized_string(self):
+        raw = "10CG/aria-plugin #122"
+        out = linked_issue_overlaps([self._claim("theirs", "cB", raw)], "mine", raw)
+        self.assertEqual(out[0]["linked_issue"], raw)
+
+
+class TestNormalizeLinkedIssueContract(unittest.TestCase):
+    """SC-12 (TASK-006): exported unit return contract."""
+
+    def test_sc12_parseable_returns_basename_number_tuple(self):
+        self.assertEqual(normalize_linked_issue("10CG/aria-plugin #122"), ("aria-plugin", 122))
+        self.assertEqual(normalize_linked_issue("10CG/10cg.local#007"), ("10cg-local", 7))
+        self.assertEqual(normalize_linked_issue("ARIA-PLUGIN#5"), ("aria-plugin", 5))
+
+    def test_sc12_three_unparseable_classes_return_none(self):
+        for v in ("no-hash-here", "repo#abc", "10CG/#7"):
+            with self.subTest(value=v):
+                out = normalize_linked_issue(v)
+                self.assertIsNone(out)
+                self.assertNotIsInstance(out, tuple)  # (None, None) / "" 替代形态必红
+
+    def test_sc12_module_level_public_name(self):
+        from lib import collision
+        self.assertTrue(callable(collision.normalize_linked_issue))
