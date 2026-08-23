@@ -24,10 +24,15 @@ from pathlib import Path
 # Add the state-scanner root (parent of lib/) so that ``lib`` is importable as a
 # package — collision.py uses relative imports (from .claim_schema), so it must be
 # imported as ``lib.collision``, NOT as a top-level ``collision`` with lib/ on path.
-# Also add scripts/ for the collectors package. Mirrors test_reconcile_golden_table.
+# Also add scripts/ for the collectors package — but as a *supplementary* search
+# path (append), never ahead of the skill root: state-scanner/ has TWO `lib`
+# packages (lib/ with collision.py vs scripts/lib/ without it); putting scripts/
+# first binds `lib` to the wrong one and `from lib import collision` raises
+# ImportError on single-module runs (aria-plugin#134; only masked under full
+# discovery because alphabetically-earlier modules pre-bind sys.modules['lib']).
 _SS_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SS_ROOT))
-sys.path.insert(0, str(_SS_ROOT / "scripts"))
+sys.path.append(str(_SS_ROOT / "scripts"))
 
 from lib import collision  # noqa: E402
 from collectors.handoff_multibranch import collect_handoff_multibranch  # noqa: E402
