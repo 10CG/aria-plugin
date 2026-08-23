@@ -97,8 +97,15 @@ def make_audit_report(
     timestamp: str = "2026-04-24T1000Z",
     spec_id: str = "test-spec",
 ) -> Path:
-    """Create a fake audit report in `.aria/audit-reports/`."""
-    name = f"{checkpoint}-R1-{timestamp}-{spec_id}.md"
+    """Create a fake audit report in `.aria/audit-reports/`.
+
+    #149: filename carries the `-aggregated.md` suffix real on-disk
+    aggregate reports use — `collect_audit()` only selects candidates whose
+    filename ends that way (see `collectors/audit.py`). A non-aggregate
+    (single-seat) filename shape is deliberately NOT offered here; tests
+    that need one build it locally (see `test_audit.py`'s `_seat_name`).
+    """
+    name = f"{checkpoint}-R1-{timestamp}-{spec_id}-aggregated.md"
     return write_file(
         root / ".aria" / "audit-reports" / name,
         f"---\ncheckpoint: {checkpoint}\nverdict: {verdict}\nconverged: {str(converged).lower()}\ntimestamp: {timestamp}\n---\n\n# audit\n",

@@ -517,9 +517,47 @@ last_audit:
   verdict: str|null             # "PASS" | "PASS_WITH_WARNINGS" | "FAIL"
   converged: bool|null          # YAML-coerced bool (R1-I6)
   timestamp: str|null
+last_audit_selection:           # additive (#149) — diagnostic: how last_audit was chosen. Fixed
+                                 # field set, present on EVERY return path (including both
+                                 # early-exit branches: absent dir, empty dir).
+  method: str                   # "aggregated-filename" | "none"
+  ordering: str|null            # "filename-timestamp" (全部候选解析到时间) | "filename-timestamp-partial" (部分 unparsed, 排最后, 不参与胜出) | "mtime-fallback" (全部 unparsed) | null (iff method == "none")
+  candidates_scanned: int       # count of ALL *.md in .aria/audit-reports/ (not just candidates)
+  aggregate_candidates: int     # count of those matching the aggregate filename shape
+  unparsed_timestamp: int       # of aggregate_candidates, how many had no parseable filename timestamp
+  selected: str|null            # filename selected; null iff method == "none"
+  tie_break: str|null           # "round" | "mtime" | null (#149 round 3) — which sort-key tier
+                                 # actually discriminated the winner; null when the top filename
+                                 # timestamp was already unique (the common case — no tie to
+                                 # break), or when method == "none" (no selection happened)
+  reason: str                   # present ONLY when method == "none" (absent otherwise)
 ```
 
-Empty audit dir → `{enabled: true, last_audit: null}`; absent dir → `{enabled: null, last_audit: null}`.
+Empty audit dir → `{enabled: true, last_audit: null, last_audit_selection: {method: "none", ordering: null, tie_break: null, ...}}`;
+absent dir → `{enabled: null, last_audit: null, last_audit_selection: {method: "none", ...}}` — both
+early-exit branches still emit the FULL `last_audit_selection` shape above, never omit the field.
+
+**#149 (round 2, finalized design) — selection keys off the AGGREGATE-report filename shape AND its embedded timestamp, never raw mtime and never round number `R<N>`.** Previously `last_audit` picked whichever `.md` file in `.aria/audit-reports/` had the newest mtime — a stray non-audit note (no frontmatter) or a single-seat per-agent report could win over the actual round aggregate simply by being touched more recently. A first attempt at fixing this filtered to aggregate-shaped filenames but then ordered candidates by `R<N>` (round number); that was rejected on review because round numbers are only meaningful **within one spec's own convergence loop** — comparing them **across** specs/audits is meaningless, and in practice picked a 5-week-old `R9` report over a same-day `R1` report from an unrelated, more recent audit. It also assumed the filename-embedded timestamp token was always pure-numeric, when `references/audit-engine/report-storage.md`'s documented `timestamp_ms` field is ISO-ish and the repo's own `.aria/audit-reports/` carries both shapes side by side.
+
+The finalized rule (`collectors/audit.py::collect_audit`):
+
+1. **Candidate filter (unchanged since the first attempt)**: only files whose name ends in `-aggregated.md` (canonical) or `-aggregate.md` (legacy spelling, no trailing "d") — WITH the leading dash — are eligible at all. `aggregated-summary.md` (ends in `-summary.md`) and `aggregate.md` on its own (no leading dash — one character short of the required `-aggregate.md` suffix) are both rejected by the same `endswith()` check; a single-seat report (e.g. `...-tech-lead.md`) or an unrelated stray file is never selected, however new its mtime.
+2. **Ordering key = a timestamp token found by scanning the filename directly, never the round number, and — as of round 3 below — never anchored to the round marker's position either.**
+3. **A candidate whose filename carries no recognizable timestamp token parses to no timestamp** — it sorts **last** (never a `-1`/empty-string stand-in that could accidentally look "smallest but real"), and is counted in `unparsed_timestamp`.
+4. **Ties break by mtime only as a last resort** (round 3 inserts a round-number tier before it — see below). When at least one candidate has a real parsed timestamp, `ordering` reports `"filename-timestamp"` when every candidate parsed, `"filename-timestamp-partial"` when some did not (round 3 [m]: the reader must know the pool was not fully timestamp-ordered). When **every** candidate's token failed to parse, the only honest remaining signal is mtime — `ordering` reports `"mtime-fallback"` explicitly rather than silently reusing the `"filename-timestamp"` label.
+5. When **zero** files match the aggregate shape at all (including both early-exit branches — audit dir absent, or present but empty), `last_audit` is `None` — it never falls back to a single-seat report or any other file — `last_audit_selection.method` is `"none"`, `ordering` is `null`, and `reason` explains which of the three no-candidate cases applied.
+
+**#149 round 3 (this fix, challenger-seat critical) — two further refinements, both grounded in real filenames the round-2 challenger seat found in `.aria/audit-reports/` that round 2's `-R<N>-`-anchored parsing didn't cover (`post_spec-FINAL-...`, `post_spec-R5.5-...`, `post_spec-R1-R2-...` merged rounds, `post_spec-R1prime-...`), plus a same-timestamp 7-way tie the repo's own `pre-merge-gate-no-run-for-branch` audit produced (`post_spec-R1..R7-1787379154696-...`):**
+
+**[M1] Timestamp-token location is no longer anchored on the `-R<N>-` marker.** Round 2's `_parse_filename_timestamp` located the token by finding the first `-R<N>-` (bare-integer round) substring and reading whatever followed it — which breaks for every round-marker shape that isn't a bare integer: `FINAL` (no digits at all), `R5.5` (decimal round), and `R1-R2` (a merged-round marker that itself contains an `-R1-`-shaped substring, but not the real round). Round 3 decouples timestamp-token location from the round marker entirely:
+
+- The timestamp token is found by scanning the filename (after its `<checkpoint>-` prefix — checkpoint values are `underscore_case` with no internal dashes, so this split is unambiguous) for the **first** `-<token>-` segment matching either shape, independent of where — or whether — a round marker sits:
+  - **epoch-ms**: a run of **exactly 13** digits, dash-bounded on both sides. 12-digit (a different, second-precision epoch convention) and 14-digit (a compact `YYYYMMDDHHMMSS` date, which would misparse to the year ~2612 if read as milliseconds) runs are both rejected by the exact-length match — round 2's `^\d{12,}` accepted both.
+  - **ISO-ish date**: `YYYY-MM-DD`, dash-bounded on the left, optionally followed by `THHMMZ` / `THHMMSSZ` (optionally with a `-mmm` millisecond suffix before `Z`).
+- The round number is now extracted completely separately, by its own scan for the first `-R(\d+(?:\.\d+)?)-` (integer or decimal) or `-FINAL-` (→ `+inf`); not found at all → `-inf` (never a `-1`/`0` stand-in). It is used only as the *second-tier* sort key (M2) — for a merged marker like `R1-R2` this scan's leftmost match is `R1`, which is immaterial since a merge event produces exactly one file and so never needs to out-rank a same-timestamp sibling on round number.
+- **A `T`-prefixed time part that fails to parse after a valid date degrades to date-only precision (00:00 UTC), not `None`** — e.g. `2026-05-17T03Z` (`T03Z` matches neither the 4- nor 6-digit compact time shape) still resolves to `2026-05-17T00:00:00Z`. Round 2 let a malformed time suffix fail the *whole* token; round 3 only lets a valid `T` suffix ADD precision, never subtract a token that already found a valid date.
+
+**[M2] Same-spec, same-timestamp ties now break by round number before mtime.** The repo's own `pre-merge-gate-no-run-for-branch` audit produced seven aggregate reports (`R1` through `R7`) sharing one filename timestamp (`1787379154696`); round 2's tie rule fell straight to mtime, which happened to land on `R7` (the correct, converged report) by write-order accident, not by design. The sort key is now three-tier: `(parsed_timestamp, round_num, mtime)` — mtime is reached only when BOTH timestamp and round number tie. `last_audit_selection.tie_break` records which tier actually discriminated the winner: `null` when the top timestamp was already unique (the common case — no tie to break at all), `"round"` when timestamp tied but round number broke it, `"mtime"` when both timestamp and round number tied too (this also covers the pre-existing "every candidate unparsed" `mtime-fallback` case, where every candidate shares the same absent-timestamp bucket).
 
 ## `custom_checks` (Phase 1.11, T3.1)
 
