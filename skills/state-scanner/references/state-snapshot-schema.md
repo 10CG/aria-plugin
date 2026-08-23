@@ -375,8 +375,11 @@ exists: bool                    # docs/architecture/system-architecture.md
 path: str|null
 status: str|null                # Status: header
 last_updated: str|null          # Last Updated: header
-parent_prd: str|null            # Parent PRD: header
-chain_valid: bool|null          # placeholder strings rejected (IMP-2)
+parent_prd: str|null            # Parent PRD: header — first hit, doc order (back-compat)
+parent_prds: list[str]|null     # ALL Parent PRD hits (additive, #151) — null only
+                                 # when exists=false or the file failed to read;
+                                 # [] when exists=true but no Parent PRD line matched
+chain_valid: bool|null          # at least one parent_prds entry resolves (#151)
 ```
 
 **Field extractor patterns** (`collectors/architecture.py`, regex hardening Spec
@@ -397,6 +400,85 @@ prefix** (`>`) + **optional bold wrapper** (`**...**`) + **dual colon** (halfwid
 - `## Status: Active` (heading-prefixed, no bold)
 - `> **Status**: Active` (blockquote)
 - `## **Status**: Active` (heading + bold combined)
+
+**Qualified `Parent PRD` variant + `parent_prds` list** (issue #151, 2026-08-23):
+
+`Parent PRD` alone additionally accepts an optional qualifier between the key
+and its colon — free-form parenthesized content, one level of nesting
+tolerated (e.g. `(v1)`, `(v1 (draft))`) — matched on **either side** of the
+closing `**`, so a doc that hangs off more than one PRD can label each link
+distinctly instead of only the last one matching (or none, pre-fix):
+
+- `**Parent PRD (v1)**: [prd-v1.md](../requirements/prd-v1.md)` (qualifier
+  before the closing `**`)
+- `**Parent PRD** (v2): [prd-v2.md](../requirements/prd-v2.md)` (qualifier
+  after the closing `**` — also matches)
+- the qualifier is entirely optional: an ordinary unqualified
+  `**Parent PRD**: prd.md` still matches and still yields a (1-element)
+  `parent_prds`.
+
+Every matching line — qualified or not — is now collected via `finditer` (not
+just the first `search()` hit) into `parent_prds`. `parent_prd` (singular)
+stays = the first entry in doc order — its **position** in the list is
+unchanged, but its **value can change** for a markdown-link-form line: see
+the value-shape paragraph immediately below. Only a bare-text (non-link)
+`Parent PRD` value is byte-for-byte identical to the pre-#151 output.
+
+Each collected entry is stored as **the link target if the line's value is a
+markdown link (`[text](target[ "title"])`), otherwise the original captured
+text verbatim.** This is a value-shape change for link-form lines, not an
+additive-only one: pre-#151, `parent_prd`/the (then single-valued) extractor
+held the raw captured text verbatim — for a line like
+`**Parent PRD**: [prd.md](../requirements/prd.md)` that meant the literal
+string `"[prd.md](../requirements/prd.md)"`, brackets and display text
+included. Post-#151 the same line yields just `"../requirements/prd.md"` (the
+target). Link recognition is a **prefix match** — `[text](target)` optionally
+followed by a `"title"` and/or arbitrary trailing text (a stray comment, a
+`(primary)` annotation, ...) — so trailing decoration is discarded from the
+stored value rather than knocking the entry back onto the bare-text path (see
+`chain_valid` note below for why that distinction matters). The reference
+case for the common shape (no trailing decoration) is this project's own
+`docs/architecture/system-architecture.md` in the main Aria repo (two
+directories above this `aria` submodule checkout — not linked here as a
+relative path, since one from this file would cross the submodule boundary
+and dangle for any reader/tool that doesn't happen to have both repos checked
+out in that exact relative layout): its two `**Parent PRD (vN)**:` lines are
+markdown links, so `parent_prds` holds their
+`../requirements/prd-aria-v{1,2}.md` targets, not the full `[text](target)`
+syntax.
+
+`chain_valid` semantics widen accordingly to **"at least one `parent_prds`
+entry resolves"** (not "the one `parent_prd` is real", and not "every entry
+resolves" — a broken sibling entry does not sink an otherwise-valid chain, nor
+does a non-empty list make an all-broken chain trivially valid):
+
+- a markdown-link entry resolves when its link target exists as a real file
+  on disk, resolved **relative to the architecture doc's own directory**
+  (the natural base for a relative link such as `../requirements/prd-x.md`).
+  Link recognition (see above) is independent of what trails the `)` — a
+  link with a broken target and trailing decoration (`[x](../missing.md)
+  (primary)`) is still disk-checked and still resolves False, it is not
+  silently waved through by falling back to the bare-text path (round-1 had
+  this fail-open gap; closed in round 2);
+- a bare-text entry (no link syntax at all) keeps the pre-#151, no-disk-check
+  semantics — non-empty and not a known placeholder token (IMP-2's
+  `_is_real_prd_reference`), same as always.
+
+The field is additive-only (`parent_prds` is a new key; nothing existing is
+removed) and existing single-PRD, **non-link** documents are unaffected: one
+bare `**Parent PRD**: prd.md` line still yields `parent_prd="prd.md"`,
+`parent_prds=["prd.md"]`, and the same `chain_valid` a pre-#151 caller would
+have computed. A single-PRD document whose value IS a markdown link is
+affected on `parent_prd`'s value (see above), even though it was never
+"qualified" or "multi-PRD".
+
+**Fixture note**: `tests/fixtures/reference-snapshot-aria.json`'s
+`architecture` block (`chain_valid: false`, no `parent_prds` key) still
+reflects the pre-#151 shape. That file is documented in
+`references/json-diff-normalizer.md` as a manual-compare baseline, not wired
+into any automated test, and is resampled only as a deliberate, separately
+scoped/documented step (see that file's "Resampled 2026-07-18" entry) — it is
+left frozen here rather than resampled as a side effect of #151.
 
 ## `readme` (Phase 1.8)
 
@@ -435,9 +517,47 @@ last_audit:
   verdict: str|null             # "PASS" | "PASS_WITH_WARNINGS" | "FAIL"
   converged: bool|null          # YAML-coerced bool (R1-I6)
   timestamp: str|null
+last_audit_selection:           # additive (#149) — diagnostic: how last_audit was chosen. Fixed
+                                 # field set, present on EVERY return path (including both
+                                 # early-exit branches: absent dir, empty dir).
+  method: str                   # "aggregated-filename" | "none"
+  ordering: str|null            # "filename-timestamp" (全部候选解析到时间) | "filename-timestamp-partial" (部分 unparsed, 排最后, 不参与胜出) | "mtime-fallback" (全部 unparsed) | null (iff method == "none")
+  candidates_scanned: int       # count of ALL *.md in .aria/audit-reports/ (not just candidates)
+  aggregate_candidates: int     # count of those matching the aggregate filename shape
+  unparsed_timestamp: int       # of aggregate_candidates, how many had no parseable filename timestamp
+  selected: str|null            # filename selected; null iff method == "none"
+  tie_break: str|null           # "round" | "mtime" | null (#149 round 3) — which sort-key tier
+                                 # actually discriminated the winner; null when the top filename
+                                 # timestamp was already unique (the common case — no tie to
+                                 # break), or when method == "none" (no selection happened)
+  reason: str                   # present ONLY when method == "none" (absent otherwise)
 ```
 
-Empty audit dir → `{enabled: true, last_audit: null}`; absent dir → `{enabled: null, last_audit: null}`.
+Empty audit dir → `{enabled: true, last_audit: null, last_audit_selection: {method: "none", ordering: null, tie_break: null, ...}}`;
+absent dir → `{enabled: null, last_audit: null, last_audit_selection: {method: "none", ...}}` — both
+early-exit branches still emit the FULL `last_audit_selection` shape above, never omit the field.
+
+**#149 (round 2, finalized design) — selection keys off the AGGREGATE-report filename shape AND its embedded timestamp, never raw mtime and never round number `R<N>`.** Previously `last_audit` picked whichever `.md` file in `.aria/audit-reports/` had the newest mtime — a stray non-audit note (no frontmatter) or a single-seat per-agent report could win over the actual round aggregate simply by being touched more recently. A first attempt at fixing this filtered to aggregate-shaped filenames but then ordered candidates by `R<N>` (round number); that was rejected on review because round numbers are only meaningful **within one spec's own convergence loop** — comparing them **across** specs/audits is meaningless, and in practice picked a 5-week-old `R9` report over a same-day `R1` report from an unrelated, more recent audit. It also assumed the filename-embedded timestamp token was always pure-numeric, when `references/audit-engine/report-storage.md`'s documented `timestamp_ms` field is ISO-ish and the repo's own `.aria/audit-reports/` carries both shapes side by side.
+
+The finalized rule (`collectors/audit.py::collect_audit`):
+
+1. **Candidate filter (unchanged since the first attempt)**: only files whose name ends in `-aggregated.md` (canonical) or `-aggregate.md` (legacy spelling, no trailing "d") — WITH the leading dash — are eligible at all. `aggregated-summary.md` (ends in `-summary.md`) and `aggregate.md` on its own (no leading dash — one character short of the required `-aggregate.md` suffix) are both rejected by the same `endswith()` check; a single-seat report (e.g. `...-tech-lead.md`) or an unrelated stray file is never selected, however new its mtime.
+2. **Ordering key = a timestamp token found by scanning the filename directly, never the round number, and — as of round 3 below — never anchored to the round marker's position either.**
+3. **A candidate whose filename carries no recognizable timestamp token parses to no timestamp** — it sorts **last** (never a `-1`/empty-string stand-in that could accidentally look "smallest but real"), and is counted in `unparsed_timestamp`.
+4. **Ties break by mtime only as a last resort** (round 3 inserts a round-number tier before it — see below). When at least one candidate has a real parsed timestamp, `ordering` reports `"filename-timestamp"` when every candidate parsed, `"filename-timestamp-partial"` when some did not (round 3 [m]: the reader must know the pool was not fully timestamp-ordered). When **every** candidate's token failed to parse, the only honest remaining signal is mtime — `ordering` reports `"mtime-fallback"` explicitly rather than silently reusing the `"filename-timestamp"` label.
+5. When **zero** files match the aggregate shape at all (including both early-exit branches — audit dir absent, or present but empty), `last_audit` is `None` — it never falls back to a single-seat report or any other file — `last_audit_selection.method` is `"none"`, `ordering` is `null`, and `reason` explains which of the three no-candidate cases applied.
+
+**#149 round 3 (this fix, challenger-seat critical) — two further refinements, both grounded in real filenames the round-2 challenger seat found in `.aria/audit-reports/` that round 2's `-R<N>-`-anchored parsing didn't cover (`post_spec-FINAL-...`, `post_spec-R5.5-...`, `post_spec-R1-R2-...` merged rounds, `post_spec-R1prime-...`), plus a same-timestamp 7-way tie the repo's own `pre-merge-gate-no-run-for-branch` audit produced (`post_spec-R1..R7-1787379154696-...`):**
+
+**[M1] Timestamp-token location is no longer anchored on the `-R<N>-` marker.** Round 2's `_parse_filename_timestamp` located the token by finding the first `-R<N>-` (bare-integer round) substring and reading whatever followed it — which breaks for every round-marker shape that isn't a bare integer: `FINAL` (no digits at all), `R5.5` (decimal round), and `R1-R2` (a merged-round marker that itself contains an `-R1-`-shaped substring, but not the real round). Round 3 decouples timestamp-token location from the round marker entirely:
+
+- The timestamp token is found by scanning the filename (after its `<checkpoint>-` prefix — checkpoint values are `underscore_case` with no internal dashes, so this split is unambiguous) for the **first** `-<token>-` segment matching either shape, independent of where — or whether — a round marker sits:
+  - **epoch-ms**: a run of **exactly 13** digits, dash-bounded on both sides. 12-digit (a different, second-precision epoch convention) and 14-digit (a compact `YYYYMMDDHHMMSS` date, which would misparse to the year ~2612 if read as milliseconds) runs are both rejected by the exact-length match — round 2's `^\d{12,}` accepted both.
+  - **ISO-ish date**: `YYYY-MM-DD`, dash-bounded on the left, optionally followed by `THHMMZ` / `THHMMSSZ` (optionally with a `-mmm` millisecond suffix before `Z`).
+- The round number is now extracted completely separately, by its own scan for the first `-R(\d+(?:\.\d+)?)-` (integer or decimal) or `-FINAL-` (→ `+inf`); not found at all → `-inf` (never a `-1`/`0` stand-in). It is used only as the *second-tier* sort key (M2) — for a merged marker like `R1-R2` this scan's leftmost match is `R1`, which is immaterial since a merge event produces exactly one file and so never needs to out-rank a same-timestamp sibling on round number.
+- **A `T`-prefixed time part that fails to parse after a valid date degrades to date-only precision (00:00 UTC), not `None`** — e.g. `2026-05-17T03Z` (`T03Z` matches neither the 4- nor 6-digit compact time shape) still resolves to `2026-05-17T00:00:00Z`. Round 2 let a malformed time suffix fail the *whole* token; round 3 only lets a valid `T` suffix ADD precision, never subtract a token that already found a valid date.
+
+**[M2] Same-spec, same-timestamp ties now break by round number before mtime.** The repo's own `pre-merge-gate-no-run-for-branch` audit produced seven aggregate reports (`R1` through `R7`) sharing one filename timestamp (`1787379154696`); round 2's tie rule fell straight to mtime, which happened to land on `R7` (the correct, converged report) by write-order accident, not by design. The sort key is now three-tier: `(parsed_timestamp, round_num, mtime)` — mtime is reached only when BOTH timestamp and round number tie. `last_audit_selection.tie_break` records which tier actually discriminated the winner: `null` when the top timestamp was already unique (the common case — no tie to break at all), `"round"` when timestamp tied but round number broke it, `"mtime"` when both timestamp and round number tied too (this also covers the pre-existing "every candidate unparsed" `mtime-fallback` case, where every candidate shares the same absent-timestamp bucket).
 
 ## `custom_checks` (Phase 1.11, T3.1)
 
@@ -964,6 +1084,11 @@ tracks_multibranch:
   collision:                      # TASK-000 (#133) — additive, ADVISORY-ONLY
     kind: str                     # enum: "none" | "cross_owner" | "self_multi_container"
     groups: list[list[str]]       # per colliding track_id: list of owner-container members
+    dedupe: dict | ABSENT         # #155 — additive, OPTIONAL: {"input_tracks": int, "after_dedupe": int,
+                                   #   "legacy_passthrough": int} — input_tracks/after_dedupe count
+                                   # non-legacy rows ONLY (legacy_passthrough is the legacy-row count,
+                                   # tracked separately since legacy rows never fold — round 2)
+                                   # present ONLY when >=1 non-legacy row was collapsed (see below)
   errors: list[str]               # accumulated non-fatal error messages
 
 TrackEntry:
@@ -979,7 +1104,23 @@ TrackEntry:
 
 **`latest.md` exclusion**: the navigation pointer (`docs/handoff/latest.md`) is excluded from `_list_handoff_files` per `feedback_collector_exclude_navigation_pointer` — it never appears as a `TrackEntry`.
 
-**Collision preservation**: the same `track_id` appearing on multiple branches is intentionally preserved (not deduped) — collision detection per `session-handoff.md §2.3.5`. `track_board.py` renders the collision signals; this collector only classifies and surfaces them.
+**Collision preservation**: the same `track_id` appearing on multiple branches is intentionally preserved (not deduped) in `tracks[]` — collision detection per `session-handoff.md §2.3.5`. `track_board.py` renders the collision signals; this collector only classifies and surfaces them.
+
+**Collision-classification-input dedupe (aria-plugin#155, additive; round 3 post-review)**: `tracks[]` itself is never deduped, but the list handed to `lib/collision.py::classify()` is. Bug: a track accumulates one `tracks[]` row per historical `docs/handoff/*.md` hit under the SAME `(track_id, owner_container)`; every OLD row's frontmatter is frozen at write time (`status: active`) and never rewritten when the track later closes — only the newest row for that pair ever says a terminal status. `classify()` groups by `track_id` ONLY (not `owner_container`) and keeps every non-terminal row as an active candidate, so those frozen-`active` historical rows kept `collision.kind` at `self_multi_container` forever, even for an already-closed track.
+
+Fix: before calling `classify()`, the collector calls the PUBLIC function `dedupe_latest_per_track_container(tracks) -> (deduped, stats)` (`handoff_multibranch.py`), which groups `tracks` by **`(track_id, owner/container)`** — i.e. the OWNER and CONTAINER segments only, split via `lib.collision.split_owner_container` (read-only import; that module is not modified). The SESSION segment (3rd part of an `owner/container/session` string) deliberately does **not** participate in the grouping key (round 3, finding [m]): two historical rows for the same track and the same physical container that differ only by session — e.g. an old `status: active` row from session `s1`, a newer `status: done` row from session `s2` — are the same container's history over time, not two containers, and must fold into one representative. Grouping on the raw `owner_container` string (rounds 1–2) left such session-differing rows in separate dedupe-of-one groups, so a stale `active` row could keep counting as a live candidate even after its own container had moved on. (Fail-soft: if the `lib.collision` import is unavailable, the grouping key falls back to the raw `owner_container` string — rounds 1–2 behaviour — rather than crashing; the session-drop fold does not apply in that degraded case.)
+
+Within each `(track_id, owner, container)` group, the row that sorts greatest under the **four-level** compound key `(parse_ok, parsed updated_at, filename, branch)` wins:
+
+- `updated_at` is parsed as ISO-8601 (a date-only string like `"2026-07-19"` is treated as that day's 00:00); a row whose `updated_at` fails to parse sorts in a strictly lower-priority bucket — it can NEVER win the "latest" slot, not via raw string comparison, so a corrupt value like `"corrupt-not-a-date"` cannot beat a real timestamp merely by being lexicographically larger (`"c" > "2"`).
+- **Filename tie-break (round 2)**: when two rows in a group parse to the IDENTICAL `updated_at` instant — the real-world case that surfaced this: this repo's own `docs/handoff/` has produced same-track same-container rows that both stamp date-only `updated_at: 2026-07-19` — the row whose `filename` is dictionary-order GREATEST wins. Round 1's key omitted filename, so a tie silently fell back to `max()`'s "keep whichever row it saw first while iterating" behavior — i.e. `git ls-tree`'s alphabetical listing order, an accident of iteration, not a real "later" signal — and it picked the wrong row against this repo's own data. Handoff filenames are `YYYY-MM-DD-...`-prefixed, so the lexicographically greater name is also the later-authored one among same-day files.
+- **Branch tie-break (round 3, finding [M1])**: filename alone still under-determines the mainline multi-branch-scan shape — the SAME handoff file (identical `track_id`/`owner_container`/`updated_at`/`filename`, byte-for-byte the same content) reachable from MULTIPLE branches sharing a common ancestor commit (an ordinary occurrence once a project has more than one long-lived branch, not an edge case). On that exact 3-way tie, the round-2 key again silently fell back to `max()`'s "first seen while iterating" — i.e. branch-scan order (`git for-each-ref --sort=-committerdate`), an accidental value with respect to this decision. The row whose `branch` is dictionary-order GREATEST wins, making the result a pure function of the candidate rows' own field values — invariant to the order `tracks[]` happens to be built/passed in.
+
+`status == "legacy"` rows (no frontmatter; `owner_container` is always `"unknown"`) pass through un-grouped — `classify()` already excludes `owner_container == "unknown"` from attribution, so this has no observable effect on the classification result either way. Only the deduped view is fed to `classify()`; `tracks[]` is untouched.
+
+The additive `collision.dedupe` audit key (`{"input_tracks": N, "after_dedupe": M, "legacy_passthrough": L}`) is present ONLY when deduping actually collapsed ≥1 **non-legacy** row (`after_dedupe < input_tracks`, both counted over non-legacy rows only) — a snapshot with no historical accumulation keeps the pre-#155 `{"kind", "groups"}` shape byte-for-byte, so existing exact-equality consumers of `collision` are unaffected. `legacy_passthrough` is the separately-tracked count of legacy rows, which never participate in folding (round 2: round 1 mixed legacy rows into `input_tracks`/`after_dedupe` without documenting it — this is now split out).
+
+**Renderer parity (round 2; automatically extends to round 3)**: `renderers/track_board.py` imports this SAME `dedupe_latest_per_track_container` (no re-implementation, no round-3-specific renderer change needed — it inherits the `(track_id, owner, container)` grouping and the four-level sort key by construction) and applies it before computing its own `all_collidable` set for the COLLISION lines it renders — so the board and this collector's persisted `collision` summary are computed from one deduped view of one snapshot (round-1 review minor finding: the renderer used to compute collidability off the raw, undeduped `tracks[]`). Feeding both paths the same deduped input turned out NOT to be sufficient by itself — verifying against this project's own real `tracks_multibranch` snapshot (the round-2 acceptance check) surfaced three further pre-existing divergences purely inside the renderer's `_render_collision_lines`/its caller, all now fixed to mirror `lib/collision.py::classify()`'s already-correct behavior without touching that file: (1) `ClaimRecord` construction is now per-track fail-soft, matching `classify()`'s own per-item skip, instead of one all-or-nothing list comprehension where a single malformed track anywhere silently degraded the WHOLE board to the cruder, status-blind P1 fallback; (2) `active_claims` now recovers a stale-takeover-demoted winner (a non-terminal claim reconcile moves to `superseded` for staleness, not because it is genuinely terminal) before classifying, matching `classify()`'s identical, already-documented recovery; (3) the renderer now has an explicit `collision_kind == "none"` case that renders no line, replacing a generic fallback branch that previously rendered a COLLISION line whenever `verdict.yielders` was non-empty regardless of what classification actually said (e.g. same-owner+container "self-serial" claims). See `renderers/track_board.py`'s own inline comments at each of these three sites for the full mechanism.
 
 **Scan cap**: bounded by `resolve_max_branches_scanned()` (`_common.py`; env > config `state_scanner.handoff_multibranch.max_branches` > default 20, #71 v1.38.0). Branches are scanned in `git for-each-ref --sort=-committerdate` order (most-recently-updated first) so the cap drops stale branches before active ones. When the cap is hit, a `soft_error` notes the resolved cap value.
 

@@ -167,7 +167,12 @@ audit_detection:
 
   last_audit_scan:
     path: ".aria/audit-reports/"
-    command: "ls .aria/audit-reports/*.md 2>/dev/null | sort | tail -1"
+    command: >-
+      只认 *-aggregated.md / *-aggregate.md (排除单席报告与杂项文件),
+      按文件名里 R<N> 之后的 timestamp token 取最新 (#149 round 2;
+      不按 R<N> 排序 — 轮次号只在同 spec 内有意义; 不按 mtime 排序,
+      仅在全部候选 timestamp token 都解析失败时才退回 mtime 兜底,
+      见 collectors/audit.py::collect_audit + state-snapshot-schema.md §audit)
     frontmatter_fields:
       - checkpoint
       - verdict
@@ -226,20 +231,26 @@ architecture_detection:
     format: "YYYY-MM-DD"
 
   parent_prd_detection:
+    # v1.67.1+ (aria-plugin#151): 机械实现 = collectors/architecture.py `_ARCH_PRD`。
+    # 行形态: `[**]Parent PRD[ (限定词)][**][ (限定词)]:` — 限定词是一对线性括号
+    # (如 `(v1)` / `(v2)`; 不支持嵌套), 可在加粗闭合前或后; `Parent PRD v1:` /
+    # `Parent PRDs:` 不命中 (负控)。一份架构文档可有多条 (一对多), 全部收集。
     patterns:
-      - "Parent Document.*prd-"
-      - "References.*prd-"
-      - "Based on.*prd-"
-    extract: prd_id
+      - "**Parent PRD**: <value>"
+      - "**Parent PRD (v1)**: <value>"
+      - "**Parent PRD** (v2): <value>"
+    extract:
+      parent_prds: 每条的值 — markdown 链接形态存链接目标 (去掉 title; `#fragment`/`?query`
+                   仅在磁盘检查时剥离), 裸文本原样
+      parent_prd: parent_prds[0] (向后兼容单值)
 
   chain_validation:
     checks:
-      - parent_prd_exists: prd file exists
-      - parent_prd_match: architecture references correct prd
-      - timestamp_order: prd.created <= architecture.created
+      - at_least_one_entry_resolves: 链接形态 → 相对架构文档目录的目标文件存在 (is_file);
+                                     裸文本 / URL 形态 → 非空且非占位符 (不查磁盘, 既有语义)
     output:
-      chain_valid: boolean
-      chain_issues: list
+      chain_valid: boolean   # = any(entry resolves); 全部不通 / 零条目 → false
+      parent_prds: list      # additive (#151)
 ```
 
 ### 需求状态检测
