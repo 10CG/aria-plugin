@@ -47,13 +47,35 @@ Collision detection (TASK-017 upgrade — reconcile-based):
       - cross-owner collision (≥2 distinct owners): 🔴 strong warning
       - self-multi-container collision (same owner, ≥2 containers): 🟡 soft hint
       - clock skew conflict (ReconcileVerdict.conflict=True): ⚠ 时钟偏移 line
-    Fallback path (P1 basic, if ClaimRecord construction fails):
-      Same track_id with ≥2 distinct owner_container values → ⚠ COLLISION line.
+    Fallback path (P1 basic, only if the reconcile machinery itself is
+    unavailable or raises — NOT triggered by one malformed track anymore,
+    see #155 round 2 note below):
+      Same track_id with ≥2 distinct owner_container values → ⚠ COLLISION line
+      (status-blind — this path predates terminal-status filtering).
+    Input (aria-plugin#155, round 2): BOTH paths above are fed
+      ``dedupe_latest_per_track_container(tracks)`` (imported from
+      collectors.handoff_multibranch — same function the collector itself
+      uses to build ``tracks_multibranch.collision``), not the raw ``tracks``
+      list, so the board and the collector's persisted summary always agree.
+      Also round 2: ClaimRecord construction (P2 path) is now fail-soft PER
+      TRACK (mirrors lib/collision.py::classify()'s own per-item skip) — one
+      track with a malformed field (e.g. bad updated_at) no longer discards
+      the reconcile-based verdict for every OTHER track and silently
+      degrades the WHOLE board to the cruder P1 fallback; only a genuinely
+      board-wide failure (reconcile_all itself raising, or the lib import
+      being unavailable) falls back to P1.
 
 Spec:  openspec/changes/multi-terminal-coordination/tasks.md §2.7
 Task:  TASK-017 (backend-architect); extends TASK-005 P1
 Deps:  TASK-004 (tracks_multibranch), TASK-007 (coordination_fetch),
        TASK-015 (reconcile / ReconcileVerdict)
+
+aria-plugin#155 (backend-architect, fix/issue-batch-149-151-155-134, round 2):
+COLLISION computation now dedupes its input via the shared
+``dedupe_latest_per_track_container`` before building ``all_collidable`` —
+fixes a round-1-review minor finding that this renderer still computed off
+the undeduped ``tracks[]`` and could diverge from the collector's fixed
+output.
 """
 
 from __future__ import annotations
@@ -128,6 +150,39 @@ except ImportError:
         _track_to_claim_record = None  # type: ignore[assignment]
         _classify_collision = None  # type: ignore[assignment]
         _RECONCILE_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
+# Collision-classification-input dedupe (aria-plugin#155, round 2).
+#
+# Shared with the handoff_multibranch collector (single source of truth —
+# imported verbatim, never re-implemented here) so that render_track_board's
+# COLLISION lines and the collector's persisted tracks_multibranch.collision
+# always agree on the SAME snapshot. Before this fix the renderer fed the
+# raw, undeduped tracks[] straight into collidability/reconcile, so a track
+# with stale "status: active" historical handoff rows (see
+# handoff_multibranch.py's own module docstring for the bug this guards
+# against) could still show a phantom "⚠ COLLISION" line on the board even
+# after the collector itself had already stopped reporting a collision for
+# that same track — a divergence flagged in round-1 review.
+#
+# No dependency on lib/ here: unlike ``lib`` (two same-named packages exist
+# in this skill — see the ladder above and aria-plugin#134), ``collectors``
+# exists in exactly ONE place (scripts/collectors/), so a plain two-level
+# fallback is enough; it fails soft to None (never crashes renderer import)
+# so a missing dedupe helper degrades the board to its pre-#155 behaviour
+# rather than breaking the whole module.
+# ---------------------------------------------------------------------------
+try:
+    from ..collectors.handoff_multibranch import (
+        dedupe_latest_per_track_container as _dedupe_tracks_for_collision,
+    )
+except ImportError:
+    try:
+        from collectors.handoff_multibranch import (  # type: ignore[import]
+            dedupe_latest_per_track_container as _dedupe_tracks_for_collision,
+        )
+    except ImportError:
+        _dedupe_tracks_for_collision = None  # type: ignore[assignment]
 
 # Maximum characters for the TRACK column before truncation.
 MAX_TRACK_ID_LEN: int = 40
@@ -282,8 +337,14 @@ def _render_collision_lines(
 ) -> list[str]:
     """Render COLLISION and clock-skew warning lines from reconcile verdicts.
 
-    One line per track with a real collision (yielders present).
-    An additional ⚠ 时钟偏移 line is appended when verdict.conflict=True.
+    One line per track with a real collision — ``verdict.yielders`` non-empty
+    AND ``_classify_collision`` (classify_claims) resolves the yielder+winner
+    set to "cross_owner" or "self_multi_container" (round 2, #155: a "none"
+    classification renders NO line — see the ``elif collision_kind ==
+    "none"`` branch below — matching ``lib/collision.py::classify()``, the
+    persisted-summary counterpart this must agree with).
+    An additional ⚠ 时钟偏移 line is appended when verdict.conflict=True,
+    regardless of collision_kind (clock skew is an independent signal).
 
     Note: when the reconcile winner was flagged as stale-takeover-eligible,
     ``verdict.winner`` is None but the stale winner is in ``verdict.superseded``.
@@ -311,6 +372,22 @@ def _render_collision_lines(
         active_claims: list = list(verdict.yielders)
         if verdict.winner:
             active_claims.append(verdict.winner)
+        # aria-plugin#155 (round 2): also recover any claim reconcile moved
+        # into `superseded` for a reason OTHER than a genuinely terminal
+        # status — i.e. a stale-takeover-eligible winner (Rule 6) — mirroring
+        # lib/collision.py::classify()'s IDENTICAL recovery, for the
+        # identical documented reason there: without it, a real 2-claim
+        # collision where the winner happens to be stale loses one of its
+        # two active claimants (the winner drops to `superseded`, `winner`
+        # becomes None) and `_classify_collision` sees only the lone
+        # yielder — misclassifying a genuine self_multi_container/cross_owner
+        # collision as "none". Confirmed against this project's own real
+        # tracks_multibranch data (aria-submodule-gate-block-flip) — omitting
+        # this recovery is exactly what made the board disagree with the
+        # persisted tracks_multibranch.collision on that track.
+        active_claims.extend(
+            c for c in verdict.superseded if c.status not in ("done", "abandoned")
+        )
 
         if not verdict.yielders:
             # No yielders → no collision line.
@@ -380,8 +457,29 @@ def _render_collision_lines(
                 f"⚠ COLLISION self-multi-container {display_tid}: "
                 f"{labels_str} (soft hint, 可能容器迁移)"
             )
+        elif collision_kind == "none":
+            # aria-plugin#155 (round 2): classify_claims (_classify_collision)
+            # can legitimately return "none" here even though
+            # verdict.yielders is non-empty — reconcile's yielders/winner
+            # split does not itself apply the owner/container/terminal-status
+            # filtering classify_claims does (e.g. once a stale winner drops
+            # out and only one non-terminal claim remains, or two claims
+            # share the same owner+container — "self-serial", not a real
+            # collision). No line for this track — matches
+            # lib/collision.py::classify(), which skips "none" tracks when
+            # building the persisted tracks_multibranch.collision.groups.
+            # (Prior code had no branch for this case and fell into the
+            # `else` fallback below, which unconditionally rendered a
+            # COLLISION line — the exact source of a round-1-review-caught
+            # board/collector divergence on this project's own real data.)
+            pass
         else:
-            # Fallback: collision detected by reconcile but classification unclear
+            # Defensive fallback only: _classify_collision (classify_claims)
+            # has exactly three return values ("cross_owner",
+            # "self_multi_container", "none"), all handled above, so this
+            # branch is unreachable in practice — kept in case a future
+            # classify_claims revision adds a kind this renderer doesn't
+            # know about yet, rather than silently dropping it.
             if verdict.winner:
                 winner_label = _label(verdict.winner)
             elif stale_winner_label:
@@ -393,7 +491,11 @@ def _render_collision_lines(
                 f"⚠ COLLISION {display_tid}: {winner_label} vs {yielder_labels}"
             )
 
-        # Clock-skew line (appended after the collision line for the same track)
+        # Clock-skew line (appended after the collision line for the same
+        # track — independent of collision_kind: reconcile can detect clock
+        # disagreement between active candidates regardless of whether
+        # classify_claims later excludes them from the "official" collision
+        # kind, e.g. two same-owner+container claims with skewed clocks).
         if verdict.conflict and verdict.max_clock_skew_seconds is not None:
             lines.append(
                 f"⚠ 时钟偏移 {display_tid}: "
@@ -630,13 +732,27 @@ def render_track_board(
 
     # ── Collision detection — TASK-017 reconcile-based path with P1 fallback ────
     #
+    # aria-plugin#155 (round 2): dedupe historical (track_id, owner_container)
+    # rows down to the updated_at-latest one (filename tie-break — same
+    # function, same semantics as the collector's own collision-classification
+    # input) BEFORE computing collidability, so the board and the persisted
+    # tracks_multibranch.collision agree on the same snapshot. This only
+    # affects which row represents a (track_id, owner_container) pair in the
+    # collision computation below — the visible table above still renders
+    # every row in tracks[] (full, undeduped history).
+    collision_input_tracks = (
+        _dedupe_tracks_for_collision(tracks)[0]
+        if _dedupe_tracks_for_collision is not None
+        else tracks
+    )
+
     # Collidable = all tracks with a real owner_container (not "unknown"), so
     # that done/abandoned tracks that are still on the same track_id (potential
     # race artifacts) participate in the verdict.  However, a track whose only
     # contribution is a terminal-status claim won't produce yielders in reconcile,
     # so the net effect is: terminal-only tracks → no collision line.
     all_collidable = [
-        t for t in tracks
+        t for t in collision_input_tracks
         if (t.get("owner_container") or "unknown") != "unknown"
     ]
 
@@ -645,10 +761,28 @@ def render_track_board(
 
     if _RECONCILE_AVAILABLE and all_collidable:
         # Attempt P2 reconcile-based path.
-        # Build ClaimRecord placeholders; if any track fails construction, fall
-        # back entirely to P1 basic detection for the whole board.
+        # Build ClaimRecord placeholders. aria-plugin#155 (round 2): each
+        # track is converted INDEPENDENTLY (try/except per item, mirroring
+        # lib/collision.py::classify()'s own fail-soft loop) rather than the
+        # prior all-or-nothing list comprehension. That prior form meant ONE
+        # track anywhere in the whole collidable set with a malformed field
+        # (e.g. a non-ISO-8601 updated_at — real data on this repo has one:
+        # a stray "2026-05-28T~14:00Z") silently discarded the ENTIRE
+        # reconcile-based verdict for every OTHER track too, falling back to
+        # the cruder, status-blind P1 `_detect_collisions` board-wide — while
+        # the collector kept classifying fine (its own per-item fail-soft
+        # skip only drops the one bad track). That divergence is exactly
+        # what made the board disagree with tracks_multibranch.collision on
+        # this repo's own real data even after dedupe-input parity was
+        # fixed. A genuinely fatal, non-per-item failure (e.g. reconcile_all
+        # itself raising) still falls through to the outer except below.
         try:
-            claim_records = [_track_to_claim_record(t) for t in all_collidable]
+            claim_records: list["ClaimRecord"] = []
+            for t in all_collidable:
+                try:
+                    claim_records.append(_track_to_claim_record(t))
+                except ValueError:
+                    continue  # fail-soft: skip only this malformed track
 
             # Build a parallel index: track_id → list of original track dicts
             # (used by _render_collision_lines to reconstruct human-readable labels).
@@ -661,7 +795,7 @@ def render_track_board(
             verdicts = reconcile_all(claim_records, now=now)
             collision_lines = _render_collision_lines(verdicts, tracks_by_tid)
             reconcile_used = True
-        except Exception:  # noqa: BLE001 — defensive: any failure → fallback
+        except Exception:  # noqa: BLE001 — defensive: any OTHER failure → fallback
             reconcile_used = False
 
     if not reconcile_used:
