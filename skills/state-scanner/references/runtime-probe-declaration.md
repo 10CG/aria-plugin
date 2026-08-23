@@ -135,8 +135,10 @@ spec 归档时，声明随整个文件移入 `openspec/archive/`，自然带入 
 **不回改已经封存的归档 proposal.md 去补声明**（owner 决策 2026-07-05）—— 对齐
 既有 ERRATA 惯例"不修改归档 proposal 本体"。这意味着：截至本文档撰写时全部已
 归档 spec（含 coordination 自身的 `interactive-session-dedup-coordination`）都
-保持**无声明**状态，不会被回填。未来第一个真实声明者，会是下一个**自带
-telemetry 分区**的**活跃**中 spec。
+保持**无声明**状态，不会被回填。首个真实声明者 = `pre-merge-gate-no-run-for-branch`
+（aria-plugin#152，2026-08）：partition `.aria/gate-state-telemetry.jsonl` /
+symbol `record` / max_age_days 14，由
+`workflow-runner/scripts/gate_state_helper.py record --source production` 写入。
 
 ## Known tradeoff：整读非流式
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -52,6 +53,15 @@ VERDICT_GREEN = "green"
 VERDICT_WAIT = "wait"
 VERDICT_FAIL = "fail"
 
+# aria-plugin#152 TASK-007b (spec §7 checklist 1): 是否可对 dispatchable
+# workflow 渲染人工 dispatch 处方 (a) 行。TASK-0a 2026-08-22 活体实测: POST
+# /repos/10CG/aria-plugin/actions/workflows/issue-triage-tests.yml/dispatches
+# → HTTP 204, run 2s 内建立 (31968); 见
+# references/pre-merge-gate-empirical-traps.md §六。false ⇒ 不渲染处方 (a) 行。
+# 读取方式 = 裸全局引用 (可 monkeypatch), ⛔ 不用默认参捕获 (spec §7 checklist 1
+# —— 默认参在 import 时求值一次, monkeypatch 全局符号后不生效)。
+DISPATCH_VIABLE = True
+
 # v1.31.0+ default config (Hard Constraint #8: ci_backends list order is
 # the explicit precedence; absent vs [] disambiguation per AC-4.5).
 DEFAULT_CONFIG = {
@@ -66,6 +76,10 @@ DEFAULT_CONFIG = {
     # v1.65.0+ (#122): 路径覆盖感知默认开启 (owner sign-off 2026-07-27 单独批
     # 默认 true)。fail-toward-covered: 评估不确定时行为与关闭时逐字段一致。
     "path_coverage_enabled": True,
+    # v1.66.5+ (#152): pr_ci_status="not_found" (远端零 run) 连续观测多少次后
+    # 才提示用户人工核验; int ≥2 (不提供 1 —— 单次零 run 太常见于新分支首推,
+    # 阈值 1 会把正常瞬时态当异常提示)。校验见 _effective_prompt_threshold。
+    "no_run_prompt_after_observations": 3,
 }
 
 # Legacy key alias map for soft-deprecation (Hard Constraint #3).
@@ -123,6 +137,112 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
                 )
                 out[new] = _translate_value(old, out.pop(old))
     return out
+
+
+def _effective_prompt_threshold(cfg: dict[str, Any] | None) -> int:
+    """no_run_prompt_after_observations 的有效值 (aria-plugin#152 唯一校验点)。
+
+    cfg=None → 取 DEFAULT_CONFIG 自身; 键缺失 (`.get` 返回 None) → 回落默认值
+    3, **不** warn (未显式配置是正常态, 不是配置错误)。值非 int / 是 bool
+    (bool 是 int 子类, 须先排除, 否则 True 被当成合法整数 1 放行) / <2 → warn
+    一次 (stacklevel=2, 指向调用方而非本函数) 并回落默认值; 阈值 1 未提供 ——
+    单次零 run 在新分支首推场景太常见 (aria-plugin#152 探针), 阈值 1 会把正常
+    瞬时态当异常提示。
+    """
+    source = cfg if cfg is not None else DEFAULT_CONFIG
+    value = source.get("no_run_prompt_after_observations")
+    default = DEFAULT_CONFIG["no_run_prompt_after_observations"]
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+        warnings.warn(
+            f"no_run_prompt_after_observations invalid ({value!r}); "
+            f"must be int >= 2; falling back to {default}",
+            stacklevel=2,
+        )
+        return default
+    return value
+
+
+def _no_run_gate_error(
+    path_coverage: dict[str, Any] | None, threshold: int
+) -> dict[str, Any]:
+    """gate_error 载荷 (aria-plugin#152, pr_ci_status="not_found" 唯一产出点)。
+
+    message 按 `(decision, reason 前缀)` 封闭表, 每档以 "no-run-for-branch: "
+    开头 (使所有档含该子串, 供上游速判/grep)。封闭表 + 显式兜底 —— 不让
+    KeyError 逃出 (理论不可达组合, 如 decision=not_applicable, 也落兜底档而
+    非炸)。⛔ 渲染禁用 `str.format` (后续 dispatch 行含 JSON 花括号会炸);
+    用 f-string/拼接。
+
+    workflow-trigger-matched 档 (aria-plugin#152 TASK-007b, spec §4): 当模块级
+    `DISPATCH_VIABLE` 为真且 path_coverage.dispatchable_workflows 非空时, 逐个
+    dispatchable workflow 在 message 末尾追加一行「处方 (a)」dispatch 命令
+    (basename 而非全路径, F6; `<owner>/<repo>` 与 `<pr_branch>` 占位符留给渲染
+    层/gate_check 回填); 其余档不渲染。
+    """
+    if path_coverage is None:
+        message = "no-run-for-branch: 远端零 run; 路径覆盖评估已关闭"
+    else:
+        decision = path_coverage.get("decision")
+        reason = path_coverage.get("reason") or ""
+        if decision == "covered" and reason == "workflow-trigger-matched":
+            matched = path_coverage.get("matched_workflows") or []
+            message = (
+                f"no-run-for-branch: 变更 path-matched {', '.join(matched)} "
+                "但远端零 run — 符合 aria-plugin#152 (新分支首推 × paths 过滤, "
+                "Forgejo 不建 run), 或 run 尚未被 runner 领走, 或 workflow "
+                "branches 过滤不含本分支"
+            )
+            # TASK-007b (spec §4/§7 checklist 1): DISPATCH_VIABLE 读裸全局
+            # (不用默认参 —— 默认参在 import 期求值一次, monkeypatch 全局符号
+            # 后不生效)。dispatchable 在函数体内读, 非默认参捕获。
+            dispatchable = path_coverage.get("dispatchable_workflows") or []
+            if DISPATCH_VIABLE and dispatchable:
+                for f in dispatchable:
+                    # ⛔ 不用 str.format: JSON 花括号 {"ref":...} 会被当成
+                    # format 占位符炸掉。basename 而非全路径 (F6, 逐字拼
+                    # .forgejo/workflows/x.yml 到 URL 会 404)。<owner>/<repo>
+                    # 与 <pr_branch> 占位符统一尖括号 —— 前者留给上游渲染 prompt
+                    # 填, 后者由 gate_check 既有 `.replace("<pr_branch>", ...)`
+                    # 回填 (:678-680)。
+                    message += (
+                        "\n处方 (a): forgejo POST /repos/<owner>/<repo>/"
+                        "actions/workflows/"
+                        + os.path.basename(f)
+                        + "/dispatches -d '{\"ref\":\"<pr_branch>\"}'"
+                    )
+        elif decision == "covered" and reason == "workflow-files-changed":
+            message = (
+                "no-run-for-branch: 变更含 workflow 文件本身 (按 covered) 但"
+                "远端零 run — 同 aria-plugin#152 形态, 或 run 尚未被 runner "
+                "领走, 或 workflow branches 过滤不含本分支"
+            )
+        elif decision == "covered" and reason == "empty-diff":
+            message = (
+                "no-run-for-branch: main...PR 三点 diff 为空, 无变更可跑; "
+                "远端零 run"
+            )
+        elif decision == "unknown" and reason.startswith(
+            ("git-diff-failed", "workflow-parse-failed", "internal-error")
+        ):
+            message = (
+                f"no-run-for-branch: 远端零 run; 路径覆盖未判定 (reason={reason})"
+            )
+            if reason.startswith("internal-error"):
+                message += " — 评估器自身异常, 请报 issue"
+        else:
+            # 兜底: 封闭表外的任何组合 (含理论不可达的 not_applicable) —— 显式
+            # 兜底而非 KeyError/IndexError 逃出。
+            message = (
+                f"no-run-for-branch: 远端零 run (path_coverage "
+                f"decision={decision}, reason={reason})"
+            )
+    return {
+        "kind": "no-run-for-branch",
+        "message": message,
+        "prompt_after_observations": threshold,
+    }
 
 
 def resolve_ci_backend(config: dict[str, Any]) -> CIBackend | None:
@@ -191,9 +311,15 @@ def compute_verdict(
     Note: Returns dict for v1.31.0+ to consolidate the verdict + output_build
     code path that gate_check used to do in two steps. Old `compute_verdict`
     that returned str is replaced — Hard Constraint #10 locks new signature.
+
+    v1.66.5+ (aria-plugin#152): `pr_ci_status == "not_found"` (远端零 run) →
+    verdict=wait + `gate_error={"kind": "no-run-for-branch", ...}` (副本通道
+    #137: 同一段文字同时写进 raw_message)。不论 main in-flight 与否都是 wait
+    ((a) 轴本身就未判定, 无法与 (b) 轴的 green 状态叠加)。
     """
     # Verdict computation (preserved logic from pre_merge_gate.py L217-228).
     raw_message = ""
+    gate_error: dict[str, Any] | None = None
     if pr_ci_status in ("failing", "error"):
         verdict = VERDICT_FAIL
     elif pr_ci_status == "pending":
@@ -216,6 +342,18 @@ def compute_verdict(
                 f"(reason={pc_reason}); PR CI wait skipped (not_applicable); "
                 "main in-flight clear"
             )
+    elif pr_ci_status == "not_found":
+        # v1.66.5+ (#152): 必须落在 not_applicable 之后、main_in_flight_runs
+        # 之前 —— ⚠️ 位置是承重的: 若放到 `elif main_in_flight_runs:` 之后,
+        # (not_found, main 非空) 组合会先被那支 truthy 分支命中 (它不检查
+        # pr_ci_status), gate_error 被悄悄吞掉, 只剩裸 wait 无诊断信息。
+        # 不论 main in-flight 与否都是 wait —— (a) 轴本身未判定, 没有可与
+        # (b) 轴 green 叠加的基础。
+        verdict = VERDICT_WAIT
+        gate_error = _no_run_gate_error(
+            path_coverage, _effective_prompt_threshold(cfg)
+        )
+        raw_message = gate_error["message"]  # 副本通道 #137: 同文同写
     elif main_in_flight_runs:
         # pr_ci_status == "passing" + main has in-flight runs → wait
         verdict = VERDICT_WAIT
@@ -230,6 +368,7 @@ def compute_verdict(
         primitive_used=backend_name,
         raw_message=raw_message,
         path_coverage=path_coverage,
+        gate_error=gate_error,
     )
 
 
@@ -250,10 +389,13 @@ def _build_output(
     分支 (enabled:false / no-backend / precheck 失败 / backend query 失败) 保持
     既有六键不变。
 
-    #137: `gate_error` 亦为 additive 可选键 — 仅 main 分支存在性核验判 fail 时
-    在场 (`{"kind": ..., "message": ...}`), 无 path_coverage。它是**副本通道**:
-    同一段文字必定同时写入 `raw_message` (主通道), 消费方只读 raw_message 亦
-    不丢信息。
+    #137/#152: `gate_error` 亦为 additive 可选键 — 三类在场: (1) main 分支存在性
+    核验判 fail (`main-branch-not-found` / `main-branch-verify-failed`, 无
+    path_coverage); (2) pr-branch 存在性核验判 fail (`pr-branch-not-found`,
+    TASK-006 已实现); (3) pr_ci_status="not_found" 的 wait 态
+    (`no-run-for-branch`, 带 `prompt_after_observations`, 可与 path_coverage
+    同时在场)。它始终是**副本通道**: 同一段文字必定同时写入 `raw_message`
+    (主通道), 消费方只读 raw_message 亦不丢信息。
     """
     # For Aether backend, populate primitive_version_sha from module constant.
     # For other backends, leave empty (or future: backend-specific version).
@@ -275,7 +417,7 @@ def _build_output(
     return out
 
 
-# --- main-branch existence verification (aria-plugin #137) --------------------
+# --- 分支存在性核验 (main: #137 / PR: #152 仅 not_found 时) --------------------
 #
 # 症状: 后端结构上无法区分「分支不存在」与「分支没有 in-flight run」—— 两者都
 # 产出 InFlightStatus(runs=[]) ⇒ 判 green。于是把 --main-branch 写成一个远端上
@@ -299,10 +441,12 @@ def _sanitize_for_json(text: str) -> str:
     return text.encode("utf-8", "replace").decode("utf-8")
 
 
-def _verify_main_branch_exists(
-    main_branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
+def _verify_branch_exists(
+    branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
 ) -> tuple[str, str]:
-    """核验 `main_branch` 在 `remote` 上确实存在。返回 (status, detail)。
+    """核验 `branch` 在 `remote` 上确实存在。返回 (status, detail)。main 与 PR
+    两处共用 (aria-plugin#152: 原 `_verify_main_branch_exists` 搬迁改名, 旧名
+    保留为对本函数的位置参数包装, 见 `_verify_main_branch_exists`)。
 
     status ∈ {"ok", "not-found", "verify-failed"} —— 「分支不存在」与「核验本身
     没做成」必须分开, 二者混为一谈正是本 bug 的形状。
@@ -317,12 +461,12 @@ def _verify_main_branch_exists(
     我们自己用 surrogateescape 解码, 该异常结构上不可能发生。
     ⚠️ 不传 `cwd=`: 继承进程 cwd, 使 `origin` 按调用者所在仓解析。
     """
-    target = "refs/heads/" + main_branch
+    target = "refs/heads/" + branch
     last_detail = ""
     for attempt in range(MAX_RETRY_ATTEMPTS):
         try:
             proc = subprocess.run(
-                ["git", "ls-remote", "--heads", remote, main_branch],
+                ["git", "ls-remote", "--heads", remote, branch],
                 capture_output=True,
                 timeout=timeout,
             )
@@ -350,6 +494,15 @@ def _verify_main_branch_exists(
         return ("ok" if target in ref_names else "not-found"), ""
 
     return "verify-failed", last_detail
+
+
+def _verify_main_branch_exists(
+    main_branch: str, remote: str, timeout: int = _LS_REMOTE_TIMEOUT
+) -> tuple[str, str]:
+    """旧名包装: 保关键字签名与默认值, 委托给 `_verify_branch_exists`
+    (aria-plugin#152 搬迁改名)。`:449` 调用字面不改, 测试 mixin 对旧名打桩
+    继续有效。"""
+    return _verify_branch_exists(main_branch, remote, timeout)
 
 
 def _no_ci_output(no_ci_fallback: str) -> dict[str, Any]:
@@ -406,6 +559,7 @@ def gate_check(
       circuits PR query). v1.65.0+ (#122): PR CI 查询是条件性的 — path coverage
       decision=not_applicable 时跳过 (a) 查询 (subprocess 调用数 0 或 1); (b)
       main in-flight 查询保持无条件执行, NIE 经 (b) 照常 propagate (SC-21)。
+      (a) 腿返 not_found 时再做一次 PR 分支存在性核验 (第七个早退, #152)。
     """
     # Alias translation BEFORE merge with DEFAULT_CONFIG (Hard Constraint #9).
     # If we merged first, DEFAULT_CONFIG's new keys would always shadow user's
@@ -518,13 +672,49 @@ def gate_check(
             raw_message=str(exc),
         )
 
-    return compute_verdict(
+    verify_note = ""  # 哨兵: 非 not_found 路径也可读 (R3 #3)
+    if pr_status.state == "not_found":
+        # #152 F5: 「PR 分支不存在」与「存在但零 run」在 backend 出口逐字节同形
+        # —— 仅此时多付一次 ls-remote。
+        st, detail = _verify_branch_exists(
+            pr_branch,
+            remote=remote,
+            timeout=int(cfg.get("primitive_call_timeout_seconds", _LS_REMOTE_TIMEOUT)),
+        )
+        if st == "not-found":
+            msg = _sanitize_for_json(
+                f"PR branch '{pr_branch}' not found on remote '{remote}'"
+            )
+            return _build_output(
+                verdict=VERDICT_FAIL,
+                pr_ci_status="not_found",
+                in_flight_runs=in_flight.runs,
+                primitive_used=backend.name,
+                raw_message=msg,
+                path_coverage=pc,  # pc 在场 ⇔ enabled (pc 为 None 时 _build_output 自动不带键)
+                gate_error={"kind": "pr-branch-not-found", "message": msg},
+            )
+        if st != "ok":
+            verify_note = _sanitize_for_json(
+                f" (PR 分支存在性核验失败: {detail})"
+            )  # detail 是 git stderr, 必须消毒
+
+    out = compute_verdict(
         main_in_flight_runs=in_flight.runs,
         pr_ci_status=pr_status.state,
         backend_name=backend.name,
         cfg=cfg,
         path_coverage=pc,
     )
+    if out.get("gate_error"):
+        # gate_check 知道分支名: 回填占位 (TASK-007b 渲染的 dispatch 行含
+        # <pr_branch>) + 核验失败附注; 副本通道重同步。
+        m = out["gate_error"]["message"].replace(
+            "<pr_branch>", _sanitize_for_json(pr_branch)
+        ) + verify_note
+        out["gate_error"]["message"] = m
+        out["raw_message"] = m
+    return out
 
 
 def _load_config_from_file(path: str) -> dict[str, Any]:
@@ -548,7 +738,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--remote",
         default="origin",
-        help="Remote to verify --main-branch exists on (default: origin)",
+        help=(
+            "Remote to verify --main-branch (always) and --pr-branch (only "
+            "when PR CI returns not_found) exist on (default: origin)"
+        ),
     )
     parser.add_argument(
         "--config-file",

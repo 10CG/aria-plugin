@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.66.5] - 2026-08-23
+
+### Fixed — aria-plugin#152 pre-merge gate: 「零 run」显影为 `not_found` + `no-run-for-branch` 提前交人, 不放行
+
+**症状**: 新分支首推 × paths 过滤 workflow ⇒ Forgejo 不建 run ⇒ backend 把零 run 与 run 未完同映射 `pending` ⇒ gate 恒 `wait` 到 1800s 且被误诊为 runner 停摆 (2026-08-20 现场)。owner 裁定 A′ = 显影 + 处方, **不归 `not_applicable` 放行** (那是 Rule #8 fail-open)。
+
+**backend / gate** (`ci_backends/aether.py` + `pre_merge_gate.py`, 同 commit 落地 — 基线 `compute_verdict([], "not_found")` 返 green, §1 单独落地会变恒 green):
+- `_normalize_pr_ci_status([]) → "not_found"` (原 `pending`); `compute_verdict` 新分支 `not_found → verdict=wait` (不论 main in-flight) + `gate_error={"kind":"no-run-for-branch","message":<按 (decision, reason 前缀) 封闭表>,"prompt_after_observations":3}`, `raw_message` 副本通道; 新分支钉在 `not_applicable` 之后 / `main_in_flight_runs` 之前 (位置承重)。
+- `_effective_prompt_threshold(cfg)` 唯一校验点 (缺键 3 不 warn; 非 int/bool/<2 warn+3); `DEFAULT_CONFIG` +`no_run_prompt_after_observations: 3`。
+- `gate_check`: `_verify_main_branch_exists` 搬迁改名 `_verify_branch_exists` (旧名保关键字包装); `not_found` 时多付一次 ls-remote 做 PR 分支存在性消歧 — 不存在 → 第七个早退 `verdict=fail` + `kind=pr-branch-not-found`; 核验失败 → 继续 wait, message 带后缀; `<pr_branch>` 占位回填 + raw_message 重同步。六个既有早退键集逐字不变 (守卫先落)。
+- `path_coverage`: `_parse_workflow.dispatchable` + `dispatchable_workflows[]` (仅 `workflow-trigger-matched` 非空, ⊆ matched); `DISPATCH_VIABLE = True` 裸全局常量 (TASK-0a 活体: dispatch API 在本 Forgejo HTTP 204) ⇒ trigger-matched 档渲染处方 (a) `forgejo POST …/workflows/<basename>/dispatches -d '{"ref":"<pr_branch>"}'`。docstring 勘正 reason 族 9→8。
+
+**workflow-runner** (`gate_state_helper.py` 接进运行时, F7): `write_gate_state(gate_error_kind=)` 单点计数 `no_run_observations` (additive, format_version 仍 1.1); `reset_no_run_observations` / `reset_retry_count`; **CLI** `record / reset / clear` (`--state-file` 与 `--source {production|test}` 必填, exit 2 fail-closed; telemetry `<dirname(state-file)>/gate-state-telemetry.jsonl`)。§wait_recoverable 改为经 CLI 维护 gate_state (非 AI 手写 JSON); **Exit condition 2.5**: `kind==no-run-for-branch ∧ should_prompt` → no-run prompt (处方 (a)/(b)/(c) 由人择一, **AI 不自动执行**), `continue ⇒ reset --observations`; exit 2 `continue` 同时置 `started_at=now`。默认阈值 3 ⇒ 首次 gate 后 ~90s 交人 (实测单次 gate ≈17s ⇒ ≈140s)。
+
+**文档**: SKILL.md §C.2.4 步骤 2.2/4/5/6 + 两配置表 + Output schema (`gate_error` 三类在场 / kind 封闭集 4 / 二维消歧表) + 处方段唯一定义处; traps §六「零 run 不是一种状态, 是几种世界的折叠」(F3/F4/(b) 轴/F6 四坑 + TASK-0a/SC-13 活体证据; 坑计数 7→11); workflow-state-schema / config-loader / runtime-probe-declaration (首个声明者) 同步。主仓: config.template 补 `path_coverage_enabled` + `no_run_prompt_after_observations`, `.gitignore` telemetry 分区, DEC-20260731-001 前向指针。
+
+**测试**: phase-c-integrator 119→148 (守卫 SC-6/SC-7 八变体键集快照 + SC-1..10 + dispatchable + doc-sync 6 条), workflow-runner 22→38 (CLI 端到端, 独立重读落盘); TDD 成对 RED→GREEN 逐 commit; INV-1 同 commit 四合取核验。**活体 SC-13**: branches 过滤结构性零 run ⇒ `not_found`×3 → `should_prompt` 55s 交人 → 处置 (b) 后 15s 转 pending; 归档门 runtime_probe (b) warn → (c) pass。
+
+rule6_note (判据表第三行): 处方段 / Exit 2.5 为处方性指令面, 套件覆盖外 (#127) → 定向 fixture `NEG-4-no-run-for-branch` (catalog v1.2.0) **真跑**: 新 10/10 vs 基线 6/10 (`aria-plugin-benchmarks/ab-results/2026-08-22-pre-merge-gate-no-run-for-branch/`); 发现: 显影/处方是代码侧交付, 基线照抄 raw_message 即得一半, 文档增量在处方 (b) / 2.5 字面出口 / CLI 维护 gate_state。其余描述性 → SC-1~SC-11/SC-14 结构化测试。Spec: 主仓 `openspec/changes/pre-merge-gate-no-run-for-branch` (post_spec R7 + post_planning R5 双 CONVERGED)。
+
 ## [1.66.4] - 2026-08-22
 
 ### Security — Aria#179 secret-guard: claude 配置文件双平面入清单 + 误报收敛
