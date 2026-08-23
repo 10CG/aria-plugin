@@ -375,8 +375,11 @@ exists: bool                    # docs/architecture/system-architecture.md
 path: str|null
 status: str|null                # Status: header
 last_updated: str|null          # Last Updated: header
-parent_prd: str|null            # Parent PRD: header
-chain_valid: bool|null          # placeholder strings rejected (IMP-2)
+parent_prd: str|null            # Parent PRD: header — first hit, doc order (back-compat)
+parent_prds: list[str]|null     # ALL Parent PRD hits (additive, #151) — null only
+                                 # when exists=false or the file failed to read;
+                                 # [] when exists=true but no Parent PRD line matched
+chain_valid: bool|null          # at least one parent_prds entry resolves (#151)
 ```
 
 **Field extractor patterns** (`collectors/architecture.py`, regex hardening Spec
@@ -397,6 +400,85 @@ prefix** (`>`) + **optional bold wrapper** (`**...**`) + **dual colon** (halfwid
 - `## Status: Active` (heading-prefixed, no bold)
 - `> **Status**: Active` (blockquote)
 - `## **Status**: Active` (heading + bold combined)
+
+**Qualified `Parent PRD` variant + `parent_prds` list** (issue #151, 2026-08-23):
+
+`Parent PRD` alone additionally accepts an optional qualifier between the key
+and its colon — free-form parenthesized content, one level of nesting
+tolerated (e.g. `(v1)`, `(v1 (draft))`) — matched on **either side** of the
+closing `**`, so a doc that hangs off more than one PRD can label each link
+distinctly instead of only the last one matching (or none, pre-fix):
+
+- `**Parent PRD (v1)**: [prd-v1.md](../requirements/prd-v1.md)` (qualifier
+  before the closing `**`)
+- `**Parent PRD** (v2): [prd-v2.md](../requirements/prd-v2.md)` (qualifier
+  after the closing `**` — also matches)
+- the qualifier is entirely optional: an ordinary unqualified
+  `**Parent PRD**: prd.md` still matches and still yields a (1-element)
+  `parent_prds`.
+
+Every matching line — qualified or not — is now collected via `finditer` (not
+just the first `search()` hit) into `parent_prds`. `parent_prd` (singular)
+stays = the first entry in doc order — its **position** in the list is
+unchanged, but its **value can change** for a markdown-link-form line: see
+the value-shape paragraph immediately below. Only a bare-text (non-link)
+`Parent PRD` value is byte-for-byte identical to the pre-#151 output.
+
+Each collected entry is stored as **the link target if the line's value is a
+markdown link (`[text](target[ "title"])`), otherwise the original captured
+text verbatim.** This is a value-shape change for link-form lines, not an
+additive-only one: pre-#151, `parent_prd`/the (then single-valued) extractor
+held the raw captured text verbatim — for a line like
+`**Parent PRD**: [prd.md](../requirements/prd.md)` that meant the literal
+string `"[prd.md](../requirements/prd.md)"`, brackets and display text
+included. Post-#151 the same line yields just `"../requirements/prd.md"` (the
+target). Link recognition is a **prefix match** — `[text](target)` optionally
+followed by a `"title"` and/or arbitrary trailing text (a stray comment, a
+`(primary)` annotation, ...) — so trailing decoration is discarded from the
+stored value rather than knocking the entry back onto the bare-text path (see
+`chain_valid` note below for why that distinction matters). The reference
+case for the common shape (no trailing decoration) is this project's own
+`docs/architecture/system-architecture.md` in the main Aria repo (two
+directories above this `aria` submodule checkout — not linked here as a
+relative path, since one from this file would cross the submodule boundary
+and dangle for any reader/tool that doesn't happen to have both repos checked
+out in that exact relative layout): its two `**Parent PRD (vN)**:` lines are
+markdown links, so `parent_prds` holds their
+`../requirements/prd-aria-v{1,2}.md` targets, not the full `[text](target)`
+syntax.
+
+`chain_valid` semantics widen accordingly to **"at least one `parent_prds`
+entry resolves"** (not "the one `parent_prd` is real", and not "every entry
+resolves" — a broken sibling entry does not sink an otherwise-valid chain, nor
+does a non-empty list make an all-broken chain trivially valid):
+
+- a markdown-link entry resolves when its link target exists as a real file
+  on disk, resolved **relative to the architecture doc's own directory**
+  (the natural base for a relative link such as `../requirements/prd-x.md`).
+  Link recognition (see above) is independent of what trails the `)` — a
+  link with a broken target and trailing decoration (`[x](../missing.md)
+  (primary)`) is still disk-checked and still resolves False, it is not
+  silently waved through by falling back to the bare-text path (round-1 had
+  this fail-open gap; closed in round 2);
+- a bare-text entry (no link syntax at all) keeps the pre-#151, no-disk-check
+  semantics — non-empty and not a known placeholder token (IMP-2's
+  `_is_real_prd_reference`), same as always.
+
+The field is additive-only (`parent_prds` is a new key; nothing existing is
+removed) and existing single-PRD, **non-link** documents are unaffected: one
+bare `**Parent PRD**: prd.md` line still yields `parent_prd="prd.md"`,
+`parent_prds=["prd.md"]`, and the same `chain_valid` a pre-#151 caller would
+have computed. A single-PRD document whose value IS a markdown link is
+affected on `parent_prd`'s value (see above), even though it was never
+"qualified" or "multi-PRD".
+
+**Fixture note**: `tests/fixtures/reference-snapshot-aria.json`'s
+`architecture` block (`chain_valid: false`, no `parent_prds` key) still
+reflects the pre-#151 shape. That file is documented in
+`references/json-diff-normalizer.md` as a manual-compare baseline, not wired
+into any automated test, and is resampled only as a deliberate, separately
+scoped/documented step (see that file's "Resampled 2026-07-18" entry) — it is
+left frozen here rather than resampled as a side effect of #151.
 
 ## `readme` (Phase 1.8)
 

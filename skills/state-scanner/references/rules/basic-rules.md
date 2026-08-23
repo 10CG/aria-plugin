@@ -572,10 +572,9 @@ conditions:
     - chain_valid: false
 
   detection:
-    chain_issues:
-      - architecture 未引用 parent_prd
-      - prd 更新时间晚于 architecture
-      - parent_prd 不存在
+    chain_issues:   # v1.67.1+ (#151): chain_valid = parent_prds 至少一条 resolve; 判据见 operations.md §chain_validation
+      - architecture 未引用 parent_prd (parent_prds 为空)
+      - parent_prds 全部不 resolve (链接目标不存在 / 值为占位符)
 
 recommendation:
   workflow: fix-architecture
