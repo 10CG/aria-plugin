@@ -173,7 +173,7 @@ CLI 输出 `{outcome, proceed, track_id, error, own_claim, competing_winner, sur
   - `kind == "push_failed"` → 🔴 claim 已写本地未同步远端, reconcile 下次 fetch 仲裁。
 - `enabled == false` (显式 opt-out; Part A1 起默认为 true) → **零调用** `run_gate`, collision 由 rule 1.54 advisory surface。
 
-**claim 生命周期闭环 (coordination-claim-lifecycle-and-overlap Part C)**: acquire (phase1_gate, Phase B-entry) 的对偶是 **release** (`scripts/release_gate.py`, phase-d-closer D.2b 收尾时调, 按 track_id+container 定位 — session 无关) + `--sweep-stale` (heartbeat 超 STALE_TTL 的 active → abandoned) + `--gc` (done 超 retention → archive/)。phase1_gate 另支持可选 `--linked-issue` (Part B1): 写入 claim 并在输出 JSON 追加 additive 键 `linked_issue_overlap[]` — 同 issue 不同 track-id 的「同一件事两个名字」advisory 告警 (按归一后的 `<repo>#<n>` 比较, org 不参与; 不可解析值回落原串精确比较), 渲染为 🔴 提示但不阻断。
+**claim 生命周期闭环 (coordination-claim-lifecycle-and-overlap Part C)**: acquire (phase1_gate, Phase B-entry) 的对偶是 **release** (`scripts/release_gate.py`, phase-d-closer D.2b 收尾时调, 按 track_id+container 定位 — session 无关) + `--sweep-stale` (heartbeat 超 STALE_TTL 的 active → abandoned) + `--gc` (done 超 retention → archive/)。phase1_gate 另支持可选 `--linked-issue` (Part B1): 写入 claim 并在输出 JSON 追加 additive 键 `linked_issue_overlap[]` — 同 issue 不同 track-id 的「同一件事两个名字」advisory 告警 (按归一后的 `<repo>#<n>` 比较: 仓名取 `/` 后最后一段、大小写与各段首尾空白不影响、`.`/`_` 视同 `-`, org 前缀不参与; 不可解析值回落原串精确比较), 渲染为 🔴 提示但不阻断。
 
 **完整设计意图 (phase1_gate 9-step 序列 / acquire_claim+heartbeat+release 调用关系 / advisory outcome 映射 / track_board+latest_md_writer 输出)**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md)。
 
