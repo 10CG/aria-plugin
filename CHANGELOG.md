@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.67.1] - 2026-08-23
+
+### Fixed — state-scanner 四缺陷批 (aria-plugin#134 / #149 / #151 / #155; Level 1, 无 spec)
+
+四件都在 2026-08-23 的真实 snapshot 上有活体现场, 修后现场值全部翻转:
+- **#134** `tests/test_collision.py` sys.path 顺序倒置 (破 70 天): `scripts/` 改 `append` 不抢占 skill root, 单模块 `pytest` / `run_tests.py collision` 由 ImportError 转绿。全量 pytest 仍 2 collection error = 两个同名 `lib` 包冲突 (#160, 另案; 官方闸门 `run_tests.py` 全绿)。
+- **#149** audit collector 按 mtime 取 latest 不分聚合/单席: 改为只认 `*-aggregated.md|*-aggregate.md` 候选, 按文件名时间戳 (恰 13 位 epoch / ISO 日期+时间, 时间段坏则退化日期精度) → 轮次号 (`R<N>` / `R5.5` / `FINAL`=+inf, 同 spec 同 token 平手用) → mtime 三级取最新; 无候选 `last_audit=None` 不退回单席; additive `last_audit_selection {method, ordering (三态), candidates_scanned, aggregate_candidates, unparsed_timestamp, selected, tie_break}`。现场: 无 frontmatter 的 `*-audit-trail.md` 被当 latest 读出全 null → 正确选到最新聚合。
+- **#151** architecture collector Parent PRD 正则不吃 `**Parent PRD (v1)**:` 限定词: 允许线性括号限定词 (加粗闭合前/后均可; 嵌套不支持 — 第二轮曾引入 `(a*)*` 灾难回溯已撤并加 40 层未闭合括号守卫测试), 多条收集 additive `parent_prds[]` (`parent_prd` 保持首条), `chain_valid` = 至少一条 resolve (链接形态查磁盘, 去 `#fragment`/`?query`, `<dest>`/三种 title; 裸文本/URL 保持既有语义); 负控 `Parent PRD v1:` / `Parent PRDs:` 不命中。现场: 主仓架构文档两条 `(v1)`/`(v2)` 链 → `chain_valid` False → True。
+- **#155** tracks_multibranch collision 把已终结轨的历史 handoff 当活跃: collector 侧 `dedupe_latest_per_track_container` 按 `(track_id, owner/container)` 取 `updated_at` 最新一份再分类 (四级确定键 parse_ok/updated_at/filename/branch; legacy 透传; session 段不参与; **不碰 `lib/collision.py`**), `renderers/track_board.py` 复用同一函数 (看板与 collector 同源), additive `collision.dedupe {input_tracks, after_dedupe, legacy_passthrough}` 仅真折叠时出现; `tracks[]` 本体不变。现场: 碰撞 2 组 → 1 组 (残余为 track-id 改写形态, 非本 issue)。
+
+测试: state-scanner 1312 → 1367 (`run_tests.py` 全绿); 每件经 qa RED → be GREEN → code-reviewer 反驳 (对抗坏实现 monkeypatch) 三轮, 最后一轮主控收口; schema 文档 audit / architecture / tracks_multibranch 三段 + `rules/operations.md` `basic-rules.md` 同步。
+
+rule6_note: 纯 collector 代码 + 测试 + 描述性文档, 零 SKILL.md 指令面变更 → substitute = 上述 baseline-failing 结构化测试 (每件含对抗坏实现负控)。
+
 ## [1.67.0] - 2026-08-23
 
 ### Added — state-scanner: `linked_issue` 跨格式归一比较 (Aria spec `linked-issue-normalization`, Aria#177 相关)
