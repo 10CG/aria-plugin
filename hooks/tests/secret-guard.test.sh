@@ -1675,13 +1675,27 @@ fi
 # 也点过名这类撞车 (见其"审计留痕与编号约定"段落), 此处显式记录以防第三次
 # 混淆。
 #
-# 判据: 五档增幅 (改后中位数 相对 改前中位数) 均 <= 50%。测量口径写死 (R4
-# tech-lead R4-M-2): 进程内计时、只计 hook 判定段 —— 跨进程计时噪声实测
-# 32-126ms 乱摆不可用。
+# 判据 (owner 2026-08-24 裁定 A, 见 .aria/decisions/2026-08-24-sc8-absolute-latency-gate.md):
+# 五档 **每次调用的绝对耗时** <= max(100ms, 改前基线 x 1.5)。
 #
-# 不达标处置 (Rule #10, proposal R5 code-reviewer M-2): 若任一档增幅 > 50%,
+# 为什么从「相对 +50%」换成绝对毫秒: 基线只有 34-38ms/call, 百分比在这个小基数
+# 上把几毫秒抖动放大成几十个百分点 —— tier (e) 六次实测 +0.8% / +6.8% / +9.2% /
+# +47.2% / +58% / +83%, 且最低负载那跑 (loadavg 2.97) 反而排第三高, 「高负载致
+# 超标」的解释被数据推翻。绝对值同期稳定在 55ms 上下, 且 55ms 远低于人机交互
+# 「瞬时」感知门槛 100ms ⇒ 闸门原本在争一个用户感知不到的 18ms。
+#
+# 双腿设计 (绝对闸的已知弱点是对机器性能敏感): 快机走绝对腿 100ms; 若某台机器
+# 慢到连**改前基线**都逼近 100ms (old x 1.5 > 100), 自动退回原 +50% 相对腿, 避免
+# 在慢机上恒红。取两者宽松者 —— 两腿都是为放过"用户无感的微增", 不是放过爆炸:
+# R3 曾报的 +583% 退化 = 37ms x 6.83 = 253ms, 绝对腿照拦。
+#
+# 测量口径不变 (R4 tech-lead R4-M-2): 进程内计时、只计 hook 判定段, min-of-rounds
+# 去噪 —— 跨进程计时噪声实测 32-126ms 乱摆不可用。
+#
+# 不达标处置 (Rule #10, proposal R5 code-reviewer M-2): 若任一档超过其 ceiling,
 # 本测试如实 FAIL + 打出完整数据即可, 不得自行改阈值/换口径/删档/宣布不适
-# 用 —— 那是 owner 复议的事, 不是这个脚本的事。
+# 用 —— 那是 owner 复议的事, 不是这个脚本的事。SC8_ABS_CEILING_MS 刻意**不读
+# 环境变量** (硬编码), 使闸门无法被调用方临时放宽。
 sc8_repo_root="$(cd "$(dirname "$HOOK")/.." && pwd)"
 sc8_tmp="$(mktemp -d)"
 sc8_unavailable=0
@@ -1859,8 +1873,10 @@ if [[ $sc8_unavailable -eq 0 ]]; then
   # 号 (多次校准跑验证), rounds=20 为 spec 硬性要求不可减。
   SC8_N=10
   SC8_ROUNDS=20
+  # 绝对腿上限 (ms/call). 硬编码不读 env — 见上方"不达标处置"。
+  SC8_ABS_CEILING_MS=100
 
-  echo "  [SC-8] N=$SC8_N calls/round, rounds=$SC8_ROUNDS, median-of-rounds, in-process (EPOCHREALTIME), BASH_VERSION=$BASH_VERSION, load=$(cat /proc/loadavg 2>/dev/null || echo unavailable)"
+  echo "  [SC-8] N=$SC8_N calls/round, rounds=$SC8_ROUNDS, min-of-rounds, in-process (EPOCHREALTIME), ceiling=max(${SC8_ABS_CEILING_MS}ms, old x 1.5)/call, BASH_VERSION=$BASH_VERSION, load=$(cat /proc/loadavg 2>/dev/null || echo unavailable)"
 
   declare -A SC8_OLD_MIN SC8_OLD_MED SC8_NEW_MIN SC8_NEW_MED SC8_PCT
   for sc8_tier in a b c d e; do
@@ -1874,19 +1890,24 @@ if [[ $sc8_unavailable -eq 0 ]]; then
     sc8_pct="${SC8_PCT[$sc8_tier]}"
     sc8_omin="${SC8_OLD_MIN[$sc8_tier]}"; sc8_omed="${SC8_OLD_MED[$sc8_tier]}"
     sc8_nmin="${SC8_NEW_MIN[$sc8_tier]}"; sc8_nmed="${SC8_NEW_MED[$sc8_tier]}"
-    # 判据用 min (去噪); median 一并打印供审计对照 (median 受负载污染, 仅参考)
-    echo "  [SC-8] tier ($sc8_tier): old_min=${sc8_omin}us new_min=${sc8_nmin}us increase(min)=${sc8_pct}%  [审计参考 median: old=${sc8_omed} new=${sc8_nmed}]"
+    # 判据 = 绝对 ms/call <= max(SC8_ABS_CEILING_MS, old x 1.5); min 去噪,
+    # median 与百分比一并打印供审计对照 (median 受负载污染, 百分比在小基数上失真)
+    sc8_oms="$(awk -v o="$sc8_omin" -v c="$SC8_N" 'BEGIN{printf "%.1f", o/c/1000}')"
+    sc8_nms="$(awk -v n="$sc8_nmin" -v c="$SC8_N" 'BEGIN{printf "%.1f", n/c/1000}')"
+    sc8_ceil="$(awk -v a="$SC8_ABS_CEILING_MS" -v o="$sc8_oms" 'BEGIN{r=o*1.5; printf "%.1f", (a>r)?a:r}')"
+    sc8_leg="$(awk -v a="$SC8_ABS_CEILING_MS" -v o="$sc8_oms" 'BEGIN{print (a > o*1.5) ? "absolute" : "relative-fallback"}')"
+    echo "  [SC-8] tier ($sc8_tier): old=${sc8_oms}ms/call new=${sc8_nms}ms/call ceiling=${sc8_ceil}ms (${sc8_leg})  [审计参考: increase(min)=${sc8_pct}%, median old=${sc8_omed}us new=${sc8_nmed}us]"
     if [[ "$sc8_pct" == "N/A" ]]; then
       fail=$((fail + 1))
-      failures+=("FAIL [SC-8 tier ($sc8_tier)]: old min was 0us -- measurement degenerate, cannot compute increase%. old_min=$sc8_omin new_min=$sc8_nmin N=$SC8_N rounds=$SC8_ROUNDS")
+      failures+=("FAIL [SC-8 tier ($sc8_tier)]: old min was 0us -- measurement degenerate (改前基线不可测 ⇒ relative-fallback 腿失去依据). old_min=$sc8_omin new_min=$sc8_nmin N=$SC8_N rounds=$SC8_ROUNDS")
       continue
     fi
-    sc8_within_50="$(awk -v p="$sc8_pct" 'BEGIN{print (p<=50)?1:0}')"
-    if [[ "$sc8_within_50" == "1" ]]; then
+    sc8_within="$(awk -v n="$sc8_nms" -v c="$sc8_ceil" 'BEGIN{print (n<=c)?1:0}')"
+    if [[ "$sc8_within" == "1" ]]; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
-      failures+=("FAIL [SC-8 tier ($sc8_tier)]: min-based increase=${sc8_pct}% exceeds the 50% ceiling (old_min=${sc8_omin}us new_min=${sc8_nmin}us; 审计 median old=${sc8_omed} new=${sc8_nmed}; N=$SC8_N calls/round, rounds=$SC8_ROUNDS, BASH_VERSION=$BASH_VERSION). Per Rule #10 / proposal.md SC-8 不达标处置: do NOT lower the threshold, change measurement, drop this tier, or self-declare not-applicable -- record full data in handoff and request owner review.")
+      failures+=("FAIL [SC-8 tier ($sc8_tier)]: ${sc8_nms}ms/call exceeds ceiling ${sc8_ceil}ms (${sc8_leg} leg; old=${sc8_oms}ms/call, increase=${sc8_pct}%; 审计 median old=${sc8_omed}us new=${sc8_nmed}us; N=$SC8_N calls/round, rounds=$SC8_ROUNDS, BASH_VERSION=$BASH_VERSION). Per Rule #10 / owner 决策 2026-08-24: do NOT lower SC8_ABS_CEILING_MS, change measurement, drop this tier, or self-declare not-applicable -- record full data in handoff and request owner review.")
     fi
   done
 fi
