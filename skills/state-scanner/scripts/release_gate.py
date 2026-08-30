@@ -8,8 +8,10 @@ claim 标记 terminal, 根除 "claim 从不释放累积" (defect c)。
 Contract:
   stdin : none
   args  : [--raw-track-id ID] [--status done|yielded|abandoned]
-          [--sweep-stale] [--gc] [--repo-path] [--remote]
+          [--sweep-stale] [--gc] [--repo-path] [--remote] [--no-push]
           至少给 --raw-track-id / --sweep-stale / --gc 之一。
+  env   : ARIA_COORDINATION_NO_PUSH=1|true|yes ⇔ --no-push (同 phase1_gate;
+          harness 安全 — AB benchmark 在真实仓 / 真实 origin 里跑)
   stdout: single JSON object (见 _result_to_dict)
   exit  : 0 — 所有请求动作完成或 benign (released / claim_not_found /
               sweep+gc 完成含 soft errors)
@@ -39,7 +41,7 @@ logger = logging.getLogger(__name__)
 try:
     from ..lib.claim_lifecycle import release_claim_by_track, AcquireResult
     from ..lib.coordination_ref import fetch_coordination_ref
-    from ..lib.failure_handlers import resilient_push
+    from ..lib.failure_handlers import resilient_push, no_push_requested_by_env
     from ..lib.gc import archive_done_claims, sweep_stale_active
     from ..lib.track_id import derive_track_id
 except ImportError:
@@ -52,7 +54,7 @@ except ImportError:
     _sys.path.insert(0, _SKILL_ROOT)
     from lib.claim_lifecycle import release_claim_by_track, AcquireResult  # type: ignore[import]
     from lib.coordination_ref import fetch_coordination_ref  # type: ignore[import]
-    from lib.failure_handlers import resilient_push  # type: ignore[import]
+    from lib.failure_handlers import resilient_push, no_push_requested_by_env  # type: ignore[import]
     from lib.gc import archive_done_claims, sweep_stale_active  # type: ignore[import]
     from lib.track_id import derive_track_id  # type: ignore[import]
 
@@ -87,11 +89,16 @@ def run_release(
     repo_path: Optional[Path] = None,
     remote: str = "origin",
     now: Optional[datetime] = None,
+    no_push: bool = False,
 ) -> dict:
     """Library entry — fetch → release → optional sweep/gc → push.
 
     每步 fail-soft: 单步失败记录进结果, 继续后续步骤 (advisory; reconcile 是
     最终仲裁, 本地成功 + push 失败也只是 "下次 fetch 时收敛")。
+
+    ``no_push`` (CLI ``--no-push`` / env ``ARIA_COORDINATION_NO_PUSH``): 本地
+    写照常, Step 5 push 整个跳过 —— 结果 ``push_skipped=True`` +
+    ``push_success=False`` (与 push 失败 / 未写任何东西可区分)。
 
     Returns the JSON-safe result dict (see keys below).
     """
@@ -104,6 +111,8 @@ def run_release(
         "gc": None,                # None=未请求; {"archived_count", "errors"}
         "fetch_success": None,
         "push_success": None,
+        "push_skipped": False,     # True 仅当本次真该 push 却被 no_push 跳过
+        "push_skipped_reason": None,  # CLI 填 cli_flag|env_var (仅 push_skipped 时)
         "hard_error": None,        # 首个硬错 token; None = 全 benign
     }
 
@@ -168,7 +177,19 @@ def run_release(
     # acquire 路径 (phase1_gate) 同一失败矩阵: non-FF fetch-replay 重试 (正是
     # "别人刚推了 claim" 的协调目标场景), auth 不重试。仍 fail-soft: 失败只
     # 记录, reconcile 下次 fetch 仲裁; 但 auth 失败升 hard_error (需 operator)。
-    if wrote_anything:
+    if wrote_anything and no_push:
+        # CLI --no-push / ARIA_COORDINATION_NO_PUSH (same channel as phase1_gate,
+        # harness safety): local ref updated, remote deliberately NOT touched.
+        # push_success=False + push_skipped=True keeps a skip distinguishable
+        # from a failed push (push_skipped=False) and from "nothing written"
+        # (push_success=None).  Not a hard_error — nothing went wrong.
+        result["push_success"] = False
+        result["push_skipped"] = True
+        logger.info(
+            "release_gate: push SKIPPED (no_push) — local ref updated only (remote=%s)",
+            remote,
+        )
+    elif wrote_anything:
         push = resilient_push(repo, remote=remote)
         result["push_success"] = push.success
         if not push.success:
@@ -231,12 +252,29 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--repo-path", default=None, help="仓库根路径 (默认 cwd)")
     parser.add_argument("--remote", default="origin", help="git remote (默认 origin)")
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help=(
+            "跳过 Step 5 push (释放/sweep/gc 仍写本地 refs/aria/coordination, 不推远端); "
+            "等价于环境变量 ARIA_COORDINATION_NO_PUSH=1|true|yes (同 phase1_gate; "
+            "AB benchmark 等在真实仓跑的 harness 必须开)。输出 push_skipped / "
+            "push_skipped_reason (cli_flag|env_var|null) 区分「主动跳过」与「push 失败」"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.raw_track_id and not args.sweep_stale and not args.gc:
         parser.error("至少需要 --raw-track-id / --sweep-stale / --gc 之一")
 
     repo = Path(args.repo_path) if args.repo_path else Path.cwd()
+    # 同 phase1_gate._main: 推送抑制只在 CLI 边界解析一次, 显式 kwarg 下传
+    # (lib 不读环境); reason 优先级: 显式 flag 胜过 env。
+    env_no_push = no_push_requested_by_env()
+    no_push = bool(args.no_push or env_no_push)
+    push_skipped_reason = (
+        "cli_flag" if args.no_push else ("env_var" if env_no_push else None)
+    )
     # 顶层兜底 (review M4): "stdout = single JSON object" 契约在意外异常下也成立
     # — caller 永远拿得到可解析 JSON, 不会收到裸 traceback。
     try:
@@ -247,6 +285,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
             gc=args.gc,
             repo_path=repo,
             remote=args.remote,
+            no_push=no_push,
         )
     except Exception as exc:  # noqa: BLE001 — CLI 契约兜底
         logger.warning("release_gate: unexpected error: %s", type(exc).__name__)
@@ -256,8 +295,12 @@ def _main(argv: Optional[list[str]] = None) -> int:
             "gc": None,
             "fetch_success": None,
             "push_success": None,
+            "push_skipped": False,
+            "push_skipped_reason": None,
             "hard_error": f"unexpected:{type(exc).__name__}",
         }
+    if result.get("push_skipped"):
+        result["push_skipped_reason"] = push_skipped_reason
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if result["hard_error"] else 0
 

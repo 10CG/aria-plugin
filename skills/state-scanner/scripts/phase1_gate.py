@@ -32,6 +32,11 @@ Gate sequence (9 steps)
   9. resilient_push (non-ff retry, auth abort) →
      success → GateResult(PASSED)
      fail    → user_decision → PROCEED (advisory) / BLOCKED_PUSH_FAILED
+     SKIPPED when no_push (CLI --no-push / env ARIA_COORDINATION_NO_PUSH=1):
+             claim stays in the LOCAL ref only, GateResult.push_skipped=True,
+             outcome as on the success branch (a deliberate skip is NOT a push
+             failure).  Harness safety — the AB benchmark runs inside the real
+             repo with the real origin.  Applies to the 7a self-resume push too.
 
 Spec references
 ---------------
@@ -74,6 +79,7 @@ try:
         ResilientWriteResult,
         FetchHealth,
         UserDecisionCallback,
+        no_push_requested_by_env,
     )
     from ..lib.identity import Identity, get_identity
     from ..lib.reconcile import reconcile, ReconcileVerdict
@@ -112,6 +118,7 @@ except ImportError:
         ResilientWriteResult,
         FetchHealth,
         UserDecisionCallback,
+        no_push_requested_by_env,
     )
     from lib.identity import Identity, get_identity  # type: ignore[import]
     from lib.reconcile import reconcile, ReconcileVerdict  # type: ignore[import]
@@ -126,7 +133,8 @@ except ImportError:
 class GateOutcome:
     """Outcome tokens for GateResult.outcome.
 
-    PASSED                 — claim acquired + pushed; user may proceed to Phase B.
+    PASSED                 — claim acquired + pushed (or push deliberately skipped,
+                             GateResult.push_skipped); user may proceed to Phase B.
     BLOCKED_OCCUPIED       — active fresh claim by another container; user yielded.
     BLOCKED_PUSH_FAILED    — claim written locally but push failed; user aborted.
     USER_YIELDED           — user explicitly chose to yield the track.
@@ -204,7 +212,8 @@ class GateResult(NamedTuple):
         Populated when a competing active claim was detected during gate
         evaluation (step 6).  None when there was no active competition.
     push_result : ResilientPushResult | None
-        Final push attempt result; None when push was never attempted.
+        Final push attempt result; None when push was never attempted
+        (early abort, or deliberately skipped — see ``push_skipped``).
     error : str | None
         Short, non-secret error token; None on success.
         Possible values: "not_a_git_repo", "identity_error", "fetch_degraded",
@@ -214,6 +223,12 @@ class GateResult(NamedTuple):
         Populated only when outcome == ADVISORY_PROCEED: the branch-differentiated
         warning the orchestration layer must render (TASK-004).  None on every
         block-mode path and on clean advisory passes with no competition.
+    push_skipped : bool
+        True when the push step was reached but deliberately skipped
+        (``no_push`` — CLI ``--no-push`` / env ``ARIA_COORDINATION_NO_PUSH``).
+        ``push_result`` is None in that case; the claim IS in the local ref.
+        Distinguishes "skipped" from "failed" (push_result.success False) and
+        from "never reached" (push_result None, push_skipped False).
     """
 
     outcome: str
@@ -224,6 +239,7 @@ class GateResult(NamedTuple):
     push_result: Optional[ResilientPushResult]
     error: Optional[str]
     surface: Optional[AdvisorySurface] = None
+    push_skipped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +359,7 @@ def _run_gate_impl(
     remote: str = "origin",
     mode: str = "advisory",
     linked_issue: Optional[str] = None,
+    no_push: bool = False,
 ) -> GateResult:
     """Execute Phase 1 acquisition gate for a single track selection.
 
@@ -424,6 +441,14 @@ def _run_gate_impl(
         仲裁" is vacuous (no second claim to arbitrate, no audit trail).
         R2-Major-B: advisory drops the abort *action*, NOT the warning *surface*;
         the 7b clock_skew signal is retained, not blanket-silenced.
+    no_push:
+        When True the push steps (7a self-resume push and step 9) are skipped
+        entirely — resilient_push is never called.  The claim is still written
+        to the LOCAL ref (step 8) exactly as before; the result carries
+        ``push_skipped=True`` with ``push_result=None`` so callers can tell a
+        deliberate skip from a push failure.  The CLI resolves it from
+        ``--no-push`` / ``ARIA_COORDINATION_NO_PUSH`` (harness safety — see the
+        module docstring); library callers pass it explicitly.
 
     Returns
     -------
@@ -526,6 +551,25 @@ def _run_gate_impl(
         # heartbeat refresh (here + phase transitions) is a tracked follow-up.
         own_claim: Optional[ClaimRecord] = verdict.winner
         # Skip acquire — claim already exists locally.
+        if no_push:
+            # Second push call site — gated like step 9 (fix the class, not
+            # the instance): the existing local claim is simply not synced.
+            logger.info(
+                "phase1_gate.run_gate: self-resume push SKIPPED (no_push) — "
+                "track=%s remote=%s (claim already in local ref)",
+                track_id,
+                remote,
+            )
+            return GateResult(
+                outcome=GateOutcome.PASSED,
+                track_id=track_id,
+                raw_input_id=raw_track_id,
+                own_claim=own_claim,
+                competing_verdict=None,
+                push_result=None,
+                error=None,
+                push_skipped=True,
+            )
         push_res: ResilientPushResult = resilient_push(
             repo,
             remote=remote,
@@ -795,19 +839,34 @@ def _run_gate_impl(
     # Overriding means: "I accept elevated collision risk; reconcile will detect
     # any actual conflict on the next fetch."
     # -----------------------------------------------------------------------
-    push_res = resilient_push(
-        repo,
-        remote=remote,
-        user_decision=user_decision,
-    )
-
-    if push_res.success:
+    # no_push (CLI --no-push / env ARIA_COORDINATION_NO_PUSH): skip the push
+    # entirely — the claim stays in the LOCAL ref only.  Modelled as the success
+    # branch with push_result=None + push_skipped=True, NOT as a push failure
+    # (no surface / no user_decision / no BLOCKED_PUSH_FAILED): a deliberate
+    # skip carries no collision signal for the orchestration layer to render.
+    push_res: Optional[ResilientPushResult] = None
+    if no_push:
         logger.info(
-            "phase1_gate.run_gate: PASSED — track=%s pushed to %s (attempts=%d)",
+            "phase1_gate.run_gate: push SKIPPED (no_push) — claim written to the "
+            "local ref only, track=%s remote=%s",
             track_id,
             remote,
-            push_res.attempts,
         )
+    else:
+        push_res = resilient_push(
+            repo,
+            remote=remote,
+            user_decision=user_decision,
+        )
+
+    if push_res is None or push_res.success:
+        if push_res is not None:
+            logger.info(
+                "phase1_gate.run_gate: PASSED — track=%s pushed to %s (attempts=%d)",
+                track_id,
+                remote,
+                push_res.attempts,
+            )
         if advisory_surface is not None:
             # advisory force-proceeded past 7b/7c — claim written + pushed;
             # surface rides along for the orchestration layer to render.
@@ -825,6 +884,7 @@ def _run_gate_impl(
             push_result=push_res,
             error=None,
             surface=advisory_surface,
+            push_skipped=no_push,
         )
 
     # Push failed — claim is already written locally.
@@ -997,6 +1057,7 @@ def _gated(
     remote: str = "origin",
     mode: str = "advisory",
     linked_issue: Optional[str] = None,
+    no_push: bool = False,
     _source: Optional[str] = None,
 ) -> GateResult:
     """PRIVATE telemetry-wrapping entry.  ``_source`` selects the telemetry
@@ -1023,6 +1084,7 @@ def _gated(
         remote=remote,
         mode=mode,
         linked_issue=linked_issue,
+        no_push=no_push,
     )
     latency_ms = int((_time.monotonic() - t0) * 1000)
     _emit_telemetry(repo, result, _source, ts, latency_ms)
@@ -1040,6 +1102,7 @@ def run_gate(
     remote: str = "origin",
     mode: str = "advisory",
     linked_issue: Optional[str] = None,
+    no_push: bool = False,
 ) -> GateResult:
     """Public entry — runs the acquisition gate and records telemetry to the
     NON-production partition (library/direct-call source).
@@ -1048,7 +1111,7 @@ def run_gate(
     written only by the CLI production path (:func:`_main` → :func:`_gated`
     with ``_source="production"``), so no public/library/test caller can inflate
     the production partition the TASK-012 probe reads.  See :func:`_run_gate_impl`
-    for the full 9-step semantic contract and mode behaviour.
+    for the full 9-step semantic contract, mode behaviour and ``no_push``.
     """
     return _gated(
         raw_track_id,
@@ -1060,6 +1123,7 @@ def run_gate(
         remote=remote,
         mode=mode,
         linked_issue=linked_issue,
+        no_push=no_push,
         _source=None,
     )
 
@@ -1087,7 +1151,11 @@ def run_gate_synthetic(raw_track_id: str, phase: str, **kwargs) -> GateResult:
 #
 # Contract:
 #   stdin : none
-#   args  : --raw-track-id --phase [--mode advisory|block] [--repo-path] [--remote]
+#   args  : --raw-track-id --phase [--mode advisory|block] [--linked-issue]
+#           [--repo-path] [--remote] [--no-push]
+#   env   : ARIA_COORDINATION_NO_PUSH=1|true|yes ⇔ --no-push (harness safety:
+#           the AB benchmark runs evals inside the real repo with the real origin;
+#           output keys push_skipped / push_skipped_reason tell a skip from a failure)
 #   stdout: single JSON object (GateResult projection; see _gate_result_to_dict)
 #   exit  : 0 when the AI may proceed to Phase B (passed / advisory_proceed /
 #           user_takeover / user_override_proceed); 1 otherwise (yield / block /
@@ -1132,10 +1200,16 @@ def _claim_to_dict(claim: Optional[ClaimRecord]) -> Optional[dict]:
     }
 
 
-def _gate_result_to_dict(result: GateResult) -> dict:
+def _gate_result_to_dict(
+    result: GateResult, *, push_skipped_reason: Optional[str] = None
+) -> dict:
     """Project a GateResult into the JSON contract consumed by the orchestration
     layer (state-scanner 阶段 2).  Surfaces the branch-differentiated warning so
-    the recommendation region can render 🔴 without re-deriving it (TASK-004)."""
+    the recommendation region can render 🔴 without re-deriving it (TASK-004).
+
+    ``push_skipped_reason`` ("cli_flag" | "env_var") names the CLI-level channel
+    that requested ``no_push``; it is emitted only when the result actually
+    skipped a push (``result.push_skipped``), otherwise null."""
     surface: Optional[dict] = None
     if result.surface is not None:
         s = result.surface
@@ -1165,8 +1239,16 @@ def _gate_result_to_dict(result: GateResult) -> dict:
         "competing_winner": competing_winner,
         "surface": surface,
         "push_success": (
-            result.push_result.success if result.push_result is not None else None
+            False
+            if result.push_skipped
+            else (result.push_result.success if result.push_result is not None else None)
         ),
+        # Additive (fix/phase1-gate-no-push): a deliberate skip must be
+        # distinguishable from a push FAILURE (push_success=false,
+        # push_skipped=false, error=<kind>) and from "push step never reached"
+        # (push_success=null).  push_success is never true when skipped.
+        "push_skipped": bool(result.push_skipped),
+        "push_skipped_reason": push_skipped_reason if result.push_skipped else None,
     }
 
 
@@ -1206,9 +1288,28 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--repo-path", default=None, help="仓库根路径 (默认 cwd)")
     parser.add_argument("--remote", default="origin", help="git remote (默认 origin)")
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help=(
+            "跳过 Step 9 push (claim 仍写本地 refs/aria/coordination, 不推远端); "
+            "等价于环境变量 ARIA_COORDINATION_NO_PUSH=1|true|yes (大小写不敏感)。"
+            "AB benchmark / 任何在真实仓、真实 origin 里跑的 harness 必须开, "
+            "否则合成 claim 会推到生产协调 ref。输出 push_skipped / "
+            "push_skipped_reason (cli_flag|env_var|null) 区分「主动跳过」与「push 失败」"
+        ),
+    )
     args = parser.parse_args(argv)
 
     repo = Path(args.repo_path) if args.repo_path else Path.cwd()
+    # Push suppression is resolved HERE (once, at the CLI boundary) and passed
+    # down as an explicit kwarg — the library never reads the environment.
+    # Precedence for the reported reason: the explicit flag wins over the env.
+    env_no_push = no_push_requested_by_env()
+    no_push = bool(args.no_push or env_no_push)
+    push_skipped_reason = (
+        "cli_flag" if args.no_push else ("env_var" if env_no_push else None)
+    )
     # This is the ONE production call site — it invokes the PRIVATE _gated with
     # _source="production" (the public run_gate has no source param, so no other
     # caller can reach the production partition — audit telemetry-antispoof fix).
@@ -1219,11 +1320,12 @@ def _main(argv: Optional[list[str]] = None) -> int:
         remote=args.remote,
         mode=args.mode,
         linked_issue=args.linked_issue,
+        no_push=no_push,
         _source=_PRODUCTION_SOURCE,
         # user_decision omitted — advisory ignores it; block via CLI degrades to
         # the None safe-default (abort) per the documented PP-R2 limitation.
     )
-    out = _gate_result_to_dict(result)
+    out = _gate_result_to_dict(result, push_skipped_reason=push_skipped_reason)
 
     # Part B1 (additive key): "same issue, two names" advisory. Bypasses
     # reconcile's exact track_id grouping; never changes outcome/proceed.
