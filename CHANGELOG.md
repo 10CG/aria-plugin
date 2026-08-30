@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.67.2] - 2026-08-30
+
+### Fixed — state-scanner: `phase1_gate.py` / `release_gate.py` 推送抑制开关 `--no-push` / `ARIA_COORDINATION_NO_PUSH` (Level 1, 无 spec; Aria 决策单 `2026-08-30-a1-entry-six-rulings-…` 第 4 项)
+
+**症状**: Rule #6 AB benchmark 的 eval 跑在**真实仓、真实 `origin`、无沙箱** (subagent 继承会话 cwd, `AB_TEST_OPERATIONS.md` 与 skill-creator 模板均无隔离); `phase1_gate.py` 第 9 步 `resilient_push` (+ 7a self-resume) 与 `release_gate.py` Step 5 **无条件**推 `refs/aria/coordination`, 且脚本不读 `coordination.enabled` (只在 SKILL.md 层判) ⇒ 评测 AI 走到闸门即向生产协调 ref 写入合成 claim (生产 ref 已有一条 2026-08-02 合成 `audit-test` claim)。审计席曾把推送点误引为 `write_claim` auto_bootstrap —— 实读它是 `bootstrap(..., push=False)`。
+
+**改动**: `--no-push` flag + 环境变量 `ARIA_COORDINATION_NO_PUSH` (`1` / `true` / `yes`, 大小写不敏感; 共享解析 `lib/failure_handlers.py::no_push_requested_by_env`, `resilient_push` 本身不读环境); keyword-only `no_push` 穿 `run_gate` → `_gated` → `_run_gate_impl` (公共签名向后兼容); 本地 claim 写入不变; JSON additive 键 `push_skipped` / `push_skipped_reason` (`cli_flag` | `env_var` | `null`), 跳过时 `push_success=false` 永不 `true` ⇒ 跳过 / 失败 / 未到推送步三态可辨; `release_gate.py` 同套 (`--no-push` / env / `run_release(no_push=)` / Step 5 跳过, `push_skipped` 只在本该 push 却被跳过时为 true)。
+
+**测试**: `tests/test_coordination_no_push.py` 16 条 (TDD: 实现前全红; 负控 `test_c_negative_control_no_flag_no_env_attempts_push` 用硬编码 `push_skipped=True` 亲验会红后还原; bare-remote 地面真值: 远端 ref SHA 只在未抑制时移动); state-scanner `unittest discover` 1409 全绿 (静态 `def test_` 计数 1409 → 1425)。
+
+**已知残留 (待 owner)**: `--no-push` 后合成 claim 留在**本地** ref, fetch refspec 非强制 ⇒ 下一次正常 session 的 FF push 会把它推上远端 (runbook 第 3 条要求跑完先 `git fetch origin +refs/aria/coordination:refs/aria/coordination` 强制对齐; 根治 = no_push 写 scratch ref / harness 跑独立 worktree); benchmark 仍写生产遥测分区 (`_source=production`)。
+
+**同版收入的两个未发版 commit**: `d50f9c3` test(secret-guard): SC-8 性能闸 相对 +50% → 绝对 ms/call 双腿 (owner 2026-08-24 裁定 A); `e1be8f3` fix(state-scanner/tests): 两个 linked-issue-normalization 测试类移到 `unittest.main()` 守卫之前 (直接执行单文件时 19 条不跑, 34 vs 53)。
+
+rule6_note: 纯代码 + 测试, 零 SKILL.md 指令面变更 → substitute = 上述 baseline-failing 结构化测试。运行前置见 `aria-plugin-benchmarks/AB_TEST_OPERATIONS.md` §场景 1「协调 ref 推送隔离」。
+
 ## [1.67.1] - 2026-08-23
 
 ### Fixed — state-scanner 四缺陷批 (aria-plugin#134 / #149 / #151 / #155; Level 1, 无 spec)
