@@ -42,9 +42,10 @@ from __future__ import annotations
 
 import errno
 import logging
+import os
 import time
 from pathlib import Path
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, Mapping, NamedTuple, Optional
 
 from .coordination_ref import (
     BootstrapResult,
@@ -73,6 +74,38 @@ NON_FF_MAX_RETRIES: int = 3
 # Index maps to attempt number (0-based): attempt 0 → 1 s, attempt 1 → 2 s, etc.
 # Last value is reused for any attempt index beyond the tuple length.
 PUSH_BACKOFF_SECONDS: tuple[int, ...] = (1, 2, 4)
+
+# ---------------------------------------------------------------------------
+# Push suppression (harness / benchmark safety)
+#
+# phase1_gate / release_gate push refs/aria/coordination to the project's REAL
+# remote.  The Rule #6 AB benchmark harness (/skill-creator) runs evals as
+# subagents inside the real repo (real origin, no sandbox), so a suppression
+# channel that needs no change to the evaluated skill is required.  Both CLIs
+# resolve it ONCE in _main() (``--no-push`` flag OR this env var) and pass an
+# explicit ``no_push`` kwarg down.  resilient_push itself deliberately does NOT
+# read the environment: library callers and tests must not change behaviour
+# because of a stray shell variable.
+# ---------------------------------------------------------------------------
+
+COORDINATION_NO_PUSH_ENV: str = "ARIA_COORDINATION_NO_PUSH"
+_NO_PUSH_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes"})
+
+
+def no_push_requested_by_env(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """Return True when ``ARIA_COORDINATION_NO_PUSH`` requests push suppression.
+
+    Truthy values: ``1`` / ``true`` / ``yes`` — case-insensitive, surrounding
+    whitespace ignored.  Anything else (``0``, ``false``, ``no``, empty, ...)
+    or an unset variable is OFF.  ``environ`` is injectable for tests and
+    defaults to ``os.environ``.
+    """
+    env = os.environ if environ is None else environ
+    raw = env.get(COORDINATION_NO_PUSH_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in _NO_PUSH_TRUTHY
+
 
 # ---------------------------------------------------------------------------
 # UserDecision callback type
