@@ -176,12 +176,12 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         if args.emit_arg is not None:
             print(
-                "归一 SOT 不可导入 (aria 侧 lib/collision.py 或 lib/linked_issue_field.py 缺失 / 版本 < <vNEXT>)",
+                "归一 SOT 不可导入 (aria 侧 lib/collision.py 或 lib/linked_issue_field.py 缺失 / 版本 < 1.68.0)",
                 file=sys.stderr,
             )
             return 2
         print(
-            "##SKIP## 归一 SOT 不可导入 (aria 侧 lib/collision.py 或 lib/linked_issue_field.py 缺失 / 版本 < <vNEXT>)"
+            "##SKIP## 归一 SOT 不可导入 (aria 侧 lib/collision.py 或 lib/linked_issue_field.py 缺失 / 版本 < 1.68.0)"
         )
         return 0
 

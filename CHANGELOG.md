@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.68.0] - 2026-09-02
+
+### Added — state-scanner / spec-drafter: proposal.md「Linked Issue」字段可得性 (Aria Spec `linked-issue-field-availability`; a1-entry 三份同族 Spec 之一, 按 2026-09-01 决策单 §H1 先 ship、各占一号)
+
+- **`skills/state-scanner/lib/linked_issue_field.py` (新建, stdlib-only 纯函数)**: `extract_linked_issue_field(text) -> FieldVerdict` 按 Spec §3 抽取规则 E0–E6 对 proposal **全文文本** (非路径) 求四态 `NO_FIELD` / `NO_TOKEN` / `BAD_TOKEN` / `OK`; 字段名两拼写集合 (`Linked Issue` canonical, ASCII 大小写折叠 `re.IGNORECASE | re.ASCII` / `关联 Issue` alias; 单复数不放宽) 与哨兵集合 (`none` canonical / `无` alias, 判 E3 原始串) 的**唯一代码宿主**; 导出 `is_sentinel()` / `emit_arg()` (E6 四格表: 只有 `OK` 且非哨兵产生 `--linked-issue` 实参)。包内相对 import `normalize_linked_issue`, `collision.py` 零改动 (D4)。是 `sibling-spec-probe` 的硬前置 (owner 2026-08-30 O-4 (i))。
+- **`skills/state-scanner/scripts/linked_issue_field_probe.py` (新建, plugin 分发面)**: check 模式 `<root> [--grandfathered <path>]` 扫 `openspec/changes/**/proposal.md` (不扫 `archive/`), 六臂 fail-CLOSED 判据分割 —— 作用域缺失 / 归一 SOT 不可导入 ⇒ `##SKIP##` exit 0; 白名单外任一非 `OK` ⇒ `FAIL <k> 项` + 逐条 `<path>:<line|-> <VERDICT> <细节>` exit 1; 白名单陈旧条目 (a 目录不存在 / b 已归档或不在作用域 / c 已合规) ⇒ `FAIL allowlist 陈旧: <path> (a|b|c)`; 白名单缺省或文件不存在 ⇒ 空集照常判定并末行注明; 其余 `OK (<n> 份在范围内, <m> 条在册)`。白名单是**采用方仓本地数据** (Aria: `.aria/linked-issue-field-grandfathered.txt`), 分发件零 Aria 路径。`--emit-arg <proposal.md>` 模式 = E6 的机械宿主 (stdout 只在 `OK` 且非哨兵时逐字节输出第一个 token 元素, 无换行; 其余空; 失败态 stdout 空 + stderr + exit 2), 母 Spec `a1-entry-claim-duplicate-work-guard` A.1 模板的 `--linked-issue` 实参来源。
+- **`skills/spec-drafter/SKILL.md` 两 hunk**: hunk A 新增 `## proposal.md 头部字段要求` (Level 2/3 必填 + 写法三条: code span 形 `<org>/<repo>#<n>` / 多值 `, ` / 无关联逐字 `none` 不留空不删行, `N/A`·`TBD` 非哨兵; 不写 markdown 链接形; 新写用英文 canonical) + A.1.4 一行指针; hunk B `### Level 2 预览` 围栏头部补 `> **Created**:` / `> **Linked Issue**: `{<org>/<repo>#<n>}`` 两行, 与 SOT 模板 (aria-standards `openspec/templates/proposal-minimal.md`, 同批改) 逐行对齐。
+
+**测试**: `tests/test_linked_issue_field.py` 48 条 (TDD: 基线 `d69091d` worktree 上 ImportError 全红; SC-1~6 / SC-7a / SC-8 / SC-9 + 13 个 `_bad_*` 坏实现拒绝矩阵); state-scanner 全量 `run_tests.py` 1457 (Ran) 全绿, 静态 `def test_` 1425 → 1473; `run_all_tests.sh` 9 套件 OK / 1889 tests。
+
+**Rule #6 (不申请豁免)**: hunk A/B = 处方性·运行时指令面 ⇒ 照跑 `ab-suite/spec-drafter.json` 全部 3 eval (id 1 / id 2 expectations +2 / **新建定向 fixture id 3** `linked-issue-field-authoring-TARGETED`), 每 eval 两臂各 1 run + 独立 grader: ship 态环境 12/12 vs 12/12 (零负 delta, 基线经同批新模板得知字段); 对照组 (旧 skill + 旧模板) 基线 eval-2 3/5 / eval-3 4/5 vs 新版 5/5 / 5/5; **无 WITHOUT_BETTER**。套件缺口归并 aria-plugin#117 (comment 20573)。模板 / 探针 / 注册 / 纯函数 hunk 走 substitute (基线红 → 实现后绿逐字留痕)。结果: Aria `aria-plugin-benchmarks/ab-results/2026-09-02-v1.68.0-linked-issue-field-rule6/`。
+
+**已知限**: SC-6 / SC-8 (a)(c) 从 aria 子模块测试读主仓文件, plugin 单独分发时 `skipTest`; 采用方须自行在其 `.aria/state-checks.yaml` 注册该 check (O-3, 与既有 `issue_cache_freshness_probe` / `coordination_probe` 同形; 实测 `CLAUDE_PLUGIN_ROOT` **未**导出到 Phase 1.11 check 子进程, 可移植注册行属另一交付面); fence 状态机三条已知限 (缩进代码块 / 嵌套围栏长度差 / 两层以上 blockquote 围栏); AB 基线在本仓被在制 proposal 语料教会目标行为, skill hunk 的边际效应本轮未证 (RESULT.md §2)。
+
 ## [1.67.2] - 2026-08-30
 
 ### Fixed — state-scanner: `phase1_gate.py` / `release_gate.py` 推送抑制开关 `--no-push` / `ARIA_COORDINATION_NO_PUSH` (Level 1, 无 spec; Aria 决策单 `2026-08-30-a1-entry-six-rulings-…` 第 4 项)
