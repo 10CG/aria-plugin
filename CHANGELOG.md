@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.68.1] - 2026-09-02
+
+### Fixed — state-scanner `linked_issue_field_probe.py` 加固 (Aria PR #190 pre_merge 收敛审计 R1 清账, aria 侧; 零 SKILL.md 指令面变更)
+
+- **白名单条目归一**: `strip` + 去 `./` 前缀 + 去尾斜杠 + 去重 (首现胜), **同一归一同时用于违规判定与陈旧守卫** —— v1.68.0 两处不一致 (守卫 `rstrip("/")`, 违规判定用原串), 尾斜杠条目 `openspec/changes/foo/` 在册却被报 `NO_FIELD`, 重复条目双计 `m 条在册` (R1 code-reviewer)。
+- **不可读 proposal fail-CLOSED**: 作用域内 `proposal.md` 读取抛 OSError (如同名目录) ⇒ 违规行 `<rel>:- UNREADABLE <Exc> (无法读取, 按违规计)` 计入 `FAIL <k> 项`, 不再 traceback + 空 stdout; 白名单文件不可读 ⇒ 视为空集并末行注明。
+- **archive 陈旧判定不用 glob**: 改为目录名精确后缀 `-<slug>` 匹配, slug 含 `[ ] * ?` 不再改变语义。
+- **stdout 非 UTF-8 宿主不崩**: `sys.stdout.reconfigure(errors="replace")` (CJK 状态文案退化为 `?`, 首行前缀 `OK`/`FAIL`/`##SKIP##` 不变); `PYTHONIOENCODING=ascii` 实测 exit 0。
+- **`root` 位置参数与 `--emit-arg` 互斥** (argparse error, exit 2), 不再静默忽略 root。
+- 注释: 去掉对 session 本地契约文件的引用 (随 plugin 分发的代码不指向不可达文档); `is_sentinel` 导入注释改为真实用途 (旧版 lib 缺该符号 ⇒ 整体 import 失败 ⇒ `##SKIP##`)。
+
+**测试**: `test_linked_issue_field.py` 48 → 53 条 — SC-5(d) 降级夹具改为复制**完整** `lib/` 只删 `collision.py`, 并先断言 `import lib.linked_issue_field` 的 ImportError 点名 `lib.collision` (R1 qa-engineer: 原夹具真正先炸的是 `__init__.py` 对 `claim_lifecycle` 的导入, 与 collision 无关, 测试自称的场景未被覆盖); 新增 `TestSC5ProbeHardening` 5 条 (对 v1.68.0 探针实测 4 红 1 绿 — 细节行那条是纯覆盖补充); SC-6 (iii) 接受英文表述 (aria-standards 模板 Usage Note 英文化 `ffed204`, TASK-013「不写中文 alias」字面对齐)。state-scanner `run_tests.py` Ran 1462 全绿; 静态 `def test_` 1473 → 1478。
+
+> 口径注 (R1 qa minor): `Ran` 与静态 `def test_` 计数差 16 = `test_collision.py` 16 个模块级 pytest 风格裸函数不被 unittest discover 收集, 本 PATCH 前已存在, 两数并列时不可互换。
+
+rule6_note: 纯代码 + 测试, 零 SKILL.md 指令面变更 → substitute = 上述 baseline-failing 结构化测试 (决策单 2026-09-01 §B 期 B9)。审计报告: Aria `.aria/audit-reports/pre_merge-R1-2026-09-02T131710-919Z-linked-issue-field-availability-*.md`。
+
 ## [1.68.0] - 2026-09-02
 
 ### Added — state-scanner / spec-drafter: proposal.md「Linked Issue」字段可得性 (Aria Spec `linked-issue-field-availability`; a1-entry 三份同族 Spec 之一, 按 2026-09-01 决策单 §H1 先 ship、各占一号)
