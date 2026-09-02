@@ -110,6 +110,7 @@ A.1.4 - 生成 Spec 文档:
   Level 2: standards/openspec/changes/{feature}/proposal.md
   Level 3: proposal.md + tasks.md (OpenSpec 双层架构格式)
   - 预填充决策引用 (如有决策记录)
+  - 头部 Linked Issue 字段 (必填): 见下方「proposal.md 头部字段要求」
 
 A.1.5 - 交互确认 (可选):
   逐章节确认: Level → Why → What → Deliverables → Impact → Tasks → Success Criteria
@@ -138,6 +139,8 @@ Location: standards/openspec/changes/user-authentication/proposal.md
 
 > **Level**: Minimal (Level 2 Spec)
 > **Status**: Draft
+> **Created**: {YYYY-MM-DD}
+> **Linked Issue**: `{<org>/<repo>#<n>}`
 
 ## Why
 为应用添加用户身份验证功能，保护敏感操作和数据。
@@ -330,6 +333,22 @@ proposal.md 中引用决策的格式：
   proposal.md → technical-001 → requirements-001 → problem-001
   完整的"为什么"决策链
 ```
+
+---
+
+## proposal.md 头部字段要求
+
+Level 2 / Level 3 的 `proposal.md` 头部 blockquote **必须**含一行 `Linked Issue` 字段, 与 SOT 模板 [proposal-minimal 模板](../../../standards/openspec/templates/proposal-minimal.md) 头部逐行对齐 (`Level` → `Status` → `Created` → `Linked Issue`):
+
+```markdown
+> **Linked Issue**: `<org>/<repo>#<n>`
+```
+
+写法三条 (机械 check 按 Aria Spec `linked-issue-field-availability` §3 抽取规则 E0–E6 校验, 实现者零裁量):
+
+1. 值是 inline code span 形 `` `<org>/<repo>#<n>` `` (例 `` `10CG/Aria#174` ``); 多个 issue 写在**同一个** code span 内, 用 `, ` 分隔 (例 `` `10CG/a#1, 10CG/b#2` ``)。
+2. 无关联 (已核实) 时逐字写 `` `none` `` —— **不留空、不删行** (空值与「忘了写」不可区分); `N/A` / `TBD` / `-` **不是**哨兵, 会被判不合规。
+3. 行首无空白, `>` 后恰一个空格, 字段名两侧各两个星号, ASCII 冒号; **不写** markdown 链接形 (`[repo#n](url)` 判 `NO_TOKEN`)。读取侧另认中文 alias `关联 Issue` / `无`, 但**新写一律用英文 canonical**。
 
 ---
 
