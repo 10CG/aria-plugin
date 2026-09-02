@@ -73,8 +73,8 @@ from collectors.custom_checks import _parse_state_checks_yaml  # noqa: E402
 
 _PROBE = Path(_SKILL_ROOT) / "scripts" / "linked_issue_field_probe.py"
 
-# 主仓根. ⚠️ 契约 (CONTRACT-linked-issue-field.md:60) 与本任务硬约束都写
-# `parents[3]` —— 但从本文件的真实路径逐段核算 (aria/skills/state-scanner/tests/
+# 主仓根. ⚠️ A.2 派生 (detailed-tasks.yaml TASK-005 verification) 原写
+# `parents[3]` (B.2 已勘正, 决策单 2026-09-01 §B 期 B1) —— 从本文件的真实路径逐段核算 (aria/skills/state-scanner/tests/
 # test_linked_issue_field.py), parents[3] 落在 `aria/` 子模块自身 (它没有
 # `standards/` 也没有 `.aria/`), 是**差一层**的错误; parents[4] 才是含
 # `standards/`/`​.aria/` 的主仓根 —— 与本目录内四份既有测试的同款用法一致
@@ -710,22 +710,34 @@ class TestSC5ProbeCheckMode(unittest.TestCase):
             self.assertIn("FAIL allowlist 陈旧: openspec/changes/track-ok (c)", proc.stdout)
 
     def test_sc5_d_degraded_missing_collision_module_is_skip(self):
-        """真实降级夹具 (proposal 新表面 #1(a)): 把探针 + lib/__init__.py +
-        lib/linked_issue_field.py 复制到临时目录, 不含 lib/collision.py.
-        它怎么会红: 判 OK 的实现 ⇒ 红 (零证据当正证据)."""
+        """真实降级夹具 (proposal 新表面 #1(a)): 把探针 + **完整** lib/ 包复制到临时
+        目录, 只删 lib/collision.py —— 使「collision 缺失」成为唯一失效点 (pre_merge R1
+        qa-engineer: 旧夹具只复制 __init__.py + linked_issue_field.py, 真正先炸的是
+        __init__.py 对 claim_lifecycle 的导入, 与 collision 无关). 本测试先用子进程
+        证明副本包除 collision 外可导入 (ImportError 消息点名 lib.collision), 再断言
+        探针在该副本上走 ##SKIP## exit 0.
+        它怎么会红: 判 OK 的实现 ⇒ 红 (零证据当正证据); 夹具若又漏掉别的模块 ⇒ 第一条
+        断言的错误消息不再点名 collision ⇒ 红."""
         with tmp_project() as root:
             copy_root = root / "copy"
             (copy_root / "scripts").mkdir(parents=True)
-            (copy_root / "lib").mkdir(parents=True)
             shutil.copy2(_PROBE, copy_root / "scripts" / "linked_issue_field_probe.py")
-            shutil.copy2(
-                Path(_SKILL_ROOT) / "lib" / "__init__.py", copy_root / "lib" / "__init__.py"
+            shutil.copytree(
+                Path(_SKILL_ROOT) / "lib",
+                copy_root / "lib",
+                ignore=shutil.ignore_patterns("collision.py", "__pycache__"),
             )
-            shutil.copy2(
-                Path(_SKILL_ROOT) / "lib" / "linked_issue_field.py",
-                copy_root / "lib" / "linked_issue_field.py",
+            self.assertFalse((copy_root / "lib" / "collision.py").exists())
+            self.assertTrue((copy_root / "lib" / "claim_lifecycle.py").exists())
+            # (1) the ONLY missing piece is collision: importing the extractor fails on it
+            imp = subprocess.run(
+                [sys.executable, "-c",
+                 f"import sys; sys.path.insert(0, {str(copy_root)!r}); import lib.linked_issue_field"],
+                capture_output=True, text=True,
             )
-            # deliberately NOT copying lib/collision.py
+            self.assertNotEqual(imp.returncode, 0)
+            self.assertIn("lib.collision", imp.stderr)
+            # (2) the probe degrades to ##SKIP## on exactly that failure
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -867,6 +879,63 @@ class TestSC9EmitArg(unittest.TestCase):
 # ===========================================================================
 
 
+class TestSC5ProbeHardening(unittest.TestCase):
+    """pre_merge R1 (2026-09-02) 清账新增: 白名单归一 / 细节行 / 互斥 / 不可读 / 非 UTF-8 stdout."""
+
+    def test_allowlist_entry_normalization_and_dedupe(self):
+        """尾斜杠 · ./ 前缀 · 重复 三种写法都算同一条在册项 (m 计 1), 违规判定与陈旧守卫同一归一.
+        它怎么会红: 违规判定用原始串 ⇒ 尾斜杠条目不豁免 ⇒ FAIL; 不去重 ⇒ m 计 3."""
+        with tmp_project() as root:
+            write_file(root / "openspec" / "changes" / "gf" / "proposal.md", "# no field\n")
+            wl = write_file(root / ".aria" / "wl.txt",
+                            "openspec/changes/gf/\n./openspec/changes/gf\nopenspec/changes/gf\n")
+            proc = _run_probe([str(root), "--grandfathered", str(wl)])
+            self.assertEqual(proc.returncode, 0, proc.stdout)
+            self.assertEqual(_first_line(proc.stdout), "OK (1 份在范围内, 1 条在册)")
+
+    def test_detail_lines_bad_token_and_no_token(self):
+        """CLI 违规行细节文案 (TASK-008 verification): BAD_TOKEN 点名坏元素, NO_TOKEN 点名 E2."""
+        with tmp_project() as root:
+            write_file(root / "openspec" / "changes" / "a-bad" / "proposal.md",
+                       "# A\n\n> **Linked Issue**: `10CG/a#1, [b](url)`\n")
+            write_file(root / "openspec" / "changes" / "b-link" / "proposal.md",
+                       "# B\n\n> **Linked Issue**: [x#1](https://e/x/issues/1)\n")
+            proc = _run_probe([str(root)])
+            self.assertEqual(proc.returncode, 1)
+            self.assertEqual(_first_line(proc.stdout), "FAIL 2 项")
+            self.assertIn("openspec/changes/a-bad/proposal.md:3 BAD_TOKEN 不可解析元素: [b](url) (无关联请写 `none`)", proc.stdout)
+            self.assertIn("openspec/changes/b-link/proposal.md:3 NO_TOKEN 首个非空白不是反引号 (E2)", proc.stdout)
+
+    def test_root_positional_with_emit_arg_is_exit2(self):
+        with tmp_project() as root:
+            f = write_file(root / "p.md", "> **Linked Issue**: `10CG/a#1`\n")
+            proc = _run_probe([str(root), "--emit-arg", str(f)])
+            self.assertEqual(proc.returncode, 2)
+            self.assertEqual(proc.stdout, "")
+
+    def test_unreadable_proposal_is_fail_not_crash(self):
+        """作用域内 proposal.md 是目录 (read_text 抛 IsADirectoryError) ⇒ 记为违规 UNREADABLE, 不 traceback."""
+        with tmp_project() as root:
+            (root / "openspec" / "changes" / "weird" / "proposal.md").mkdir(parents=True)
+            write_file(root / "openspec" / "changes" / "ok" / "proposal.md", "# ok\n\n> **Linked Issue**: `none`\n")
+            proc = _run_probe([str(root)])
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(_first_line(proc.stdout), "FAIL 1 项")
+            self.assertIn("openspec/changes/weird/proposal.md:- UNREADABLE", proc.stdout)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_check_mode_survives_ascii_stdout(self):
+        """PYTHONIOENCODING=ascii 宿主上 CJK 状态文案不得让探针崩成空 stdout."""
+        import os
+        with tmp_project() as root:
+            write_file(root / "openspec" / "changes" / "ok" / "proposal.md", "# ok\n\n> **Linked Issue**: `none`\n")
+            env = dict(os.environ, PYTHONIOENCODING="ascii")
+            proc = subprocess.run([sys.executable, str(_PROBE), str(root)], capture_output=True, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(_first_line(proc.stdout).startswith("OK ("))
+            self.assertNotIn("Traceback", proc.stderr)
+
+
 class TestSC6Template(unittest.TestCase):
     def test_sc6_template_field_and_usage_note_and_reference(self):
         """它怎么会红: 模板加字段但写裸文本/markdown 链接 ⇒ (i) 红; 用中文 alias
@@ -900,8 +969,9 @@ class TestSC6Template(unittest.TestCase):
         self.assertNotEqual(notes_idx, -1, "模板缺 ## Template Usage Notes 段")
         notes_section = text[notes_idx:]
         self.assertIn("`none`", notes_section)
-        self.assertIn("不留空", notes_section)
-        self.assertIn("不删行", notes_section)
+        low = notes_section.lower()
+        self.assertTrue("不留空" in notes_section or "do not leave" in low, "缺「不留空 / do not leave」")
+        self.assertTrue("不删行" in notes_section or "do not delete" in low, "缺「不删行 / do not delete」")
 
         # (iv) spec-drafter/SKILL.md's relative reference resolves to this file
         skill_text = _SPEC_DRAFTER_SKILL.read_text(encoding="utf-8")

@@ -41,11 +41,14 @@ import argparse
 import sys
 from pathlib import Path
 
-# Sibling-skill-import style (state-scanner is its own package root; see
-# CONTRACT-linked-issue-field.md §2 for why this is the mirror image of
-# coordination_probe.py's scripts/lib insertion — that script needs
-# scripts/lib/runtime_probe.py, this one needs the skill-root-level lib/
-# package instead).
+# Sibling-skill-import style: state-scanner's skill root goes on sys.path so
+# that `lib` resolves to the skill-root package (lib/collision.py uses relative
+# imports and must be imported as a package member). This is the deliberate
+# mirror image of coordination_probe.py:80-85, which inserts scripts/lib and
+# imports a bare module — that script needs scripts/lib/runtime_probe.py, this
+# one needs the skill-root-level lib/ package. Rationale + both measured
+# outcomes: openspec/changes/linked-issue-field-availability/proposal.md §4
+# 「归一的导入方式」.
 _SS = str(Path(__file__).resolve().parent.parent)
 if _SS not in sys.path:
     sys.path.insert(0, _SS)
@@ -55,11 +58,25 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="linked-issue-field-availability E0-E6 probe (check mode + --emit-arg mode)"
     )
-    parser.add_argument("root", nargs="?", default=".")
+    parser.add_argument("root", nargs="?", default=None)  # check mode only; None -> "." 
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--grandfathered", default=None)
     mode.add_argument("--emit-arg", default=None)
     return parser
+
+
+def _normalize_entry(raw: str) -> str:
+    """Allowlist entry canonical form: strip, drop a leading `./`, drop trailing `/`.
+
+    Both the violation check and the stale guard compare against this form, so
+    `openspec/changes/foo/` and `./openspec/changes/foo` are the same entry as
+    `openspec/changes/foo` (pre_merge R1 code-reviewer: the two sites used to
+    normalize differently). Duplicates are collapsed (first occurrence wins).
+    """
+    e = raw.strip()
+    while e.startswith("./"):
+        e = e[2:]
+    return e.rstrip("/")
 
 
 def _run_check(root: Path, grandfathered_arg, extract_linked_issue_field) -> int:
@@ -71,28 +88,42 @@ def _run_check(root: Path, grandfathered_arg, extract_linked_issue_field) -> int
         return 0
 
     entries: list[str] = []
-    missing_note = False
+    missing_note: str | None = None  # final stdout line when the allowlist is absent/unreadable
     if grandfathered_arg is None:
-        missing_note = True
+        missing_note = "(白名单文件缺失, 视为空集)"
     else:
         wl_path = Path(grandfathered_arg)
         if not wl_path.is_absolute():
             wl_path = root / wl_path  # relative to root, not cwd
         if not wl_path.is_file():
-            missing_note = True
+            missing_note = "(白名单文件缺失, 视为空集)"
         else:
-            for raw in wl_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                wl_lines = wl_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError as exc:
+                wl_lines = []
+                missing_note = f"(白名单文件不可读, 视为空集: {exc.__class__.__name__})"
+            seen: set[str] = set()
+            for raw in wl_lines:
                 s = raw.strip()
                 if not s or s.startswith("#"):
                     continue
-                entries.append(s)
+                e = _normalize_entry(s)
+                if e and e not in seen:
+                    seen.add(e)
+                    entries.append(e)
 
     violations: list[tuple[str, str]] = []
     for p in scope:
-        text = p.read_text(encoding="utf-8", errors="replace")
-        fv = extract_linked_issue_field(text)
         rel = p.relative_to(root).as_posix()
         slug_dir = rel[: -len("/proposal.md")]
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            # fail-CLOSED: a proposal we cannot read is a violation, never a silent skip
+            violations.append((rel, f"{rel}:- UNREADABLE {exc.__class__.__name__} (无法读取, 按违规计)"))
+            continue
+        fv = extract_linked_issue_field(text)
         # fail-CLOSED: only the literal "OK" verdict passes; every other
         # (closed-enum) verdict is a violation unless grandfathered.
         if fv.verdict != "OK" and slug_dir not in entries:
@@ -115,16 +146,20 @@ def _run_check(root: Path, grandfathered_arg, extract_linked_issue_field) -> int
         if not e.startswith("openspec/changes/"):
             stale.append((e, "b"))
             continue
-        e_clean = e.rstrip("/")
-        cand = root / e_clean / "proposal.md"
+        cand = root / e / "proposal.md"  # e is already normalized (no trailing slash)
         if not cand.is_file():
-            slug = e_clean.rsplit("/", 1)[-1]
-            if archive_dir.is_dir() and any(archive_dir.glob(f"*-{slug}")):
-                stale.append((e, "b"))
-            else:
-                stale.append((e, "a"))
+            slug = e.rsplit("/", 1)[-1]
+            # exact suffix match over real directory names — no glob, so slug
+            # metacharacters ([, ], *, ?) cannot change the meaning
+            archived = archive_dir.is_dir() and any(
+                d.is_dir() and d.name.endswith("-" + slug) for d in archive_dir.iterdir()
+            )
+            stale.append((e, "b" if archived else "a"))
             continue
-        cand_text = cand.read_text(encoding="utf-8", errors="replace")
+        try:
+            cand_text = cand.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue  # unreadable -> already reported as a violation above; not judged stale
         cand_fv = extract_linked_issue_field(cand_text)
         if cand_fv.verdict == "OK":
             stale.append((e, "c"))
@@ -145,7 +180,7 @@ def _run_check(root: Path, grandfathered_arg, extract_linked_issue_field) -> int
         exit_code = 0
 
     if missing_note:
-        out_lines.append("(白名单文件缺失, 视为空集)")
+        out_lines.append(missing_note)
 
     print("\n".join(out_lines))
     return exit_code
@@ -166,11 +201,19 @@ def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.emit_arg is not None and args.root is not None:
+        parser.error("--emit-arg 与位置参数 root 互斥 (root 仅 check 模式)")  # exit 2
+    # stdout carries CJK status text; on a non-UTF-8 stdout (PYTHONIOENCODING=ascii,
+    # native Windows pipes) never crash — degrade unknown characters to `?` instead.
+    try:
+        sys.stdout.reconfigure(errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
 
     try:
         from lib.linked_issue_field import (
             extract_linked_issue_field,
-            is_sentinel,  # noqa: F401 -- re-exported import surface, contract-pinned
+            is_sentinel,  # noqa: F401 -- unused here on purpose: a lib older than v1.68.0 lacks the symbol, so the whole import fails -> check mode ##SKIP## / emit-arg exit 2 (version probe)
             emit_arg,
         )
     except Exception:
@@ -188,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.emit_arg is not None:
         return _run_emit_arg(Path(args.emit_arg), extract_linked_issue_field, emit_arg)
 
-    return _run_check(Path(args.root), args.grandfathered, extract_linked_issue_field)
+    return _run_check(Path(args.root or "."), args.grandfathered, extract_linked_issue_field)
 
 
 if __name__ == "__main__":
