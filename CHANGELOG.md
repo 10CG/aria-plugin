@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.68.2] - 2026-09-03
+
+### Fixed — state-scanner `linked_issue_field_probe.py` 第二轮加固 (Aria PR #190 pre_merge 收敛审计 R2/R3/R5 carry, 决策单 2026-09-01 §C7 / §C9 / R5 行 + 2026-09-03 D2; 零 SKILL.md 指令面变更)
+
+- **`--emit-arg` 不再静默改写实参** (R2 `2ed89c8a`, 候选内最高优先): `sys.stdout.reconfigure(errors="replace")` 只在 check 模式生效; `--emit-arg` 输出遇 stdout 编码无法表示的实参 (非 ASCII repo slug × `PYTHONIOENCODING=ascii`) ⇒ stderr 说明 + exit 2 + stdout 空 (E6「探针自身失败 ⇒ 非 0」); v1.68.1 输出 `10CG/??#1` exit 0。
+- **作用域枚举 fail-CLOSED** (R3 `4a675f17`-(i) + C9-补): `Path.rglob` 换 `os.walk(onerror=…, followlinks=False)`; 不可枚举的目录 ⇒ `<dir>:- UNREADABLE <Exc> (目录无法枚举, 按违规计)`; 符号链接目录 ⇒ `<dir>:- SYMLINK 目录不跟随 (按违规计)` (按链接自身路径报, 不报目标); `openspec/changes/` 自身不可读 ⇒ `FAIL` 而非 `##SKIP##`; 同名目录 `proposal.md` 仍 `UNREADABLE IsADirectoryError`。v1.68.1 前三种情形都让 proposal 从作用域消失后报 `OK` (fail-OPEN by omission)。
+- **陈旧守卫不 traceback** (R2 `ae4f1c9f` / R3 B3): `openspec/archive/` 不可枚举 ⇒ 该条按 (a) 并 stderr 警告; 在册 slug 目录不可 stat ⇒ 不判陈旧 (作用域枚举已报 UNREADABLE)。
+- **白名单条目归一用 `posixpath.normpath`** (R2/R3 `4a675f17`-(ii)): `./` 中缀 / `/.` 后缀 / `//` / `a/../b` 全部收干净; 文件按 `utf-8-sig` 读 (BOM 不再污染首条目)。
+
+**测试**: `test_linked_issue_field.py` 53 → 59 条 (`TestV1682ProbeMinors` 6 条, 对 v1.68.1 探针实测 **6/6 红**); state-scanner `run_tests.py` 全绿。rule6_note: 纯代码 + 测试, 零指令面变更 → substitute (决策单 2026-09-03 D2)。**未随本 PATCH**: spec-drafter hunk A 措辞软化 (B8, 处方性 ⇒ Rule #6 AB 照跑, 并入 M4 A.1.4 路径勘正批次) / 归档 proposal §4 六臂表 `UNREADABLE` 回写 (文档批次) / 新 check 专属测试 C6 (主仓 state-check 基建)。
+
 ## [1.68.1] - 2026-09-02
 
 ### Fixed — state-scanner `linked_issue_field_probe.py` 加固 (Aria PR #190 pre_merge 收敛审计 R1 清账, aria 侧; 零 SKILL.md 指令面变更)
