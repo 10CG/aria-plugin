@@ -936,6 +936,126 @@ class TestSC5ProbeHardening(unittest.TestCase):
             self.assertNotIn("Traceback", proc.stderr)
 
 
+class TestV1682ProbeMinors(unittest.TestCase):
+    """v1.68.2 — pre_merge R2/R3/R5 carry (决策单 C7 / C9 / R5 行): 五处 fail-open / 过度覆盖 / 归一残余.
+    每条 docstring 写「它怎么会红」= 对 v1.68.1 探针实测的失败形态."""
+
+    @staticmethod
+    def _needs_perm_tests():
+        import os
+        return os.geteuid() != 0  # root ignores chmod 000; those tests would be vacuous
+
+    def test_emit_arg_non_ascii_on_ascii_stdout_fails_loud(self):
+        """非 ASCII repo slug × ascii stdout ⇒ exit 2 + stdout 空 + stderr 说明 (E6 探针自身失败 ⇒ 非 0).
+        它怎么会红 (v1.68.1): errors=replace 也作用于 --emit-arg ⇒ stdout `10CG/??#1` exit 0 — 实参被静默改写."""
+        import os
+        with tmp_project() as root:
+            f = write_file(root / "p.md", "# t\n\n> **Linked Issue**: `10CG/仓库#1`\n")
+            env = dict(os.environ, PYTHONIOENCODING="ascii")
+            proc = subprocess.run([sys.executable, str(_PROBE), "--emit-arg", str(f)],
+                                  capture_output=True, env=env)
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            self.assertEqual(proc.stdout, b"")
+            self.assertIn("--emit-arg", proc.stderr.decode("utf-8", "replace"))
+            self.assertNotIn(b"Traceback", proc.stderr)
+            # control: UTF-8 stdout still emits the verbatim argument, exit 0
+            env_ok = dict(os.environ, PYTHONIOENCODING="utf-8")
+            proc2 = subprocess.run([sys.executable, str(_PROBE), "--emit-arg", str(f)],
+                                   capture_output=True, env=env_ok)
+            self.assertEqual(proc2.returncode, 0)
+            self.assertEqual(proc2.stdout.decode("utf-8"), "10CG/仓库#1")
+
+    def test_unreadable_slug_dir_is_violation_not_omitted(self):
+        """不在册的 slug 目录 chmod 000 ⇒ 违规行 UNREADABLE (fail-closed), 不得 `OK (…, 0 条在册)`.
+        它怎么会红 (v1.68.1): rglob 内部吞 PermissionError ⇒ 该 proposal 从作用域消失 ⇒ OK exit 0 (fail-OPEN by omission)."""
+        import os
+        if not self._needs_perm_tests():
+            self.skipTest("root 忽略 chmod 000, 无法构造不可读目录")
+        with tmp_project() as root:
+            secret = root / "openspec" / "changes" / "secret"
+            write_file(secret / "proposal.md", "# no field\n")
+            write_file(root / "openspec" / "changes" / "ok" / "proposal.md", "# ok\n\n> **Linked Issue**: `none`\n")
+            os.chmod(secret, 0)
+            try:
+                proc = _run_probe([str(root)])
+            finally:
+                os.chmod(secret, 0o755)
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertEqual(_first_line(proc.stdout), "FAIL 1 项")
+            self.assertIn("openspec/changes/secret:- UNREADABLE PermissionError", proc.stdout)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_changes_root_unreadable_is_fail_not_skip(self):
+        """openspec/changes/ 自身 chmod 000 ⇒ FAIL (UNREADABLE), 不得退化成 ##SKIP## (零证据不当正证据).
+        它怎么会红 (v1.68.1): rglob 吞异常 ⇒ scope 空 ⇒ ##SKIP## exit 0."""
+        import os
+        if not self._needs_perm_tests():
+            self.skipTest("root 忽略 chmod 000")
+        with tmp_project() as root:
+            changes = root / "openspec" / "changes"
+            write_file(changes / "x" / "proposal.md", "# x\n")
+            os.chmod(changes, 0)
+            try:
+                proc = _run_probe([str(root)])
+            finally:
+                os.chmod(changes, 0o755)
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertEqual(_first_line(proc.stdout), "FAIL 1 项")
+            self.assertIn("UNREADABLE PermissionError", proc.stdout)
+            self.assertNotIn("##SKIP##", proc.stdout)
+
+    def test_symlinked_slug_dir_is_reported_not_followed(self):
+        """slug 目录是符号链接 ⇒ 违规行 SYMLINK (不跟随), 不得静默消失也不得跟进链接目标.
+        它怎么会红 (v1.68.1): rglob 对 symlink 目录的处理不受本探针控制 (跟随/不跟随都不披露)."""
+        with tmp_project() as root:
+            target = root / "elsewhere"
+            write_file(target / "proposal.md", "# elsewhere\n")
+            (root / "openspec" / "changes").mkdir(parents=True, exist_ok=True)
+            (root / "openspec" / "changes" / "link").symlink_to(target, target_is_directory=True)
+            write_file(root / "openspec" / "changes" / "ok" / "proposal.md", "# ok\n\n> **Linked Issue**: `none`\n")
+            proc = _run_probe([str(root)])
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertEqual(_first_line(proc.stdout), "FAIL 1 项")
+            self.assertIn("openspec/changes/link:- SYMLINK 目录不跟随", proc.stdout)
+            self.assertNotIn("elsewhere", proc.stdout)
+
+    def test_archive_dir_unreadable_stale_guard_no_traceback(self):
+        """在册条目的 slug 已不存在 + openspec/archive chmod 000 ⇒ 陈旧行 (a) + stderr 警告, 不 traceback.
+        它怎么会红 (v1.68.1): archive_dir.iterdir() 抛 PermissionError 未捕获 ⇒ traceback, stdout 空, exit 1 (违反首行前缀契约)."""
+        import os
+        if not self._needs_perm_tests():
+            self.skipTest("root 忽略 chmod 000")
+        with tmp_project() as root:
+            write_file(root / "openspec" / "changes" / "ok" / "proposal.md", "# ok\n\n> **Linked Issue**: `none`\n")
+            archive = root / "openspec" / "archive"
+            archive.mkdir(parents=True)
+            wl = write_file(root / ".aria" / "wl.txt", "openspec/changes/gone\n")
+            os.chmod(archive, 0)
+            try:
+                proc = _run_probe([str(root), "--grandfathered", str(wl)])
+            finally:
+                os.chmod(archive, 0o755)
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertEqual(_first_line(proc.stdout), "FAIL 1 项")
+            self.assertIn("FAIL allowlist 陈旧: openspec/changes/gone (a)", proc.stdout)
+            self.assertNotIn("Traceback", proc.stderr)
+            self.assertIn("openspec/archive 不可枚举", proc.stderr)
+
+    def test_allowlist_entry_normpath_infix_and_bom(self):
+        """`./` 中缀 · `/.` 后缀 · `//` · `a/../b` · 文件头 BOM 全部归一到同一在册项 (m 计 1, 豁免生效).
+        它怎么会红 (v1.68.1): 只归一前缀/尾斜杠 ⇒ 中缀条目「在册」却不豁免 ⇒ FAIL NO_FIELD; BOM 让首条目带 U+FEFF ⇒ 不匹配."""
+        with tmp_project() as root:
+            write_file(root / "openspec" / "changes" / "gf" / "proposal.md", "# no field\n")
+            wl = root / ".aria" / "wl.txt"
+            wl.parent.mkdir(parents=True, exist_ok=True)
+            wl.write_bytes(
+                "\ufeffopenspec/changes/./gf\nopenspec/changes/gf/.\nopenspec//changes/gf\nopenspec/changes/../changes/gf\n".encode("utf-8")
+            )
+            proc = _run_probe([str(root), "--grandfathered", str(wl)])
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(_first_line(proc.stdout), "OK (1 份在范围内, 1 条在册)")
+
+
 class TestSC6Template(unittest.TestCase):
     def test_sc6_template_field_and_usage_note_and_reference(self):
         """它怎么会红: 模板加字段但写裸文本/markdown 链接 ⇒ (i) 红; 用中文 alias
