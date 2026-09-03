@@ -116,6 +116,21 @@ agent-team-audit (单轮执行引擎)
 
 > **NOTE (#17 vs #79 边界)**: 本机制 (#17) 仅覆盖**审计讨论轮内 drift** (anchor 固化在单次审计周期内); 实施期偏离 Spec 的检测属 #79 (mid-implementation spec drift), 两者机制独立。#79 已落地为 `mid_post_spec` 条件触发检查点 (见检查点列表 + [agent-team-audit/references/audit-points.md](../agent-team-audit/references/audit-points.md) `## mid_post_spec`); #17 drift-checker 与 #79 spec-drift 各管各 (前者审计轮内结论漂移, 后者运行实际 vs spec 陈述)。
 
+### per-round 入口探针 (竞品 spec 探针, Spec `sibling-spec-probe`)
+
+**每轮** (Round 1, 2, …, N) 的入口先跑竞品 spec 探针 —— 与上方 Step 0 (`Round 1 启动前一次性`) 显式消歧: 本探针每轮入口跑, **不沿用 Step 编号**。它查的是远端仓里已落盘的 proposal 语料 (`changes/` + `archive/`, 全部分支), 与认领 (claim) 通道没有共享失效模式 —— 对方没走认领、或已 ship 归档时, 只有这条通道能把「这件事别人做完了」摆到台面上; 审计跨天时首轮结论会陈旧, 所以每轮重跑。
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/audit-engine/scripts/sibling_spec_probe.py" --own-spec-dir "<本轨 spec 目录名>" --repo-path "<repo root>"
+```
+
+- **(α)** 读 stdout JSON 的一等字段 `verdict`, 把结果渲染进当轮 `### Round N` 记录 (report-format.md 模板行 `- Sibling probe:`): `sibling_found` ⇒ 🔴 「检测到 N 份同 issue 的竞品 Spec」, `archive/` 命中标「已完成的 Spec」; `no_sibling_found` ⇒ 「本轮已完整扫描, 未发现同 issue 竞品」。
+- **(β)** `verdict == not_established` / exit≠0 / stdout 非 JSON / `schema_version` 未知 ⇒ 渲染「**未能核实** (原因: <reason>)」, **不得**渲染为「无竞品」—— 零证据不当正证据。
+- **不阻断**: 不改 verdict 计算、不改收敛判定、不改轮次路由 (advisory; 「同 issue」≠「重复劳动」, 命中是告警不是判决)。
+- 探针自带 fetch (双远端约 25s/轮, 不称轻量), Convergence 与 Challenge 两模式块**都**在入口调用 (下游 Level-3 走 Challenge)。
+
+**权威可执行版见 references/execution-modes.md `## 竞品 spec 探针 (per-round 入口)`** (十二字段 stdout 契约 / exit code / `error_kind` 集合 / 三档消费措辞)。
+
 ---
 
 ## 数据 Schema
@@ -414,8 +429,9 @@ else:                                   # 任一业务文件 ∉ skip_paths
 - [references/convergence-algorithm.md](./references/convergence-algorithm.md) -- 收敛判定详细算法与边界情况
 - [references/challenge-mode-schema.md](./references/challenge-mode-schema.md) -- Challenge 模式完整数据流
 - [references/report-format.md](./references/report-format.md) -- 审计报告完整格式规范
+- [references/execution-modes.md `## 竞品 spec 探针 (per-round 入口)`](./references/execution-modes.md) -- per-round 入口探针 stdout 契约 + 三档消费措辞 (Spec `sibling-spec-probe`)
 - [agent-team-audit](../agent-team-audit/SKILL.md) -- 单轮执行引擎 (被本 Skill 调用)
 
 ---
 
-**最后更新**: 2026-06-11 (#17 audit-drift-guard — Drift Guard 原始目的锚定)
+**最后更新**: 2026-09-03 (Spec `sibling-spec-probe` — per-round 入口竞品 spec 探针; 前次 2026-06-11 #17 audit-drift-guard)

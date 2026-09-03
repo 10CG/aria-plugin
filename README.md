@@ -2,7 +2,7 @@
 
 # Aria Plugin
 
-> **Version**: 1.68.2 | **Released**: 2026-09-03
+> **Version**: 1.69.0 | **Released**: 2026-09-03
 >
 > AI-DDD methodology plugin for Claude Code — 35 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 

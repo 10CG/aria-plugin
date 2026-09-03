@@ -51,12 +51,14 @@ agents: [{agent_list}]
 
 ### Round 1
 - Agents: {agent_list}
+- Sibling probe: {🔴 检测到 N 份同 issue 的竞品 Spec (含 M 份已完成的 Spec) | 已完整扫描, 未发现同 issue 竞品 | 未能核实 (原因: <reason>)}
 - Conclusions: {count}
 - Vote: {PASS/REVISE}
 - Duration: {seconds}s
 
 ### Round 2
 - Agents: {agent_list}
+- Sibling probe: {🔴 检测到 N 份同 issue 的竞品 Spec (含 M 份已完成的 Spec) | 已完整扫描, 未发现同 issue 竞品 | 未能核实 (原因: <reason>)}
 - Conclusions: {count}
 - Delta vs Round 1: +{added} / -{removed}
 - Vote: {PASS/REVISE}
@@ -66,6 +68,7 @@ agents: [{agent_list}]
 
 ### Round N (Final)
 - Agents: {agent_list}
+- Sibling probe: {🔴 检测到 N 份同 issue 的竞品 Spec (含 M 份已完成的 Spec) | 已完整扫描, 未发现同 issue 竞品 | 未能核实 (原因: <reason>)}
 - Conclusions: {count}
 - Converged: {true/false}
 - Duration: {seconds}s

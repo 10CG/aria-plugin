@@ -87,6 +87,8 @@ Fix 任一:
 
 ```
 Round N:
+  每轮入口: 竞品 spec 探针 —— python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/audit-engine/scripts/sibling_spec_probe.py" --own-spec-dir "<本轨 spec 目录名>" --repo-path "<repo root>"
+  读 stdout JSON 的 verdict: sibling_found ⇒ 本轮 🔴 (含 N 份/归档标注) · no_sibling_found ⇒ 「已完整扫描, 未发现同 issue 竞品」 · not_established / exit≠0 / 非 JSON / schema_version 未知 ⇒ 「未能核实」(禁止渲染为无竞品); 不阻断本轮
   1. 调用 agent-team-audit 单轮引擎
      - spawn Agent team (convergence_agents)
      - 各 Agent 独立分析
@@ -116,6 +118,8 @@ Round N:
 
 ```
 Round N (一个完整周期):
+  每轮入口: 竞品 spec 探针 —— python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/audit-engine/scripts/sibling_spec_probe.py" --own-spec-dir "<本轨 spec 目录名>" --repo-path "<repo root>"
+  读 stdout JSON 的 verdict: sibling_found ⇒ 本轮 🔴 (含 N 份/归档标注) · no_sibling_found ⇒ 「已完整扫描, 未发现同 issue 竞品」 · not_established / exit≠0 / 非 JSON / schema_version 未知 ⇒ 「未能核实」(禁止渲染为无竞品); 不阻断本轮
   Step 1: 讨论组 spawn → discussion_output
      - proposal (统一提案文本)
      - decisions [{severity, category, scope, summary}]
@@ -142,3 +146,60 @@ Round N (一个完整周期):
 **Round 计数**: 一个 Round = 讨论组提案 + 挑战组质疑的完整周期。全员合并讨论属于下一 Round 的开头。max_rounds=5 意味着最多 5 个完整周期。
 
 详细 Schema 见 [challenge-mode-schema.md](./challenge-mode-schema.md)。
+
+## 竞品 spec 探针 (per-round 入口)
+
+> Spec: `openspec/changes/sibling-spec-probe/proposal.md` §3–§10 (主仓)。本节是探针 **stdout 契约 + exit code + 消费措辞的权威可执行版**; SKILL.md 「per-round 入口探针」小节只放概述与指针。上方 Convergence / Challenge 两个围栏块内各有一条同字面的两行调用串 (机械护栏 SC-17 计数恰 2), 本节**不**复用那个前缀。
+
+**为什么每轮跑, 为什么两个模式块都改**: 探针看的是远端仓里已落盘的 proposal 语料 (`openspec/changes/*/proposal.md` + `openspec/archive/*/proposal.md`, 全部 `refs/heads/*`), 与 claim 通道没有共享失效模式 —— 对方没走认领、或已 ship 归档时, 只有语料通道还能把「这件事别人做完了」摆到台面上 (Spec §Why 第 5 次事故)。审计跨天时首轮结论会陈旧, 所以每轮入口重跑 (不复用 `remote_refresh` 缓存, P3)。`config-loader/DEFAULTS.json` 的 `adaptive_rules.level_3 = "challenge"` 让下游 Level-3 审计走 Challenge 块, 只 patch Convergence 会让那些项目静默漏掉探针。它与 Step 0 (Anchor 固化, Round 1 启动前一次性) 是两回事, 不沿用 Step 编号。
+
+**调用** (每轮入口, Round 1 含):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/audit-engine/scripts/sibling_spec_probe.py" \
+  --own-spec-dir "<本轨 spec 目录名>" --repo-path "<repo root>"
+```
+
+- `--own-spec-dir` = 本轨 `openspec/changes/<目录名>` 的目录名 (自命中排除键); `--repo-path` = 仓库根 (探针不假定 cwd)。
+- 探针自带 fetch (`--no-tags --prune`, 写进私有命名空间 `refs/aria/sibling-probe/<remote>/<branch>`, 不动 `refs/remotes/*`), 每个 git 子进程 30s, fetch 腿最多 2 次; 双远端一轮约 25s (Spec §5), 这是本探针的成本, 不称轻量。
+
+**stdout — 恰一个 JSON 对象 (schema_version "1")**:
+
+| 字段 | 类型 | 语义 |
+|---|---|---|
+| `schema_version` | str | 固定 `"1"`; 未知值 ⇒ 按「未能核实」处置 |
+| `probe` | str | 固定 `"sibling_spec_probe"` |
+| `status` | str | 运行面 (覆盖是否完整): `ok` \| `degraded` \| `skipped` |
+| `reason` | str \| null | `status != "ok"` **或** `verdict == "not_established"` 时必非空: `no_enforced_remote` \| `remote_unresolved` \| `fetch_failed` \| `cap_applied` \| `own_token_absent` |
+| `verdict` | str | 判定面 (一等字段): `sibling_found` \| `no_sibling_found` \| `not_established` |
+| `own_spec_dir` | str | 本轨 spec 目录名 |
+| `own_layer` | str | 本轨 proposal 走的层: `canonical` \| `none_sentinel` \| `url_fallback` \| `no_token_no_url` \| `no_field` \| `bad_token_union` |
+| `own_keys` | list | 本轨比较键, 每项 `["k", <repo basename>, <n>]` 或 `["r", <原串>]` |
+| `remotes` | list[obj] | 每 remote: `name` / `default_branch` (str\|null, 只认 `ls-remote --symref`, 不猜) / `resolved_by` (`ls_remote_symref`\|null) / `error_kind` (str\|null) / `scanned` / `capped` / `refs_scanned` / `stale_skipped` |
+| `hits` | list[obj] | **恒为 list**; 每项 `remote` / `branch` / `corpus` (`changes`\|`archive`) / `spec_dir` / `path` / `field_line` / `key` / `layer` / `refs` (`<remote>/<branch>` 全部命中处, 字节序) |
+| `caps_applied` | list[obj] | 每项 `remote` / `kind` (`proposals`\|`refs`) / `total` / `kept` / `dropped_from` |
+| `elapsed_ms` | int | 探针总耗时 |
+
+`error_kind` 封闭集合: `network` / `auth_403` / `non_ff` / `git_missing` / `other` (形态照 `phase-d-closer/scripts/fetch_gate.py::_classify_error`) + `timeout` / `no_symref` / `bad_symref_prefix`; git 原始 stderr 永不回显 (Rule #7)。
+
+**`verdict` 取值表** (消费方**不得**从 `hits == []` 推断结论 —— 「扫完没有」与「没扫到 / 本轨无输入」在 `hits` 上取值相同):
+
+| `verdict` | 何时 |
+|---|---|
+| `sibling_found` | `hits` 非空 (即使 `status == "degraded"`: 正证据不因覆盖不完整而降级, 此时 `reason` 说明缺口) |
+| `no_sibling_found` | `hits` 为空 **且** 覆盖完整 (全部 enforced remote 解析出默认分支、fetch 成功、全部 `refs/heads/*` 已枚举、无任何 cap) **且** `own_keys` 非空 |
+| `not_established` | 其余: `own_keys` 为空 (本轨无可比较输入, 典型: 字段值为哨兵 `none` / `无`, 或无字段) / 任一 remote 未解析或 fetch 失败 / 任一 cap / enforced 集合为空 |
+
+**exit code**: `0` = 探针完成了一次有定义的判定 (命中与不命中都是 0; `degraded` / `skipped` 也是 0); 非 `0` = 仅探针自身失败 (参数错 / 内部异常 / 仓库不可读), 此时 stdout 不保证是 JSON。
+
+**消费措辞 (三档, 不得合并)** —— 写进当轮 `### Round N` 记录 (模板见 [report-format.md](./report-format.md)) 并进聚合报告; N = 去重后的 `spec_dir` 数 (同一 Spec 在 origin/github 两镜像各成一条 `hits[]` 项, 计数须去重):
+
+| `verdict` | 措辞 |
+|---|---|
+| `sibling_found` | 「🔴 检测到 N 份同 issue 的竞品 Spec: <spec_dir 列表>」; 命中项 `corpus == "archive"` 时标注**「已完成的 Spec」**; `status == "degraded"` 时追加「(覆盖不完整: <reason>)」 |
+| `no_sibling_found` | 「本轮已完整扫描, 未发现同 issue 竞品」 |
+| `not_established` | 「**未能核实** —— 本轮竞品扫描未取到完整证据 (原因: <reason>)」; **禁止**渲染为「无竞品」 |
+
+**消费方 fail-closed 义务**: `exit != 0` **或** stdout 无法解析为 JSON **或** `schema_version` 未知 ⇒ 一律按 `not_established` 处置 (渲染「未能核实」)。
+
+**不阻断**: 探针是 advisory 副机制 —— 不改 verdict 计算、不改收敛判定、不改轮次路由; 「同 issue」≠「重复劳动」(Spec §Why 的 `#137` 簇是有意拆分), 命中是告警不是判决, 由人一眼可辨。
