@@ -295,7 +295,7 @@ TASK-001 ──▶ TASK-002 ──┬──▶ TASK-003 ──┬──▶ TASK-
 1. 当 spec-drafter 判断为 Level 3 时，自动使用此模板
 2. 模板中的占位符 `{...}` 由信息提取引擎填充
 3. 交互模式下允许用户修改每个任务的详情
-4. 生成后存放在 `standards/openspec/changes/{feature}/tasks.md`
+4. 生成后存放在**本项目仓**的 `openspec/changes/{feature}/tasks.md` (不是 `standards/` —— 规则 #5)
 
 ---
 

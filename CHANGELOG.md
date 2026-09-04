@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.69.1] - 2026-09-04
+
+### Fixed — spec-drafter 落点路径 (Rule #5) + hunk A 措辞 (B8) + spec_complete 符号分类器 `.json` 分支
+
+Level 1 carry 批 (2026-09-02 / 09-04 两份周期 handoff §2 的 M1 / M4 项), 三处独立修复:
+
+- **spec-drafter 起草落点勘正为本项目仓 `openspec/changes/`** —— 旧文**四处**字面写 `standards/openspec/changes/`: `SKILL.md` A.1.4 生成路径 + Level 2 预览的 `Location:` 行 + `LEVEL_GUIDE.md` 示例 1/2 (三条路径) + `LEVEL3_TEMPLATE.md` 存放说明。它与不可协商规则 #5 (「项目变更放本项目 `openspec/changes/`, 不放 `standards/`」) 直接冲突, 历史上 5 个评测 run 各自独立发现并 override 过。A.1.4 另补三行 why (standards 是共享子模块, 写进去等于该变更对所有采用方可见且无人拥有)。
+- **hunk A 措辞软化** (2026-09-01 决策单 B8 的 carry 项): 「**必须**含 `Linked Issue` 字段, 与 SOT 模板头部**逐行对齐**」→ 「**必须**含字段; 字段**顺序建议**与模板一致 —— 从模板起草时自然满足」, 并新增一段 why: **位置不影响机械判定** (check 按 E0 取文档序第一条 depth-1 命中, 不限行号; 「只扫头部 N 行」的加固已被真实语料实测否决)。B8 当时判定该改动属处方性指令面 ⇒ 须 Rule #6 照跑 AB, 故延后至本批与路径勘正合并成一次 AB。
+- **`spec_complete.py` 符号分类器补 `.json` 分支**: 数据型 JSON (AB eval 套件 / 结果快照) 与非 CI yaml 同归宿 = 声明性数据, 不是运行时调用面; 真正的注册面 (`hooks.json` / `.aria/config.json`) 仍由上游分支先行拦截, 以字面脚本路径发起调用的 JSON (package.json scripts) 仍算 alive。**根因** (实测): `.json` 此前落通用「代码性」分支, 文本先过 `_strip_comments_and_docstrings` —— 该函数按 `#` 截到行尾, 而 `#` 在 JSON 里从不是注释; 一条含 `#` 的长串 (eval prompt 里的 `aria-plugin#122` / `### Round N`) 被截断后引号不再闭合, `_strip_string_literals` 状态机失步、不再剥除该串。**承重细节**: `#` 必须落在符号**之后**才复现 (落在之前会把符号一起删掉)。
+
+**Rule #6**: 路径 + hunk A 两处是处方性运行时指令面 ⇒ **照跑 AB** (`ab-suite/spec-drafter.json` v1.4.0): with_skill **16/16** vs old_skill **13/16**, delta **+0.19**, WITHOUT_BETTER 0, 四 eval 八臂形态全 descriptive。区分力全部来自本批新建的定向 fixture **eval 4** (`level2-proposal-location-rule5-TARGETED`, old 1/4 vs with 4/4) —— 原 3 个 eval 对落点路径面零覆盖 (判据表第三行), 套件缺口随该 eval 一并闭合, 不另开 issue。eval 3 的「头部四行顺序」断言在 with 臂**未因软化而回归** (5/5)。结果: `aria-plugin-benchmarks/ab-results/2026-09-04-v1.69.1-spec-drafter-rule5-hunkA/`。分类器改动为描述性 ⇒ **substitute**: `test_spec_complete_json_branch.py` 8 条, 对 v1.69.0 实测 **5 红**。
+
+**测试**: state-scanner `run_tests.py` **1475** 全绿 (1468 → +7; 另 1 条在同文件内)。
+
+> ⚠️ **Aria#192 未闭合, 本条只修了它的一半**: 该 tracker 报的症状是探针 Spec 归档时 gate 报 `warn`。本次修掉的是**误分类** —— 并且实测发现基线上还藏着一个**假 alive** (`descriptive` 只出现在 JSON 散文串里却被判 `code_reference`; 假 alive 会掩盖真死代码, 比假 warn 危险)。但归档 gate 在该 Spec 上**仍报 warn**: 符号落到另一条独立的 fail-toward-warn 分支 (`no Python definition for '<sym>' — not code, cannot be dead-code`), 且 claim 从 1 条变 2 条 (假 alive 被摘除后如实浮出)。真正的根因是「从 tasks.md 声称行里抽出的反引号词 (`not_established` / `descriptive`) 本来就不是代码符号」, 属符号**抽取**层而非文件分类层。证据与再定范围已回写 Aria#192。
+
 ## [1.69.0] - 2026-09-03
 
 ### Added — audit-engine per-round 竞品 spec 探针 (Spec `sibling-spec-probe`, 主仓 `openspec/changes/sibling-spec-probe/`; 母 Spec `a1-entry-claim-duplicate-work-guard` §4 拆出, owner 2026-08-30 批准; 2026-09-01 P11 = 扩 / 档位 = MINOR)
