@@ -107,8 +107,11 @@ A.1.3 - 模块检测:
   - standards: 规范, Skill, OpenSpec
 
 A.1.4 - 生成 Spec 文档:
-  Level 2: standards/openspec/changes/{feature}/proposal.md
+  Level 2: openspec/changes/{feature}/proposal.md      # 本项目仓内, 不是 standards/
   Level 3: proposal.md + tasks.md (OpenSpec 双层架构格式)
+  ⚠️ 路径落点 = **消费方项目自己的** `openspec/changes/`。standards 是共享子模块,
+     把项目变更写进 `standards/openspec/changes/` 会让该变更对所有采用方可见且无人拥有
+     (Aria 不可协商规则 #5)。standards 自身的规范变更才落 standards 仓。
   - 预填充决策引用 (如有决策记录)
   - 头部 Linked Issue 字段 (必填): 见下方「proposal.md 头部字段要求」
 
@@ -132,7 +135,7 @@ A.1.6 - 验证提示:
 
 Feature: user-authentication
 Module: backend
-Location: standards/openspec/changes/user-authentication/proposal.md
+Location: openspec/changes/user-authentication/proposal.md
 
 ──────────────────────────────────────────────────────────
 # User Authentication
@@ -338,7 +341,7 @@ proposal.md 中引用决策的格式：
 
 ## proposal.md 头部字段要求
 
-Level 2 / Level 3 的 `proposal.md` 头部 blockquote **必须**含一行 `Linked Issue` 字段, 与 SOT 模板 [proposal-minimal 模板](../../../standards/openspec/templates/proposal-minimal.md) 头部逐行对齐 (`Level` → `Status` → `Created` → `Linked Issue`):
+Level 2 / Level 3 的 `proposal.md` 头部 blockquote **必须**含一行 `Linked Issue` 字段。字段**顺序建议**与 SOT 模板 [proposal-minimal 模板](../../../standards/openspec/templates/proposal-minimal.md) 一致 (`Level` → `Status` → `Created` → `Linked Issue`) —— 从模板起草时自然满足, 无需额外对齐动作:
 
 ```markdown
 > **Linked Issue**: `<org>/<repo>#<n>`
@@ -349,6 +352,8 @@ Level 2 / Level 3 的 `proposal.md` 头部 blockquote **必须**含一行 `Linke
 1. 值是 inline code span 形 `` `<org>/<repo>#<n>` `` (例 `` `10CG/Aria#174` ``); 多个 issue 写在**同一个** code span 内, 用 `, ` 分隔 (例 `` `10CG/a#1, 10CG/b#2` ``)。
 2. 无关联 (已核实) 时逐字写 `` `none` `` —— **不留空、不删行** (空值与「忘了写」不可区分); `N/A` / `TBD` / `-` **不是**哨兵, 会被判不合规。
 3. 行首无空白, `>` 后恰一个空格, 字段名两侧各两个星号, ASCII 冒号; **不写** markdown 链接形 (`[repo#n](url)` 判 `NO_TOKEN`)。读取侧另认中文 alias `关联 Issue` / `无`, 但**新写一律用英文 canonical**。
+
+> **位置不影响机械判定** (裁定 2026-09-01 B8): check 按 E0 取**文档序第一条** depth-1 命中, 不限行号 —— 既有 proposal 把字段写在超长头部 blockquote 的第 45 / 61 行仍判合规。「只扫头部 N 行」这个看起来更严的加固**已被真实语料实测否决** (它会误杀两份真命中)。所以上面那条「顺序建议」是**起草侧的模板对齐建议**, 不是 check 的判据 —— 别为了「对齐」去改动既有 proposal 的头部顺序。
 
 ---
 

@@ -266,7 +266,7 @@
     结果: Level 2 (Minimal)
 
   输出:
-    path: standards/openspec/changes/test-report-skill/proposal.md
+    path: openspec/changes/test-report-skill/proposal.md      # 本项目仓内 (规则 #5)
     模板: proposal-minimal.md 格式
 ```
 
@@ -287,8 +287,8 @@
 
   输出:
     files:
-      - standards/openspec/changes/progress-refactor/proposal.md
-      - standards/openspec/changes/progress-refactor/tasks.md
+      - openspec/changes/progress-refactor/proposal.md      # 本项目仓内 (规则 #5)
+      - openspec/changes/progress-refactor/tasks.md
 ```
 
 ### 示例 3: 简单修复 (Level 1)

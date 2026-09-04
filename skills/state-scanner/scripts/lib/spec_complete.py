@@ -928,7 +928,27 @@ def _classify_file_occurrence(
         # 运行时调用面 — 与 deliverables 提取源同理, 不能自证已引用。
         return {"alive": False, "categories": [], "prose": True}
 
-    # 通用 "代码性" 文件 (.py/.js/.ts/.sh/Makefile/其它 .json fixture 等):
+    if ext == ".json":
+        # 数据型 JSON (AB eval 套件 / 结果快照 / 其它声明性 fixture) 与非 CI yaml 同
+        # 归宿: 声明性数据不是运行时调用面, 不能自证已引用。真正的注册面
+        # (hooks.json / `.aria/config.json`) 在上方 `_is_hooks_or_config_path` 分支已
+        # 先行拦截, 走不到这里; 而以字面脚本路径发起调用的 JSON (如 package.json 的
+        # scripts 段) 仍按路径匹配算 alive。
+        #
+        # 为什么要单列这一支 (Aria#192 实证, 2026-09-04): 落到下方通用「代码性」分支
+        # 时, 文本先过 `_strip_comments_and_docstrings` —— 那个函数按 `#` 截到行尾,
+        # 而 `#` 在 JSON 里从来不是注释。一条含 `#` 的长字符串 (如 eval prompt 里的
+        # `aria-plugin#122` / `### Round N`) 被截断后引号不再闭合, 随后
+        # `_strip_string_literals` 的状态机失步、不再剥除该串, 于是串内的符号被当成
+        # 「剥注释后仍在代码体出现」⇒ unclassified ⇒ 整个 spec 的归档判定被顶成 warn。
+        # 实测: `ab-suite/audit-engine.json` 里 `not_established` 只出现在 eval prompt
+        # 的字符串值中, 却让 sibling-spec-probe 的归档 gate 报 warn。
+        if _literal_script_path_match(text, symbol, definition_paths):
+            # 原文匹配, 不剥注释 —— 见上方 `#` 说明
+            return {"alive": True, "categories": ["generic_path_call"], "prose": False}
+        return {"alive": False, "categories": [], "prose": True}
+
+    # 通用 "代码性" 文件 (.py/.js/.ts/.sh/Makefile 等; .json 已在上方单列):
     # (iv) 的字面路径匹配也必须在剥注释/docstring 后的文本上做 —— 否则任何文件
     # (含本模块自身的说明性 docstring!) 只要在注释里提过 "symbol.py" 这个字符串
     # 就会被误判为"已引用" (dogfood 实测踩坑: collectors/openspec.py 一行
