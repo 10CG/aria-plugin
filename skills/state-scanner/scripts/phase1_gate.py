@@ -219,6 +219,18 @@ class GateResult(NamedTuple):
         Possible values: "not_a_git_repo", "identity_error", "fetch_degraded",
         "write_failed", "max_retries_exhausted", "auth_failed", "user_aborted",
         "push_failed", and any resilient_push error_kind.
+
+        Precedence: ``"fetch_degraded"`` is a SOFT error recorded at Step 4 —
+        the gate proceeds (advisory), but on stale local state.  It fills this
+        field only on outcomes that would otherwise report None; any later hard
+        error overwrites it, since a write/push failure is the more actionable
+        report.  Consumers must render a degraded fetch as "未能核实" and never
+        as "no collision" — zero evidence is not positive evidence.
+
+        NOT interchangeable with ``linked_issue_overlap_error`` (§2.4b): this
+        field covers failing to READ the ref (Step 4); that key covers the
+        overlap COMPUTATION raising.  Either one alone still leaves a path that
+        silently returns an empty list, so both exist.
     surface : AdvisorySurface | None
         Populated only when outcome == ADVISORY_PROCEED: the branch-differentiated
         warning the orchestration layer must render (TASK-004).  None on every
@@ -494,8 +506,16 @@ def _run_gate_impl(
     # -----------------------------------------------------------------------
     # Step 4: health_check_fetch (second-fetch — narrows the race window)
     # -----------------------------------------------------------------------
+    # Soft error: a degraded fetch means every judgement below rests on a
+    # possibly-stale local ref.  It is recorded here and surfaces on any
+    # outcome that would otherwise report error=None; a later HARD error
+    # (write_failed / push_failed / clock_skew_conflict / ...) takes
+    # precedence, because that is the more actionable of the two.
+    soft_error: Optional[str] = None
+
     fh: FetchHealth = health_check_fetch(repo, remote=remote)
     if not fh.success:
+        soft_error = "fetch_degraded"
         logger.warning(
             "phase1_gate.run_gate: fetch degraded (kind=%s) — proceeding "
             "with stale local ref (elevated collision risk)",
@@ -567,7 +587,7 @@ def _run_gate_impl(
                 own_claim=own_claim,
                 competing_verdict=None,
                 push_result=None,
-                error=None,
+                error=soft_error,
                 push_skipped=True,
             )
         push_res: ResilientPushResult = resilient_push(
@@ -583,7 +603,7 @@ def _run_gate_impl(
                 own_claim=own_claim,
                 competing_verdict=None,
                 push_result=push_res,
-                error=None,
+                error=soft_error,
             )
         # Push failed on resume — treat as push-failed path.
         if mode == "advisory":
@@ -627,7 +647,7 @@ def _run_gate_impl(
             own_claim=own_claim if proceed else None,
             competing_verdict=None,
             push_result=push_res,
-            error=None if proceed else push_res.error_kind,
+            error=soft_error if proceed else push_res.error_kind,
         )
 
     # --- 7b: clock-skew conflict — highest risk, default abort -------------
@@ -747,7 +767,7 @@ def _run_gate_impl(
                     own_claim=None,
                     competing_verdict=competing_verdict,
                     push_result=None,
-                    error=None,
+                    error=soft_error,
                 )
             # User chose to proceed (takeover or force-proceed).
             logger.info(
@@ -882,7 +902,7 @@ def _run_gate_impl(
             own_claim=written_record,
             competing_verdict=competing_verdict,
             push_result=push_res,
-            error=None,
+            error=soft_error,
             surface=advisory_surface,
             push_skipped=no_push,
         )
@@ -1152,7 +1172,7 @@ def run_gate_synthetic(raw_track_id: str, phase: str, **kwargs) -> GateResult:
 # Contract:
 #   stdin : none
 #   args  : --raw-track-id --phase [--mode advisory|block] [--linked-issue]
-#           [--repo-path] [--remote] [--no-push]
+#           [--include-terminal] [--repo-path] [--remote] [--no-push]
 #   env   : ARIA_COORDINATION_NO_PUSH=1|true|yes ⇔ --no-push (harness safety:
 #           the AB benchmark runs evals inside the real repo with the real origin;
 #           output keys push_skipped / push_skipped_reason tell a skip from a failure)
@@ -1286,6 +1306,16 @@ def _main(argv: Optional[list[str]] = None) -> int:
             "同 linked_issue 不同 track-id 的 active claim (advisory 告警, 不阻断)"
         ),
     )
+    parser.add_argument(
+        "--include-terminal",
+        action="store_true",
+        help=(
+            "把终态 claim (done / abandoned) 也纳入重叠检测, 并输出 "
+            "unknown_schema_claims 计数。A.1 入口用: 「同一个 issue 已经有人做完了」"
+            "只在终态 claim 里看得见, 而默认路径只看 active。与 --linked-issue 正交 —— "
+            "本 flag 独立控制 unknown_schema_claims 键的存在性 (§2.4b 四态表)"
+        ),
+    )
     parser.add_argument("--repo-path", default=None, help="仓库根路径 (默认 cwd)")
     parser.add_argument("--remote", default="origin", help="git remote (默认 origin)")
     parser.add_argument(
@@ -1327,17 +1357,46 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     out = _gate_result_to_dict(result, push_skipped_reason=push_skipped_reason)
 
-    # Part B1 (additive key): "same issue, two names" advisory. Bypasses
+    # Part B1 (additive keys): "same issue, two names" advisory. Bypasses
     # reconcile's exact track_id grouping; never changes outcome/proceed.
-    if args.linked_issue:
+    #
+    # Key-presence contract (§2.4b four-state table) — the two keys are
+    # ORTHOGONAL on the success path:
+    #   linked_issue_overlap   present iff --linked-issue was given
+    #   unknown_schema_claims  present iff --include-terminal was given
+    # A missing key means "not checked", NOT "nothing found"; ``null`` means
+    # "checked, but no evidence could be obtained".  Consumers MUST NOT read
+    # these with ``.get(key, 0)`` / ``.get(key, [])`` — that collapses "no
+    # evidence" into "positive evidence of absence", which is the exact
+    # regression R2/M-4 reintroduced inside its own fix.
+    #
+    # unknown_schema_claims counts claims this reader cannot parse
+    # (schema_version != "1" → parse_claim returns a status="unknown"
+    # sentinel).  Those sentinels carry linked_issue=None and are therefore
+    # dropped by the overlap matcher itself; the count is how their EXISTENCE
+    # stays visible.  Domain: int | null.
+    if args.linked_issue or args.include_terminal:
         try:
-            claims = read_claims(repo).claims
-            out["linked_issue_overlap"] = linked_issue_overlaps(
-                claims, result.track_id, args.linked_issue
-            )
+            claims = read_claims(repo).claims          # single read, both keys
+            if args.linked_issue:
+                out["linked_issue_overlap"] = linked_issue_overlaps(
+                    claims,
+                    result.track_id,
+                    args.linked_issue,
+                    include_terminal=args.include_terminal,
+                )
+            if args.include_terminal:
+                out["unknown_schema_claims"] = sum(
+                    1 for c in claims if c.status == "unknown"
+                )
         except Exception as exc:  # fail-soft: overlap advisory must not break the gate
             logger.warning("phase1_gate: linked_issue overlap check skipped (%s)", exc)
-            out["linked_issue_overlap"] = []
+            # BOTH keys go null, unconditionally (SC-33 + Impact ④⑥). Assigning
+            # only one leaves the other absent, and an absent key reads as 0/[]
+            # downstream — the same silent-zero-evidence bug in a new costume.
+            out["linked_issue_overlap"] = None
+            out["unknown_schema_claims"] = None
+            out["linked_issue_overlap_error"] = f"{type(exc).__name__}: {exc}"
 
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if result.outcome in _PROCEED_OUTCOMES else 1
