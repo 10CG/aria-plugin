@@ -244,6 +244,67 @@ def get_container_id(home_dir: Optional[Path] = None) -> str:
     return uuid
 
 
+def get_container_uuid(home_dir: Optional[Path] = None) -> str:
+    """Return the ``uuid`` segment of this machine's container identity.
+
+    Same file, same regeneration and fallback behaviour as
+    :func:`get_container_id`.  The only difference is the label preference:
+    ``get_container_id`` returns ``label if label else uuid``, while this
+    accessor ignores ``label`` entirely and always yields the ``uuid`` field.
+
+    Rationale: the A.1 carry-id contract is ``<spec-slug>-<container_uuid>``
+    (spec ``a1-entry-claim-duplicate-work-guard`` §2.1).  A track-id must stay
+    stable when an operator edits the cosmetic ``label`` line, so the carry-id
+    cannot be derived from :func:`get_container_id`.
+
+    Returns
+    -------
+    str
+        ``uuid`` field value.  Falls back to the hostname when the file cannot
+        be read *and* cannot be created (e.g. read-only filesystem) — the same
+        hostname path :func:`get_container_id` takes.
+
+    Parameters
+    ----------
+    home_dir:
+        Override the home directory used to locate ``~/.aria/``.  Pass a
+        ``tmp_path`` fixture in tests to avoid touching the real user home.
+    """
+    path = _container_id_path(home_dir)
+
+    # --- Attempt to read existing file ---
+    if path.exists():
+        try:
+            text = path.read_text(encoding="utf-8")
+            parsed = _parse_container_file(text)
+            uuid = parsed.get("uuid", "").strip()
+            if not uuid:
+                raise ValueError("uuid field is empty")
+            return uuid
+        except Exception as exc:
+            print(
+                f"[aria/identity] WARNING: container-id file corrupt ({exc}),"
+                " regenerating.",
+                file=sys.stderr,
+            )
+            # Fall through to regeneration.
+
+    # --- Generate a new container-id ---
+    uuid = _generate_uuid()
+    created_at = _now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        _write_container_file(path, uuid=uuid, label="", created_at=created_at)
+    except OSError as exc:
+        print(
+            f"[aria/identity] WARNING: cannot write container-id file ({exc}),"
+            f" falling back to hostname.",
+            file=sys.stderr,
+        )
+        return _hostname()
+
+    return uuid
+
+
 def get_session_id(now: Optional[datetime] = None) -> str:
     """Generate an ephemeral session identifier.
 
