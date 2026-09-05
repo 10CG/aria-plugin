@@ -49,10 +49,10 @@ D.2 归档完成后 (或 D.2 跳过但本 session 曾在 Phase B-entry 经 phase
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/release_gate.py" \
-  --raw-track-id "<本 cycle 的 carry-id 原始串>" --sweep-stale --gc --repo-path "<repo root>"
+  --raw-track-id "<A.1 认领时派生的那一串>" --sweep-stale --gc --repo-path "<repo root>"
 ```
 
-- carry-id = Phase B-entry 时传给 phase1_gate 的同一原始串 (归一在 CLI 内部, 两端一致)。
+- carry-id = **A.1 认领时派生的那一串** —— 与 Phase B-entry 传给 phase1_gate 的是同一原始串 (归一在 CLI 内部, 两端一致); 重新拼一串会 release 不到自己那条。
 - `--sweep-stale` 顺带把全 ref 内 heartbeat 超 STALE_TTL 的 active claim 标 abandoned; `--gc` 顺带归档超 retention 的 done claim —— 收尾是 GC 的自然挂载点, 无需独立调度。
 - **advisory 契约**: exit 1 (硬错) 只记录 warning 到收尾报告, **不阻断** D.3/D.4。`released.error == "claim_not_found"` 是 benign (早已释放/未认领), exit 0。
 - **除 exit code 外还须看 `push_success`** (review I2): `released.success=true` 但 `push_success=false` = 释放只在本地生效, 远端/其他终端仍看到 active claim — 报告里注明 "本地已释放, 待下次 fetch/reconcile 收敛", 不要报成"已释放"完事。

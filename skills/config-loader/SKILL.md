@@ -135,12 +135,20 @@ state_scanner.coordination.enabled:
   type: boolean
   default: true                   # Part A1 (defect a): false→true — 2026-07-11 双子星撞车实证 opt-in 默认导致认领从不发生; advisory mode 保证翻转不阻断任何流程。显式设 false 可退回 rule 1.54 advisory。
                                   # 已知边界: runtime_probe._resolve_enabled_when 的缺键=off 是通用探针契约不随动 — 无此 key 的项目 coordination_probe 判 skipped (保守), 不误报 warn。
+                                  # A.1 入口认领与 --heartbeat-only 心跳**同受本开关**: false ⇒ 两者皆零调用 (a1-entry-claim-duplicate-work-guard §2.5)。
 
 # mode 与 enabled 正交 (仅 enabled==true 时相关), 不改 rule 1.54 disjointness (DEC-20260704-002 §1, R1-C2)
 state_scanner.coordination.mode:
   type: string
   valid_values: [advisory, block]
   default: "advisory"             # advisory=放行+写推自己 claim+surface 告警 (advisory-over-hardlock); block=旧交互 abort/yield 语义
+
+# 无人值守分支 (a1-entry-claim-duplicate-work-guard §2.3): 决定 A.1 检出重叠时向谁请裁
+state_scanner.coordination.unattended:
+  type: boolean
+  default: false                  # false ⇒ A.1 overlap 非空时经 AskUserQuestion 请人裁; true ⇒ 零 AskUserQuestion, 改写「待复议」记录并置 awaiting_owner, 由产品负责人事后复议。
+                                  # 取值路径: aria-runner 容器镜像内的 .aria/config.json (Layer 2 自主运行时); Nomad env 三腿契约属 follow-up, 本 key 不承载。
+                                  # ⚠️ **不得以「AskUserQuestion 当前是否可用」做运行期推断** (D15): 有没有人可问是**配置事实**, 不是可以从工具可用性猜出来的东西 —— 猜错的方向恰好是「没人时默默替人做决定」。
 
 # 远程引用新鲜度阈值 (state-scanner-stale-refs-false-parity Phase 0)
 # — D15′/D18 阈值, 供 F1′ 双轴谓词 (evidence_grade) + 豁免资格判定使用。
