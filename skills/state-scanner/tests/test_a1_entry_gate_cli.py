@@ -30,8 +30,10 @@ if _SKILL_ROOT not in sys.path:
 from lib.claim_lifecycle import acquire_claim, release_claim_by_track  # noqa: E402
 from lib.coordination_ref import apply_tree_edits, bootstrap, read_claims  # noqa: E402
 from lib.identity import Identity  # noqa: E402
+from lib.track_id import derive_track_id  # noqa: E402
 
 _GATE = Path(_SKILL_ROOT) / "scripts" / "phase1_gate.py"
+_RELEASE = Path(_SKILL_ROOT) / "scripts" / "release_gate.py"
 _ISSUE = "10CG/Aria#174"
 _TRACK_A = "spec-x-aaaa1111"
 _TRACK_B = "spec-x-bbbb2222"
@@ -73,7 +75,11 @@ def _seed_other_container(repo: Path, track: str, container: str, session: str =
                           status: str = "active"):
     """在另一个容器名下种一条 claim; status 为终态时经生产路径 release 过去."""
     ident = Identity("peer", container, session)
-    acquire_claim(track, "A.1", identity=ident, repo_path=repo, linked_issue=_ISSUE)
+    # 经 derive_track_id 归一后再 acquire —— 生产里 run_gate 就是这么做的
+    # (acquire_claim 自己不归一, 它期望已归一的串)。夹具若直接塞原始串, 「改坏
+    # derive_track_id」这类负控只会作用在本侧, 另一侧纹丝不动 ⇒ 负控失去区分力。
+    acquire_claim(derive_track_id(track), "A.1", identity=ident, repo_path=repo,
+                  linked_issue=_ISSUE)
     if status != "active":
         release_claim_by_track(track, status=status, identity=ident, repo_path=repo)
     return ident
@@ -165,6 +171,20 @@ def _seed_unknown_schema_claim(repo: Path, linked_issue: str = _ISSUE):
 def _unreachable_remote(repo: Path):
     """让 Step 4 health_check_fetch 降级: origin 指向不存在的路径."""
     _sh(["git", "remote", "add", "origin", str(repo / "no-such-remote.git")], str(repo))
+
+
+def _release(repo: Path, track: str, *extra: str):
+    """跑 release_gate CLI (新 session — 每个 subprocess 都是新的 session_id)."""
+    proc = subprocess.run(
+        [sys.executable, str(_RELEASE),
+         "--raw-track-id", track, "--repo-path", str(repo), "--no-push", *extra],
+        capture_output=True, text=True,
+    )
+    try:
+        parsed = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        parsed = None
+    return proc.returncode, parsed, proc.stderr
 
 
 class TestSc2MutualVisibility(unittest.TestCase):
@@ -423,6 +443,95 @@ class TestFourStateDistinguishable(unittest.TestCase):
             len(set(states.values())), 4,
             f"四态未两两可辨: {states}",
         )
+
+
+class TestA1CarryIdRoundTrip(unittest.TestCase):
+    """SC-23 / SC-14(a) 回归守卫 + SC-2 ↔ SC-23 相容性 (全部 baseline 即绿).
+
+    守的是 track-id 的**单一形态** ``<spec-slug>-<container_uuid>`` 同时满足两件事:
+      - 两个容器做同一件事时靠 ``linked_issue`` 互相看得见 (track-id 各不相同, SC-2);
+      - 一次 release 能精确命中自己那条 (SC-23)。
+    坏实现 ``derive_track_id`` 去掉容器段会同时打破两者: 两容器串相同 ⇒ 自排除让
+    overlap 空掉 (SC-2 红), 且 release 会连别人那条一起命中 (相容性红)。两条互为负控。
+    """
+
+    TRACK = "a1-spec-1a2b3c4d"
+
+    def test_sc23_acquire_then_release_by_track_from_a_new_session(self):
+        repo = _fresh_repo()
+        rc1, out1, err1 = _gate(repo, self.TRACK)
+        self.assertEqual(rc1, 0, err1[-600:])
+        own = out1["own_claim"]
+
+        rc2, rel, err2 = _release(repo, self.TRACK)
+
+        self.assertEqual(rc2, 0, err2[-600:])
+        self.assertTrue(rel["released"]["success"], rel)
+        mine = [c for c in read_claims(repo).claims if c.container == own["container"]]
+        self.assertEqual([c.status for c in mine], ["done"])
+
+    def test_sc14a_release_as_abandoned(self):
+        repo = _fresh_repo()
+        rc1, out1, err1 = _gate(repo, self.TRACK)
+        self.assertEqual(rc1, 0, err1[-600:])
+        own = out1["own_claim"]
+
+        rc2, rel, err2 = _release(repo, self.TRACK, "--status", "abandoned")
+
+        self.assertEqual(rc2, 0, err2[-600:])
+        self.assertEqual(rel["released"]["status"], "abandoned")
+        mine = [c for c in read_claims(repo).claims if c.container == own["container"]]
+        self.assertEqual([c.status for c in mine], ["abandoned"])
+
+    def test_sc14a_missing_all_three_selectors_is_parser_error(self):
+        """旧版 `--status abandoned` 单参写法必须被拒 —— 三选一之一都不给就是用法错."""
+        repo = _fresh_repo()
+
+        proc = subprocess.run(
+            [sys.executable, str(_RELEASE),
+             "--status", "abandoned", "--repo-path", str(repo), "--no-push"],
+            capture_output=True, text=True,
+        )
+
+        self.assertEqual(proc.returncode, 2, proc.stdout[-300:])
+        self.assertIn("--raw-track-id", proc.stderr)
+
+    def test_overlap_and_release_are_compatible_on_the_same_id_pair(self):
+        """相容性 (:763-766 待办 (3)): 同一对串既能 overlap 互见, 又能被 release 精确定位.
+
+        与 Spec 措辞的一处适配 (记在此以免读者误以为漏做): 原文第 (3) 步写「再跑 B 认领」,
+        但 B 是**另一个**容器, 而 CLI 的身份恒为本机容器, 子进程里换不了。改用第三条串
+        ``spec-x-cccc3333`` 从本容器再认领一次 —— 被考察的性质 (终态 claim 是否随
+        ``--include-terminal`` 现身) 一模一样, 且不依赖假装换容器。
+        """
+        repo = _fresh_repo()
+        _seed_other_container(repo, _TRACK_B, "cPEER")          # B: 另一容器, 另一条串
+
+        # (1) 本容器认领 A ⇒ overlap 看得见 B (SC-2)
+        rc1, out1, err1 = _gate(repo, _TRACK_A, "--linked-issue", _ISSUE, "--include-terminal")
+        self.assertEqual(rc1, 0, err1[-600:])
+        self.assertEqual([h["track_id"] for h in out1["linked_issue_overlap"]], [_TRACK_B])
+        own_container = out1["own_claim"]["container"]
+
+        # (2) release A ⇒ 只命中自己那条, B 毫发无损
+        rc2, rel, err2 = _release(repo, _TRACK_A)
+        self.assertEqual(rc2, 0, err2[-600:])
+        self.assertTrue(rel["released"]["success"])
+        by = {(c.container, c.track_id): c.status for c in read_claims(repo).claims}
+        self.assertEqual(by[(own_container, _TRACK_A)], "done")
+        self.assertEqual(by[("cPEER", _TRACK_B)], "active", "release 不得波及另一容器的串")
+
+        # (3) 第三条串再认领: 带 flag ⇒ 终态的 A 仍可见; 不带 ⇒ 只剩 B
+        rc3, out3, err3 = _gate(repo, "spec-x-cccc3333", "--linked-issue", _ISSUE,
+                                "--include-terminal")
+        self.assertEqual(rc3, 0, err3[-600:])
+        self.assertEqual(sorted(h["track_id"] for h in out3["linked_issue_overlap"]),
+                         sorted([_TRACK_A, _TRACK_B]))
+        # 不带 flag 用**同一条**第三串再跑: 自己被自排除, 终态的 A 被终态门隐藏 ⇒ 只剩 B。
+        # (换第四条串会看见第三串自己那条 active claim, 那是夹具噪声不是被测性质)
+        rc4, out4, err4 = _gate(repo, "spec-x-cccc3333", "--linked-issue", _ISSUE)
+        self.assertEqual(rc4, 0, err4[-600:])
+        self.assertEqual([h["track_id"] for h in out4["linked_issue_overlap"]], [_TRACK_B])
 
 
 if __name__ == "__main__":

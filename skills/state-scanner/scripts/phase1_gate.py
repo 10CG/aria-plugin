@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 # Context (b): proper package install — relative import works cleanly.
 # ---------------------------------------------------------------------------
 try:
-    from ..lib.claim_lifecycle import acquire_claim, AcquireResult
+    from ..lib.claim_lifecycle import acquire_claim, heartbeat_by_track, AcquireResult
     from ..lib.claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT
     from ..lib.constants import CLOCK_SKEW_WARN_THRESHOLD
     from ..lib.coordination_ref import read_claims, ReadClaimsResult
@@ -106,7 +106,11 @@ except ImportError:
     while _SKILL_ROOT in _sys.path:
         _sys.path.remove(_SKILL_ROOT)
     _sys.path.insert(0, _SKILL_ROOT)
-    from lib.claim_lifecycle import acquire_claim, AcquireResult  # type: ignore[import]
+    from lib.claim_lifecycle import (  # type: ignore[import]
+        acquire_claim,
+        heartbeat_by_track,
+        AcquireResult,
+    )
     from lib.claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT  # type: ignore[import]
     from lib.constants import CLOCK_SKEW_WARN_THRESHOLD  # type: ignore[import]
     from lib.coordination_ref import read_claims, ReadClaimsResult  # type: ignore[import]
@@ -1066,6 +1070,134 @@ def _emit_telemetry(
         logger.debug("phase1_gate: telemetry emit skipped (%s)", exc)
 
 
+_HEARTBEAT_SOURCE = "heartbeat"
+
+
+def _emit_heartbeat_telemetry(
+    repo: Path,
+    outcome: str,
+    track_id: Optional[str],
+    reason: Optional[str],
+    ts: datetime,
+    latency_ms: int,
+) -> None:
+    """Append one ``--heartbeat-only`` telemetry record.  NEVER raises.
+
+    Routed through :func:`_telemetry_path` with source ``"heartbeat"``, which is
+    NOT the production partition — deliberately.  A heartbeat fires on every
+    orchestration entry; letting it into the production partition would drown
+    ``coordination_probe``'s "the gate was actually invoked recently" signal in
+    high-frequency noise, turning a real dead-code detector into a rubber stamp.
+
+    A record is emitted even for the no-track case, on purpose: "nothing to
+    refresh" has to be visible as an observation.  Silence is indistinguishable
+    from "the heartbeat never ran at all".
+    """
+    try:
+        import json as _json
+
+        record = {
+            "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": _HEARTBEAT_SOURCE,
+            "arm": "heartbeat",
+            "outcome": outcome,
+            "track_id": track_id,
+            "reason": reason,
+            "claim_written": False,       # heartbeat never creates a claim
+            "collision_surfaced": False,  # nor judges collisions
+            "surface_kind": None,
+            "latency_ms": latency_ms,
+        }
+        path = _telemetry_path(repo, _HEARTBEAT_SOURCE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:  # pragma: no cover — telemetry is best-effort
+        logger.debug("phase1_gate: heartbeat telemetry emit skipped (%s)", exc)
+
+
+def _heartbeat_only(
+    raw_track_id: Optional[str],
+    repo: Path,
+    *,
+    remote: str = "origin",
+    no_push: bool = False,
+    push_skipped_reason: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> "tuple[int, dict]":
+    """``--heartbeat-only`` mode: refresh this container's active claims.
+
+    Deliberately NOT a gate run — no reconcile, no 7a-7d branches, no fetch of
+    its own, no new claim.  It only extends the life of what is already there,
+    so that a live track is not swept out from under a session still working on
+    it.
+
+    ``coordination.enabled`` is NOT consulted here: the CLI never reads config,
+    the orchestration layer decides whether to call at all (same contract as the
+    acquire path).  ``skipped_disabled`` exists in the outcome vocabulary for
+    that caller to report, not for this function to produce.
+
+    Returns ``(exit_code, output_dict)``; the code is always 0 — a heartbeat
+    that refreshed nothing is an observation, never a gate failure.
+    """
+    import time as _time
+
+    ts = now if now is not None else datetime.now(timezone.utc)
+    t0 = _time.monotonic()
+    track_id: Optional[str] = None
+    error: Optional[str] = None
+
+    if not raw_track_id:
+        outcome, reason = "skipped_no_track", "no carry-id supplied"
+    else:
+        track_id = derive_track_id(raw_track_id)
+        result = heartbeat_by_track(raw_track_id, repo_path=repo, now=ts)
+        if result.success:
+            outcome, reason = "refreshed", None
+        else:
+            outcome, reason, error = "error", result.error, result.error
+
+    # Push reuses the acquire/release failure matrix (resilient_push: non-FF
+    # fetch-replay retry — precisely the "someone else just pushed a claim"
+    # case — no retry on auth), under the SAME no_push gate.  Only when this run
+    # actually wrote the ref: a heartbeat that refreshed nothing has nothing to
+    # publish, and pushing anyway would burn a network round-trip per entry.
+    # fail-soft throughout — an unpushed refresh still stands locally and
+    # converges on the next fetch; it must never fail the heartbeat.
+    wrote_anything = outcome == "refreshed"
+    push_success: Optional[bool] = None
+    push_skipped = False
+    if wrote_anything and no_push:
+        push_success, push_skipped = False, True
+        logger.info(
+            "phase1_gate.heartbeat: push SKIPPED (no_push) — local ref only (remote=%s)",
+            remote,
+        )
+    elif wrote_anything:
+        push = resilient_push(repo, remote=remote)
+        push_success = push.success
+        if not push.success:
+            logger.warning(
+                "phase1_gate.heartbeat: push failed (kind=%s) — local refresh stands, "
+                "remote converges on next fetch",
+                push.error_kind,
+            )
+
+    latency_ms = int((_time.monotonic() - t0) * 1000)
+    _emit_heartbeat_telemetry(repo, outcome, track_id, reason, ts, latency_ms)
+    return 0, {
+        "mode": "heartbeat-only",
+        "outcome": outcome,
+        "track_id": track_id,
+        "raw_input_id": raw_track_id,
+        "reason": reason,
+        "error": error,
+        "push_success": push_success,
+        "push_skipped": push_skipped,
+        "push_skipped_reason": push_skipped_reason if push_skipped else None,
+    }
+
+
 def _gated(
     raw_track_id: str,
     phase: str,
@@ -1286,7 +1418,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--raw-track-id",
-        required=True,
+        required=False,  # 模式校验在 _main(): 非 --heartbeat-only 缺参仍 parser.error
         help="用户选定的 carry-id 原始串 (未归一; run_gate 内部 derive_track_id 归一)",
     )
     parser.add_argument(
@@ -1304,6 +1436,18 @@ def _main(argv: Optional[list[str]] = None) -> int:
         help=(
             "可选语义重叠信号 (Part B1, 如 '10CG/Aria#160'): 写入 claim 并检测 "
             "同 linked_issue 不同 track-id 的 active claim (advisory 告警, 不阻断)"
+        ),
+    )
+    parser.add_argument(
+        "--heartbeat-only",
+        action="store_true",
+        help=(
+            "只刷新本容器已有的 active claim, 不认领、不判碰撞、不 fetch。"
+            "给编排层 (state-scanner 入口) 的轻量模式: A.1 认领之后 claim 需要有人"
+            "定期刷新, 否则 SWEEP_TTL 一到就被扫成 abandoned。遥测走独立的 heartbeat "
+            "分区, 不进 production —— 心跳是高频动作, 混进去会把 coordination_probe "
+            "的「闸门最近真被调用过」判据冲成噪声。此模式下 --raw-track-id 可省略 "
+            "(省略 ⇒ 记一条 skipped_no_track, 不静默)"
         ),
     )
     parser.add_argument(
@@ -1343,6 +1487,20 @@ def _main(argv: Optional[list[str]] = None) -> int:
     # This is the ONE production call site — it invokes the PRIVATE _gated with
     # _source="production" (the public run_gate has no source param, so no other
     # caller can reach the production partition — audit telemetry-antispoof fix).
+    if args.heartbeat_only:
+        rc, hb_out = _heartbeat_only(
+            args.raw_track_id, repo,
+            remote=args.remote, no_push=no_push,
+            push_skipped_reason=push_skipped_reason,
+        )
+        print(json.dumps(hb_out, ensure_ascii=False, indent=2))
+        return rc
+
+    # 模式校验 (⑦, 落法 (a): 不用 subparsers, 不拆脚本)。把 required 从 flag 上摘掉
+    # 会连 acquire 路径也一起放开, 而那条路径必须继续 fail-fast —— 所以在这里补回。
+    if not args.raw_track_id:
+        parser.error("--raw-track-id 是必需的 (只有 --heartbeat-only 模式可省略)")
+
     result = _gated(
         args.raw_track_id,
         args.phase,

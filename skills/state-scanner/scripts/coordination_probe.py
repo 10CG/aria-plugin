@@ -26,6 +26,14 @@ Partition guarantee (accurate scope — NOT over-claimed):
   Those are out of the threat model (accidental dead-code, not adversarial
   forgery) and are called out here so maintainers don't over-trust the guarantee.
 
+  ``--heartbeat-only`` (spec a1-entry-claim-duplicate-work-guard) does NOT widen
+  this count: its telemetry carries ``source=="heartbeat"`` and is routed to the
+  non-production partition.  That is deliberate — a heartbeat fires on every
+  orchestration entry, so counting it here would keep this probe permanently
+  green regardless of whether the gate itself was ever invoked, which is exactly
+  the dead-code condition the probe exists to detect.  This probe's criterion
+  therefore stays "a real ``run_gate`` invocation", unchanged.
+
 --------------------------------------------------------------------------
 #95 follow-up A (runtime-probe-archive-gate-integration, TASK-003): thin shell
 --------------------------------------------------------------------------
