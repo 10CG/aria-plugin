@@ -29,6 +29,7 @@ Deps: TASK-010 (claim_schema.py)
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -469,3 +470,110 @@ def release_claim_by_track(
         resolved.container_id,
     )
     return AcquireResult(success=True, record=first_released, error=None)
+
+
+def heartbeat_by_track(
+    raw_track_id: str,
+    identity: Optional[Identity] = None,
+    repo_path: Optional[Path] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> AcquireResult:
+    """Refresh THIS container's active claims for a track, located by track_id.
+
+    Coexisting variant of :func:`heartbeat`, which locates by
+    ``(container_id, session_id)`` and therefore cannot refresh a claim written
+    by an earlier session.  A.1 entry claiming makes that the normal case: one
+    container carries one track across many sessions, and a claim nobody can
+    refresh is swept to ``abandoned`` once ``SWEEP_TTL`` elapses — a live track
+    silently disappearing.
+
+    Matching mirrors :func:`release_claim_by_track` exactly (same three-way
+    conjunction on container / normalized track_id / ``active``), including its
+    all-matching semantics, quoted verbatim from that function's contract:
+
+        If several active claims match (same container re-claimed a track
+        across sessions — the NORMAL case, since every session mints a fresh
+        session_id and B.0 REQUIRE-claim runs per session), **ALL matching
+        active claims are released**
+
+    Under the single track-id form ``<spec-slug>-<container_uuid>`` (spec
+    a1-entry-claim-duplicate-work-guard §5.1) refreshing all matches is the
+    expected behaviour for the same reason: leaving the later session-claims
+    unrefreshed would let the sweep abandon them out from under a live track.
+
+    ``heartbeat_at`` is the only field written; every other field is carried
+    over by ``dataclasses.replace`` rather than a field-by-field rebuild, so a
+    future ``ClaimRecord`` field cannot be silently dropped here (§5.3).
+
+    Parameters
+    ----------
+    raw_track_id:
+        Raw carry-id.  Normalized via ``derive_track_id`` — same path as
+        :func:`acquire_claim` and :func:`release_claim_by_track`.
+    identity:
+        Caller-supplied Identity.  Unlike :func:`heartbeat`, the ``session_id``
+        is irrelevant here: any session of the owning container may refresh.
+    repo_path:
+        Absolute path to the repository root.  Defaults to ``Path.cwd()``.
+    now:
+        Reference UTC time for the new ``heartbeat_at``.
+
+    Returns
+    -------
+    AcquireResult
+        ``record`` is the earliest-claimed refreshed record.
+        ``error='claim_not_found'`` when no active claim matches.
+    """
+    resolved = _resolve_identity(identity, repo_path)
+    if resolved is None:
+        return AcquireResult(success=False, record=None, error="identity_error")
+
+    norm = derive_track_id(raw_track_id)
+
+    read_result = read_claims(repo_path)
+    if not read_result.ref_exists:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    matches = [
+        rec
+        for rec in read_result.claims
+        if rec.container == resolved.container_id
+        and rec.track_id == norm
+        and rec.status == "active"
+    ]
+    if not matches:
+        logger.warning(
+            "claim_lifecycle.heartbeat_by_track: no active claim for "
+            "container=%s track=%s",
+            resolved.container_id,
+            norm,
+        )
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    ts_str = _iso(now if now is not None else _utc_now())
+    first_refreshed: Optional[ClaimRecord] = None
+    for existing in sorted(matches, key=lambda r: r.claimed_at):
+        refreshed = dataclasses.replace(existing, heartbeat_at=ts_str)
+        result: WriteClaimResult = write_claim(refreshed, repo_path)
+        if not result.success:
+            logger.warning(
+                "claim_lifecycle.heartbeat_by_track: write failed mid-loop "
+                "(error=%s, session=%s) — earlier refreshes stand; rerun completes",
+                result.error,
+                existing.session,
+            )
+            return AcquireResult(
+                success=False, record=None, error=result.error or "write_failed"
+            )
+        if first_refreshed is None:
+            first_refreshed = refreshed
+
+    logger.info(
+        "claim_lifecycle.heartbeat_by_track: refreshed %d claim(s) track=%s "
+        "container=%s",
+        len(matches),
+        norm,
+        resolved.container_id,
+    )
+    return AcquireResult(success=True, record=first_refreshed, error=None)
