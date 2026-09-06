@@ -131,8 +131,9 @@ def _write_container_file(path: Path, uuid: str, label: str, created_at: str) ->
     label_value = label if label else ""
     content = (
         f"# Aria container identity (auto-generated {created_at})\n"
-        f"# Edit the `label` line to add a human-readable tag"
-        f' (e.g. "devbox-A" / "laptop")\n'
+        f"# uuid 是这台机器的协调身份 (handoff frontmatter <owner>/<container-id> 的 container 段)。\n"
+        f"# label: 可选的人读标签; 注意 label 当前仍参与协调身份 (设了会换身份, claims 目录随之改名),\n"
+        f"# 后续版本改为仅展示 (owner-container-identity-key-and-collision-parser S2); 建议留空。\n"
         f"uuid: {uuid}\n"
         f"label: {label_value}\n"
         f"created_at: {created_at}\n"
@@ -242,6 +243,25 @@ def get_container_id(home_dir: Optional[Path] = None) -> str:
         return _hostname()
 
     return uuid
+
+
+def get_container_label(home_dir: Optional[Path] = None) -> str:
+    """Return the optional human-readable ``label`` from ``~/.aria/container-id``.
+
+    Read-only accessor (owner-container-identity-key-and-collision-parser S1):
+    never creates or rewrites the file.  Returns ``""`` when the file is
+    missing, unparseable, or the label is empty.  Under S1
+    :func:`get_container_id` still prefers the label; S2 (reserved) flips it
+    to uuid-first and this accessor becomes the only way to read the label.
+    """
+    path = _container_id_path(home_dir)
+    if not path.exists():
+        return ""
+    try:
+        parsed = _parse_container_file(path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    return (parsed.get("label") or "").strip()
 
 
 def get_session_id(now: Optional[datetime] = None) -> str:

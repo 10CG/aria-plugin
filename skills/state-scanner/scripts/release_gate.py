@@ -39,8 +39,9 @@ logger = logging.getLogger(__name__)
 
 # --- import bootstrap: 同 phase1_gate (scripts/ 直跑 vs 包内 import 双上下文) ---
 try:
-    from ..lib.claim_lifecycle import release_claim_by_track, AcquireResult
-    from ..lib.coordination_ref import fetch_coordination_ref
+    from ..lib.claim_lifecycle import release_claim_by_track, AcquireResult, label_migration_inventory
+    from ..lib.coordination_ref import fetch_coordination_ref, read_claims
+    from ..lib.identity import get_container_label
     from ..lib.failure_handlers import resilient_push, no_push_requested_by_env
     from ..lib.gc import archive_done_claims, sweep_stale_active
     from ..lib.track_id import derive_track_id
@@ -52,8 +53,9 @@ except ImportError:
     while _SKILL_ROOT in _sys.path:
         _sys.path.remove(_SKILL_ROOT)
     _sys.path.insert(0, _SKILL_ROOT)
-    from lib.claim_lifecycle import release_claim_by_track, AcquireResult  # type: ignore[import]
-    from lib.coordination_ref import fetch_coordination_ref  # type: ignore[import]
+    from lib.claim_lifecycle import release_claim_by_track, AcquireResult, label_migration_inventory  # type: ignore[import]
+    from lib.coordination_ref import fetch_coordination_ref, read_claims  # type: ignore[import]
+    from lib.identity import get_container_label  # type: ignore[import]
     from lib.failure_handlers import resilient_push, no_push_requested_by_env  # type: ignore[import]
     from lib.gc import archive_done_claims, sweep_stale_active  # type: ignore[import]
     from lib.track_id import derive_track_id  # type: ignore[import]
@@ -114,6 +116,7 @@ def run_release(
         "push_skipped": False,     # True 仅当本次真该 push 却被 no_push 跳过
         "push_skipped_reason": None,  # CLI 填 cli_flag|env_var (仅 push_skipped 时)
         "hard_error": None,        # 首个硬错 token; None = 全 benign
+        "label_migration": None,   # T3b S1 inventory (owner-container-identity-key); null = 无 label
     }
 
     # Step 1: fetch (fail-soft — 拿最新 claim 状态; 失败继续用本地视图)
@@ -124,6 +127,16 @@ def run_release(
             "release_gate: fetch failed (kind=%s) — proceeding with local view",
             fetch.error_kind,
         )
+
+    # Step 1b: T3b label-migration inventory (S1: 纯告警, 无抑制; additive key)
+    try:
+        inv = label_migration_inventory(get_container_label(), read_claims(repo).claims)
+    except Exception as exc:  # fail-soft
+        logger.warning("release_gate: label migration inventory skipped (%s)", exc)
+        inv = None
+    result["label_migration"] = inv
+    if inv is not None:
+        logger.warning("release_gate: %s", inv["message"])
 
     wrote_anything = False
 

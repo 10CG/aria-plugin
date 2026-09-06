@@ -107,6 +107,8 @@ try:
         split_owner_container as _split_owner_container,
         track_to_claim_record as _track_to_claim_record,
         classify_claims as _classify_collision,
+        identity_drift_advisories as _identity_drift_advisories,
+        filter_layer_h_fresh as _filter_layer_h_fresh,
     )
     _RECONCILE_AVAILABLE = True
 except ImportError:
@@ -132,6 +134,8 @@ except ImportError:
             split_owner_container as _split_owner_container,
             track_to_claim_record as _track_to_claim_record,
             classify_claims as _classify_collision,
+            identity_drift_advisories as _identity_drift_advisories,
+            filter_layer_h_fresh as _filter_layer_h_fresh,
         )
         _RECONCILE_AVAILABLE = True
     except ImportError:
@@ -149,6 +153,8 @@ except ImportError:
         _split_owner_container = None  # type: ignore[assignment]
         _track_to_claim_record = None  # type: ignore[assignment]
         _classify_collision = None  # type: ignore[assignment]
+        _identity_drift_advisories = None  # type: ignore[assignment]
+        _filter_layer_h_fresh = None  # type: ignore[assignment]
         _RECONCILE_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
@@ -410,7 +416,10 @@ def _render_collision_lines(
         for t in (tracks_by_track_id.get(tid) or []):
             oc = t.get("owner_container") or "unknown"
             o, c, s = _split_owner_container(oc)
-            oc_by_key[(o, c, s)] = oc
+            # Normalise exactly like track_to_claim_record ("" -> "unknown") or the
+            # two-part strings never match their ClaimRecord and the board echoes
+            # the reconstructed "unknown/..." form (SC-4 board echo).
+            oc_by_key[(o or "unknown", c or "unknown", s or "unknown")] = oc
 
         def _label(claim: "ClaimRecord") -> str:
             key = (claim.owner, claim.container, claim.session)
@@ -745,6 +754,10 @@ def render_track_board(
         if _dedupe_tracks_for_collision is not None
         else tracks
     )
+    # owner-container-identity-key D-3(a): same Layer H window as the collector
+    # (one implementation in lib/collision — SC-11), applied after dedupe.
+    if _filter_layer_h_fresh is not None:
+        collision_input_tracks = _filter_layer_h_fresh(collision_input_tracks, now=now)
 
     # Collidable = all tracks with a real owner_container (not "unknown"), so
     # that done/abandoned tracks that are still on the same track_id (potential
@@ -786,9 +799,14 @@ def render_track_board(
 
             # Build a parallel index: track_id → list of original track dicts
             # (used by _render_collision_lines to reconstruct human-readable labels).
+            # Keyed by the ClaimRecord track_id (D-0(a) family key already
+            # stripped) so the lookup matches reconcile's verdict keys.
             tracks_by_tid: dict[str, list[dict]] = {}
             for t in all_collidable:
-                tid = t.get("track_id") or ""
+                try:
+                    tid = _track_to_claim_record(t).track_id
+                except ValueError:
+                    continue
                 if tid:
                     tracks_by_tid.setdefault(tid, []).append(t)
 
@@ -804,5 +822,21 @@ def render_track_board(
 
     for cl in collision_lines:
         lines.append(cl)
+
+    # ⚪ same-identity-multi-owner advisories (owner-container-identity-key D3,
+    # SC-10): independent data path — computed from the RAW tracks (pre-dedupe;
+    # dedupe folds exactly the rows this must see), rendered after the
+    # collision lines, no section at all when empty.
+    if _identity_drift_advisories is not None:
+        try:
+            for adv in _identity_drift_advisories(tracks):
+                owners = ", ".join(adv.get("owners") or [])
+                lines.append(
+                    f"⚪ IDENTITY-DRIFT {adv.get('identity_key')}: owners=[{owners}] "
+                    f"first_seen={adv.get('first_seen') or '?'} last_seen={adv.get('last_seen') or '?'} "
+                    f"(同一容器多个 git 身份, 信息级; 不计入 collision)"
+                )
+        except Exception:  # noqa: BLE001 — advisory must never break the board
+            pass
 
     return "\n".join(lines)

@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add the state-scanner root (parent of lib/) so that ``lib`` is importable as a
@@ -433,7 +434,9 @@ def test_real_collector_emits_cross_owner_collision():
             "feature-a": ("shared-track", "alice/box-A/s1"),
             "feature-b": ("shared-track", "bob/box-B/s2"),
         })
-        result = collect_handoff_multibranch(Path(tmp))
+        # Fixture rows are dated 2026-05-30; pin ``now`` inside the Layer H
+        # window (D-3(a)) so the test is calendar-independent.
+        result = collect_handoff_multibranch(Path(tmp), now=datetime(2026, 5, 31, tzinfo=timezone.utc))
         data = result.data
         # Phantom-field guard: the key MUST exist with the documented shape.
         assert "collision" in data, "collision field missing from real collector output"
@@ -454,7 +457,7 @@ def test_real_collector_no_collision_is_none():
             "feature-a": ("track-one", "alice/box-A/s1"),
             "feature-b": ("track-two", "bob/box-B/s2"),
         })
-        result = collect_handoff_multibranch(Path(tmp))
+        result = collect_handoff_multibranch(Path(tmp), now=datetime(2026, 5, 31, tzinfo=timezone.utc))
         coll = result.data["collision"]
         assert coll == {"kind": "none", "groups": [], "identity_advisories": []}, f"got {coll!r}"
 

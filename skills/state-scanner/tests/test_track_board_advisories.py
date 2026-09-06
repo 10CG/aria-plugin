@@ -78,12 +78,20 @@ class TestAdvisoryRendering(unittest.TestCase):
             self.assertIn("last_seen=", l)
 
     def test_counterfactual_deduped_rows_yield_zero_advisories(self):
-        """If the renderer computed advisories on post-dedupe rows, the fixture
-        would give 0 (each (track, identity_key) collapses to one owner)."""
-        rows = json.loads(_FIXTURE.read_text(encoding="utf-8"))["tracks"]
+        """Discriminating fixture for the data path: the SAME track under one
+        uuid container and two owner strings. Pre-dedupe -> 1 advisory; if the
+        renderer computed on post-dedupe rows it would see one row -> 0."""
+        rows = [
+            _row("drift", "simonfish/aaaa1111", updated="2026-09-01T00:00:00Z", filename="a.md"),
+            _row("drift", "aria-runner-bot/aaaa1111", updated="2026-09-02T00:00:00Z", filename="b.md"),
+        ]
         deduped, _ = dedupe_latest_per_track_container(rows)
-        self.assertEqual(len(collision.identity_drift_advisories(rows)), 2)
+        self.assertEqual(len(collision.identity_drift_advisories(rows)), 1)
         self.assertEqual(collision.identity_drift_advisories(deduped), [])
+        out = render_track_board(_snapshot(rows, {"kind": "none", "groups": [], "identity_advisories": []}), now=_NOW)
+        self.assertEqual(sum(1 for l in out.splitlines() if l.startswith("⚪")), 1, out)
+        corpus = json.loads(_FIXTURE.read_text(encoding="utf-8"))["tracks"]
+        self.assertEqual(len(collision.identity_drift_advisories(corpus)), 2)
 
     def test_no_advisory_no_section(self):
         tracks = [_row("t", "alice/aaaa1111"), _row("u", "alice/aaaa1111")]
