@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
-## [Unreleased] — owner-container-identity-key-and-collision-parser (档位待 owner 二选一: 判据 PATCH / §2.3.5 行为变更可升 MINOR)
+## [1.70.0] - 2026-09-06 — owner-container-identity-key-and-collision-parser (owner 裁定 D5: §2.3.5 对采用方是行为变更 ⇒ MINOR)
 
 ### Fixed
 - **state-scanner `lib/collision.py`** — Layer H `owner-container` 解析改为**两段式** `<owner>/<container-id>` (Aria #193 / aria-plugin#135 缺口 3): 旧三段式读法把 owner 段当 container、container 当 session, 同一机器的 git 身份漂移被判成 🟡 `self_multi_container`, 而真正的两人两机 `cross_owner` 从未可达。
