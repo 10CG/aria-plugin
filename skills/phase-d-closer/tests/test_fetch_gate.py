@@ -59,6 +59,10 @@ def test_advisory_when_behind_and_collision_no_touch():
                        upm_source_file="docs/progress/upm.md", _runner=run)
     assert r["verdict"] == "advisory"
     assert r["upm_touched"] is False
+    # owner-container-identity-key SC-9 (TASK-011, baseline-green lock-in): the
+    # advisory copy names the kind verbatim — cross_owner is first reachable on
+    # real data after the two-part parser; fetch_gate consumes only the string.
+    assert "(cross_owner)" in r["message"], r["message"]
 
 
 def test_silent_when_pure_behind_no_collision_no_touch():

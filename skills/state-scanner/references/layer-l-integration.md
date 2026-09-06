@@ -23,9 +23,10 @@ Phase 1.17 (handoff_multibranch) 产出 tracks_multibranch
           │
           ▼
 阶段 2 推荐: AI 检查 tracks_multibranch.collision.kind
-    ├── cross_owner → 强提示 + 触发 phase1_gate (pre-Phase B)
-    ├── self_multi_container → soft hint (不阻塞)
+    ├── cross_owner → 强提示 + 触发 phase1_gate (pre-Phase B)   [两个提交身份两台机器, §2.3.5 identity_key]
+    ├── self_multi_container → soft hint (不阻塞)               [同一可归属身份多机]
     └── none → 正常推荐 Phase B
+    (另: collision.identity_advisories[] 非空 → ⚪ 同机多 git 身份说明, 信息级, 不改上面三路)
           │
           ▼ (用户确认进入 Phase B)
 phase1_gate 9-step 序列:

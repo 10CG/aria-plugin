@@ -541,7 +541,7 @@ description: >
 
 conditions:
   all:
-    - tracks_multibranch.collision.kind: "!= none"   # TASK-000 持久化字段 (cross_owner | self_multi_container)
+    - tracks_multibranch.collision.kind: "!= none"   # TASK-000 持久化字段 (cross_owner = ≥2 identity_key 且 ≥2 非空非 unknown owner | self_multi_container = ≥2 identity_key 且可归属 owner ≤1; session-handoff.md §2.3.5)
     - coordination_enabled: false                    # config 读: state_scanner.coordination.enabled == false (默认)
 
   detection:
@@ -571,11 +571,12 @@ recommendation:
   context:
     collision_kind: "from tracks_multibranch.collision.kind"
     collision_groups: "from tracks_multibranch.collision.groups (参与 collision 的 owner_container 成员)"
+    identity_advisories: "from tracks_multibranch.collision.identity_advisories (恒存在, 空为 []; ⚪ 同一 uuid 容器多个 git 身份 {identity_key, owners[], first_seen, last_seen}, 信息级, 不计入 collision)"
   suggestion:
     - "主解药: 遵循 standards/conventions/concurrent-session-write-safety.md (共享区 append-friendly / per-session 隔离 / followup sub-row)"
     - "可选一键启用 coordination (.aria/config.json):"
     - '  { "state_scanner": { "coordination": { "enabled": true } } }'
-    - "判定不依赖\"谁\" (collision helper 已按 owner+container 归类, 同 owner/container 全相同→none 不触发)"
+    - "判定按 §2.3.5 identity_key 归类 (uuid 容器 = 一个身份, 主机名保留 owner 段); 同 identity_key 多行先折叠→none 不触发; 两个提交身份两台机器才 cross_owner"
   non_blocking: true   # advisory 降级, 不阻断任何现有推荐, 不 auto-enable (advisory-over-hardlock)
 ```
 
