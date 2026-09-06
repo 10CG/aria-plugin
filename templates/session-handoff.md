@@ -40,7 +40,7 @@ Schema canonical source: `standards/conventions/session-handoff.md` §2.3.1
                                        (持久 short-UUID + 可选人类标签;
                                         文件缺失时回退 hostname)
                       示例: "creationhikari/devbox-A"
-                            "simonfish/bfe8285d"  (label 空 → uuid; 设 label 使更可读)
+                            "simonfish/bfe8285d"  (uuid 形; label 当前仍参与协调身份, 建议留空)
 
   {phase}           — 写出时该 track 所处的十步循环阶段。
                       enum: A / A.1 / A.2 / A.3

@@ -469,3 +469,35 @@ def release_claim_by_track(
         resolved.container_id,
     )
     return AcquireResult(success=True, record=first_released, error=None)
+
+
+# ---------------------------------------------------------------------------
+# T3b label-migration inventory (owner-container-identity-key S1 semantics)
+# ---------------------------------------------------------------------------
+
+
+def label_migration_inventory(label: Optional[str], claims: "list[ClaimRecord]") -> Optional[dict]:
+    """Inventory of ACTIVE claims filed under a ``label`` container identity.
+
+    S1: pure inventory, no suppression — when ``~/.aria/container-id`` carries a
+    non-empty ``label``, both phase1_gate and release_gate surface
+    ``{"label", "active_claims", "message"}`` (additive JSON key
+    ``label_migration``) and log a warning, so an operator knows which claims
+    live under the label before S2 flips ``get_container_id()`` to the uuid.
+    Returns ``None`` when ``label`` is empty (key emitted as ``null``).
+    """
+    if not label:
+        return None
+    active = sum(
+        1 for c in (claims or [])
+        if getattr(c, "container", None) == label and c.status not in ("done", "abandoned")
+    )
+    return {
+        "label": label,
+        "active_claims": active,
+        "message": (
+            f"container-id label '{label}' 仍参与协调身份: claims/{label}/ 下 active={active}; "
+            "S2 (uuid 优先) 前请留空 label 或迁移这些 claim (owner-container-identity-key T3b)"
+        ),
+    }
+
