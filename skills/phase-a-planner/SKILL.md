@@ -111,6 +111,10 @@ if_missing: 跑上面的命令; 已存在则跳过, 不重复 acquire
 - `放弃方向 ⇒ release_gate.py --raw-track-id <同一串> --status abandoned`
 
 **overlap 非空时按对方 claim 的 `status` 分档请裁**(经 `AskUserQuestion`, 不自行放行):
+**告警须含五要素** —— 对方 `track_id` / `owner-container` / `claimed_at` / **双方 `linked_issue` 原始串** / `status`。
+`linked_issue` 要**逐字回显原串**(如 `10CG/Aria#174`, 不要缩成 `#174`), `claimed_at` 也不要截断成日期 ——
+org 段不参与匹配, **回显原串是人工判别「误配」的唯一手段**; 缩写与截断正好把这个手段消掉。
+
 
 | 对方 status | 处置 |
 |---|---|

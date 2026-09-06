@@ -128,6 +128,18 @@ if_missing: 跑上面的命令; 已存在则跳过, 不重复 acquire
 - `改名 ⇒ release 旧 + acquire 新` —— Spec 目录改名就是换了 track-id, 必须两步走。
 - `放弃方向 ⇒ release_gate.py --raw-track-id <同一串> --status abandoned`
 
+**overlap 非空时按对方 claim 的 `status` 分档请裁**(经 `AskUserQuestion`, 不自行放行):
+
+**告警须含五要素** —— 对方 `track_id` / `owner-container` / `claimed_at` / **双方 `linked_issue` 原始串** / `status`。
+`linked_issue` 要**逐字回显原串**(如 `10CG/Aria#174`, 不要缩成 `#174`), `claimed_at` 也不要截断成日期 ——
+org 段不参与匹配, **回显原串是人工判别「误配」的唯一手段**; 缩写与截断正好把这个手段消掉。
+
+| 对方 status | 处置 |
+|---|---|
+| `active` | 有人正在做 —— 请裁: 合并方向 / 换方向 / 确认确实是两件事 |
+| `unknown` | 读不懂其 schema, **视同 `active`** 处理(存在性已确认) |
+| `done` / `abandoned` | 同一件事可能**已经做完或已被放弃**。按 `active` 同档请裁, 并注明该终态也可能是 GC 产物而非真的做完。**不要提议去释放对方的 claim** —— 那是对方的东西 |
+
 ## 执行流程
 
 ```yaml
