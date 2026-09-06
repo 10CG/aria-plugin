@@ -185,7 +185,13 @@ class TestPhase1GateNoPushCli(unittest.TestCase):
         self.assertEqual(out["push_skipped_reason"], "cli_flag")
         self.assertIs(out["push_success"], False)
         self.assertTrue(out["proceed"])
-        self.assertIsNone(out["error"])  # a deliberate skip is not an error
+        # 主动跳过不得被报成 push 侧错误。
+        # 注意别写成 assertIsNone(error): 本类的夹具**刻意没有 remote** (见类
+        # docstring), 而 a1-entry TASK-015 起 Step 4 的 fetch 降级也会落进同一个
+        # error 字段 —— 那是「读 ref 这一步」的软信号, 与本条要守的「推这一步」无关。
+        # 用 error is None 表达「跳过不是错误」会把两条正交路径绑死。
+        self.assertNotIn(out["error"], {"push_failed", "auth_failed",
+                                        "max_retries_exhausted", "user_aborted"})
         mine = _local_track_claims(repo, "carry-no-push-a")
         self.assertEqual(len(mine), 1)
         self.assertEqual(mine[0].status, "active")

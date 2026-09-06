@@ -30,6 +30,11 @@
       "doc_only"
     ],
     "audit_log_path": ".aria/audit.log",
+    "coordination": {
+      "enabled": true,
+      "mode": "advisory",
+      "unattended": false
+    },
     "sync_check": {
       "enabled": true,
       "check_submodules": true,

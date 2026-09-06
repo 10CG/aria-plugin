@@ -165,15 +165,31 @@ scan.py → snapshot (含 tracks_multibranch.collision.kind)
 
 ### JSON 消费 + surface 渲染 (阶段 2 推荐区)
 
-CLI 输出 `{outcome, proceed, track_id, error, own_claim, competing_winner, surface, push_success}`。渲染规则:
+CLI 输出 `{outcome, proceed, track_id, error, own_claim, competing_winner, surface, push_success, push_skipped, push_skipped_reason}`; 传 `--linked-issue` / `--include-terminal` 时另有 additive 键 `linked_issue_overlap`, `linked_issue_overlap_error`, `unknown_schema_claims`。渲染规则:
 - `proceed == true` (outcome ∈ passed / advisory_proceed / user_takeover / user_override_proceed) → 放行进 Phase B。
 - `surface != null` → 在推荐区渲染 🔴 告警行 (**按 `surface.kind` 分化, 不 blanket 静默** R2-Major-B):
   - `kind == "occupied"` → 🔴 `surface.message` (含 `<owner/container> <age> 已认领 <carry-id>`), **回显 `surface.carry_id` 供逐字 copy** (R1-m5, 减少转录漂移)。
   - `kind == "clock_skew"` → 🔴 `surface.message` (含 `max_clock_skew_seconds`) —— 最高风险路径, 提示查容器时钟同步; advisory **不吞** 此告警。
   - `kind == "push_failed"` → 🔴 claim 已写本地未同步远端, reconcile 下次 fetch 仲裁。
 - `enabled == false` (显式 opt-out; Part A1 起默认为 true) → **零调用** `run_gate`, collision 由 rule 1.54 advisory surface。
+- `linked_issue_overlap` 是 **list | null | 缺席** 三态, 不可混为一谈: 缺席 = 本轮未检测 (未传 `--linked-issue`); `[]` = 已检测、无碰撞; **`null` 且 `linked_issue_overlap_error` 非空 = 本轮未取到任何证据 ⇒ 必须渲染「未能核实, 建议重试」, 不得渲染成「无碰撞」** (零证据不是正证据)。消费方**不得**用 `.get(key, [])` / `.get(key, 0)` 读这几个键 —— 那正好把三态压成一态。
+- `unknown_schema_claims > 0` ⇒ 「已检测到 N 条无法解析的 claim, 存在性已确认、内容未知, **按存在处理**」; 它是 `int | null`, `null` ≠ `0`。
 
 **claim 生命周期闭环 (coordination-claim-lifecycle-and-overlap Part C)**: acquire (phase1_gate, Phase B-entry) 的对偶是 **release** (`scripts/release_gate.py`, phase-d-closer D.2b 收尾时调, 按 track_id+container 定位 — session 无关) + `--sweep-stale` (heartbeat 超 STALE_TTL 的 active → abandoned) + `--gc` (done 超 retention → archive/)。phase1_gate 另支持可选 `--linked-issue` (Part B1): 写入 claim 并在输出 JSON 追加 additive 键 `linked_issue_overlap[]` — 同 issue 不同 track-id 的「同一件事两个名字」advisory 告警 (按归一后的 `<repo>#<n>` 比较: 仓名取 `/` 后最后一段、大小写与各段首尾空白不影响、`.`/`_` 视同 `-`, org 前缀不参与; 不可解析值回落原串精确比较), 渲染为 🔴 提示但不阻断。
+
+### Layer L A.1 heartbeat 集成
+
+**触发条件**: 本会话**持 active claim** 且 `coordination.enabled == true` 的**每次 `/state-scanner` 入口**都调用一次, 不依赖 `collision.kind`; `enabled == false` ⇒ **零触发**。
+**为什么要有**: A.1 认领写下的 claim 若无人刷新, `SWEEP_TTL` (24h) 一到就被扫成 `abandoned` —— 一条还在干活的轨道会从所有碰撞面上消失。
+**命令行**:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py" \
+  --heartbeat-only --raw-track-id "<carry-id>" --phase A.1 --repo-path "<repo root>"
+```
+
+**fail-soft**: 心跳失败只记遥测 (独立 `heartbeat` 分区, 不进 production), 绝不阻断扫描或后续阶段; 拿不到 carry-id 时**照样调用**、不传 `--raw-track-id`, 记一条 `skipped_no_track` —— 静默等于「心跳从没跑过」, 二者必须可分辨。
+**三级回落表 / 遥测分区边界 / fail-CLOSED 新鲜度谓词 / degraded 处置**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md) 的「Layer L A.1 heartbeat 集成」设计段。
 
 **完整设计意图 (phase1_gate 9-step 序列 / acquire_claim+heartbeat+release 调用关系 / advisory outcome 映射 / track_board+latest_md_writer 输出)**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md)。
 

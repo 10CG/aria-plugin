@@ -12,7 +12,7 @@
 - 当前项目 `state_scanner.coordination.enabled == true` (**默认 `true`, opt-out** — coordination-claim-lifecycle-and-overlap Part A1 把默认 false→true; 显式设 false 退回 rule 1.54 advisory)
 - **同容器并发检测 (TASK-023)**: 同一 `container-id` 内有 ≥2 个 active claim (Phase B 或以上) 时强提示
 - **cross-owner collision**: `tracks_multibranch` snapshot 包含同一 `track-id`、不同 `owner` 的活跃 track → 触发闸门;**advisory(默认)**: claim 先写(acquire_claim), reconcile 事后仲裁, 不阻塞用户继续;**block(可选模式)**: 保留原姿态, 要求用户 reconcile 后再 claim
-- **Design A 条件触发**: 闸门仅在用户确认要进入 Phase B 时调用, **不在 scan.py 内自动执行**
+- **Design A 条件触发**: 闸门在用户确认要进入 Phase B 时调用, **不在 scan.py 内自动执行**。自 `a1-entry-claim-duplicate-work-guard` 起另有一个**更早**的触发点: **A.1 起草前**的入口认领 (`--phase A.1`) —— Phase B 的认领只能保护「已经做完 Phase A 的人不被打扰」, 保护不了「正要开始的人不做重复功」; 以及 `/state-scanner` 每次入口的 `--heartbeat-only` 刷新 (见下方设计段)。三个触发点同受 `coordination.enabled` 门控。
 
 > **Disjointness 与切口2 (#133 concurrent_churn_detected, rule 1.54)**: phase1_gate 在 `coordination.enabled == true` 时处理 cross-owner collision;切口2 advisory (rule 1.54) 在 `coordination.enabled == false` 时 surface collision 提示。两者在 `enabled` 上**严格互斥**, 同一 scan **绝不双触发** (#133 AC-2)。
 
@@ -43,10 +43,51 @@ phase1_gate 9-step 序列:
 | 操作 | 调用方 | 时机 | 实现位置 |
 |------|--------|------|---------|
 | `acquire_claim` | `phase1_gate` | Phase B 启动前 | `lib/coordination_ref.py` + `lib/claim_lifecycle.py` |
-| `heartbeat` | `phase-b-developer` mid-cycle | 每 10min (caller 负责调度) | `lib/claim_lifecycle.py::update_heartbeat()` |
+| `heartbeat` | AI 编排层, `/state-scanner` 每次入口 | 每次调用 (非定时器), 受 `coordination.enabled` 门控 | `lib/claim_lifecycle.py::heartbeat()` (按 `(container, session)`) / `heartbeat_by_track()` (按 `(container, 归一 track_id)`, 跨 session) |
 | `release` | `phase-d-closer` D.2 归档后 | cycle 完成 / 放弃时 | `lib/claim_lifecycle.py::release_claim()` + `lib/reconcile.py` |
 
 > **P2 已 ship**: `acquire_claim` / `heartbeat` API 已完成 (单测覆盖); `release` + GC `archive_done_claims` 写路径 deferred to P3 (code-reviewer 确认)。
+
+## Layer L A.1 heartbeat 集成
+
+`/state-scanner` 每次入口调一次 `phase1_gate.py --heartbeat-only`。命令行与
+`state-scanner/SKILL.md` 的同名小节**逐字节相同**:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py" \
+  --heartbeat-only --raw-track-id "<carry-id>" --phase A.1 --repo-path "<repo root>"
+```
+
+### carry-id 三级回落 (编排层负责, CLI 不推断)
+
+| 级 | 来源 | 说明 |
+|----|------|------|
+| ① | 本 session 已持有的 claim 的 `track_id` | 最可靠 —— 就是自己刚认领的那一串 |
+| ② | 最新 handoff §6 的结构化 carry-id (`standards/conventions/session-handoff.md §2.3.8` 的 `{id, desc}` 之 `id`) | 跨 session 接力时的唯一书面来源 |
+| ③ | 两级都取不到 | **仍然调用**, 但不传 `--raw-track-id` ⇒ 遥测记一条 `skipped_no_track` |
+
+③ 是刻意的: 静默不调用与「调了但没东西可刷」在事后完全不可分辨, 而这两件事的处置截然不同。
+**CLI 不做推断** —— 它拿到什么刷什么, 三级判断全在编排层, 否则同一份回落逻辑会在两处各写一遍并分叉。
+
+### 遥测分区边界
+
+心跳遥测带 `source == "heartbeat"`, 路由到**非 production** 分区。
+`coordination_probe` 的计数口径**不放宽**: 它判的是「闸门最近真被调用过」, 而心跳是每次入口都触发的高频动作 ——
+把它计进去会让那个探针无论闸门死活都恒绿, 恰好废掉它存在的理由。
+
+### fail-CLOSED 新鲜度谓词
+
+「本轮拿到的协调视图是否新鲜」只有在
+`coordination_fetch.success == true` **且** `coordination_ref_present == true`
+时才成立 (字段见 `references/state-snapshot-schema.md` 的 `coordination_fetch` 段)。
+两者任一不成立即按**未核实**处理, 不得当作「无碰撞」。
+
+### degraded 处置
+
+fetch 降级时**不重跑 fetch** —— 心跳的职责是刷新, 不是把协调视图修好。
+处置是: 照常写本地, push 尝试一次即止 (fail-soft, 失败留给下次 fetch/reconcile 收敛)。
+**代价披露**: 若违反「不自带 fetch」这条, 每次入口要多付约 **13.8s** (spike S2 实测) ——
+那是把一个应当无感的心跳变成每次扫描都卡一下的东西。本地写 + 单次 push 的实测耗时待 B.2 回填。
 
 ## track_board 与 latest_md_writer 输出关系
 

@@ -89,12 +89,19 @@ B.0 - REQUIRE claim (coordination-claim-lifecycle-and-overlap Part A1, MUST):
   if_missing:
     - MUST 先跑 (不可跳过, advisory 强制 — 步骤级 MUST, 非 hook 硬锁):
       python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py" \
-        --raw-track-id "<本 cycle carry-id/Spec id>" --phase B --mode advisory \
+        --raw-track-id "<A.1 认领时派生的那一串>" --phase B --mode advisory \
         [--linked-issue "<repo>#<n>"] --repo-path "<repo root>"
     - goal 直驱 / 绕过 state-scanner 进入的 session 也适用 (B-entry 手动补 claim)
+    - carry-id 取值 = **A.1 认领时派生的那一串** (逐字, 不重新拼); 未走 A.1 的
+      session 沿用 Spec id —— 两端不同串会各认领一条, 收尾时 release 只命中一条
   skip_if:
     # 可判定谓词 (review I5 — 注意: "无 coordination 基础设施"不是有效 skip 条件,
-    # write_claim auto_bootstrap 会自动建 ref 并 push 到项目 origin):
+    # write_claim auto_bootstrap 会自动建 ref, 缺 ref 不构成 skip 理由):
+    #   ⚠️ 勘正: bootstrap 走的是 push=False (coordination_ref.py:800), **它不推**。
+    #   真正的推送点是 phase1_gate.py 的 Step 9 resilient_push (:880) 与 7a
+    #   self-resume push (:597) —— 把「建 ref」当成「已同步远端」会高估协调面。
+    #   另: --no-push / ARIA_COORDINATION_NO_PUSH 只抑制推送, **不是 skip 条件** ——
+    #   claim 照写本地, 跳过的只是同步那一步。
     - coordination.enabled 显式 false (opt-out; 默认 true — config-loader SOT)
     - 非 git repo / 无 origin remote (gate 自身 fail-soft ABORT, 不阻断)
   third_party_note: 默认 true 意味着装了 aria-plugin 的项目走 Phase B 会向其

@@ -366,6 +366,8 @@ def linked_issue_overlaps(
     claims: "list[ClaimRecord]",
     own_track_id: str,
     own_linked_issue: Optional[str],
+    *,
+    include_terminal: bool = False,
 ) -> "list[dict]":
     """Detect active claims sharing our linked_issue under a DIFFERENT track_id.
 
@@ -391,6 +393,17 @@ def linked_issue_overlaps(
                            path, already handled by reconcile).
         own_linked_issue:  This session's linked_issue.  None/empty → no
                            overlap possible → always [].
+        include_terminal:  Keyword-only.  When False (default) the result is
+                           byte-for-byte what it has always been: claims in a
+                           terminal status are skipped.  When True they are
+                           kept, so an A.1 entry check can see that a sibling
+                           track for the same issue already ran to ``done`` /
+                           was ``abandoned`` — "someone already did this" is
+                           exactly the signal A.1 needs, and it is invisible
+                           while only ``active`` claims are considered.
+                           ``unknown`` is unaffected either way: those records
+                           carry ``linked_issue=None`` and are dropped by the
+                           next guard, not by this one.
 
     Returns:
         One dict per overlapping claim, sorted by (track_id, owner, container):
@@ -404,7 +417,7 @@ def linked_issue_overlaps(
     own_key = normalize_linked_issue(own_linked_issue)
     out: "list[dict]" = []
     for c in claims or []:
-        if c.status in _TERMINAL:
+        if not include_terminal and c.status in _TERMINAL:
             continue
         if not getattr(c, "linked_issue", None):
             continue

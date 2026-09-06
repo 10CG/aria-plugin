@@ -7,7 +7,7 @@ description: |
 argument-hint: "[feature-name]"
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
+allowed-tools: Read, Write, Glob, Grep, AskUserQuestion, Bash
 ---
 
 # Spec 起草助手 (Spec Drafter)
@@ -69,6 +69,76 @@ allowed-tools: Read, Write, Glob, Grep, AskUserQuestion
 | `level_override` | ❌ | 强制指定 Level | `1`, `2`, `3` |
 
 ---
+
+## 前置: REQUIRE claim (A.1, MUST)
+
+**起草之前**先认领, 不可跳过。
+
+**幂等分工**: 正常委派路径 (`phase-a-planner` → 本 skill) 下认领已在上游做过, 本块只在
+(a) 未经 `phase-a-planner` **直接调用**本 skill, 或 (b) `phase-a-planner` 因 skip 条件
+未走到认领 —— 这两种情况下生效。下面的幂等 `check` 就是用来分辨的; 直调路径没有 Level 判定,
+**因此本块无 Level 1 例外**。
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py" \
+  --raw-track-id "<spec-slug>-<container_uuid>" \
+  --phase A.1 --mode advisory \
+  --linked-issue "<org>/<repo>#<n>" \
+  --include-terminal \
+  --repo-path "<主仓根>"
+```
+
+**为什么在这里**: 十步循环的 10 轮闸门, 没有任何一条问过「远端是不是已经有人在做同一件事」。
+它们审的都是**这份产物做得对不对**, 从不问**它该不该存在** —— 已经有 5 次两个容器对同一个 issue
+各自起草、各跑数轮审计、互不知情, 直到一方 ship 才发现。认领必须**早于投入**, 否则它记录的
+只是既成事实。
+
+**实参怎么来**:
+- `--raw-track-id`: 逐字拼 `<spec-slug>-<container_uuid>` —— slug = 本 Spec 目录名
+  `openspec/changes/<slug>/` **逐字**(不预归一, 归一在 CLI 内部做); uuid 段取
+  `~/.aria/container-id` 的 **`uuid` 字段**, **不是 `label`** —— 改一行装饰性 label 不该换掉 track-id。
+- `--linked-issue`: **两阶段**取法。若
+  `${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/linked_issue_field_probe.py` 存在,
+  实参 = `python3 <该脚本> --emit-arg <本 Spec 的 proposal.md>` 的 stdout(**输出为空 ⇒ 整个参数省略**);
+  否则按字段 Spec E6 手工判 —— 只有字段行冒号后首个 code span 的第一个元素形如 `<org>/<repo>#<n>`
+  且非哨兵时才传。**哨兵 / `BAD_TOKEN` / `NO_TOKEN` / `NO_FIELD` 一律省略整个参数**,
+  绝不可把哨兵当值传: 任何非空字符串都 truthy, 两份毫无关系的 Spec 只要都写哨兵就会互相命中。
+
+**幂等** —— 已经认领过就不要再认领一次:
+
+```yaml
+check: coordination ref 内按 (container_id, session_id) 定位到本 session 的 active claim
+       (claims/<container>/<session>.yaml 存在且 status == active)
+if_missing: 跑上面的命令; 已存在则跳过, 不重复 acquire
+```
+
+**输出怎么读 (四态, 两两不同)**:
+
+| 信号 | 含义 | 措辞 |
+|---|---|---|
+| 键**缺席** | 未检测(没传 `--linked-issue`) | 「本轮未检测」 |
+| `linked_issue_overlap == []` | 已检测, 无碰撞 | 「无碰撞」 |
+| `unknown_schema_claims > 0` | 有 N 条读不懂 schema 的 claim | 「已检测到 N 条无法解析的 claim —— 存在性已确认、内容未知, **按存在处理**」 |
+| `linked_issue_overlap == null` 且 `linked_issue_overlap_error` 非空 | 本轮没取到任何证据 | 「**未能核实**, 建议重试」 |
+
+⚠️ 最后一行绝不可渲染成「无碰撞」—— 零证据不是正证据。同理不要用 `.get(key, [])` / `.get(key, 0)`
+去读这几个键, 那正好把四态压成一态。
+
+**退出义务** (两条, 缺一就留下永不释放的僵尸 claim):
+- `改名 ⇒ release 旧 + acquire 新` —— Spec 目录改名就是换了 track-id, 必须两步走。
+- `放弃方向 ⇒ release_gate.py --raw-track-id <同一串> --status abandoned`
+
+**overlap 非空时按对方 claim 的 `status` 分档请裁**(经 `AskUserQuestion`, 不自行放行):
+
+**告警须含五要素** —— 对方 `track_id` / `owner-container` / `claimed_at` / **双方 `linked_issue` 原始串** / `status`。
+`linked_issue` 要**逐字回显原串**(如 `10CG/Aria#174`, 不要缩成 `#174`), `claimed_at` 也不要截断成日期 ——
+org 段不参与匹配, **回显原串是人工判别「误配」的唯一手段**; 缩写与截断正好把这个手段消掉。
+
+| 对方 status | 处置 |
+|---|---|
+| `active` | 有人正在做 —— 请裁: 合并方向 / 换方向 / 确认确实是两件事 |
+| `unknown` | 读不懂其 schema, **视同 `active`** 处理(存在性已确认) |
+| `done` / `abandoned` | 同一件事可能**已经做完或已被放弃**。按 `active` 同档请裁, 并注明该终态也可能是 GC 产物而非真的做完。**不要提议去释放对方的 claim** —— 那是对方的东西 |
 
 ## 执行流程
 

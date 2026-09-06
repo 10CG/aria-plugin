@@ -67,7 +67,12 @@ logger = logging.getLogger(__name__)
 # Context (b): proper package install — relative import works cleanly.
 # ---------------------------------------------------------------------------
 try:
-    from ..lib.claim_lifecycle import acquire_claim, AcquireResult, label_migration_inventory
+    from ..lib.claim_lifecycle import (
+        acquire_claim,
+        heartbeat_by_track,
+        label_migration_inventory,
+        AcquireResult,
+    )
     from ..lib.claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT
     from ..lib.constants import CLOCK_SKEW_WARN_THRESHOLD
     from ..lib.coordination_ref import read_claims, ReadClaimsResult
@@ -106,7 +111,12 @@ except ImportError:
     while _SKILL_ROOT in _sys.path:
         _sys.path.remove(_SKILL_ROOT)
     _sys.path.insert(0, _SKILL_ROOT)
-    from lib.claim_lifecycle import acquire_claim, AcquireResult, label_migration_inventory  # type: ignore[import]
+    from lib.claim_lifecycle import (  # type: ignore[import]
+        acquire_claim,
+        heartbeat_by_track,
+        label_migration_inventory,
+        AcquireResult,
+    )
     from lib.claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT  # type: ignore[import]
     from lib.constants import CLOCK_SKEW_WARN_THRESHOLD  # type: ignore[import]
     from lib.coordination_ref import read_claims, ReadClaimsResult  # type: ignore[import]
@@ -219,6 +229,18 @@ class GateResult(NamedTuple):
         Possible values: "not_a_git_repo", "identity_error", "fetch_degraded",
         "write_failed", "max_retries_exhausted", "auth_failed", "user_aborted",
         "push_failed", and any resilient_push error_kind.
+
+        Precedence: ``"fetch_degraded"`` is a SOFT error recorded at Step 4 —
+        the gate proceeds (advisory), but on stale local state.  It fills this
+        field only on outcomes that would otherwise report None; any later hard
+        error overwrites it, since a write/push failure is the more actionable
+        report.  Consumers must render a degraded fetch as "未能核实" and never
+        as "no collision" — zero evidence is not positive evidence.
+
+        NOT interchangeable with ``linked_issue_overlap_error`` (§2.4b): this
+        field covers failing to READ the ref (Step 4); that key covers the
+        overlap COMPUTATION raising.  Either one alone still leaves a path that
+        silently returns an empty list, so both exist.
     surface : AdvisorySurface | None
         Populated only when outcome == ADVISORY_PROCEED: the branch-differentiated
         warning the orchestration layer must render (TASK-004).  None on every
@@ -494,8 +516,16 @@ def _run_gate_impl(
     # -----------------------------------------------------------------------
     # Step 4: health_check_fetch (second-fetch — narrows the race window)
     # -----------------------------------------------------------------------
+    # Soft error: a degraded fetch means every judgement below rests on a
+    # possibly-stale local ref.  It is recorded here and surfaces on any
+    # outcome that would otherwise report error=None; a later HARD error
+    # (write_failed / push_failed / clock_skew_conflict / ...) takes
+    # precedence, because that is the more actionable of the two.
+    soft_error: Optional[str] = None
+
     fh: FetchHealth = health_check_fetch(repo, remote=remote)
     if not fh.success:
+        soft_error = "fetch_degraded"
         logger.warning(
             "phase1_gate.run_gate: fetch degraded (kind=%s) — proceeding "
             "with stale local ref (elevated collision risk)",
@@ -567,7 +597,7 @@ def _run_gate_impl(
                 own_claim=own_claim,
                 competing_verdict=None,
                 push_result=None,
-                error=None,
+                error=soft_error,
                 push_skipped=True,
             )
         push_res: ResilientPushResult = resilient_push(
@@ -583,7 +613,7 @@ def _run_gate_impl(
                 own_claim=own_claim,
                 competing_verdict=None,
                 push_result=push_res,
-                error=None,
+                error=soft_error,
             )
         # Push failed on resume — treat as push-failed path.
         if mode == "advisory":
@@ -627,7 +657,7 @@ def _run_gate_impl(
             own_claim=own_claim if proceed else None,
             competing_verdict=None,
             push_result=push_res,
-            error=None if proceed else push_res.error_kind,
+            error=soft_error if proceed else push_res.error_kind,
         )
 
     # --- 7b: clock-skew conflict — highest risk, default abort -------------
@@ -747,7 +777,7 @@ def _run_gate_impl(
                     own_claim=None,
                     competing_verdict=competing_verdict,
                     push_result=None,
-                    error=None,
+                    error=soft_error,
                 )
             # User chose to proceed (takeover or force-proceed).
             logger.info(
@@ -882,7 +912,7 @@ def _run_gate_impl(
             own_claim=written_record,
             competing_verdict=competing_verdict,
             push_result=push_res,
-            error=None,
+            error=soft_error,
             surface=advisory_surface,
             push_skipped=no_push,
         )
@@ -1046,6 +1076,134 @@ def _emit_telemetry(
         logger.debug("phase1_gate: telemetry emit skipped (%s)", exc)
 
 
+_HEARTBEAT_SOURCE = "heartbeat"
+
+
+def _emit_heartbeat_telemetry(
+    repo: Path,
+    outcome: str,
+    track_id: Optional[str],
+    reason: Optional[str],
+    ts: datetime,
+    latency_ms: int,
+) -> None:
+    """Append one ``--heartbeat-only`` telemetry record.  NEVER raises.
+
+    Routed through :func:`_telemetry_path` with source ``"heartbeat"``, which is
+    NOT the production partition — deliberately.  A heartbeat fires on every
+    orchestration entry; letting it into the production partition would drown
+    ``coordination_probe``'s "the gate was actually invoked recently" signal in
+    high-frequency noise, turning a real dead-code detector into a rubber stamp.
+
+    A record is emitted even for the no-track case, on purpose: "nothing to
+    refresh" has to be visible as an observation.  Silence is indistinguishable
+    from "the heartbeat never ran at all".
+    """
+    try:
+        import json as _json
+
+        record = {
+            "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": _HEARTBEAT_SOURCE,
+            "arm": "heartbeat",
+            "outcome": outcome,
+            "track_id": track_id,
+            "reason": reason,
+            "claim_written": False,       # heartbeat never creates a claim
+            "collision_surfaced": False,  # nor judges collisions
+            "surface_kind": None,
+            "latency_ms": latency_ms,
+        }
+        path = _telemetry_path(repo, _HEARTBEAT_SOURCE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:  # pragma: no cover — telemetry is best-effort
+        logger.debug("phase1_gate: heartbeat telemetry emit skipped (%s)", exc)
+
+
+def _heartbeat_only(
+    raw_track_id: Optional[str],
+    repo: Path,
+    *,
+    remote: str = "origin",
+    no_push: bool = False,
+    push_skipped_reason: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> "tuple[int, dict]":
+    """``--heartbeat-only`` mode: refresh this container's active claims.
+
+    Deliberately NOT a gate run — no reconcile, no 7a-7d branches, no fetch of
+    its own, no new claim.  It only extends the life of what is already there,
+    so that a live track is not swept out from under a session still working on
+    it.
+
+    ``coordination.enabled`` is NOT consulted here: the CLI never reads config,
+    the orchestration layer decides whether to call at all (same contract as the
+    acquire path).  ``skipped_disabled`` exists in the outcome vocabulary for
+    that caller to report, not for this function to produce.
+
+    Returns ``(exit_code, output_dict)``; the code is always 0 — a heartbeat
+    that refreshed nothing is an observation, never a gate failure.
+    """
+    import time as _time
+
+    ts = now if now is not None else datetime.now(timezone.utc)
+    t0 = _time.monotonic()
+    track_id: Optional[str] = None
+    error: Optional[str] = None
+
+    if not raw_track_id:
+        outcome, reason = "skipped_no_track", "no carry-id supplied"
+    else:
+        track_id = derive_track_id(raw_track_id)
+        result = heartbeat_by_track(raw_track_id, repo_path=repo, now=ts)
+        if result.success:
+            outcome, reason = "refreshed", None
+        else:
+            outcome, reason, error = "error", result.error, result.error
+
+    # Push reuses the acquire/release failure matrix (resilient_push: non-FF
+    # fetch-replay retry — precisely the "someone else just pushed a claim"
+    # case — no retry on auth), under the SAME no_push gate.  Only when this run
+    # actually wrote the ref: a heartbeat that refreshed nothing has nothing to
+    # publish, and pushing anyway would burn a network round-trip per entry.
+    # fail-soft throughout — an unpushed refresh still stands locally and
+    # converges on the next fetch; it must never fail the heartbeat.
+    wrote_anything = outcome == "refreshed"
+    push_success: Optional[bool] = None
+    push_skipped = False
+    if wrote_anything and no_push:
+        push_success, push_skipped = False, True
+        logger.info(
+            "phase1_gate.heartbeat: push SKIPPED (no_push) — local ref only (remote=%s)",
+            remote,
+        )
+    elif wrote_anything:
+        push = resilient_push(repo, remote=remote)
+        push_success = push.success
+        if not push.success:
+            logger.warning(
+                "phase1_gate.heartbeat: push failed (kind=%s) — local refresh stands, "
+                "remote converges on next fetch",
+                push.error_kind,
+            )
+
+    latency_ms = int((_time.monotonic() - t0) * 1000)
+    _emit_heartbeat_telemetry(repo, outcome, track_id, reason, ts, latency_ms)
+    return 0, {
+        "mode": "heartbeat-only",
+        "outcome": outcome,
+        "track_id": track_id,
+        "raw_input_id": raw_track_id,
+        "reason": reason,
+        "error": error,
+        "push_success": push_success,
+        "push_skipped": push_skipped,
+        "push_skipped_reason": push_skipped_reason if push_skipped else None,
+    }
+
+
 def _gated(
     raw_track_id: str,
     phase: str,
@@ -1152,7 +1310,7 @@ def run_gate_synthetic(raw_track_id: str, phase: str, **kwargs) -> GateResult:
 # Contract:
 #   stdin : none
 #   args  : --raw-track-id --phase [--mode advisory|block] [--linked-issue]
-#           [--repo-path] [--remote] [--no-push]
+#           [--include-terminal] [--repo-path] [--remote] [--no-push]
 #   env   : ARIA_COORDINATION_NO_PUSH=1|true|yes ⇔ --no-push (harness safety:
 #           the AB benchmark runs evals inside the real repo with the real origin;
 #           output keys push_skipped / push_skipped_reason tell a skip from a failure)
@@ -1266,7 +1424,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--raw-track-id",
-        required=True,
+        required=False,  # 模式校验在 _main(): 非 --heartbeat-only 缺参仍 parser.error
         help="用户选定的 carry-id 原始串 (未归一; run_gate 内部 derive_track_id 归一)",
     )
     parser.add_argument(
@@ -1284,6 +1442,28 @@ def _main(argv: Optional[list[str]] = None) -> int:
         help=(
             "可选语义重叠信号 (Part B1, 如 '10CG/Aria#160'): 写入 claim 并检测 "
             "同 linked_issue 不同 track-id 的 active claim (advisory 告警, 不阻断)"
+        ),
+    )
+    parser.add_argument(
+        "--heartbeat-only",
+        action="store_true",
+        help=(
+            "只刷新本容器已有的 active claim, 不认领、不判碰撞、不 fetch。"
+            "给编排层 (state-scanner 入口) 的轻量模式: A.1 认领之后 claim 需要有人"
+            "定期刷新, 否则 SWEEP_TTL 一到就被扫成 abandoned。遥测走独立的 heartbeat "
+            "分区, 不进 production —— 心跳是高频动作, 混进去会把 coordination_probe "
+            "的「闸门最近真被调用过」判据冲成噪声。此模式下 --raw-track-id 可省略 "
+            "(省略 ⇒ 记一条 skipped_no_track, 不静默)"
+        ),
+    )
+    parser.add_argument(
+        "--include-terminal",
+        action="store_true",
+        help=(
+            "把终态 claim (done / abandoned) 也纳入重叠检测, 并输出 "
+            "unknown_schema_claims 计数。A.1 入口用: 「同一个 issue 已经有人做完了」"
+            "只在终态 claim 里看得见, 而默认路径只看 active。与 --linked-issue 正交 —— "
+            "本 flag 独立控制 unknown_schema_claims 键的存在性 (§2.4b 四态表)"
         ),
     )
     parser.add_argument("--repo-path", default=None, help="仓库根路径 (默认 cwd)")
@@ -1313,6 +1493,20 @@ def _main(argv: Optional[list[str]] = None) -> int:
     # This is the ONE production call site — it invokes the PRIVATE _gated with
     # _source="production" (the public run_gate has no source param, so no other
     # caller can reach the production partition — audit telemetry-antispoof fix).
+    if args.heartbeat_only:
+        rc, hb_out = _heartbeat_only(
+            args.raw_track_id, repo,
+            remote=args.remote, no_push=no_push,
+            push_skipped_reason=push_skipped_reason,
+        )
+        print(json.dumps(hb_out, ensure_ascii=False, indent=2))
+        return rc
+
+    # 模式校验 (⑦, 落法 (a): 不用 subparsers, 不拆脚本)。把 required 从 flag 上摘掉
+    # 会连 acquire 路径也一起放开, 而那条路径必须继续 fail-fast —— 所以在这里补回。
+    if not args.raw_track_id:
+        parser.error("--raw-track-id 是必需的 (只有 --heartbeat-only 模式可省略)")
+
     result = _gated(
         args.raw_track_id,
         args.phase,
@@ -1327,17 +1521,46 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     out = _gate_result_to_dict(result, push_skipped_reason=push_skipped_reason)
 
-    # Part B1 (additive key): "same issue, two names" advisory. Bypasses
+    # Part B1 (additive keys): "same issue, two names" advisory. Bypasses
     # reconcile's exact track_id grouping; never changes outcome/proceed.
-    if args.linked_issue:
+    #
+    # Key-presence contract (§2.4b four-state table) — the two keys are
+    # ORTHOGONAL on the success path:
+    #   linked_issue_overlap   present iff --linked-issue was given
+    #   unknown_schema_claims  present iff --include-terminal was given
+    # A missing key means "not checked", NOT "nothing found"; ``null`` means
+    # "checked, but no evidence could be obtained".  Consumers MUST NOT read
+    # these with ``.get(key, 0)`` / ``.get(key, [])`` — that collapses "no
+    # evidence" into "positive evidence of absence", which is the exact
+    # regression R2/M-4 reintroduced inside its own fix.
+    #
+    # unknown_schema_claims counts claims this reader cannot parse
+    # (schema_version != "1" → parse_claim returns a status="unknown"
+    # sentinel).  Those sentinels carry linked_issue=None and are therefore
+    # dropped by the overlap matcher itself; the count is how their EXISTENCE
+    # stays visible.  Domain: int | null.
+    if args.linked_issue or args.include_terminal:
         try:
-            claims = read_claims(repo).claims
-            out["linked_issue_overlap"] = linked_issue_overlaps(
-                claims, result.track_id, args.linked_issue
-            )
+            claims = read_claims(repo).claims          # single read, both keys
+            if args.linked_issue:
+                out["linked_issue_overlap"] = linked_issue_overlaps(
+                    claims,
+                    result.track_id,
+                    args.linked_issue,
+                    include_terminal=args.include_terminal,
+                )
+            if args.include_terminal:
+                out["unknown_schema_claims"] = sum(
+                    1 for c in claims if c.status == "unknown"
+                )
         except Exception as exc:  # fail-soft: overlap advisory must not break the gate
             logger.warning("phase1_gate: linked_issue overlap check skipped (%s)", exc)
-            out["linked_issue_overlap"] = []
+            # BOTH keys go null, unconditionally (SC-33 + Impact ④⑥). Assigning
+            # only one leaves the other absent, and an absent key reads as 0/[]
+            # downstream — the same silent-zero-evidence bug in a new costume.
+            out["linked_issue_overlap"] = None
+            out["unknown_schema_claims"] = None
+            out["linked_issue_overlap_error"] = f"{type(exc).__name__}: {exc}"
 
     # T3b (owner-container-identity-key S1): label-migration inventory. Additive
     # key, always present (null when no label); never changes outcome/proceed.

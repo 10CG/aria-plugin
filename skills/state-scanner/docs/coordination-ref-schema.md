@@ -138,6 +138,17 @@ When a reader encounters a claim file with `schema_version` other than `"1"`:
    sentinel. It does not appear in `STATUS_ENUM` for write validation.
 5. The reader **should emit a `soft_error("claim_schema_unknown_version", ...)`** so operators
    can detect schema drift across containers running different plugin versions.
+6. The A.1 entry consumer surfaces these through a **separate additive key**,
+   `unknown_schema_claims: int | null` — present only when `--include-terminal` was
+   passed, `null` when this round obtained no evidence at all (see §2.4b of spec
+   `a1-entry-claim-duplicate-work-guard`). The count is deliberately NOT folded into
+   `linked_issue_overlap[]`: the sentinel carries `linked_issue=None` and would either
+   vanish silently or, if force-admitted, contribute three empty-string fields to the
+   warning surface. Nor is it filed alongside `done` / `abandoned` — those are claims
+   this reader understood and judged terminal, whereas these are claims it could not
+   read at all. Consumer wording: "已检测到 N 条无法解析的 claim —— **存在性已确认、
+   内容未知, 按存在处理**". Path and identity of the offending files are deliberately
+   not exposed (follow-up); the count alone answers the question the gate is asking.
 
 ### 3.3 Introducing v2
 

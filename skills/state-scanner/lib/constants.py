@@ -39,15 +39,22 @@ STALE_TTL: int = 1800  # seconds
 # review C1): the DURABLE-abandon threshold used by gc.sweep_stale_active.
 # Deliberately much longer than STALE_TTL: STALE_TTL only marks a claim
 # "takeover-eligible" (advisory, reversible on next read), but the sweep
-# REWRITES status=abandoned durably and the victim has no recovery path —
-# and in reality NO production heartbeat loop exists (heartbeat() has zero
-# production call sites; phase1_gate self-resume does not refresh either),
-# so every live claim's heartbeat_at is frozen at acquire time.  A 30-minute
+# REWRITES status=abandoned durably and the victim has no recovery path.
+# Historical note (pre a1-entry-claim-duplicate-work-guard): NO production
+# heartbeat loop existed, so every live claim's heartbeat_at stayed frozen at
+# acquire time.  That is no longer true — the AI orchestration layer now
+# refreshes on every /state-scanner entry via
+# `phase1_gate.py --heartbeat-only` (see state-scanner/SKILL.md
+# 「Layer L A.1 heartbeat 集成」).  The threshold below is NOT relaxed on that
+# account: a refresh happens only when the orchestration layer actually runs,
+# and a session that stops entering the scanner stops refreshing.  A 30-minute
 # sweep threshold would abandon any parallel session still working after
 # 30 min (the common case) and erase it from all collision/overlap advisory
 # surfaces — defeating the coordination this spec exists to protect.  24h
 # comfortably exceeds real interactive session lengths while still clearing
-# genuinely dead claims daily.  Revisit when a heartbeat loop ships.
+# genuinely dead claims daily.  Revisit if the heartbeat ever becomes
+# unconditional (a timer rather than an entry hook) — only then does the
+# "frozen heartbeat" premise behind 24h fully go away.
 SWEEP_TTL: int = 86400  # seconds (24h)
 
 # ---------------------------------------------------------------------------
