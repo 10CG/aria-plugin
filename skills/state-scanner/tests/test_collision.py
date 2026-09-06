@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add the state-scanner root (parent of lib/) so that ``lib`` is importable as a
@@ -156,12 +157,179 @@ def test_classify_groups_members_sorted_and_deduped():
 
 
 def test_split_owner_container_variants():
+    """SC-1 (owner-container-identity-key-and-collision-parser TASK-001).
+
+    Layer H frontmatter is TWO-part ``<owner>/<container-id>`` per
+    session-handoff.md §2.3.1; the former 3-part reading mis-attributed the
+    owner segment to "container" and the container to "session".  How it goes
+    red on aria 7dd0135: ``("", "simonfish", "bfe8285d")`` / ``("", "", "solo")``.
+    """
+    assert collision.split_owner_container("simonfish/bfe8285d") == ("simonfish", "bfe8285d", "")
+    assert collision.split_owner_container("solo") == ("", "solo", "")
     assert collision.split_owner_container("a/b/c") == ("a", "b", "c")
-    assert collision.split_owner_container("b/c") == ("", "b", "c")
-    assert collision.split_owner_container("solo") == ("", "", "solo")
     assert collision.split_owner_container("") == ("", "", "")
-    # 4-part: session keeps the remainder joined.
+    # 4-part: session keeps the remainder joined (unchanged).
     assert collision.split_owner_container("a/b/c/d") == ("a", "b", "c/d")
+
+
+# ---------------------------------------------------------------------------
+# SC-2 判定臂 — 生产路径 dedupe → classify (TASK-002)
+# ---------------------------------------------------------------------------
+
+from collectors.handoff_multibranch import dedupe_latest_per_track_container  # noqa: E402
+
+
+def _row(track_id, oc, *, status="active", updated="2026-08-20T10:00:00Z", filename=None):
+    return {
+        "track_id": track_id,
+        "owner_container": oc,
+        "phase": "B",
+        "status": status,
+        "updated_at": updated,
+        "filename": filename or f"{updated[:10]}-{oc.replace('/', '-')}.md",
+        "branch": "master",
+        "legacy": False,
+    }
+
+
+def _classify_via_production_path(rows):
+    deduped, _stats = dedupe_latest_per_track_container(rows)
+    return collision.classify(deduped)
+
+
+def test_arm_same_container_two_owners_is_none():
+    # 同容器双 owner (git 身份漂移, #193): 一台机器 bfe8285d 两个提交身份 -> 折叠为 1 行 -> none.
+    # RED on 7dd0135: 🟡 self_multi_container (3-part parser reads owners as containers).
+    out = _classify_via_production_path([
+        _row("t", "simonfish/bfe8285d", updated="2026-08-20T10:00:00Z"),
+        _row("t", "aria-runner-bot/bfe8285d", updated="2026-08-21T10:00:00Z"),
+    ])
+    assert out["kind"] == "none", out
+    assert out["groups"] == [], out
+
+
+def test_arm_two_people_two_machines_is_cross_owner():
+    # RED on 7dd0135: 🟡 (owner segment lost -> both "unknown" owners).
+    out = _classify_via_production_path([
+        _row("t", "alice/aaaa1111"),
+        _row("t", "bob/bbbb2222"),
+    ])
+    assert out["kind"] == "cross_owner", out
+    assert out["groups"] == [["alice/aaaa1111", "bob/bbbb2222"]], out
+
+
+def test_arm_same_person_two_machines_is_self_multi_container():
+    # RED on 7dd0135: none (both rows fold into one dedupe key (t, "", "simonfish")).
+    out = _classify_via_production_path([
+        _row("t", "simonfish/bfe8285d"),
+        _row("t", "simonfish/023236f2"),
+    ])
+    assert out["kind"] == "self_multi_container", out
+    assert out["groups"] == [["simonfish/023236f2", "simonfish/bfe8285d"]], out
+
+
+def test_arm_drift_without_cooccurrence_is_cross_owner():
+    # 漂移后无共现: 两个不同提交身份在两个 uuid 容器上 = 🔴 (诚实), ⚪ advisory 负责解释.
+    out = _classify_via_production_path([
+        _row("t", "aria-runner-bot/bfe8285d"),
+        _row("t", "simonfish/023236f2"),
+    ])
+    assert out["kind"] == "cross_owner", out
+
+
+def test_arm_zero_segment_vs_two_segment_same_hostname_is_self_multi_container():
+    # "devbox01" (零段, owner 空 -> 不可归属) vs "simonfish/devbox01": 两个 identity_key, 可归属 owner 集合 = {simonfish}.
+    out = _classify_via_production_path([
+        _row("t", "devbox01"),
+        _row("t", "simonfish/devbox01"),
+    ])
+    assert out["kind"] == "self_multi_container", out
+
+
+def test_arm_unknown_owner_is_not_an_independent_owner():
+    # owner 字面 "unknown" (git 未配 email) 与真实 owner 并存: 只有 1 个可归属 owner -> 🟡, 不是 🔴.
+    out = _classify_via_production_path([
+        _row("t", "unknown/aaaa1111"),
+        _row("t", "alice/bbbb2222"),
+    ])
+    assert out["kind"] == "self_multi_container", out
+
+
+# ---------------------------------------------------------------------------
+# SC-2 advisory 臂 — identity_drift_advisories (函数级, 对 dedupe 前全语料) (TASK-002)
+# ---------------------------------------------------------------------------
+
+
+def test_advisory_same_container_two_owners_yields_exactly_one():
+    # RED on 7dd0135: AttributeError (function does not exist).
+    rows = [
+        _row("t1", "simonfish/bfe8285d", updated="2026-07-01T10:00:00Z"),
+        _row("t2", "aria-runner-bot/bfe8285d", updated="2026-09-01T10:00:00Z"),
+        _row("t3", "simonfish/bfe8285d", updated="2026-08-01T10:00:00Z", status="done"),
+    ]
+    adv = collision.identity_drift_advisories(rows)
+    assert isinstance(adv, list) and len(adv) == 1, adv
+    a = adv[0]
+    assert a["identity_key"] == "bfe8285d"
+    assert a["owners"] == ["aria-runner-bot", "simonfish"]
+    assert a["first_seen"] == "2026-07-01T10:00:00Z"
+    assert a["last_seen"] == "2026-09-01T10:00:00Z"
+    assert set(a.keys()) == {"identity_key", "owners", "first_seen", "last_seen"}
+
+
+def test_advisory_three_owners_same_uuid_lists_three():
+    rows = [
+        _row("t1", "a/aaaa1111"),
+        _row("t2", "b/aaaa1111"),
+        _row("t3", "c/aaaa1111"),
+    ]
+    adv = collision.identity_drift_advisories(rows)
+    assert len(adv) == 1 and adv[0]["owners"] == ["a", "b", "c"], adv
+
+
+def test_advisory_ignores_legacy_unknown_and_hostname_containers():
+    rows = [
+        _row("t1", "unknown", status="legacy"),
+        _row("t2", "unknown/aaaa1111"),          # owner "unknown" 不计
+        _row("t3", "alice/aaaa1111"),            # 只有 1 个可归属 owner -> 不产生
+        _row("t4", "alice/devbox01"),            # 主机名容器不是 uuid identity_key -> 不产生
+        _row("t5", "bob/devbox01"),
+        _row("t6", "devbox01"),
+    ]
+    assert collision.identity_drift_advisories(rows) == []
+
+
+def test_advisory_no_input_is_empty_list():
+    assert collision.identity_drift_advisories([]) == []
+
+
+# ---------------------------------------------------------------------------
+# D-0(a) 族键 — track_to_claim_record 纯形状剥离 (TASK-007)
+# ---------------------------------------------------------------------------
+
+
+def test_family_key_two_uuid_suffixed_tracks_collide():
+    # <slug>-<uuid1> / <slug>-<uuid2> 两容器同一件事 -> 剥后同 track -> 可达 🔴.
+    # RED on 7dd0135: none (两个 track_id 不同组).
+    out = _classify_via_production_path([
+        _row("slug-aaaa1111", "alice/aaaa1111"),
+        _row("slug-bbbb2222", "bob/bbbb2222"),
+    ])
+    assert out["kind"] == "cross_owner", out
+    assert len(out["groups"]) == 1, out
+
+
+def test_family_key_strip_rules():
+    base = {"owner_container": "alice/aaaa1111", "updated_at": "2026-08-20T10:00:00Z", "status": "active"}
+    # 8 位小写 hex 尾段 -> 剥
+    assert collision.track_to_claim_record({**base, "track_id": "slug-aaaa1111"}).track_id == "slug"
+    # 7 位 -> 不剥
+    assert collision.track_to_claim_record({**base, "track_id": "slug-abcdefg"}).track_id == "slug-abcdefg"
+    # 8 位十进制也是 hex 形 (成文已知限制): 剥为 "x"; 与冻结语料零碰撞由 test_collision_frozen_corpus 承担
+    assert collision.track_to_claim_record({**base, "track_id": "x-20260719"}).track_id == "x"
+    # 大写 / 含非 hex -> 不剥
+    assert collision.track_to_claim_record({**base, "track_id": "slug-AAAA1111"}).track_id == "slug-AAAA1111"
+    assert collision.track_to_claim_record({**base, "track_id": "slug-devbox01"}).track_id == "slug-devbox01"
 
 
 def test_track_to_claim_record_raises_on_missing_fields():
@@ -266,12 +434,16 @@ def test_real_collector_emits_cross_owner_collision():
             "feature-a": ("shared-track", "alice/box-A/s1"),
             "feature-b": ("shared-track", "bob/box-B/s2"),
         })
-        result = collect_handoff_multibranch(Path(tmp))
+        # Fixture rows are dated 2026-05-30; pin ``now`` inside the Layer H
+        # window (D-3(a)) so the test is calendar-independent.
+        result = collect_handoff_multibranch(Path(tmp), now=datetime(2026, 5, 31, tzinfo=timezone.utc))
         data = result.data
         # Phantom-field guard: the key MUST exist with the documented shape.
         assert "collision" in data, "collision field missing from real collector output"
         coll = data["collision"]
-        assert set(coll.keys()) == {"kind", "groups"}
+        # SC-8 (TASK-004): identity_advisories is ALWAYS present (list; [] when no drift).
+        assert set(coll.keys()) == {"kind", "groups", "identity_advisories"}, coll.keys()
+        assert coll["identity_advisories"] == []
         assert coll["kind"] == "cross_owner", f"got {coll!r}"
         assert len(coll["groups"]) == 1
         members = coll["groups"][0]
@@ -285,9 +457,9 @@ def test_real_collector_no_collision_is_none():
             "feature-a": ("track-one", "alice/box-A/s1"),
             "feature-b": ("track-two", "bob/box-B/s2"),
         })
-        result = collect_handoff_multibranch(Path(tmp))
+        result = collect_handoff_multibranch(Path(tmp), now=datetime(2026, 5, 31, tzinfo=timezone.utc))
         coll = result.data["collision"]
-        assert coll == {"kind": "none", "groups": []}, f"got {coll!r}"
+        assert coll == {"kind": "none", "groups": [], "identity_advisories": []}, f"got {coll!r}"
 
 
 def run_all() -> int:

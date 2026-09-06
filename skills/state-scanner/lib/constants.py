@@ -78,6 +78,15 @@ CLOCK_SKEW_WARN_THRESHOLD: int = 30  # seconds
 # recently completed sessions before they are archived.
 ARCHIVE_RETENTION_DAYS: int = 7  # days
 
+# Layer H active window (owner-container-identity-key-and-collision-parser,
+# owner D-3(a)). A handoff row whose ``updated_at`` is older than this many days
+# is treated as historical residue for §2.3.5 collision grouping — it can no
+# longer manufacture a permanent cross_owner/self_multi_container from 2026-05..07
+# frontmatter (#182 shape). Consumed ONLY via lib/collision.py::layer_h_is_fresh /
+# filter_layer_h_fresh (single implementation, SC-11); collector and renderer
+# must not re-implement the comparison.
+LAYER_H_ACTIVE_WINDOW_DAYS: int = 30  # days
+
 # ---------------------------------------------------------------------------
 # Informational (no enforcement)
 # ---------------------------------------------------------------------------

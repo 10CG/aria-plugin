@@ -39,12 +39,19 @@ Deps:  lib/claim_schema.py (ClaimRecord), lib/reconcile.py (reconcile_all)
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import re
 import sys
 from typing import Optional
 
 from .claim_schema import ClaimRecord
+from .constants import LAYER_H_ACTIVE_WINDOW_DAYS
 from .reconcile import reconcile_all
+
+# 8-char lowercase hex — the shape of ~/.aria/container-id ``uuid`` (identity.py).
+_UUID8_RE = re.compile(r"^[0-9a-f]{8}$")
+# Track family suffix: ``<slug>-<uuid8>`` (D-0(a), Layer H grouping only).
+_FAMILY_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}$")
 
 # Collision kind severity ordering (higher index == more severe).
 # Used to escalate the aggregate ``kind`` across multiple colliding tracks.
@@ -63,24 +70,58 @@ _KIND_SEVERITY: dict[str, int] = {
 def split_owner_container(owner_container: str) -> tuple[str, str, str]:
     """Split an owner_container string into (owner, container, session).
 
-    Expected format: "owner/container/session" (3 parts).
-    Handles shorter / malformed strings gracefully by filling missing parts
-    with empty-string sentinels so callers can still reason about owner.
+    Layer H frontmatter is TWO-part ``<owner>/<container-id>`` (session-handoff.md
+    §2.3.1; owner-container-identity-key-and-collision-parser SC-1).  Three or
+    more segments are the legacy ``owner/container/session`` reading, kept for
+    the historical rows that carried a session tag.
 
     Examples:
-        "hikari/devbox-A/s-7f3a"  -> ("hikari", "devbox-A", "s-7f3a")
-        "devbox-A/sess-001"       -> ("", "devbox-A", "sess-001")   # 2-part
-        "solo"                    -> ("", "", "solo")               # 1-part
+        "simonfish/bfe8285d"      -> ("simonfish", "bfe8285d", "")   # 2-part (canonical)
+        "hikari/devbox-A/s-7f3a"  -> ("hikari", "devbox-A", "s-7f3a")  # 3-part (legacy)
+        "solo"                    -> ("", "solo", "")                # 1-part: container only
         ""                        -> ("", "", "")
+
+    Aria #193 root cause: the former reading treated 2-part strings as
+    ``container/session`` with an unknown owner, so every real row lost its
+    owner segment and the classifier could never see two owners.
     """
     parts = (owner_container or "").split("/")
     if len(parts) >= 3:
         return parts[0], parts[1], "/".join(parts[2:])
     if len(parts) == 2:
-        # Two-part: treat as container/session (owner unknown)
-        return "", parts[0], parts[1]
-    # One-part or empty
-    return "", "", parts[0] if parts else ""
+        return parts[0], parts[1], ""
+    return "", parts[0] if parts else "", ""
+
+
+def identity_key(owner: str, container: str) -> str:
+    """Return the coordination identity key for an (owner, container) pair.
+
+    - ``container`` is an 8-char lowercase hex uuid (``~/.aria/container-id``)
+      -> the uuid alone is the identity: the same machine under two git
+      identities is ONE identity (Aria #193 drift), not two.
+    - otherwise (hostname era, empty, read-only-fs fallback) -> ``owner/container``
+      (empty owner yields ``"/container"``), because a hostname is not unique.
+
+    Known, documented limit: a hostname or label that happens to be 8 lowercase
+    hex chars is read as a uuid (that path is itself the degraded path).
+    ``owner`` values ``""`` and ``"unknown"`` are normalised to ``""`` here.
+    """
+    owner_n = "" if (owner or "") == "unknown" else (owner or "")
+    container_n = container or ""
+    if _UUID8_RE.match(container_n):
+        return container_n
+    return f"{owner_n}/{container_n}"
+
+
+def family_track_id(track_id: str) -> str:
+    """D-0(a): strip a trailing ``-<8 lowercase hex>`` from a Layer H track id.
+
+    Pure shape rule, no corpus lookup.  Applied ONLY inside
+    :func:`track_to_claim_record` (both Layer H paths — collector classify() and
+    the board — go through it); Layer L claims never do, and the frontmatter
+    string itself is never rewritten.
+    """
+    return _FAMILY_SUFFIX_RE.sub("", track_id or "")
 
 
 def track_to_claim_record(track: dict) -> ClaimRecord:
@@ -99,6 +140,8 @@ def track_to_claim_record(track: dict) -> ClaimRecord:
     track_id = track.get("track_id") or ""
     if not track_id:
         raise ValueError("track_id missing")
+    # D-0(a) family key — Layer H grouping only (see family_track_id docstring).
+    track_id = family_track_id(track_id) or track_id
 
     updated_at = track.get("updated_at") or ""
     if not updated_at:
@@ -147,25 +190,117 @@ def classify_claims(claims: "list[ClaimRecord]") -> tuple[str, str]:
         collision_kind: 'cross_owner' | 'self_multi_container' | 'none'
         severity_emoji: 'RED' | 'YELLOW' | ''  (render-only; never persisted)
 
-    Logic (per session-handoff.md §2.3.5):
-        cross_owner          -> >=2 distinct owner values across active claims
-        self_multi_container -> same owner, >=2 distinct container values
-        none                 -> <=1 active claim or all same owner+container
-                                (self-serial: same (owner,container) -> none)
+    Logic (session-handoff.md §2.3.5, owner-container-identity-key D1):
+        identity_keys = { identity_key(owner, container) } over active claims
+        < 2 identity_keys                       -> none  (one machine, however
+                                                   many owner strings / sessions)
+        >= 2 identity_keys:
+            attributable owners = non-empty, non-"unknown" owner strings
+            >= 2 attributable owners           -> cross_owner          (🔴)
+            <= 1 attributable owner            -> self_multi_container (🟡)
+
+    There is deliberately NO "same person" inference: two different owner
+    strings on two uuid containers are two commit identities -> 🔴 (the ⚪
+    identity_drift_advisories explains a same-machine drift separately).
     """
     active = [c for c in claims if c.status not in ("done", "abandoned")]
     if len(active) < 2:
         return "none", ""
 
-    owners = {c.owner for c in active}
-    if len(owners) >= 2:
+    keys = {identity_key(c.owner, c.container) for c in active}
+    if len(keys) < 2:
+        return "none", ""
+
+    attributable = {c.owner for c in active if c.owner and c.owner != "unknown"}
+    if len(attributable) >= 2:
         return "cross_owner", "\U0001F534"  # 🔴
+    return "self_multi_container", "\U0001F7E1"  # 🟡
 
-    containers = {c.container for c in active}
-    if len(containers) >= 2:
-        return "self_multi_container", "\U0001F7E1"  # 🟡
 
-    return "none", ""
+# ---------------------------------------------------------------------------
+# Layer H freshness window (D-3(a)) — the ONE implementation (SC-11)
+# ---------------------------------------------------------------------------
+
+
+def layer_h_is_fresh(updated_at: str, *, now: Optional[datetime] = None) -> bool:
+    """True when ``updated_at`` is within LAYER_H_ACTIVE_WINDOW_DAYS of ``now``.
+
+    Unparseable / missing ``updated_at`` -> True (fail-open: the row keeps
+    flowing to track_to_claim_record, which raises ValueError there and is
+    skipped fail-soft — freshness must not become a second silent drop path).
+    """
+    ref = now if now is not None else datetime.now(timezone.utc)
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=timezone.utc)
+    try:
+        ts = datetime.fromisoformat((updated_at or "").replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return True
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts >= ref - timedelta(days=LAYER_H_ACTIVE_WINDOW_DAYS)
+
+
+def filter_layer_h_fresh(tracks: "list[dict]", *, now: Optional[datetime] = None) -> "list[dict]":
+    """Drop Layer H rows older than the active window (legacy rows pass through).
+
+    Called by BOTH the collector (before classify) and the board renderer
+    (before building its collidable set) so the persisted
+    ``tracks_multibranch.collision`` and the board agree on the same input.
+    ``tracks`` itself is untouched.
+    """
+    return [
+        t for t in (tracks or [])
+        if t.get("status") == "legacy" or layer_h_is_fresh(t.get("updated_at") or "", now=now)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# ⚪ same-identity-multi-owner advisory (D3) — computed on PRE-dedupe rows
+# ---------------------------------------------------------------------------
+
+
+def identity_drift_advisories(tracks: "list[dict]") -> "list[dict]":
+    """Report uuid identity_keys that appear under >= 2 attributable owners.
+
+    Input: the collector's raw non-legacy rows (dedupe would fold exactly the
+    rows this needs to see).  Cross-track, cross-branch — this is a repository-
+    wide inventory of git-identity drift on one machine (Aria #193), NOT a
+    collision: it never feeds ``kind``/``groups`` (session-handoff.md §2.3.5
+    ``same-identity-multi-owner`` = informational ⚪).
+
+    Returns one dict per drifting key, sorted by identity_key:
+        {"identity_key": str, "owners": sorted[str], "first_seen": str, "last_seen": str}
+    ``first_seen``/``last_seen`` are the min/max ``updated_at`` strings across
+    the contributing rows.  Only uuid-shaped keys qualify (a hostname shared by
+    two owners is two identities, see identity_key()).  Empty / "unknown"
+    owners and legacy rows do not count.  Never raises.
+    """
+    seen: dict[str, dict] = {}
+    for t in tracks or []:
+        if t.get("status") == "legacy":
+            continue
+        owner, container, _session = split_owner_container(t.get("owner_container") or "")
+        if not owner or owner == "unknown" or not _UUID8_RE.match(container or ""):
+            continue
+        entry = seen.setdefault(container, {"owners": set(), "stamps": []})
+        entry["owners"].add(owner)
+        stamp = t.get("updated_at") or ""
+        if stamp:
+            entry["stamps"].append(stamp)
+    out: list[dict] = []
+    for key in sorted(seen):
+        owners = sorted(seen[key]["owners"])
+        if len(owners) < 2:
+            continue
+        stamps = sorted(seen[key]["stamps"])
+        out.append({
+            "identity_key": key,
+            "owners": owners,
+            "first_seen": stamps[0] if stamps else "",
+            "last_seen": stamps[-1] if stamps else "",
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------

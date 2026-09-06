@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
-## [1.70.0] - 2026-09-06
+## [1.71.0] - 2026-09-06
 
 ### Added — A.1 入口重复劳动闸门 (Spec `a1-entry-claim-duplicate-work-guard`, 主仓 `openspec/changes/`; 立项 issue `10CG/Aria#174`; 档位 MINOR = 2026-09-01 技术裁定 §H1a)
 
@@ -45,6 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **7 项执笔侧流程判断待 owner 复议** (proposal 闸门状态表, Rule #10): 其中 #2「carry-id 采 editlist 选项 A 不算动 Phase B」经 R3–R5 三轮未被推翻, 但 owner 从未显式确认。
 - `unattended=true` 分支的 Nomad env 三腿契约属 follow-up (`10CG/Aria#196`)。
 - `resilient_push` 的 non-FF 恢复路径**结构上必失败** (`aria-plugin#169`) —— 2026-09-05 dogfood `--heartbeat-only` 时生产实撞 + 离线三态负控确认; 属本 cycle 之外的新发现。
+
+## [1.70.0] - 2026-09-06 — owner-container-identity-key-and-collision-parser (owner 裁定 D5: §2.3.5 对采用方是行为变更 ⇒ MINOR)
+
+### Fixed
+- **state-scanner `lib/collision.py`** — Layer H `owner-container` 解析改为**两段式** `<owner>/<container-id>` (Aria #193 / aria-plugin#135 缺口 3): 旧三段式读法把 owner 段当 container、container 当 session, 同一机器的 git 身份漂移被判成 🟡 `self_multi_container`, 而真正的两人两机 `cross_owner` 从未可达。
+- **判定按 `identity_key`** (session-handoff.md §2.3.5 **实质变更**): uuid 容器 = 一个身份 (多 owner 串折叠), 主机名容器保留 owner 段; `≥2 identity_key` 且非空非 `unknown` owner 集合 `≥2` → `cross_owner`, `≤1` → `self_multi_container`。dedupe 键随之改为 `(track_id, identity_key)`。
+- **D-0(a) 族键**: `track_to_claim_record` 对 `<slug>-<8hex>` 形 track-id 剥尾段, a1-entry 风格双容器同一件事可达 🟡/🔴 (仅 Layer H 分组, 不动 frontmatter / carry-id / Layer L)。
+- **D-3(a) 新鲜度窗口**: `lib/constants.py::LAYER_H_ACTIVE_WINDOW_DAYS = 30` + `lib/collision.py::filter_layer_h_fresh` 单一实现, collector 与 track_board 同用; 2026-05..07 残留 `active` 行不再制造永久 collision (冻结语料 996 行: 改前 1 组 → 改后 0 组, 机械归因全部 stale #182)。
+- **track_board** 对两段式串回显原串 (旧: 查表键 `""` vs `"unknown"` 失配, 打印 `unknown/...`)。
+
+### Added
+- `tracks_multibranch.collision.identity_advisories[]` (**恒存在**, 空为 `[]`): ⚪ `same-identity-multi-owner` — 同一 uuid 容器在 handoff 全集出现 ≥2 个 git 身份 `{identity_key, owners[], first_seen, last_seen}`, 信息级, 不计入 collision; track_board 渲染 ⚪ 段。
+- `lib/identity.py::get_container_label()` 只读 accessor (S1: `get_container_id()` 仍 label 优先, 不 flip); `container-id` 文件头注释改为 S1 实况措辞。
+- T3b 迁移 inventory (S1 语义): `phase1_gate` / `release_gate` 输出 additive 键 `label_migration` (`{label, active_claims, message}` 或 `null`), label 非空即告警, 无抑制。
+- 测试: `tests/fixtures/handoff-tracks-frozen-2026-09-05.json` + `freeze_corpus.py` + `test_collision_frozen_corpus.py` (SC-6/SC-11) / `test_track_board_advisories.py` / `test_identity_label.py` / `test_migration_inventory.py`; `test_collision.py` 16 → 28 用例。
+
+### Changed
+- 文档: `references/state-snapshot-schema.md` (collision 字段 + dedupe 键语义) / `RECOMMENDATION_RULES.md` rule 1.54 / `references/rules/advanced-rules.md` / `references/layer-l-integration.md` / `references/phase-1-collectors.md` / `templates/session-handoff.md`; standards `session-handoff.md` §2.3.1 三态 + `identity_key` + 族键句, §2.3.5 三行判据表 (Amended), 新增 §2.3.9 AI runner 提交身份。
 
 ## [1.69.1] - 2026-09-04
 

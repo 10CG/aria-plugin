@@ -67,7 +67,12 @@ logger = logging.getLogger(__name__)
 # Context (b): proper package install — relative import works cleanly.
 # ---------------------------------------------------------------------------
 try:
-    from ..lib.claim_lifecycle import acquire_claim, heartbeat_by_track, AcquireResult
+    from ..lib.claim_lifecycle import (
+        acquire_claim,
+        heartbeat_by_track,
+        label_migration_inventory,
+        AcquireResult,
+    )
     from ..lib.claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT
     from ..lib.constants import CLOCK_SKEW_WARN_THRESHOLD
     from ..lib.coordination_ref import read_claims, ReadClaimsResult
@@ -81,7 +86,7 @@ try:
         UserDecisionCallback,
         no_push_requested_by_env,
     )
-    from ..lib.identity import Identity, get_identity
+    from ..lib.identity import Identity, get_identity, get_container_label
     from ..lib.reconcile import reconcile, ReconcileVerdict
     from ..lib.track_id import derive_track_id
     from ..lib.collision import linked_issue_overlaps
@@ -109,6 +114,7 @@ except ImportError:
     from lib.claim_lifecycle import (  # type: ignore[import]
         acquire_claim,
         heartbeat_by_track,
+        label_migration_inventory,
         AcquireResult,
     )
     from lib.claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT  # type: ignore[import]
@@ -124,7 +130,7 @@ except ImportError:
         UserDecisionCallback,
         no_push_requested_by_env,
     )
-    from lib.identity import Identity, get_identity  # type: ignore[import]
+    from lib.identity import Identity, get_identity, get_container_label  # type: ignore[import]
     from lib.reconcile import reconcile, ReconcileVerdict  # type: ignore[import]
     from lib.track_id import derive_track_id  # type: ignore[import]
     from lib.collision import linked_issue_overlaps  # type: ignore[import]
@@ -1555,6 +1561,17 @@ def _main(argv: Optional[list[str]] = None) -> int:
             out["linked_issue_overlap"] = None
             out["unknown_schema_claims"] = None
             out["linked_issue_overlap_error"] = f"{type(exc).__name__}: {exc}"
+
+    # T3b (owner-container-identity-key S1): label-migration inventory. Additive
+    # key, always present (null when no label); never changes outcome/proceed.
+    try:
+        inv = label_migration_inventory(get_container_label(), read_claims(repo).claims)
+    except Exception as exc:  # fail-soft: inventory must not break the gate
+        logger.warning("phase1_gate: label migration inventory skipped (%s)", exc)
+        inv = None
+    out["label_migration"] = inv
+    if inv is not None:
+        logger.warning("phase1_gate: %s", inv["message"])
 
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if result.outcome in _PROCEED_OUTCOMES else 1

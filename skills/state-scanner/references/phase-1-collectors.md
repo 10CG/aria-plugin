@@ -72,7 +72,7 @@ Snapshot 字段: `coordination_fetch` (additive, schema v1.0+; `coordination_ref
 - 配置: `state_scanner.worktree_scan.enabled` (默认 `true`, 无多 worktree 时零成本 no-op) + `state_scanner.worktree_scan.max_worktrees` (默认 **8**, env `ARIA_WORKTREE_MAX_SCANNED`, 三层 resolver 镜像 `resolve_max_branches_scanned`)。
 - 软错 (走 `errors[]` + exit 10): `worktree_enumeration_failed` (git 失败 → `enumerated=false`) / `worktree_unreachable` (单树跳过, 记 path) / `worktree_scan_cap` (超上限截断, warn-only) / `handoff_canonical_scan_failed` + `handoff_pointer_target_missing` + `handoff_stat_failed` (树内失败, message **带 worktree path 前缀**)。他树**不发** #137 `handoff_frontmatter_missing` (该软错语义锚定当前树 latest, 跨树发射会污染 `errors[]` 误触 E2)。
 
-> **与 Layer L TASK-024/025 正交互补** (反向互引, 双向闭环): Layer L TASK-024/025 (见 [layer-l-integration.md §worktree 触发条件](./layer-l-integration.md)) 覆盖 **cross_owner 创建** 独立 worktree (检测到跨 owner collision → 推荐新建 checkout); 本 1.15b 机制覆盖 **single-owner 进入** 已存在 worktree (跨自己的多 worktree 发现最新 handoff → advisory `EnterWorktree`)。**创建 vs 进入** 正交, 两者互不依赖。
+> **与 Layer L TASK-024/025 正交互补** (反向互引, 双向闭环): Layer L TASK-024/025 (见 [layer-l-integration.md §worktree 触发条件](./layer-l-integration.md)) 覆盖 **cross_owner 创建** 独立 worktree (检测到跨 owner collision → 推荐新建 checkout); 本 1.15b 机制覆盖 **single-owner 进入** 已存在 worktree (跨自己的多 worktree 发现最新 handoff → advisory `EnterWorktree`)。**创建 vs 进入** 正交, 两者互不依赖。1.17 `tracks_multibranch.collision` 三态按 session-handoff.md §2.3.5 `identity_key` 判 (`cross_owner` = 两个提交身份两台机器 / `self_multi_container` = 同一可归属身份多机 / `none`), 另带恒存在的 `identity_advisories[]` (⚪ 同一 uuid 容器多个 git 身份, 信息级, 不计入 collision)。
 
 ## 子阶段深度参考 (实现 + schema 细节)
 

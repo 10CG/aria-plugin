@@ -108,6 +108,7 @@ groups.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 from pathlib import Path
 
 # Note (Round 6 review): `git show` / `git ls-tree` invocations below intentionally
@@ -143,11 +144,17 @@ try:
     from lib.collision import (  # type: ignore[import]
         classify as _classify_collision_summary,
         split_owner_container as _split_owner_container,
+        identity_key as _identity_key,
+        identity_drift_advisories as _identity_drift_advisories,
+        filter_layer_h_fresh as _filter_layer_h_fresh,
     )
     _COLLISION_AVAILABLE = True
 except ImportError:
     _COLLISION_AVAILABLE = False  # fail-soft: collision summary degrades to none
     _split_owner_container = None  # type: ignore[assignment]  # dedupe grouping falls back to raw owner_container string (see dedupe_latest_per_track_container)
+    _identity_key = None  # type: ignore[assignment]
+    _identity_drift_advisories = None  # type: ignore[assignment]
+    _filter_layer_h_fresh = None  # type: ignore[assignment]
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -515,11 +522,14 @@ def dedupe_latest_per_track_container(
         if t.get("status") == "legacy":
             legacy.append(t)
             continue
-        if _split_owner_container is not None:
+        if _split_owner_container is not None and _identity_key is not None:
+            # owner-container-identity-key SC-4: key on identity_key so the same
+            # uuid container under two git identities (Aria #193 drift) folds
+            # to its newest row; hostname containers keep the owner segment.
             owner, container, _session = _split_owner_container(
                 t.get("owner_container") or ""
             )
-            key = (t.get("track_id"), owner, container)
+            key = (t.get("track_id"), _identity_key(owner, container))
         else:
             # Fail-soft fallback (lib.collision unavailable): raw string,
             # round 1/2 behaviour — session segment still participates, so
@@ -543,9 +553,11 @@ def dedupe_latest_per_track_container(
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
-def collect_handoff_multibranch(
+def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one place on purpose
+
     project_root: Path,
     remote: str = _REMOTE,
+    now: Optional[datetime] = None,  # owner-container-identity-key: Layer H window reference (tests pin it)
 ) -> CollectorResult:
     """Scan all remote branches for handoff docs and rebuild the track list.
 
@@ -578,7 +590,7 @@ def collect_handoff_multibranch(
             "tracks": [],
             "branches_scanned": 0,
             "legacy_count": 0,
-            "collision": {"kind": "none", "groups": []},
+            "collision": {"kind": "none", "groups": [], "identity_advisories": []},
             "errors": [list_err],
         }
         return r
@@ -707,11 +719,16 @@ def collect_handoff_multibranch(
             # longer manufacture a permanent self_multi_container/cross_owner
             # false positive. tracks[] itself is untouched.
             deduped_tracks, dedupe_stats = dedupe_latest_per_track_container(tracks)
-            # now=None -> classify/reconcile use datetime.now(timezone.utc).
-            # Collision kind does not depend on freshness, so a fixed "now" is
-            # unnecessary here (only stale-takeover labelling would, which the
-            # summary does not surface).
-            collision = _classify_collision_summary(deduped_tracks)
+            # owner-container-identity-key D-3(a): drop Layer H rows older than
+            # LAYER_H_ACTIVE_WINDOW_DAYS (single implementation in lib/collision)
+            # AFTER dedupe (stats stay calendar-independent) and BEFORE classify,
+            # so 2026-05..07 residue can no longer manufacture a permanent group.
+            fresh_tracks = _filter_layer_h_fresh(deduped_tracks, now=now)
+            collision = _classify_collision_summary(fresh_tracks, now=now)
+            # ⚪ same-identity-multi-owner advisory (D3): computed on the RAW
+            # rows — BEFORE dedupe, which folds exactly the rows it must see.
+            # Always present (additive, [] when no drift) — SC-8.
+            collision["identity_advisories"] = _identity_drift_advisories(tracks)
             if dedupe_stats["after_dedupe"] < dedupe_stats["input_tracks"]:
                 # Additive audit field — only present when deduping actually
                 # collapsed >=1 NON-legacy row, so a snapshot with no
@@ -722,10 +739,10 @@ def collect_handoff_multibranch(
                 # docstring for why round 1's mixed accounting was wrong.
                 collision["dedupe"] = dedupe_stats
         except Exception as exc:  # noqa: BLE001 — advisory field never breaks scan
-            collision = {"kind": "none", "groups": []}
+            collision = {"kind": "none", "groups": [], "identity_advisories": []}
             error_messages.append(f"collision classify failed (degraded to none): {exc}")
     else:
-        collision = {"kind": "none", "groups": []}
+        collision = {"kind": "none", "groups": [], "identity_advisories": []}
 
     r.data = {
         "exists": len(tracks) > 0,
