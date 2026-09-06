@@ -335,12 +335,32 @@ class TestSelfMultiContainerRealCollisionSurvivesDedupe(unittest.TestCase):
                 {"input_tracks": 6, "after_dedupe": 2, "legacy_passthrough": 0},
                 f"expected 6 raw rows collapsed to 2 (one per container) — got {coll['dedupe']!r}",
             )
+            # SC-4 (owner-container-identity-key TASK-003): the two rows are TWO
+            # commit identities on TWO uuid containers (aria-runner-bot vs
+            # simonfish) -> cross_owner under the two-part §2.3.5 reading.
+            # How it goes red on 7dd0135: self_multi_container (3-part parser
+            # drops the owner segment, both owners collapse to "unknown").
             self.assertEqual(
                 coll["kind"],
-                "self_multi_container",
-                "both containers' LATEST handoff is still status=active — a "
-                f"real ongoing collision — dedup must not erase it; got {coll!r}",
+                "cross_owner",
+                "both containers' LATEST handoff is still status=active and the "
+                f"two owner strings differ — real cross-owner collision; got {coll!r}",
             )
+
+    def test_both_latest_active_same_owner_is_self_multi_container(self):
+        """Same-owner variant of the fixture above: ``simonfish`` on two uuid
+        containers -> self_multi_container (one attributable owner, two
+        identity_keys)."""
+        track_id = "twin-track"
+        files = [
+            ("2026-08-20-t2a.md", track_id, "simonfish/023236f2", "active", "2026-08-20T09:00:00Z"),
+            ("2026-08-19-t2b.md", track_id, "simonfish/bfe8285d", "active", "2026-08-19T09:00:00Z"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="ss-ick-t2s-") as tmp:
+            root = _build_repo(tmp, files)
+            coll = collect_handoff_multibranch(root).data["collision"]
+            self.assertEqual(coll["kind"], "self_multi_container", coll)
+            self.assertEqual(coll["groups"], [["simonfish/023236f2", "simonfish/bfe8285d"]], coll)
 
 
 class TestCrossOwnerRealCollisionSurvivesDedupe(unittest.TestCase):
@@ -1037,17 +1057,40 @@ class TestDedupeRound3Residuals(unittest.TestCase):
         self.assertEqual([r["status"] for r in deduped if r["track_id"] == "t1"], ["done"])
 
     def test_owner_segment_participates_in_grouping_key(self):
-        """Same container NAME under two different owners (`alice/box/s1` vs
-        `bob/box/s2`, both active) must stay two rows. How it goes red: a key
-        of (track_id, container) that drops the owner folds them into one and
-        erases a cross_owner collision."""
-        rows = [
-            _row("t1", "alice/box/s1", "active", "2026-08-01T00:00:00Z", "2026-08-01-a.md"),
-            _row("t1", "bob/box/s2", "active", "2026-08-01T00:00:00Z", "2026-08-01-b.md"),
+        """SC-4 (owner-container-identity-key TASK-003) — dedupe key is
+        ``(track_id, identity_key)``; three arms:
+
+        A. uuid container, two owners (`alice/aaaa1111` vs `bob/aaaa1111`) ->
+           ONE identity_key (aaaa1111) -> folds to the newest row.
+           How it goes red on 7dd0135: 2 rows (owner still in the key).
+        B. hostname container, two owners (`alice/box` vs `bob/box`) -> two
+           identity_keys (`alice/box` / `bob/box`) -> stays two rows.
+        C. adversarial: `devbox01` is 8 chars but NOT hex -> hostname domain ->
+           `alice/devbox01` vs `bob/devbox01` stay two rows.
+        """
+        # A — uuid domain folds across owners
+        rows_a = [
+            _row("t1", "alice/aaaa1111", "active", "2026-08-01T00:00:00Z", "2026-08-01-a.md"),
+            _row("t1", "bob/aaaa1111", "active", "2026-08-02T00:00:00Z", "2026-08-02-b.md"),
         ]
-        deduped, stats = dedupe_latest_per_track_container(rows)
-        self.assertEqual(stats["after_dedupe"], 2)
-        self.assertEqual(sorted(r["owner_container"] for r in deduped), ["alice/box/s1", "bob/box/s2"])
+        deduped_a, stats_a = dedupe_latest_per_track_container(rows_a)
+        self.assertEqual(stats_a["after_dedupe"], 1, deduped_a)
+        self.assertEqual(deduped_a[0]["owner_container"], "bob/aaaa1111")
+        # B — hostname domain keeps the owner segment
+        rows_b = [
+            _row("t1", "alice/box", "active", "2026-08-01T00:00:00Z", "2026-08-01-a.md"),
+            _row("t1", "bob/box", "active", "2026-08-01T00:00:00Z", "2026-08-01-b.md"),
+        ]
+        deduped_b, stats_b = dedupe_latest_per_track_container(rows_b)
+        self.assertEqual(stats_b["after_dedupe"], 2)
+        self.assertEqual(sorted(r["owner_container"] for r in deduped_b), ["alice/box", "bob/box"])
+        # C — 8-char non-hex hostname is not a uuid
+        rows_c = [
+            _row("t1", "alice/devbox01", "active", "2026-08-01T00:00:00Z", "2026-08-01-a.md"),
+            _row("t1", "bob/devbox01", "active", "2026-08-01T00:00:00Z", "2026-08-01-b.md"),
+        ]
+        deduped_c, stats_c = dedupe_latest_per_track_container(rows_c)
+        self.assertEqual(stats_c["after_dedupe"], 2)
 
     def test_sort_key_prefers_filename_over_branch(self):
         """Equal updated_at; row A has the GREATER filename but LESSER branch,
@@ -1060,3 +1103,75 @@ class TestDedupeRound3Residuals(unittest.TestCase):
             self.assertEqual(len(deduped), 1)
             self.assertEqual(deduped[0]["filename"], "2026-08-01-zzz.md")
             self.assertEqual(deduped[0]["status"], "done")
+
+
+class TestTwoPartBoardEchoAndAdvisoryWiring(unittest.TestCase):
+    """owner-container-identity-key-and-collision-parser TASK-003 (c) / TASK-005."""
+
+    def test_board_echoes_original_two_part_strings(self):
+        """SC-4: the board's collision line must echo the ORIGINAL two-part
+        strings. How it goes red on 7dd0135: the label lookup is keyed on the
+        split tuple ('' , 'simonfish', 'bfe8285d') while the ClaimRecord carries
+        ('unknown', 'simonfish', 'bfe8285d') -> lookup misses -> the board prints
+        the reconstructed 'unknown/simonfish/bfe8285d'."""
+        from renderers.track_board import render_track_board
+        snapshot = {
+            "tracks_multibranch": {
+                "exists": True,
+                "tracks": [
+                    _row("twin", "aria-runner-bot/023236f2", "active", "2026-08-20T09:00:00Z", "2026-08-20-a.md"),
+                    _row("twin", "simonfish/bfe8285d", "active", "2026-08-19T09:00:00Z", "2026-08-19-b.md"),
+                ],
+                "branches_scanned": ["master"],
+                "legacy_count": 0,
+                "collision": {"kind": "cross_owner", "groups": [["aria-runner-bot/023236f2", "simonfish/bfe8285d"]], "identity_advisories": []},
+                "errors": [],
+            },
+            "coordination_fetch": {"attempted": True, "success": True, "fetched_at": "2026-08-21T00:00:00Z"},
+        }
+        out = render_track_board(snapshot, now=datetime(2026, 8, 21, tzinfo=timezone.utc))
+        collision_lines = [l for l in out.splitlines() if "COLLISION" in l]
+        self.assertEqual(len(collision_lines), 1, out)
+        line = collision_lines[0]
+        self.assertIn("cross-owner", line)
+        self.assertIn("aria-runner-bot/023236f2", line)
+        self.assertIn("simonfish/bfe8285d", line)
+        self.assertNotIn("unknown/", line)
+
+    def test_advisory_wired_before_dedupe_same_track_two_owner_strings(self):
+        """SC-2 端到端 (TASK-005): two handoffs for the SAME track_id from the
+        same uuid container under two owner strings. Dedupe folds them to one
+        row; the advisory must be computed on the PRE-dedupe rows, so exactly
+        one advisory survives. How it goes red: (i) on 7dd0135 the key does not
+        exist; (ii) if :709 passes deduped_tracks to the advisory -> 0."""
+        track_id = "drift-track"
+        files = [
+            ("2026-08-10-x.md", track_id, "simonfish/aaaa1111", "active", "2026-08-10T09:00:00Z"),
+            ("2026-08-20-y.md", track_id, "aria-runner-bot/aaaa1111", "active", "2026-08-20T09:00:00Z"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="ss-ick-adv-") as tmp:
+            root = _build_repo(tmp, files)
+            coll = collect_handoff_multibranch(root).data["collision"]
+            self.assertIn("identity_advisories", coll, coll)
+            self.assertEqual(coll["kind"], "none", coll)   # one identity_key after dedupe
+            self.assertEqual(len(coll["identity_advisories"]), 1, coll)
+            adv = coll["identity_advisories"][0]
+            self.assertEqual(adv["identity_key"], "aaaa1111")
+            self.assertEqual(adv["owners"], ["aria-runner-bot", "simonfish"])
+            self.assertEqual(adv["first_seen"], "2026-08-10T09:00:00Z")
+            self.assertEqual(adv["last_seen"], "2026-08-20T09:00:00Z")
+
+    def test_real_two_part_two_people_two_machines_is_cross_owner(self):
+        """SC-2 端到端: real two-part frontmatter, two people on two uuid
+        containers -> cross_owner. How it goes red on 7dd0135: self_multi_container."""
+        files = [
+            ("2026-08-20-a.md", "shared", "alice/aaaa1111", "active", "2026-08-20T09:00:00Z"),
+            ("2026-08-20-b.md", "shared", "bob/bbbb2222", "active", "2026-08-20T09:00:00Z"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="ss-ick-2p-") as tmp:
+            root = _build_repo(tmp, files)
+            coll = collect_handoff_multibranch(root).data["collision"]
+            self.assertEqual(coll["kind"], "cross_owner", coll)
+            self.assertEqual(coll["groups"], [["alice/aaaa1111", "bob/bbbb2222"]], coll)
+            self.assertEqual(coll["identity_advisories"], [])
+
