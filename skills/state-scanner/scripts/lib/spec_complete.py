@@ -709,6 +709,27 @@ def _is_ci_workflow_path(rel_path: str) -> bool:
     return "/.forgejo/" in norm or "/.github/" in norm
 
 
+def _is_aria_check_registry_path(rel_path: str) -> bool:
+    """``.aria/state-checks.yaml`` — custom-check 注册表, 是**运行时调用面**。
+
+    与已在 :func:`_is_hooks_or_config_path` 白名单里的 ``hooks.json`` /
+    ``.aria/config.json`` 同性质: 声明式注册 + 运行时真执行 —— state-scanner
+    Phase 1.11 每次扫描都会跑其 ``command:`` 字段。区别于 ``detailed-tasks.yaml``
+    那类「声明意图, 不能自证已引用」的规划元数据。
+
+    2026-09-06 实证 (Spec ``a1-entry-claim-duplicate-work-guard`` 的 D.2 归档闸门):
+    ``coordination_probe.py`` 由本文件的 ``coordination-gate-invocation`` check 每
+    次扫描真实执行且当日 pass, 但三个判据 (hooks/config · CI · yaml) 都不命中 ⇒ 落
+    「非 CI yaml」支归 prose ⇒ 「有 Python 定义 ∧ 零生产引用」⇒ 误判高置信 dead-code
+    ⇒ ``verdict=block`` 拦停归档。
+
+    与 CI 分支同样要求**字面脚本路径**匹配 (:func:`_literal_script_path_match`) ——
+    仅在 yaml 里提一句符号名不算 alive, 故本改动只减少 block, 不放行真死代码。
+    """
+    norm = "/" + rel_path.replace("\\", "/")
+    return norm.endswith("/.aria/state-checks.yaml")
+
+
 def _is_hooks_or_config_path(rel_path: str) -> bool:
     """(iii) hooks.json / ``.aria/config.json`` — the two known aria-plugin
     registration files. Deliberately NARROW (not "any .json file") — a blanket
@@ -920,7 +941,9 @@ def _classify_file_occurrence(
 
     if ext in (".yaml", ".yml"):
         stripped_yaml = _strip_comments_and_docstrings(text)
-        if _is_ci_workflow_path(rel_path):
+        if _is_ci_workflow_path(rel_path) or _is_aria_check_registry_path(rel_path):
+            # 两者都是真实调用面 (外部平台 wiring / 本仓 custom-check 注册表), 判据
+            # 同为字面脚本路径匹配 —— 见 `_is_aria_check_registry_path` 的实证说明。
             if _literal_script_path_match(stripped_yaml, symbol, definition_paths):
                 return {"alive": True, "categories": ["generic_path_call"], "prose": False}
             return {"alive": False, "categories": [], "prose": False}

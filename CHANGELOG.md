@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.71.1] - 2026-09-06
+
+### Fixed — 归档闸门把 `.aria/state-checks.yaml` 误判为「非运行时调用面」⇒ 误报高置信死代码
+
+`spec_complete.py` 的引用分类器 (`_classify_file_occurrence`) 三个判据都不认
+`.aria/state-checks.yaml`: `_is_hooks_or_config_path` 只认 `hooks.json` 与
+`.aria/config.json` (注释明写 Deliberately NARROW), `_is_ci_workflow_path` 只认
+`/.github/` 与 `/.forgejo/` —— 于是它落进「非 CI yaml = 声明意图非运行时调用面」被归为
+prose。而该文件其实是**本仓 custom-check 注册表**, state-scanner Phase 1.11 每次扫描都真
+实执行其 `command:` 字段, 与已在白名单里的 `hooks.json` / `.aria/config.json` 是同一性质。
+
+**后果**: 「交付物含 CLI 脚本、且只由 `.aria/state-checks.yaml` 调用」的符号会被判成
+「有 Python 定义 ∧ 零生产引用」= 高置信 dead-code-on-arrival ⇒ `verdict=block` ⇒ **拦停归档**。
+
+**实证** (2026-09-06, Spec `a1-entry-claim-duplicate-work-guard` 的 D.2): 唯一 blocking
+reason 是 `symbol 'coordination_probe' has zero production semantic reference`, 而
+`coordination_probe.py` 正由本文件的 `coordination-gate-invocation` check 每次扫描执行,
+且该 check 当日为 **pass**。
+
+**处置**: 新增判据 `_is_aria_check_registry_path`, 与 CI 分支并列接入 yaml 支; 判据同为
+**字面脚本路径匹配** (`_literal_script_path_match`) —— 仅在 yaml 里提一句符号名不算 alive,
+故本改动**只减少 block, 不放行真死代码**。
+
+**影响面实测** (改前/改后各跑一遍全部 7 个活跃 + 12 个近期归档 Spec, 共 19 条): 只有
+`a1-entry-claim-duplicate-work-guard` 从 `block` 变 `warn`, 其余 **18 条逐字不变**。
+
+**Rule #6**: 纯代码, 零 SKILL.md / description 变更 ⇒ 判据表第一行「描述性」⇒ substitute
+(SC 级 baseline-failing 结构化测试) 而非跑 AB。新增 `tests/test_spec_complete_state_checks_yaml.py`
+4 条, **基线三态亲跑**: 改前 2 红 2 绿, 改后 4 绿; 两条负控 (只提名字不给脚本路径 / 其它非 CI
+yaml) 钉住「不放行真死代码」。首版夹具红在 `ambiguous` 而非 `dead` (stub 不含符号名 ⇒ 走不到
+「有定义」支), 已按真实文件形态修正后复现出 `dead`。测试 2107 → **2111**。
+
+Level 1 (bug 修复, 无 Spec) —— 同一文件同一分类器的直接先例: v1.69.1 `c98646e` 补 `.json`
+分支 (Aria#192), 亦为 Level 1 carry 批。
+
 ## [1.71.0] - 2026-09-06
 
 ### Added — A.1 入口重复劳动闸门 (Spec `a1-entry-claim-duplicate-work-guard`, 主仓 `openspec/changes/`; 立项 issue `10CG/Aria#174`; 档位 MINOR = 2026-09-01 技术裁定 §H1a)
