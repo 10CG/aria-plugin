@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.70.0] - 2026-09-06
+
+### Added — A.1 入口重复劳动闸门 (Spec `a1-entry-claim-duplicate-work-guard`, 主仓 `openspec/changes/`; 立项 issue `10CG/Aria#174`; 档位 MINOR = 2026-09-01 技术裁定 §H1a)
+
+治的是「两个 AI 容器对**同一个 issue** 各自起草 Spec、各跑数轮审计闸门、互不知情, 直到一方 ship 才发现」——**已发生 5 次**, 且第 5 次是提出这条纪律的人在提出后的第二天自己违反了它。根因: 既有的 Layer L 认领只在 **Phase B 入口**起效, 而重复劳动在 **A.1 起草**时就已经发生 —— 闸门审的是产物质量, 不审产物是否该存在。
+
+- **A.1 入口认领 (双落点)**: `phase-a-planner` 与 `spec-drafter` 两个 SKILL.md 各新增「前置: REQUIRE claim (A.1, MUST)」段 —— 起草前先认领, 检出重叠即请裁。两处都要: 任一处漏掉即可绕过。
+- **`phase1_gate.py --heartbeat-only`** (新模式): 只延长本容器已有 active claim 的寿命, **刻意不是 gate run** —— 无 reconcile、无 7a–7d 分支、自己不 fetch、不建新 claim, 使长会话不被 `SWEEP_TTL` 从底下扫走。退出码恒 0 (刷不到东西是观察, 不是闸门失败); 遥测走独立 `heartbeat` 分区**不进 production**, 否则高频心跳会把 `coordination_probe` 的「闸门确实被调用过」信号淹成橡皮图章。
+- **`phase1_gate.py --include-terminal`**: 把终态 claim (done / abandoned) 也纳入重叠检测, 并输出 `unknown_schema_claims` 计数 —— A.1 要回答的是「同一个 issue 是不是**已经有人做完了**」, 不只是「现在有没有人在做」。默认 `False`, Phase B 既有语义逐字节不变。
+- **`lib/identity.py::get_container_uuid()`**: 与 `get_container_id()` 同文件、同再生与回退语义, 唯一区别是忽略 `label` 恒取 `uuid` 段 —— label 会随 git 提交身份漂移, uuid 不会。
+- **`lib/claim_lifecycle.py::heartbeat_by_track()`**: 按 track_id 定位并刷新本容器的 active claim (session 无关)。
+- **输出 JSON additive 键 `linked_issue_overlap_error` / `fetch_degraded`**: 让「重叠检测没跑成」与「跑了没重叠」可分辨 —— 零证据不得当正证据。
+- **`config-loader` 新键 `state_scanner.coordination.unattended`** (默认 `false`): 决定 A.1 检出重叠时向谁请裁 —— `false` 经 `AskUserQuestion` 请人裁; `true` 零 AskUserQuestion, 改写「待复议」记录 (Layer 2 自主运行时用; 取值路径 = aria-runner 容器镜像内的 `.aria/config.json`)。**不得以「AskUserQuestion 当前是否可用」做运行期推断** (D15): 有没有人可问是**配置事实**, 不是运行期观测。A.1 入口认领与 `--heartbeat-only` 同受 `coordination.enabled` 管辖, `false` ⇒ 两者皆零调用。
+- **carry-id 口径统一三处** (D13): `phase-b-developer` B.0 / `branch-manager` / `phase-d-closer` D.2b 的 carry-id 占位串一律取「A.1 认领时派生的那一串」并逐字节复用, 消除 B-entry 认领与 D.2b 释放对不上的断链。只改占位串**取值口径**, 不改 Phase B 闸门的调用形态与参数。
+- 测试 **5 个新文件 / +1537 行** (`test_a1_entry_gate_cli` 538 · `test_coordination_default_lockin` 320 · `test_heartbeat_by_track` 315 · `test_heartbeat_only_cli` 236 · `test_identity_container_uuid` 128), 另 `test_coordination_no_push` 增补。
+
+### Changed
+
+- **`phase-a-planner` / `spec-drafter` 两 skill 的 `allowed-tools` 扩权** (owner 2026-08-22 裁定 (a)): A.1 入口需调 `phase1_gate` CLI, 并在检出重叠时 `AskUserQuestion` 请裁, 原权限面不够。这是**能力面扩大**, 也是本版定 MINOR 的主要依据之一。
+
+### Rule #6 (基准测试)
+
+六套件全跑完 —— **6 套件 / 31 eval / 66 臂 / 67 份 grading**。全部产物在主仓 `aria-plugin-benchmarks/ab-results/2026-09-05-v1.70.0-a1-entry-rule6/` (`RESULT.md` / `SCORES.md` / `DEFECTS.md`)。
+
+- **定向 fixture (7 条) 是唯一有效度的数字**: with **45/45** vs old **16/45**, delta **+0.644**。分套件 `phase-a-planner` 25/25 vs 13/25 · `spec-drafter` 14/14 vs 1/14 · `state-scanner` 6/6 vs 2/6 —— 三者各自成立, 不靠单条撑起。
+- **回归面判定为「未被有效测试」, 不是「已验证无回归」。** 机械分 85/110 vs 82/110 (+0.027) **不作任何结论依据**: 110 条回归断言里大面积恒真, 且四处方向性错误 —— 其中两处**奖励了错误行为** (拒绝虚构进度记录得 0/3 而编造记录得 3/3; 拒绝拿别的套件顶替验证反被扣分)。「无回归」这个判断成立, 但证据来源是主控手工横向比对, 不是断言。
+- 跑动中按预注册规则补过一次指令面缺陷 (纯增 **+16/−0**, 断言未动): 两个 SKILL.md 漏抄 `proposal.md:277` 的成文要求, `spec-drafter` 缺整段 overlap 分档。
+
+### 已知限
+
+- **套件缺口未开单**: `phase-a-planner` / `spec-drafter` 对 A.1 入口认领编排行为**零覆盖**, 本版靠定向 fixture 补。同族 `aria-plugin#117` / `#127`, 独立 issue 待开。
+- **AB 套件 24 条缺陷** (`DEFECTS.md`): A 节四条「断言奖励错误行为」**会持续污染后续所有 AB**, 优先处置。
+- **7 项执笔侧流程判断待 owner 复议** (proposal 闸门状态表, Rule #10): 其中 #2「carry-id 采 editlist 选项 A 不算动 Phase B」经 R3–R5 三轮未被推翻, 但 owner 从未显式确认。
+- `unattended=true` 分支的 Nomad env 三腿契约属 follow-up (`10CG/Aria#196`)。
+- `resilient_push` 的 non-FF 恢复路径**结构上必失败** (`aria-plugin#169`) —— 2026-09-05 dogfood `--heartbeat-only` 时生产实撞 + 离线三态负控确认; 属本 cycle 之外的新发现。
+
 ## [1.69.1] - 2026-09-04
 
 ### Fixed — spec-drafter 落点路径 (Rule #5) + hunk A 措辞 (B8) + spec_complete 符号分类器 `.json` 分支
