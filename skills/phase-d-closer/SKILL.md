@@ -38,7 +38,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Task
 | 步骤 | Skill | 职责 | 输出 |
 |------|-------|------|------|
 | D.1 | progress-updater | 进度更新 | upm_updated |
-| D.2 | openspec-archive | Spec 归档 (自动修正 CLI bug; **#95 完成度 + C 分级证据闸 tri-state verdict, verdict=block 时本步 BLOCK**) | spec_archived |
+| D.2 | openspec-archive | Spec 归档 (**#95 完成度 + C 分级证据闸 tri-state verdict, verdict=block 时本步 BLOCK**) | spec_archived |
 | D.2b | release_gate CLI (state-scanner) | **本 cycle claim 释放** (coordination-claim-lifecycle Part C, advisory 非阻塞) | claim_released |
 | D.3 | session-handoff (本 Skill 内嵌) | 写 session handoff doc 到 `docs/handoff/` | handoff_written |
 | D.4 | ai-native-estimator (capture) | 采集本 cycle token 工作量 (advisory, 非阻塞, #18 v1) | estimator_captured |

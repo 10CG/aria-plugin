@@ -82,7 +82,7 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-validator — PRD/Story/Architecture 验证
 - requirements-sync — Story ↔ UPM 状态同步
 - forgejo-sync — Story ↔ Issue 同步
-- openspec-archive — 归档已完成的 OpenSpec 变更（自动修正 CLI bug）
+- openspec-archive — 归档已完成的 OpenSpec 变更到 openspec/archive/ 并做落点校验
 
 **基础设施**
 - config-loader *（内部，非用户调用）* — 配置加载

@@ -1,7 +1,7 @@
 ---
 name: openspec-archive
 description: |
-  归档已完成的 OpenSpec 变更到正确的 archive/ 目录，自动修正 CLI bug。
+  归档已完成的 OpenSpec 变更到 openspec/archive/ 目录，并做归档后落点校验。
 
   使用场景："归档 Spec"、"Phase D.2"、"完成变更归档"
 argument-hint: "[change-name]"
@@ -14,7 +14,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 
 > **版本**: 1.1.0 | **十步循环**: D.2
 > **更新**: 2026-07-05 - #95 归档 gate 硬化: Step1 扩展 C 分级证据闸 (block 死代码 / warn 模糊) + 新增 Step7 D auto-issue (归档不吞未完成)
-> **历史**: 2026-02-08 - 初始版本，修复 CLI 归档位置 bug
+> **历史**: 2026-02-08 - 初始版本，修复归档目录落点错误 (彼时经由外部工具链, 现已改为 git mv)
 
 ## 快速开始
 
@@ -37,14 +37,16 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 |------|------|
 | **状态验证** | 检查 Spec 完成状态和任务完成度 (#134 完成度二元判定) |
 | **完成声称真实性证据闸 (#95)** | C 分级 (🔴 block 高置信死代码 / 🟠 warn 模糊声称) — 验 tasks.md `[x]` 代码集成类声称有无真实生产语义引用 |
-| **执行归档** | 调用 openspec archive CLI |
-| **自动修正** | 修正 CLI 的归档目录位置 bug |
+| **执行归档** | `git mv openspec/changes/{name} openspec/archive/{date}-{name}` |
+| **位置校验** | 归档后断言目标存在 / 源已消失 / 无 `changes/archive/` 残留 |
 | **清理验证** | 清理空目录，验证最终结果 |
 | **D auto-issue (#95)** | 归档不吞未完成 — deferred/unverified 项自动建 Forgejo tracker issue (幂等 + headless 默认) |
 
 ---
 
 ## ⚠️ 已知 Bug: OpenSpec CLI 归档位置错误
+
+> ⏳ **时限限定 (v1.72.0)**: 本仓从未安装该 CLI, 归档走 git mv (见 Step 3) —— 下述问题对本仓是**历史记述**, 不是现时风险; 仅对仍使用该 CLI 的采用方适用。
 
 **问题**: `openspec archive` CLI 命令有 bug，输出到错误位置：
 
@@ -53,7 +55,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 ✅ 正确位置: openspec/archive/YYYY-MM-DD-{feature}/
 ```
 
-**本 Skill 会自动修正此问题**。
+**本 Skill 自 v1.72.0 起改走 `git mv`, 不再经由上述工具链** —— 故本仓不会产生该错位; 仍使用旧工具链归档的采用方需自行处置。
 
 ---
 
@@ -84,7 +86,6 @@ change_name:
 
 options:
   skip_verification: false     # 仅跳过 tasks.md [x] 校验 (v1.42.0+ 收口: 不绕过 Status 归一化 gate)
-  keep_changes_copy: false     # 在 changes/ 中保留副本
   dry_run: false               # 仅验证不执行 (三路输出, 见示例 3)
   archive_design_only: false   # 逃生舱 (--archive-design-only): 归档未实施稿, 须配 reason
                                 # #95: 同一逃生舱也覆盖 "complete=true ∧ verdict=block" 死代码组合
@@ -244,21 +245,16 @@ Step 2 - 写 proposal.md (三路径分叉 + warn 覆盖层; 标记写入属本�
 
   保存: (a)/(b) 路径 (含 warn_overlay 时) 写回 proposal.md; (c) 路径无写入
 
-Step 3 - 执行 CLI 归档命令:
-  命令: openspec archive {change_name} --yes
-  等待: CLI 完成
+Step 3 - 执行归档 (git mv):
+  命令: git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}
+  等待: git mv 返回
 
-Step 4 - 检测并修正归档位置:
-  检测: openspec/changes/archive/ 是否存在
-  如果存在:
-    → 移动: openspec/changes/archive/* → openspec/archive/
-    → 清理: rmdir openspec/changes/archive/
-  如果不存在:
-    → 验证: openspec/archive/YYYY-MM-DD-{change_name}/ 是否存在
+Step 4 - 归档后位置校验:
+  断言 1: openspec/archive/{YYYY-MM-DD}-{change_name}/ 存在
+  断言 2: openspec/changes/{change_name}/ 已不存在 (git mv 的必然结果)
+  断言 3: openspec/changes/archive/ 不存在 (若存在 ⇒ 历史上有人走过 CLI 路径, 搬到 openspec/archive/ 后 rmdir)
 
-Step 5 - 清理活跃变更目录 (可选):
-  删除: openspec/changes/{change_name}/
-  除非: keep_changes_copy = true
+Step 5 - (已并入 Step 3: git mv 使源目录必然消失)
 
 Step 6 - 验证归档结果:
   确认: 归档目录在 openspec/archive/ 下
@@ -314,8 +310,14 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
   SHA 回链填充 (已知设计取舍, 见下 "已知限制"):
     命令: git rev-parse --short HEAD
     行为: 用该 SHA 替换 d_payload.body 中的占位行
-      "> 归档 SHA 回链: 由 openspec-archive Step2 归档提交后填入"
-      → "> 归档 SHA 回链: {sha} (Step 1-6 归档动作完成时的 HEAD)"
+   "> 归档 SHA 回链: 由 openspec-archive Step 7 归档提交后填入"
+   → "> 归档 SHA 回链: {sha} (7-40 位十六进制; 归档动作完成时的 HEAD)"
+   约束: {sha} 必须是 7-40 位十六进制 (`git rev-parse --short HEAD` 的输出形态);
+         上面那行**不得以「填入」二字结尾** —— 该后缀是 skill-md-sha-backlink-literal-sync
+         探针区分「待填占位串」与「已填替换串」的承重锚点, 破坏它会让该 check 恒红。
+   校验: python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/openspec-archive/scripts/archive_tracker_verify.py" --repo {owner}/{repo} --issue {number}
+         断言 tracker issue 正文里回链行存在且 SHA 合形; rc != 0 时本 Step 判 FAIL, 不静默通过。
+         ⚠️ 本行是写给 AI 读的自然语言指令, 没有代码宿主强制它被执行 (已知缺口, 见 10CG/aria-plugin#189)。
     已知限制: 本 Skill 自身不执行 git commit (Phase D 的提交由调用方/用户在 D 阶段收尾时统一提交,
       参见 phase-d-closer §D.3 "提示 user commit handoff doc" 同惯例) — 此处捕获的 SHA 是
       **归档动作发生时**的 HEAD, 不必然是"归档变更被提交"的那个 commit。若调用方需要精确的
@@ -389,16 +391,16 @@ d_issue_url: null
 执行:
   Step 1: ✅ gate_result verdict=pass (complete=true, 无死代码声称)
   Step 2: ✅ 更新 proposal.md 状态
-  Step 3: ✅ 执行 openspec archive
-  Step 4: ✅ 修正归档位置 (检测到 CLI bug)
-  Step 5: ✅ 清理活跃变更目录
+  Step 3: ✅ git mv → openspec/archive/2026-02-08-cloudflare-access-auto-handling/
+  Step 4: ✅ 位置校验通过 (目标存在 / 源已消失 / 无 changes/archive/)
+  Step 5: ⏭️ (已并入 Step 3)
   Step 6: ✅ 验证归档结果
   Step 7: ⏭️ 跳过 (d_payload=null, 无 deferred/unverified, 干净归档)
 
 输出:
   ✅ 归档成功
   📍 位置: openspec/archive/2026-02-08-cloudflare-access-auto-handling
-  🐛 CLI bug 已自动修正
+  📦 归档路径: openspec/archive/2026-02-08-cloudflare-access-auto-handling
 ```
 
 ### 示例 2: 未完成任务
@@ -574,6 +576,17 @@ d_issue_url: null
 
 ---
 
+## 已退役配置项
+
+| 配置项 | 退役版本 | 说明 |
+|--------|----------|------|
+| `keep_changes_copy` | v1.72.0 | 声明接口, **从未有代码宿主实现它** —— 全仓仅本文件出现过 2 次, 零消费方 / 零测试 / 零 eval。 |
+
+**退役理由**: 若真行使该选项, 同一 spec 会同时存在于 `openspec/changes/` 与 `openspec/archive/`,
+被 `collectors/openspec.py` 计成**幽灵活跃变更**并永挂 `pending_archive`。实测两目录 slug 零重叠 ⇒ 历史从未行使。
+
+---
+
 ## 错误处理
 
 | 错误 | 原因 | 解决方案 |
@@ -585,7 +598,9 @@ d_issue_url: null
 | BLOCKED-already-archived | openspec/archive/ 已存在对应条目 (Step 1 前置 abort) | 检查是否已归档; 不重复写标记 |
 | `--force` (DEPRECATED) | 旧绕过通道, v1.42.0+ 收口 | 改用 `--archive-design-only` + reason (可追溯逃生舱) |
 | skip_verification=true 未配逃生舱 | backward-compat shim 触发 | WARN + abort (不静默降级); 改用 `--archive-design-only` + reason |
-| CLI 命令失败 | openspec CLI 未安装 | 安装 openspec CLI |
+| `git mv` 失败: 目标已存在 | 该 change 已归档过 | 判 `BLOCKED-already-archived`, 不覆盖 |
+| `git mv` 失败: 源未被 git 跟踪 | change 目录从未 `git add` | 先 `git add openspec/changes/{change_name}` 再重试 |
+| `git mv` 失败: 其余 | — | 按 `git mv` 的 stderr 原文处置, 不猜测 |
 | 权限不足 | 无法移动/删除文件 | 检查文件权限 |
 | **Step 7 非-Forgejo backend (#95)** | `forgejo` CLI 不可用 / remote 非 Forgejo | 降级打印 d_payload.body 待创建草稿, 提示手动在项目 issue tracker 创建; 归档本身不受影响 |
 | **Step 7 API 失败 (#95)** | forgejo POST 非 2xx / 网络错误 | 打印 d_payload.body 完整草稿 + WARN, 不静默; 归档 (Step 1-6) 已完成, 不因此 abort |
@@ -604,7 +619,7 @@ phase-d-closer
     │ D.2 - Spec 归档 (openspec-archive) ◄── 本 Skill
     │   ├── Step 1 验证完成状态 + C 分级证据闸 (#95)
     │   ├── Step 2 写 proposal.md (含 warn frontmatter, #95)
-    │   ├── Step 3-6 执行归档 / 修正 CLI bug / 验证结果
+    │   ├── Step 3-6 执行归档 (git mv) / 位置校验 / 验证结果
     │   └── Step 7 D auto-issue (归档不吞未完成, #95, 单一 owner)
     │
     ▼
@@ -619,7 +634,7 @@ phase-d-closer
 - **OpenSpec 项目规范**: `standards/openspec/project.md`
 - **归档目录说明**: `openspec/archive/README.md`
 - **已知 Bug 列表**: `standards/openspec/AGENTS.md`
-- **#95 Spec**: `openspec/changes/aria-archive-gate-runtime-reality/proposal.md` (主仓, C 分级证据闸 + D auto-issue 设计 SOT)
+- **#95 Spec**: `openspec/archive/2026-07-05-aria-archive-gate-runtime-reality/proposal.md` (主仓, C 分级证据闸 + D auto-issue 设计 SOT)
 - **spec_complete.py --gate 契约**: `state-scanner/scripts/lib/spec_complete.py` module docstring (tri-state gate_result 完整 schema)
 
 ---

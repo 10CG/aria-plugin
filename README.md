@@ -82,7 +82,7 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-validator — PRD / Story / Architecture validation
 - requirements-sync — Story ↔ UPM state sync
 - forgejo-sync — Story ↔ Issue sync
-- openspec-archive — Archive completed OpenSpec changes (auto-fixes CLI bugs)
+- openspec-archive — Archive completed OpenSpec changes to openspec/archive/ with post-move location checks
 
 **Infrastructure**
 - config-loader *(internal, non-user-invocable)* — Configuration loading

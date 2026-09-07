@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (archive-gate-registration-class-and-skill-drift)
+
+- **Step 3 改走 `git mv`**: 原「执行 CLI 归档命令 (`openspec archive`)」替换为
+  `git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}`。
+  本仓从未安装该 CLI, 原流程描述与实际执行路径长期不符。
+- **Step 4 由「检测并修正归档位置」改为「归档后位置校验」**: 三条断言 (目标存在 / 源已消失 /
+  无 `changes/archive/` 残留), 不再声称会自动修正错位。
+- **Step 5 并入 Step 3**: `git mv` 使源目录必然消失, 原「清理活跃变更目录 (可选)」整块退化为
+  标题行说明, 编号保留 (Step 7 被 `spec_complete.py` 引用, 不重编)。
+- **Step 7 SHA 回链**: 替换文案改为可验证约束 (`{sha}` 须 7-40 位十六进制), 并写明调用
+  `archive_tracker_verify.py` 校验; 占位串修正为 `Step 7` (原 `Step2` 与生产者不符)。
+
+### Removed
+
+- **退役 `keep_changes_copy` 配置项**: 声明接口, 从未有代码宿主实现; 若行使会使同一 spec 同时
+  存在于 `changes/` 与 `archive/`, 被计成幽灵活跃变更并永挂 `pending_archive`。移入
+  `## 已退役配置项` 小节。⚠️ 声明接口移除, 已在 handoff 点名请 owner 复议。
+
 ### Added (#95 archive-gate-runtime-reality, TG-2)
 
 - **Step 1 C 分级证据闸**: 完成 gate 改走 `spec_complete.py --gate` tri-state 契约
