@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.73.0] - 2026-09-08
+
+### Changed — openspec-archive CLI 漂移类级收口 (Aria spec `archive-gate-registration-class-and-skill-drift`)
+
+- **Step 3 改走 `git mv`**: 原「执行 CLI 归档命令 (`openspec archive`)」替换为 `git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}`。本仓从未安装该 CLI, 原流程描述与实际执行路径长期不符 (类级漂移, SC-1 基线四文件区段外 **15 处 → 0**)。
+- **Step 4 由「检测并修正归档位置」改为「归档后位置校验」**: 四条断言 (目标存在 / 源已消失 / 无 `changes/archive/` 残留 / **目标目录下直接有 `proposal.md`**)。末条是承重的 —— 实测 `git mv src dst` 在 dst 已存在为目录时**返回 rc 0** 并把 src 嵌进 dst, 而前三条在该坏结果上**全为真**。Step 3 另加两条前置 (`mkdir -p` 父目录 / 断言目标不存在)。
+- **Step 5 并入 Step 3**: `git mv` 使源目录必然消失。编号保留 (Step 7 被 `spec_complete.py` 引用, 不重编)。
+- **Step 7 SHA 回链**: 占位串 `Step2` → `Step 7` (与唯一生产者 `_build_d_payload` 对齐, 有 2026-07-22 成文裁定背书); 替换文案改为可验证约束 (7-40 位十六进制); 在**创建/命中 issue 之后**调用 `archive_tracker_verify.py` 校验。
+- 同步 `phase-d-closer` 的跨 Skill 声称与两份 README 的 skill 名册行。
+
+### Added — 三个机械兜底探针
+
+- `state-scanner/scripts/skill_md_literal_sync_probe.py` — 守「SKILL.md 复述的占位串 == 生产者产生的那一串」, 三条断言四态实跑; 注册进 `.aria/state-checks.yaml` (`skill-md-sha-backlink-literal-sync`)。
+- `openspec-archive/scripts/archive_tracker_verify.py` + 6 个单测 + 4 份冻结夹具 — 给 Step 7 的 SHA 回链一个**断言宿主** (填充动作本身仍无调用宿主, 见 `10CG/aria-plugin#189`)。
+- `state-scanner/scripts/check_bare_issue_refs.py` — 守跨仓 issue 引用纪律, fail-CLOSED 判据 + 外置允许清单。
+
+### Removed
+
+- **退役 `keep_changes_copy` 配置项**: 声明接口, 从未有代码宿主实现; 若行使会使同一 spec 同时存在于 `changes/` 与 `archive/`, 被计成幽灵活跃变更并永挂 `pending_archive`。⚠️ 声明接口移除, 已在 handoff 点名请 owner 复议。
+
+### Notes
+
+- Rule #6 AB 照跑 (`description` 变动 ⇒ 第二行零裁量), 结果存 `ab-results/2026-09-08-v1.73.0-archive-skill-drift/`。**实测对本改动零区分力** —— 六项改动无一被现有 expectation 承接, 其中 `description` 因评测台构造 (ARM 被直接喂 SKILL_MD 路径) **永远测不到**。不把「跑过了」当「验过了」, 套件缺口见 `10CG/aria-plugin#190`。
+- 版本号取号避开并发轨 `10CG/Aria#195` / `10CG/Aria#199` 正在争的 `v1.71.2` / `v1.72.0` (E-4 三腿实测)。
+
 ## [1.71.1] - 2026-09-06
 
 ### Fixed — 归档闸门把 `.aria/state-checks.yaml` 误判为「非运行时调用面」⇒ 误报高置信死代码
