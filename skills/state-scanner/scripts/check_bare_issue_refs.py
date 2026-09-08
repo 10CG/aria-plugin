@@ -11,7 +11,8 @@
   (c) 命中**允许清单**里某条字面的 `#<n>` —— 且只豁免**落在该字面覆盖区间内**的那个
       `#<n>`, 不豁免整行 (旧版用整行子串包含判定, 同一行后面追加的新裸引用会被连带放行)
 
-允许清单来源: 调用仓的 `.aria/bare-issue-ref-allowlist.txt` (每行一条完整字面, `#` 开头
+允许清单来源: **从被扫文件向上找最近的** `.aria/bare-issue-ref-allowlist.txt` (与 cwd 无关;
+显式 `--repo-root=DIR` 优先) (每行一条完整字面, `#` 开头
 的行为注释)。**脚本本身不硬编码任何项目专属字面** —— 它随插件分发给第三方, 硬编码本仓的
 字面对采用方既无意义又会造成不可预期的豁免。文件缺失 ⇒ 清单为空 (最严格), 不是错误。
 
@@ -27,15 +28,32 @@ from pathlib import Path
 HASH = re.compile(r'#(\d+)')
 # 全限定: 恰一个 `/`; org 段允许 . _ -; repo 段**不含 .** (排除 `a/b.md#1` 这类路径伪装);
 # 左侧不得紧邻 `/` 或字母数字 (排除 `x/a/b#1` 这类多级路径)
-QUALIFIED = re.compile(r'(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_-]+#\d+')
+# 左边界**显式枚举 ASCII**, 不用 `\w` —— Python 的 `\w` 匹配 CJK, 会让「参见10CG/Aria#195」
+# 这种中文紧邻全限定引用的写法被判成裸引用 (落地复审实测)。
+QUALIFIED = re.compile(r'(?<![A-Za-z0-9_./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_-]+#\d+')
 RULE_BEFORE = re.compile(r'(Rule|规则)\s*$')
 ALLOWLIST_REL = ".aria/bare-issue-ref-allowlist.txt"
 
 
+def _find_allowlist(start):
+    """从被扫文件向上找最近的 `.aria/bare-issue-ref-allowlist.txt`。
+
+    **不依赖 cwd** (落地复审实测: 原版相对 `Path.cwd()` 解析, 换个目录跑自检就红两条假阳性,
+    而 Spec 自己规定落地前必跑该自检)。显式 `--repo-root=` 仍然优先。
+    """
+    cur = Path(start).resolve()
+    cur = cur if cur.is_dir() else cur.parent
+    for d in [cur, *cur.parents]:
+        cand = d / ALLOWLIST_REL
+        if cand.is_file():
+            return cand
+    return None
+
+
 def load_allowlist(repo_root):
-    """读调用仓的允许清单。缺失 ⇒ 空清单 (最严格)。读不了 ⇒ 抛, 调用方判 rc 2。"""
-    p = Path(repo_root) / ALLOWLIST_REL
-    if not p.is_file():
+    """读允许清单。缺失 ⇒ 空清单 (最严格)。读不了 ⇒ 抛, 调用方判 rc 2。"""
+    p = Path(repo_root) / ALLOWLIST_REL if repo_root else None
+    if p is None or not p.is_file():
         return []
     out = []
     for ln in p.read_text(encoding="utf-8").splitlines():
@@ -71,7 +89,7 @@ def scan(path, allowlist):
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     targets = [a for a in argv if not a.startswith("--")]
-    root = Path.cwd()
+    root = None
     for a in argv:
         if a.startswith("--repo-root="):
             root = Path(a.split("=", 1)[1])
@@ -79,7 +97,12 @@ def main(argv=None):
         print("usage: check_bare_issue_refs.py [--repo-root=DIR] <file> [<file>...]", file=sys.stderr)
         return 2
     try:
-        allowlist = load_allowlist(root)
+        if root is not None:
+            allowlist = load_allowlist(root)
+        else:
+            # 无显式 --repo-root: 按**第一个被扫文件**向上找, 与 cwd 无关
+            found = _find_allowlist(targets[0])
+            allowlist = load_allowlist(found.parent.parent) if found else []
     except OSError as e:
         print("UNDECIDABLE: 允许清单读不了 (%s) — fail-CLOSED, 不当作通过" % e, file=sys.stderr)
         return 2

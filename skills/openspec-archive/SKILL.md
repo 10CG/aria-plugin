@@ -319,11 +319,11 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
   SHA 回链填充 (已知设计取舍, 见下 "已知限制"):
     命令: git rev-parse --short HEAD
     行为: 用该 SHA 替换 d_payload.body 中的占位行
-   "> 归档 SHA 回链: 由 openspec-archive Step 7 归档提交后填入"
-   → "> 归档 SHA 回链: {sha} (7-40 位十六进制; 归档动作完成时的 HEAD)"
+      "> 归档 SHA 回链: 由 openspec-archive Step 7 归档提交后填入"
+      → "> 归档 SHA 回链: {sha} (归档动作完成时的 HEAD)"
     约束: {sha} 必须是 7-40 位十六进制 (`git rev-parse --short HEAD` 的输出形态);
-          上面那行**不得以「填入」二字结尾** —— 该后缀是 skill-md-sha-backlink-literal-sync
-          探针区分「待填占位串」与「已填替换串」的承重锚点, 破坏它会让该 check 恒红。
+      上面那行**不得以「填入」二字结尾** —— 该后缀是 skill-md-sha-backlink-literal-sync
+      探针区分「待填占位串」与「已填替换串」的承重锚点, 破坏它会让该 check 恒红。
     已知限制: 本 Skill 自身不执行 git commit (Phase D 的提交由调用方/用户在 D 阶段收尾时统一提交,
       参见 phase-d-closer §D.3 "提示 user commit handoff doc" 同惯例) — 此处捕获的 SHA 是
       **归档动作发生时**的 HEAD, 不必然是"归档变更被提交"的那个 commit。若调用方需要精确的
@@ -348,9 +348,9 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
     前提: d_issue_created == true (取 {number} = 新建 issue 的 number) 或幂等命中 (取 {number} = {found});
           d_issue_skip_reason 非 null (clean_archive / non_forgejo_backend / api_failed) ⇒ **本校验整段跳过**
     命令: python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/openspec-archive/scripts/archive_tracker_verify.py" \
-          --repo {owner}/{repo} --issue {number}
+      --repo {owner}/{repo} --issue {number}
     断言: rc 0 = 回链行存在且 SHA 合形; rc 1 = 回链缺失或不含 SHA ⇒ 本 Step 判 FAIL 并打印脚本输出;
-          rc 2 = 取不到 issue body ⇒ WARN (fail-CLOSED 但不 abort 归档, 同 API 失败路径的处置)
+      rc 2 = 取不到 issue body ⇒ WARN (fail-CLOSED 但不 abort 归档, 同 API 失败路径的处置)
     ⚠️ 本段是写给 AI 读的自然语言指令, 没有代码宿主强制它被执行 (已知缺口, 见 10CG/aria-plugin#189)。
 
   输出:
@@ -375,7 +375,6 @@ verification:
   contains_proposal: true
   contains_tasks: true
   contains_detailed_tasks: true
-  wrong_dir_cleaned: true
 # #95 新增字段 (verdict=warn 或 d_payload 非 null 时出现; 干净归档时省略, 向后兼容):
 gate_verdict: "pass"|"warn"|"block"
 unverified_claims_written: false        # true 时对应 Step 2 warn_overlay 已写 frontmatter
@@ -407,14 +406,14 @@ d_issue_url: null
   Step 1: ✅ gate_result verdict=pass (complete=true, 无死代码声称)
   Step 2: ✅ 更新 proposal.md 状态
   Step 3: ✅ git mv → openspec/archive/2026-02-08-cloudflare-access-auto-handling/
-  Step 4: ✅ 位置校验通过 (目标存在 / 源已消失 / 无 changes/archive/)
+  Step 4: ✅ 位置校验通过 (目标存在 / 源已消失 / 无 changes/archive/ / proposal.md 在该层)
   Step 5: ⏭️ (已并入 Step 3)
   Step 6: ✅ 验证归档结果
   Step 7: ⏭️ 跳过 (d_payload=null, 无 deferred/unverified, 干净归档)
 
 输出:
   ✅ 归档成功
-  📍 位置: openspec/archive/2026-02-08-cloudflare-access-auto-handling
+  📦 归档方式: git mv
   📦 归档路径: openspec/archive/2026-02-08-cloudflare-access-auto-handling
 ```
 
