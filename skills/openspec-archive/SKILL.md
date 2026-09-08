@@ -38,7 +38,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 | **状态验证** | 检查 Spec 完成状态和任务完成度 (#134 完成度二元判定) |
 | **完成声称真实性证据闸 (#95)** | C 分级 (🔴 block 高置信死代码 / 🟠 warn 模糊声称) — 验 tasks.md `[x]` 代码集成类声称有无真实生产语义引用 |
 | **执行归档** | `git mv openspec/changes/{name} openspec/archive/{date}-{name}` |
-| **位置校验** | 归档后断言目标存在 / 源已消失 / 无 `changes/archive/` 残留 |
+| **位置校验** | 归档后四条断言: 目标存在 / 源已消失 / 无 `changes/archive/` 残留 / **无 `{name}/{name}/` 嵌套**; 另断言 `proposal.md` 在该层 |
 | **归档结果验证** | 确认归档目录在 `openspec/archive/` 下且内容完整 (Step 6) |
 | **D auto-issue (#95)** | 归档不吞未完成 — deferred/unverified 项自动建 Forgejo tracker issue (幂等 + headless 默认) |
 
@@ -246,22 +246,32 @@ Step 2 - 写 proposal.md (三路径分叉 + warn 覆盖层; 标记写入属本�
   保存: (a)/(b) 路径 (含 warn_overlay 时) 写回 proposal.md; (c) 路径无写入
 
 Step 3 - 执行归档 (git mv):
-    取日期: {YYYY-MM-DD} = 归档动作发生当日 UTC (`TZ=UTC date -u +%Y-%m-%d`), 非 spec 创建日
-    前置 1: mkdir -p openspec/archive/   # 父目录不存在时 git mv 硬失败, 且该失败不在下方三分支内
-    前置 2: 断言 openspec/archive/{YYYY-MM-DD}-{change_name}/ **不存在**
-            ⚠️ 这一条是承重的: `git mv src dst` 在 dst 已存在为目录时**返回 rc 0** 并把 src
-            **嵌进** dst 里 (实测 → openspec/archive/{date}-{name}/{name}/), 不报任何错。
-            Step 1 的 BLOCKED-already-archived 前置只查 Step 1 时刻, 此处再查一次防竞态。
-    命令: git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}
-    等待: git mv 返回 (rc 0 不等于结果正确, 见 Step 4 断言 4)
+  取日期: {YYYY-MM-DD} = 归档动作发生当日 UTC (`TZ=UTC date -u +%Y-%m-%d`), 非 spec 创建日
+  前置 1: mkdir -p openspec/archive/   # 父目录不存在时 git mv 硬失败, 且该失败不在下方三分支内
+  前置 2: 断言 openspec/archive/{YYYY-MM-DD}-{change_name}/ **不存在**
+    ⚠️ 这一条是承重的: `git mv src dst` 在 dst 已存在为目录时**返回 rc 0** 并把 src
+    **嵌进** dst 里 (实测 → openspec/archive/{date}-{name}/{name}/), 不报任何错。
+    Step 1 的 BLOCKED-already-archived 前置只查 Step 1 时刻, 此处再查一次防竞态。
+  命令: git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}
+  等待: git mv 返回 (rc 0 不等于结果正确, 见 Step 4 断言 4)
 
 Step 4 - 归档后位置校验:
-    断言 1: openspec/archive/{YYYY-MM-DD}-{change_name}/ 存在
-    断言 2: openspec/changes/{change_name}/ 已不存在 (git mv 的必然结果)
-    断言 3: openspec/changes/archive/ 不存在 (若存在 ⇒ 历史上有人走过 CLI 路径, 搬到 openspec/archive/ 后 rmdir)
-    断言 4: openspec/archive/{YYYY-MM-DD}-{change_name}/proposal.md **直接存在于该层**
-            ⚠️ 断言 1-3 挡不住 Step 3 前置 2 描述的嵌套坏结果 —— 那种情形下三条**全为真**
-            (目标目录确实存在 / 源确实消失 / 确实无 changes/archive/), 只有本条会红。
+  断言 1: openspec/archive/{YYYY-MM-DD}-{change_name}/ 存在
+  断言 2: openspec/changes/{change_name}/ 已不存在 (git mv 的必然结果)
+  断言 3: openspec/changes/archive/ 不存在 (若存在 ⇒ 历史上有人走过 CLI 路径, 搬到 openspec/archive/ 后 rmdir)
+  断言 4: openspec/archive/{YYYY-MM-DD}-{change_name}/{change_name}/ **不存在**
+    ⚠️ 这一条钉的是**嵌套坏结果的确切形状**, 是四条里唯一看得见它的。`git mv src dst`
+    在 dst 已存在为目录时返回 rc 0 并把 src **整个塞进** dst, 产出 {name}/{name}/ 这一层。
+    ⛔ **不要**用「proposal.md 直接存在于该层」来替代它 —— 那条在真实坏情形下**是绿的**:
+    dst 已存在的现实成因只有一个 (该 spec 已归档过一次), 那么 dst 里**必然已有一份**
+    上次归档留下的 proposal.md, 存在性检查照样通过。**维度必须匹配错误的维度**
+    (查的是「多了一层」, 不是「有没有」)。
+  断言 5: openspec/archive/{YYYY-MM-DD}-{change_name}/proposal.md 存在
+    (内容完整性的下界; 与断言 4 正交 —— 它挡「搬空了」, 断言 4 挡「搬套了」)
+  任一断言红 ⇒ **立即停止, 不进 Step 6 / Step 7**。此刻仓已处在「源已消失 + 内容嵌套」的
+    损坏中间态, 须先回滚:
+              git mv openspec/archive/{YYYY-MM-DD}-{change_name}/{change_name} openspec/changes/{change_name}
+    回滚后核 `git status` 确认源目录已复位, 再按 BLOCKED-already-archived 处置。
 
 Step 5 - (已并入 Step 3: git mv 使源目录必然消失)
 
@@ -345,8 +355,9 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
       不影响归档本身) — 绝不静默 fail-soft 吞掉残留工作可见性 (对称 D 的 "非静默" 设计原则)
 
   回链校验 (**必须排在创建/命中之后** —— 它要 issue number, 而 number 只有到这里才有绑定):
-    前提: d_issue_created == true (取 {number} = 新建 issue 的 number) 或幂等命中 (取 {number} = {found});
-          d_issue_skip_reason 非 null (clean_archive / non_forgejo_backend / api_failed) ⇒ **本校验整段跳过**
+    前提: **仅当** d_issue_skip_reason ∈ {null, "duplicate_found"} 时执行本校验 (fail-CLOSED: 列举要跑的, 不列举要跳的) ——
+          null ⇒ 取 {number} = d_issue_number (本次新建); "duplicate_found" ⇒ 取 {number} = 幂等检查命中的 {found}
+          其余 skip_reason (clean_archive / non_forgejo_backend / api_failed) ⇒ **整段跳过**, backlink_verified 记 null
     命令: python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/openspec-archive/scripts/archive_tracker_verify.py" \
       --repo {owner}/{repo} --issue {number}
     断言: rc 0 = 回链行存在且 SHA 合形; rc 1 = 回链缺失或不含 SHA ⇒ 本 Step 判 FAIL 并打印脚本输出;
@@ -358,6 +369,8 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
     d_issue_number: <int>|null
     d_issue_url: "<url>"|null
     d_issue_skip_reason: "clean_archive"|"duplicate_found"|"non_forgejo_backend"|"api_failed"|null
+    backlink_verified: true|false|null   # null = 本校验跳过 (见「回链校验」前提)
+    backlink_verify_rc: 0|1|2|null       # 1 ⇒ 本 Step FAIL; 2 ⇒ WARN (取不到 body, fail-CLOSED 但不 abort)
 ```
 
 ---
@@ -406,7 +419,7 @@ d_issue_url: null
   Step 1: ✅ gate_result verdict=pass (complete=true, 无死代码声称)
   Step 2: ✅ 更新 proposal.md 状态
   Step 3: ✅ git mv → openspec/archive/2026-02-08-cloudflare-access-auto-handling/
-  Step 4: ✅ 位置校验通过 (目标存在 / 源已消失 / 无 changes/archive/ / proposal.md 在该层)
+  Step 4: ✅ 位置校验通过 (目标存在 / 源已消失 / 无 changes/archive/ / 无嵌套 / proposal.md 在该层)
   Step 5: ⏭️ (已并入 Step 3)
   Step 6: ✅ 验证归档结果
   Step 7: ⏭️ 跳过 (d_payload=null, 无 deferred/unverified, 干净归档)
@@ -594,7 +607,7 @@ d_issue_url: null
 
 | 配置项 | 退役版本 | 说明 |
 |--------|----------|------|
-| `keep_changes_copy` | `<vNEXT>` | 声明接口, **从未有代码宿主实现它** —— 零消费方 / 零测试 / 零 eval。 |
+| `keep_changes_copy` | v1.73.0 | 声明接口, **从未有代码宿主实现它** —— 零消费方 / 零测试 / 零 eval。 |
 
 **退役理由**: 若真行使该选项, 同一 spec 会同时存在于 `openspec/changes/` 与 `openspec/archive/`,
 被 `collectors/openspec.py` 计成**幽灵活跃变更**并永挂 `pending_archive`。实测两目录 slug 零重叠 ⇒ 历史从未行使。

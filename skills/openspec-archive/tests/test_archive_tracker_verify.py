@@ -71,6 +71,35 @@ def test_prefix_must_be_line_start():
     assert "MISSING" in msg, msg
 
 
+def test_non_utf8_body_file_is_undecidable():
+    """非 UTF-8 的 --body-file ⇒ fetch_body 返回 None ⇒ 调用方判 rc 2 (fail-CLOSED)。
+
+    回归锁 (发布前验证席): 该分支此前只捕 OSError, UnicodeDecodeError 会裸抛,
+    Python 默认退出码 1 恰好落进「回链确实有问题」那个桶 —— 与 rc 契约冲突。
+    「判不了」与「有问题」必须分开。
+    """
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        f.write(b"\xff\xfe not utf-8")
+        bad = f.name
+    try:
+        assert fetch_body("10CG/Aria", 1, bad) is None
+    finally:
+        Path(bad).unlink(missing_ok=True)
+
+
+def test_missing_repo_or_issue_exits_before_any_request():
+    """缺 --repo/--issue 且无 --body-file ⇒ argparse.error 立即退出 (rc 2), 不发垃圾请求。
+
+    回归锁: 此前两个参数都非必填, 缺省时会真的发起一次 forgejo 调用才失败。
+    """
+    import subprocess, sys as _sys
+    script = Path(__file__).resolve().parent.parent / "scripts" / "archive_tracker_verify.py"
+    p = subprocess.run([_sys.executable, "-B", str(script)], capture_output=True, text=True)
+    assert p.returncode == 2, "argparse.error 应给 rc 2, 实得 %d" % p.returncode
+    assert "--repo" in p.stderr and "--issue" in p.stderr, p.stderr
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for f in fns:

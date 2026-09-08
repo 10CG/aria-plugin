@@ -103,7 +103,7 @@ def main(argv=None):
             # 无显式 --repo-root: 按**第一个被扫文件**向上找, 与 cwd 无关
             found = _find_allowlist(targets[0])
             allowlist = load_allowlist(found.parent.parent) if found else []
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         print("UNDECIDABLE: 允许清单读不了 (%s) — fail-CLOSED, 不当作通过" % e, file=sys.stderr)
         return 2
     total = 0

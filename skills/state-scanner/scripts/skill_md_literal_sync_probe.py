@@ -57,8 +57,11 @@ def main(argv=None):
         md_text = md.read_text(encoding="utf-8", errors="replace")
         py_text = py.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        # 读不了 (权限 / IO) 与「两侧漂移」是两回事。落地复审补: 未捕获异常会让
-        # custom_check 落 status=error 而非 fail, 两种状态在推荐规则里语义不同。
+        # 读不了 (权限 / IO) 与「两侧漂移」是两回事。
+        # ⚠️ 理据订正 (发布前验证席): 不捕获时**两者都落 status=fail** —— Python 未捕获
+        # 异常的退出码是 1 而非 127, 而 custom_checks.py 只在 rc==127 时判 error。
+        # 这里显式 return 换来的是**可读的 FAIL 诊断文案**, 而不是 status 值本身的区分
+        # (不捕获时 output 是空的, 回退成没有信息量的 "rc=1")。
         print("FAIL 目标文件读取失败 (%s) — fail-CLOSED, 不当作通过" % e)
         return 1
     md_hits = _MD_RE.findall(md_text)

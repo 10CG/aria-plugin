@@ -1,7 +1,7 @@
 # Aria Plugin 版本信息
 
 > **版本**: 1.73.0
-> **发布日期**: 2026-09-08  # minor: v1.73.0 openspec-archive CLI 漂移类级收口 — Step 3 改走 `git mv` / Step 4 归档后四条落点断言 (第四条挡 `git mv` 在目标已存在时 rc 0 静默嵌套) / Step 5 并入 Step 3 / Step 7 SHA 回链占位串修正 + `archive_tracker_verify.py` 断言宿主 / 退役 `keep_changes_copy` 声明接口; 新增三个机械兜底探针 (`skill_md_literal_sync_probe.py` / `archive_tracker_verify.py` / `check_bare_issue_refs.py`)。Rule #6 AB 照跑, 实测对本改动零区分力 (套件缺口见 10CG/aria-plugin#190)
+> **发布日期**: 2026-09-08  # minor: v1.73.0 openspec-archive CLI 漂移类级收口 — Step 3 改走 `git mv` / Step 4 归档后五条落点断言 (第四条钉 `{name}/{name}/` 不存在 —— 那是 `git mv` 在目标已存在时 rc 0 静默嵌套的确切形状; 初版用「proposal.md 存在」被发布前验证席实测证伪) / Step 5 并入 Step 3 / Step 7 SHA 回链占位串修正 + `archive_tracker_verify.py` 断言宿主 / 退役 `keep_changes_copy` 声明接口; 新增三个机械兜底探针 (`skill_md_literal_sync_probe.py` / `archive_tracker_verify.py` / `check_bare_issue_refs.py`)。Rule #6 AB 照跑, 实测对本改动零区分力 (套件缺口见 10CG/aria-plugin#190)
 > **发布日期(旧)**: 2026-09-06  # patch: v1.71.1 归档闸门 `_classify_file_occurrence` 补 `.aria/state-checks.yaml` 判据 (`_is_aria_check_registry_path`) —— 该文件是 custom-check 注册表 (Phase 1.11 每次扫描真实执行其 `command:`), 却因不在 hooks/config 白名单、又非 CI 路径而落「非 CI yaml = 声明意图」支归 prose ⇒ 「有 Python 定义 ∧ 零生产引用」误判高置信 dead-code ⇒ `verdict=block` 拦停归档 (实证: `coordination_probe` 阻断 a1-entry 母 Spec 的 D.2, 而该探针每次扫描都在跑且 check pass)。判据同为字面脚本路径匹配, 只减少 block 不放行真死代码。影响面 19 个 Spec 改前后对跑: 仅 1 条 block→warn, 其余 18 条逐字不变。Rule #6 走 substitute (4 条新测试, 基线 2 红 2 绿→4 绿), 2107→2111。
 > **发布日期(旧)**: 2026-09-06  # minor: v1.71.0 Aria spec a1-entry-claim-duplicate-work-guard — A.1 入口重复劳动闸门 (起草前先认领, 检出重叠即请裁; 双落点 phase-a-planner + spec-drafter)。phase1_gate 两个新模式 `--heartbeat-only` (只延长本容器 active claim, 非 gate run, 遥测独立分区不进 production) 与 `--include-terminal` (终态 claim 纳入重叠检测 + `unknown_schema_claims` 计数, 默认 False 保 Phase B 语义); 新 lib API `get_container_uuid` / `heartbeat_by_track`; additive 键 `linked_issue_overlap_error` / `fetch_degraded`; config 新键 `state_scanner.coordination.unattended` (默认 false, 决定重叠时向谁请裁, 不得由运行期推断); carry-id 口径三处统一 (D13)。**MINOR 依据 = 两 skill allowed-tools 扩权 (能力面扩大, owner 2026-08-22 裁定 (a)) + 新 CLI 模式**; 测试 5 新文件 +1537 行。Rule #6 六套件全跑 (6/31/66/67), 定向 fixture with 45/45 vs old 16/45 (**+0.644**); 回归面判定「未被有效测试」非「已验证无回归」(110 条大面积恒真 + 四处方向性错误)。已知限: 套件缺口 issue 待开 · AB 24 条缺陷 (A 节四条奖励错误行为) · 7 项流程判断待 owner 复议 · aria-plugin#169 resilient_push。
 > **发布日期(旧)**: 2026-09-06  # minor: v1.70.0 Aria spec owner-container-identity-key-and-collision-parser (Aria #193 / aria-plugin#135 缺口 3) — state-scanner Layer H owner-container 两段式解析 (旧三段式把 owner 当 container, 同机 git 身份漂移误判 🟡、真两人两机 cross_owner 从未可达); 判定与 dedupe 键改按 session-handoff.md §2.3.5 identity_key (uuid 容器 = 一个身份; 主机名保留 owner 段; 非空非 unknown owner 集合 ≥2 才 cross_owner, 实质变更); D-0(a) 族键剥 -<8hex>; D-3(a) LAYER_H_ACTIVE_WINDOW_DAYS=30 单一谓词 (冻结语料 996 行 1 组→0 组, 机械归因全 stale #182); 新增恒存在 collision.identity_advisories[] (⚪ same-identity-multi-owner) + track_board ⚪ 段 + get_container_label() (S1 不 flip) + phase1_gate/release_gate label_migration inventory。测试 +29 TestCase, test_collision.py 16→28; run_tests 1505 全绿。standards §2.3.1/§2.3.5/§2.3.9 同步。
@@ -70,7 +70,7 @@
 ## 版本号
 
 ```
-1.47.0
+1.73.0
 ```
 
 ## 说明
