@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Step 3 改走 `git mv`**: 原「执行 CLI 归档命令 (`openspec archive`)」替换为
   `git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}`。
   本仓从未安装该 CLI, 原流程描述与实际执行路径长期不符。
-- **Step 4 由「检测并修正归档位置」改为「归档后位置校验」**: 三条断言 (目标存在 / 源已消失 /
-  无 `changes/archive/` 残留), 不再声称会自动修正错位。
+- **Step 4 由「检测并修正归档位置」改为「归档后位置校验」**: 四条断言 (目标存在 / 源已消失 /
+  无 `changes/archive/` 残留 / **目标目录下直接有 `proposal.md`**)。末条挡 `git mv` 在目标已存在时
+  静默嵌套的坏结果 —— 实测该情形 `git mv` 返回 **rc=0** 并把源目录嵌进目标里, 而前三条断言全绿。
+  不再声称会自动修正错位。
 - **Step 5 并入 Step 3**: `git mv` 使源目录必然消失, 原「清理活跃变更目录 (可选)」整块退化为
   标题行说明, 编号保留 (Step 7 被 `spec_complete.py` 引用, 不重编)。
-- **Step 7 SHA 回链**: 替换文案改为可验证约束 (`{sha}` 须 7-40 位十六进制), 并写明调用
-  `archive_tracker_verify.py` 校验; 占位串修正为 `Step 7` (原 `Step2` 与生产者不符)。
+- **Step 7 SHA 回链**: 替换文案改为可验证约束 (`{sha}` 须 7-40 位十六进制), 并在**创建/命中 issue 之后**
+  调用 `archive_tracker_verify.py` 校验; 占位串修正为 `Step 7` (原 `Step2` 与生产者不符)。
 
 ### Removed
 

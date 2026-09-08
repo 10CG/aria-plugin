@@ -39,14 +39,14 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 | **完成声称真实性证据闸 (#95)** | C 分级 (🔴 block 高置信死代码 / 🟠 warn 模糊声称) — 验 tasks.md `[x]` 代码集成类声称有无真实生产语义引用 |
 | **执行归档** | `git mv openspec/changes/{name} openspec/archive/{date}-{name}` |
 | **位置校验** | 归档后断言目标存在 / 源已消失 / 无 `changes/archive/` 残留 |
-| **清理验证** | 清理空目录，验证最终结果 |
+| **归档结果验证** | 确认归档目录在 `openspec/archive/` 下且内容完整 (Step 6) |
 | **D auto-issue (#95)** | 归档不吞未完成 — deferred/unverified 项自动建 Forgejo tracker issue (幂等 + headless 默认) |
 
 ---
 
 ## ⚠️ 已知 Bug: OpenSpec CLI 归档位置错误
 
-> ⏳ **时限限定 (v1.72.0)**: 本仓从未安装该 CLI, 归档走 git mv (见 Step 3) —— 下述问题对本仓是**历史记述**, 不是现时风险; 仅对仍使用该 CLI 的采用方适用。
+> ⏳ **时限限定**: 本仓从未安装该 CLI, 归档走 `git mv` (见 Step 3) —— 下述问题对本仓是**历史记述**, 不是现时风险; 仅对仍使用该 CLI 的采用方适用。
 
 **问题**: `openspec archive` CLI 命令有 bug，输出到错误位置：
 
@@ -55,7 +55,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 ✅ 正确位置: openspec/archive/YYYY-MM-DD-{feature}/
 ```
 
-**本 Skill 自 v1.72.0 起改走 `git mv`, 不再经由上述工具链** —— 故本仓不会产生该错位; 仍使用旧工具链归档的采用方需自行处置。
+**本 Skill 归档走 `git mv`, 不经由上述工具链** —— 故本仓不会产生该错位; 仍使用旧工具链归档的采用方需自行处置。
 
 ---
 
@@ -246,13 +246,22 @@ Step 2 - 写 proposal.md (三路径分叉 + warn 覆盖层; 标记写入属本�
   保存: (a)/(b) 路径 (含 warn_overlay 时) 写回 proposal.md; (c) 路径无写入
 
 Step 3 - 执行归档 (git mv):
-  命令: git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}
-  等待: git mv 返回
+    取日期: {YYYY-MM-DD} = 归档动作发生当日 UTC (`TZ=UTC date -u +%Y-%m-%d`), 非 spec 创建日
+    前置 1: mkdir -p openspec/archive/   # 父目录不存在时 git mv 硬失败, 且该失败不在下方三分支内
+    前置 2: 断言 openspec/archive/{YYYY-MM-DD}-{change_name}/ **不存在**
+            ⚠️ 这一条是承重的: `git mv src dst` 在 dst 已存在为目录时**返回 rc 0** 并把 src
+            **嵌进** dst 里 (实测 → openspec/archive/{date}-{name}/{name}/), 不报任何错。
+            Step 1 的 BLOCKED-already-archived 前置只查 Step 1 时刻, 此处再查一次防竞态。
+    命令: git mv openspec/changes/{change_name} openspec/archive/{YYYY-MM-DD}-{change_name}
+    等待: git mv 返回 (rc 0 不等于结果正确, 见 Step 4 断言 4)
 
 Step 4 - 归档后位置校验:
-  断言 1: openspec/archive/{YYYY-MM-DD}-{change_name}/ 存在
-  断言 2: openspec/changes/{change_name}/ 已不存在 (git mv 的必然结果)
-  断言 3: openspec/changes/archive/ 不存在 (若存在 ⇒ 历史上有人走过 CLI 路径, 搬到 openspec/archive/ 后 rmdir)
+    断言 1: openspec/archive/{YYYY-MM-DD}-{change_name}/ 存在
+    断言 2: openspec/changes/{change_name}/ 已不存在 (git mv 的必然结果)
+    断言 3: openspec/changes/archive/ 不存在 (若存在 ⇒ 历史上有人走过 CLI 路径, 搬到 openspec/archive/ 后 rmdir)
+    断言 4: openspec/archive/{YYYY-MM-DD}-{change_name}/proposal.md **直接存在于该层**
+            ⚠️ 断言 1-3 挡不住 Step 3 前置 2 描述的嵌套坏结果 —— 那种情形下三条**全为真**
+            (目标目录确实存在 / 源确实消失 / 确实无 changes/archive/), 只有本条会红。
 
 Step 5 - (已并入 Step 3: git mv 使源目录必然消失)
 
@@ -312,12 +321,9 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
     行为: 用该 SHA 替换 d_payload.body 中的占位行
    "> 归档 SHA 回链: 由 openspec-archive Step 7 归档提交后填入"
    → "> 归档 SHA 回链: {sha} (7-40 位十六进制; 归档动作完成时的 HEAD)"
-   约束: {sha} 必须是 7-40 位十六进制 (`git rev-parse --short HEAD` 的输出形态);
-         上面那行**不得以「填入」二字结尾** —— 该后缀是 skill-md-sha-backlink-literal-sync
-         探针区分「待填占位串」与「已填替换串」的承重锚点, 破坏它会让该 check 恒红。
-   校验: python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/openspec-archive/scripts/archive_tracker_verify.py" --repo {owner}/{repo} --issue {number}
-         断言 tracker issue 正文里回链行存在且 SHA 合形; rc != 0 时本 Step 判 FAIL, 不静默通过。
-         ⚠️ 本行是写给 AI 读的自然语言指令, 没有代码宿主强制它被执行 (已知缺口, 见 10CG/aria-plugin#189)。
+    约束: {sha} 必须是 7-40 位十六进制 (`git rev-parse --short HEAD` 的输出形态);
+          上面那行**不得以「填入」二字结尾** —— 该后缀是 skill-md-sha-backlink-literal-sync
+          探针区分「待填占位串」与「已填替换串」的承重锚点, 破坏它会让该 check 恒红。
     已知限制: 本 Skill 自身不执行 git commit (Phase D 的提交由调用方/用户在 D 阶段收尾时统一提交,
       参见 phase-d-closer §D.3 "提示 user commit handoff doc" 同惯例) — 此处捕获的 SHA 是
       **归档动作发生时**的 HEAD, 不必然是"归档变更被提交"的那个 commit。若调用方需要精确的
@@ -338,6 +344,15 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
       **归档不因此 abort** (Step 1-6 已成功完成, 本 Step 失败只影响"是否自动建了 tracker",
       不影响归档本身) — 绝不静默 fail-soft 吞掉残留工作可见性 (对称 D 的 "非静默" 设计原则)
 
+  回链校验 (**必须排在创建/命中之后** —— 它要 issue number, 而 number 只有到这里才有绑定):
+    前提: d_issue_created == true (取 {number} = 新建 issue 的 number) 或幂等命中 (取 {number} = {found});
+          d_issue_skip_reason 非 null (clean_archive / non_forgejo_backend / api_failed) ⇒ **本校验整段跳过**
+    命令: python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/openspec-archive/scripts/archive_tracker_verify.py" \
+          --repo {owner}/{repo} --issue {number}
+    断言: rc 0 = 回链行存在且 SHA 合形; rc 1 = 回链缺失或不含 SHA ⇒ 本 Step 判 FAIL 并打印脚本输出;
+          rc 2 = 取不到 issue body ⇒ WARN (fail-CLOSED 但不 abort 归档, 同 API 失败路径的处置)
+    ⚠️ 本段是写给 AI 读的自然语言指令, 没有代码宿主强制它被执行 (已知缺口, 见 10CG/aria-plugin#189)。
+
   输出:
     d_issue_created: true|false
     d_issue_number: <int>|null
@@ -353,7 +368,7 @@ Step 7 - D auto-issue (归档不吞未完成, #95, 单一 owner):
 success: true
 change_name: "cloudflare-access-auto-handling"
 archive_path: "openspec/archive/2026-02-08-cloudflare-access-auto-handling"
-cli_bug_fixed: true
+archive_method: "git mv"
 warnings: []
 verification:
   archive_exists: true
@@ -580,7 +595,7 @@ d_issue_url: null
 
 | 配置项 | 退役版本 | 说明 |
 |--------|----------|------|
-| `keep_changes_copy` | v1.72.0 | 声明接口, **从未有代码宿主实现它** —— 全仓仅本文件出现过 2 次, 零消费方 / 零测试 / 零 eval。 |
+| `keep_changes_copy` | `<vNEXT>` | 声明接口, **从未有代码宿主实现它** —— 零消费方 / 零测试 / 零 eval。 |
 
 **退役理由**: 若真行使该选项, 同一 spec 会同时存在于 `openspec/changes/` 与 `openspec/archive/`,
 被 `collectors/openspec.py` 计成**幽灵活跃变更**并永挂 `pending_archive`。实测两目录 slug 零重叠 ⇒ 历史从未行使。
@@ -598,7 +613,7 @@ d_issue_url: null
 | BLOCKED-already-archived | openspec/archive/ 已存在对应条目 (Step 1 前置 abort) | 检查是否已归档; 不重复写标记 |
 | `--force` (DEPRECATED) | 旧绕过通道, v1.42.0+ 收口 | 改用 `--archive-design-only` + reason (可追溯逃生舱) |
 | skip_verification=true 未配逃生舱 | backward-compat shim 触发 | WARN + abort (不静默降级); 改用 `--archive-design-only` + reason |
-| `git mv` 失败: 目标已存在 | 该 change 已归档过 | 判 `BLOCKED-already-archived`, 不覆盖 |
+| **归档目标已存在** | 该 change 已归档过 | Step 3 前置 2 断言拦下 (⚠️ **不能靠 `git mv` 报错** —— 实测它 rc 0 并把源嵌进目标里); 判 `BLOCKED-already-archived`, 不覆盖 |
 | `git mv` 失败: 源未被 git 跟踪 | change 目录从未 `git add` | 先 `git add openspec/changes/{change_name}` 再重试 |
 | `git mv` 失败: 其余 | — | 按 `git mv` 的 stderr 原文处置, 不猜测 |
 | 权限不足 | 无法移动/删除文件 | 检查文件权限 |

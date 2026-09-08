@@ -18,7 +18,9 @@ def fetch_body(repo: str, issue: int, body_file: str | None) -> str | None:
     if body_file:
         try:
             return open(body_file, encoding="utf-8").read()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # 读不了 / 非 UTF-8 都归 None ⇒ 调用方判 rc 2 (fail-CLOSED)。
+            # 不可归 rc 1 —— 那是「回链确实有问题」的语义, 与「判不了」必须分开。
             return None
     try:
         p = subprocess.run(
@@ -50,6 +52,9 @@ def main() -> int:
     ap.add_argument("--issue", type=int)
     ap.add_argument("--body-file", help="离线夹具 (单测用)")
     a = ap.parse_args()
+    if not a.body_file and (not a.repo or a.issue is None):
+        ap.error("需要 --repo 与 --issue (或用 --body-file 走离线夹具) —— "
+                 "缺省时不发起垃圾 API 请求")
     body = fetch_body(a.repo, a.issue, a.body_file)
     if body is None:
         print("FETCH_FAIL: 取不到 issue body — fail-CLOSED, 不当作通过", file=sys.stderr)

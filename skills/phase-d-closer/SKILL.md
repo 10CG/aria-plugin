@@ -279,7 +279,7 @@ phase-d-closer (本 Skill)
 - [UPM 规范](../../../standards/core/upm/unified-progress-management-spec.md)
 - [state-scanner Phase 1.15 handoff awareness](../state-scanner/SKILL.md) - D.3 输出在下次 session start 自动 surface
 - [openspec-archive](../openspec-archive/SKILL.md) - D.2 委托的归档 Skill (Step 1 C-gate + Step 7 D auto-issue, #95)
-- **#95 Spec**: `openspec/changes/aria-archive-gate-runtime-reality/proposal.md` (主仓, tri-state verdict 契约设计 SOT)
+- **#95 Spec**: `openspec/archive/2026-07-05-aria-archive-gate-runtime-reality/proposal.md` (主仓, tri-state verdict 契约设计 SOT)
 
 ---
 

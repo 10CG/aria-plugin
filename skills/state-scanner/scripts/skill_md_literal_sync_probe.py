@@ -13,7 +13,7 @@
 
 exit code (对齐 collectors/custom_checks.py 契约):
   0 → pass: 两侧逐字相等且值正确
-  1 → fail: 两侧不等 / 锚点提取数 != 1 / 两侧一致但值错了 / 目标文件缺失
+  1 → fail: 两侧不等 / 锚点提取数 != 1 / 两侧一致但值错了 / 目标文件缺失或读不了
 
 ⚠️ **无 SKIP 态**: 探针落盘后就在插件内, `parents[3]` 必然可达两个目标文件 ⇒
 「插件源码不可见」在健康常态下永不触发, 保留它就得人为构造生产中不可能的场景 =
@@ -53,8 +53,16 @@ def main(argv=None):
         print("FAIL 目标文件缺失 (插件损坏?): " + ", ".join(missing))
         return 1
 
-    md_hits = _MD_RE.findall(md.read_text(encoding="utf-8", errors="replace"))
-    py_hits = _PY_RE.findall(py.read_text(encoding="utf-8", errors="replace"))
+    try:
+        md_text = md.read_text(encoding="utf-8", errors="replace")
+        py_text = py.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        # 读不了 (权限 / IO) 与「两侧漂移」是两回事。落地复审补: 未捕获异常会让
+        # custom_check 落 status=error 而非 fail, 两种状态在推荐规则里语义不同。
+        print("FAIL 目标文件读取失败 (%s) — fail-CLOSED, 不当作通过" % e)
+        return 1
+    md_hits = _MD_RE.findall(md_text)
+    py_hits = _PY_RE.findall(py_text)
     if len(md_hits) != 1 or len(py_hits) != 1:
         print(
             "FAIL 锚点提取数异常 (期望各 1): SKILL.md=%d spec_complete.py=%d"

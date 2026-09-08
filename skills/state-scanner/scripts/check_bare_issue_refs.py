@@ -1,60 +1,101 @@
 #!/usr/bin/env python3
-"""跨仓 issue 引用纪律检查 (Part C3 / SC-12)。
+"""跨仓 issue 引用纪律检查 — 文档里的 `#<n>` 必须带 `<org>/<repo>` 限定。
 
-违规 = 任何 `#<n>` 不能被下列**封闭**豁免集合覆盖。判据是 fail-CLOSED:
-先假定每个 `#<n>` 都违规, 只有落进豁免集才放过 (post_planning R5 F13 订正
-—— v1 用的是「`#` 前一个字符不是 / 或字母数字」这种单字符前瞻, 那是正向枚举,
-对 `Aria#195` 这种「只有仓名没有 org」的半限定形态天然 fail-OPEN, memory
-`invariant-needs-failclosed-default`)。
+判据 **fail-CLOSED**: 先假定每个 `#<n>` 都违规, 只有落进**封闭**豁免集才放过。
 
 封闭豁免集 (仅三类):
-  1. 全限定引用 `<org>/<repo>#<n>` —— 必须含 `/`, 半限定 (`Aria#195`) **不豁免**
-  2. 不可协商规则编号 `Rule #<n>` / `规则 #<n>`
-  3. 反引号 code span 内的 `#<n>`, **且该 code span 自身是全限定形态**
-     —— v1 是「任意 code span 一律掏空」, 那会让 `` `#199` `` 这种反引号裹的
-     裸号免检 (R5 F13 点名的盲区)。现改为: code span 内仍照常判, 全限定才豁免。
+  (a) **全限定** `<org>/<repo>#<n>` —— 恰一个 `/`; repo 段不含 `.`
+      (排除 `docs/handoff/x.md#123` 这类**路径伪装**: 它有两个 `/` 且末段带扩展名,
+       不是 issue 引用形态。Phase B 落地复审实测: 旧版单看「有没有 `/`」会放行它)
+  (b) `Rule #N` / `规则 #N` 规则编号
+  (c) 命中**允许清单**里某条字面的 `#<n>` —— 且只豁免**落在该字面覆盖区间内**的那个
+      `#<n>`, 不豁免整行 (旧版用整行子串包含判定, 同一行后面追加的新裸引用会被连带放行)
 
-退出码: 0 = 零违规; 1 = 有违规 (逐条打印 file:line 与原文)。
+允许清单来源: 调用仓的 `.aria/bare-issue-ref-allowlist.txt` (每行一条完整字面, `#` 开头
+的行为注释)。**脚本本身不硬编码任何项目专属字面** —— 它随插件分发给第三方, 硬编码本仓的
+字面对采用方既无意义又会造成不可预期的豁免。文件缺失 ⇒ 清单为空 (最严格), 不是错误。
+
+退出码:
+  0 = 零违规
+  1 = 有违规 (逐条打印 file:line 与原文)
+  2 = 无法判定 (文件读不了 / 清单读不了) —— fail-CLOSED, 与「有违规」区分开
 """
 import re
 import sys
 from pathlib import Path
 
 HASH = re.compile(r'#(\d+)')
-# 全限定: <org>/<repo>#<n>, org/repo 段允许字母数字与 _ . -
-QUALIFIED = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d+')
+# 全限定: 恰一个 `/`; org 段允许 . _ -; repo 段**不含 .** (排除 `a/b.md#1` 这类路径伪装);
+# 左侧不得紧邻 `/` 或字母数字 (排除 `x/a/b#1` 这类多级路径)
+QUALIFIED = re.compile(r'(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_-]+#\d+')
 RULE_BEFORE = re.compile(r'(Rule|规则)\s*$')
-
-# 豁免类 (c): 显式**封闭**白名单 —— Part B 要逐字写进 SKILL.md 而本身含裸 #<n> 的目标行。
-# 新增须在此显式登记; 不得放宽成「任意反引号一律豁免」(那正是 R5 F13 点名的 fail-OPEN)。
-TARGET_LITERALS = (
-    "| D.2 | openspec-archive | Spec 归档 (**#95 完成度",
-)
+ALLOWLIST_REL = ".aria/bare-issue-ref-allowlist.txt"
 
 
-def scan(path):
+def load_allowlist(repo_root):
+    """读调用仓的允许清单。缺失 ⇒ 空清单 (最严格)。读不了 ⇒ 抛, 调用方判 rc 2。"""
+    p = Path(repo_root) / ALLOWLIST_REL
+    if not p.is_file():
+        return []
+    out = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        s = ln.strip()
+        if s and not s.startswith("#"):
+            out.append(s)
+    return out
+
+
+def scan(path, allowlist):
     bad = []
-    for n, line in enumerate(Path(path).read_text(encoding="utf-8").split("\n"), 1):
-        # 全限定引用占据的字符区间 —— 落在其中的 # 一律豁免 (豁免类 1 与 3 合流:
-        # 反引号内也必须是全限定才算数, 反引号本身不再构成豁免)
+    lines = Path(path).read_text(encoding="utf-8").split("\n")
+    for n, line in enumerate(lines, 1):
+        # 豁免区间: 全限定引用 + 允许清单字面各自占据的字符区间
         spans = [(m.start(), m.end()) for m in QUALIFIED.finditer(line)]
-        if any(lit in line for lit in TARGET_LITERALS):   # 豁免类 (c)
-            continue
+        for lit in allowlist:
+            start = 0
+            while True:
+                k = line.find(lit, start)
+                if k < 0:
+                    break
+                spans.append((k, k + len(lit)))
+                start = k + 1
         for m in HASH.finditer(line):
-            if any(a <= m.start() < b for a, b in spans):  # 豁免类 (a) 全限定
+            if any(a <= m.start() < b for a, b in spans):
                 continue
-            if RULE_BEFORE.search(line[:m.start()]):       # 豁免类 (b) 规则编号
+            if RULE_BEFORE.search(line[:m.start()]):
                 continue
             bad.append((n, m.group(0), line.strip()[:100]))
     return bad
 
 
-if __name__ == "__main__":
-    targets = sys.argv[1:] or ["proposal.md"]
+def main(argv=None):
+    argv = argv if argv is not None else sys.argv[1:]
+    targets = [a for a in argv if not a.startswith("--")]
+    root = Path.cwd()
+    for a in argv:
+        if a.startswith("--repo-root="):
+            root = Path(a.split("=", 1)[1])
+    if not targets:
+        print("usage: check_bare_issue_refs.py [--repo-root=DIR] <file> [<file>...]", file=sys.stderr)
+        return 2
+    try:
+        allowlist = load_allowlist(root)
+    except OSError as e:
+        print("UNDECIDABLE: 允许清单读不了 (%s) — fail-CLOSED, 不当作通过" % e, file=sys.stderr)
+        return 2
     total = 0
     for t in targets:
-        for n, tok, ctx in scan(t):
-            print(f"  {Path(t).name}:{n} {tok}  {ctx}")
+        try:
+            hits = scan(t, allowlist)
+        except (OSError, UnicodeDecodeError) as e:
+            print("UNDECIDABLE: %s 读不了 (%s) — fail-CLOSED, 不当作通过" % (t, e), file=sys.stderr)
+            return 2
+        for n, tok, ctx in hits:
+            print("  %s:%d %s  %s" % (Path(t).name, n, tok, ctx))
             total += 1
-    print(f"裸 issue 引用: {total}")
-    sys.exit(1 if total else 0)
+    print("裸 issue 引用: %d" % total)
+    return 1 if total else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
