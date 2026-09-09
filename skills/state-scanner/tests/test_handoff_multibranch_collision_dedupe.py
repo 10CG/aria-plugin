@@ -120,11 +120,12 @@ Spec: aria-plugin#155
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ── Ensure collectors (and renderers) packages are importable ──────────────
@@ -164,6 +165,7 @@ from collectors.handoff_multibranch import (  # noqa: E402
     dedupe_latest_per_track_container,
 )
 from renderers.track_board import render_track_board  # noqa: E402
+from lib.constants import LAYER_H_ACTIVE_WINDOW_DAYS  # noqa: E402
 
 # Fixed reference "now" for render_track_board determinism (freshness emoji /
 # LAST-PING are irrelevant to the assertions below, which only count
@@ -271,7 +273,7 @@ class TestSelfMultiContainerFalsePositiveFromStaleHistory(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-t1-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
 
             # Schema-additive contract pin: the fix must dedupe only what is
@@ -322,7 +324,7 @@ class TestSelfMultiContainerRealCollisionSurvivesDedupe(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-t2-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             coll = result.data["collision"]
 
             self.assertIn(
@@ -358,7 +360,7 @@ class TestSelfMultiContainerRealCollisionSurvivesDedupe(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-ick-t2s-") as tmp:
             root = _build_repo(tmp, files)
-            coll = collect_handoff_multibranch(root).data["collision"]
+            coll = collect_handoff_multibranch(root, now=_FIXED_NOW).data["collision"]
             self.assertEqual(coll["kind"], "self_multi_container", coll)
             self.assertEqual(coll["groups"], [["simonfish/023236f2", "simonfish/bfe8285d"]], coll)
 
@@ -383,7 +385,7 @@ class TestCrossOwnerRealCollisionSurvivesDedupe(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-t3-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             coll = result.data["collision"]
 
             self.assertIn(
@@ -431,7 +433,7 @@ class TestDedupeUsesRealTimestampNotListingOrder(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-t4-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             coll = result.data["collision"]
             self.assertEqual(
                 coll["kind"],
@@ -478,7 +480,7 @@ class TestDedupeUnparseableUpdatedAtSortsLastNotFirst(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-t5-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
 
             # Real rejection power (round 2 fix): assert directly on which
@@ -542,7 +544,7 @@ class TestDedupeTiebreakByFilenameWhenUpdatedAtTies(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-t6-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
 
             deduped, _stats = dedupe_latest_per_track_container(data["tracks"])
@@ -637,7 +639,7 @@ class TestBoardAndCollectorAgreeOnCollisionCount(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-board1-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
             snapshot = {"tracks_multibranch": data}
             board = render_track_board(snapshot, now=_FIXED_NOW)
@@ -678,7 +680,7 @@ class TestBoardAndCollectorAgreeOnCollisionCount(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-board2-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
             snapshot = {"tracks_multibranch": data}
             board = render_track_board(snapshot, now=_FIXED_NOW)
@@ -724,7 +726,7 @@ class TestBoardAndCollectorAgreeOnCollisionCount(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-board5-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
             coll = data["collision"]
             self.assertEqual(
@@ -778,7 +780,7 @@ class TestBoardAndCollectorAgreeOnCollisionCount(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-board6-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
             self.assertEqual(
                 data["collision"]["groups"], [],
@@ -823,7 +825,7 @@ class TestBoardAndCollectorAgreeOnCollisionCount(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-board7-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
             self.assertEqual(
                 data["collision"]["groups"], [],
@@ -946,7 +948,7 @@ class TestDedupeFoldsAcrossSessionsWithinSameContainer(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-r3-session-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
 
             deduped, stats = dedupe_latest_per_track_container(data["tracks"])
@@ -1002,7 +1004,7 @@ class TestDedupeFoldsAcrossSessionsWithinSameContainer(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-c155-r3-session2-") as tmp:
             root = _build_repo(tmp, files)
-            result = collect_handoff_multibranch(root)
+            result = collect_handoff_multibranch(root, now=_FIXED_NOW)
             data = result.data
             coll = data["collision"]
 
@@ -1020,6 +1022,69 @@ class TestDedupeFoldsAcrossSessionsWithinSameContainer(unittest.TestCase):
                 f"ongoing collision — per-container session folding must "
                 f"not erase it; got {coll!r}",
             )
+
+
+# ── aria-plugin#194 回归锁 ────────────────────────────────────────────────
+class TestCollectorClockIsPinnedInThisFile(unittest.TestCase):
+    """冻结面必须对称 (aria-plugin#194)。
+
+    本文件的夹具**全部是硬编码绝对日期**, 而 Layer H 活跃窗口
+    (``lib/constants.py::LAYER_H_ACTIVE_WINDOW_DAYS`` = 30 天) 在
+    ``layer_h_is_fresh(..., now=None)`` 时读**真实墙钟**。任何不钉 ``now=``
+    的 collector 调用, 都会在其承重夹具行的日期 +30 天后**静默腐烂**: 那一行
+    掉出活跃窗口 ⇒ 只剩一方 ⇒ ``collision.kind`` 落 ``none`` ⇒ 断言变红。
+
+    #194 实测的不对称: ``render_track_board`` 的 6 个调用点 **6/6 全钉** (都带 ``now=_FIXED_NOW``),
+    ``collect_handoff_multibranch`` 的 16 个调用点 **0/16 全不钉**。本文件上方 ``_FIXED_NOW``
+    的原注释只提到 "render_track_board determinism" —— collector 侧从一开始
+    就不在视野里, 尽管它的形参签名里逐字写着 "tests pin it"。
+
+    腐烂时间表 (逐日期冻结时钟实跑, 非按时间戳推算):
+    2026-09-08 全绿 → 09-09 两红 → 09-14 三红 → 09-18 五红 → 09-22 起稳定七红。
+
+    **这条锁守的不是那 16 处对不对** (那由 7 条 negative control 自己守),
+    而是「**第 17 个调用点不会再不钉**」—— 修实例不做类是 #194 的成因本身。
+    """
+
+    def _self_source(self) -> str:
+        return Path(__file__).read_text(encoding="utf-8")
+
+    def test_every_collector_call_in_this_file_pins_now(self):
+        # 函数名在运行期拼装, 使本断言自身的正则字面量不被自己扫到
+        pat = re.compile("collect_handoff_multibranch" + r"\(\s*([^)]*?)\s*\)", re.S)
+        calls = pat.findall(self._self_source())
+        # 防「正则与代码形态脱节 ⇒ 扫到 0 个 ⇒ 恒绿」(memory false_green_dual_is_permanent_red)
+        self.assertGreaterEqual(
+            len(calls), 16,
+            f"本锁靠扫自身源码工作, 只扫到 {len(calls)} 个调用点 (应 >=16)。"
+            f"数目骤降 = 正则与代码形态脱节, 此时本条会恒绿 —— 宁可在这里红。",
+        )
+        # now=None 与不传是同一语义 (都走真实墙钟), 必须同样判红
+        unpinned = [c for c in calls if not re.search(r"\bnow\s*=\s*(?!None\b)\S", c)]
+        self.assertEqual(
+            unpinned, [],
+            f"{len(unpinned)}/{len(calls)} 个 collector 调用点未钉 now= "
+            f"(或钉成 None)。本文件夹具是绝对日期, 不钉就会在 30 天窗口外腐烂 "
+            f"(aria-plugin#194) —— 逐个补 now=_FIXED_NOW。未钉的实参: {unpinned}",
+        )
+
+    def test_newest_fixture_stays_inside_the_window_relative_to_fixed_now(self):
+        """钉住的那个时钟对夹具而言必须仍是有意义的。
+
+        与上一条正交: 上一条保证「时钟被钉住」, 这条保证「钉的位置对」。
+        若日后有人把 ``_FIXED_NOW`` 往后挪而不动夹具, 全部夹具会一起掉出窗口,
+        那 7 条 negative control 会一起变红而原因不可读 —— 本条先一步指出来。
+        """
+        cutoff = _FIXED_NOW - timedelta(days=LAYER_H_ACTIVE_WINDOW_DAYS)
+        stamps = re.findall(r'"(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d)Z"', self._self_source())
+        self.assertTrue(stamps, "扫不到任何夹具时间戳 —— 正则与夹具形态脱节, 本条会恒绿")
+        newest = max(datetime.fromisoformat(s).replace(tzinfo=timezone.utc) for s in stamps)
+        self.assertGreater(
+            newest, cutoff,
+            f"最新夹具 {newest.isoformat()} 已落在 _FIXED_NOW ({_FIXED_NOW.isoformat()}) 的 "
+            f"{LAYER_H_ACTIVE_WINDOW_DAYS} 天窗口外 (cutoff {cutoff.isoformat()}) —— "
+            f"钉住时钟也救不了, 需把夹具整体前移或调 _FIXED_NOW。",
+        )
 
 
 if __name__ == "__main__":
@@ -1151,7 +1216,7 @@ class TestTwoPartBoardEchoAndAdvisoryWiring(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-ick-adv-") as tmp:
             root = _build_repo(tmp, files)
-            coll = collect_handoff_multibranch(root).data["collision"]
+            coll = collect_handoff_multibranch(root, now=_FIXED_NOW).data["collision"]
             self.assertIn("identity_advisories", coll, coll)
             self.assertEqual(coll["kind"], "none", coll)   # one identity_key after dedupe
             self.assertEqual(len(coll["identity_advisories"]), 1, coll)
@@ -1170,7 +1235,7 @@ class TestTwoPartBoardEchoAndAdvisoryWiring(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory(prefix="ss-ick-2p-") as tmp:
             root = _build_repo(tmp, files)
-            coll = collect_handoff_multibranch(root).data["collision"]
+            coll = collect_handoff_multibranch(root, now=_FIXED_NOW).data["collision"]
             self.assertEqual(coll["kind"], "cross_owner", coll)
             self.assertEqual(coll["groups"], [["alice/aaaa1111", "bob/bbbb2222"]], coll)
             self.assertEqual(coll["identity_advisories"], [])
