@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.73.1] - 2026-09-12
+
+### Fixed
+
+- **state-scanner 测试时钟半冻结** (`aria-plugin#194`) — `tests/test_handoff_multibranch_collision_dedupe.py` 只给 renderer
+  (`render_track_board(..., now=_FIXED_NOW)`, 6/6) 冻结了时钟, 没给 collector (`collect_handoff_multibranch(root)`, **0/16**) 冻。
+  该文件夹具全为硬编码绝对日期, 撞上 `lib/constants.py::LAYER_H_ACTIVE_WINDOW_DAYS = 30` 的活跃窗口 ⇒ 承重夹具行按日历逐条掉出窗口,
+  `collision.kind` 落 `none`, 断言变红。逐日期冻结生产时钟实测: **09-08 全绿 → 09-09 两红 → 09-14 三红 → 09-18 五红 → 09-22 起稳定七红**;
+  变红的 6 条里 **5 条自称 negative control** ⇒ 守护 `cross_owner` 分类的护栏本身已失效 (恒红与假绿同为零信息量)。
+  ⚠️ **生产代码零改动** —— `collect_handoff_multibranch` 的 `now` 形参一直存在 (定义处注释逐字 `tests pin it`), `:726` 也确实透传给
+  `filter_layer_h_fresh`; 同目录 `test_collision.py:439/460` 就是正确先例。缺陷完全在 16 个调用点漏用已有注入点。
+
+### Added
+
+- `TestCollectorClockIsPinnedInThisFile` 两条回归锁 —— (1) 该文件每个 collector 调用点必须钉**非 None** 的 `now=`
+  (附「扫到 <16 个即红」自守卫, 防正则与代码形态脱节后恒绿; 函数名运行期拼装使断言自身的正则字面量不被自己扫到);
+  (2) 最新夹具须落在 `_FIXED_NOW` 的 30 天窗口内 (守「日后有人挪 `_FIXED_NOW` 而不动夹具」)。
+  守的是「**第 17 个调用点不会再不钉**」—— 修实例不做类正是本缺陷的成因。
+
+### Verification
+
+- 时间旅行 (冻结生产时钟): 09-14 / 09-22 / 2027 / **2040** 均 23 条全绿 —— 真防腐, 非「把夹具日期往后挪」的治标改法
+- 三态负控: 退回 1 个调用点 → 锁 1 红 · 钉成 `now=None` (与不传同语义) → 锁 1 红 · 锁 2 对抗态 (`_FIXED_NOW` +60d) → 红 (非恒真)
+- 全量 harness `skills/run_all_tests.sh`: 11 OK / 0 FAIL / 0 SKIP, **2146 → 2148**
+- 类级普查 (49 个含绝对日期的测试文件 × 9 个日期, 冻结全部生产模块 `datetime`): 真腐烂仅本文件 7 条
+
+### Notes
+
+- Rule #6: 纯测试文件改动, SKILL.md 与 frontmatter `description` 零变动 ⇒ 判据表第一行 (描述性 / AB 不适用) ⇒ **substitute** = 上述 baseline-failing 结构化测试
+- 版本号 `v1.73.1` 由 owner 2026-09-12 裁定归本修复, 并发的两条 L2 Spec 顺延
+  (见 `.aria/decisions/2026-09-12-v1731-number-awarded-to-issue-194.md`)
+
 ## [1.73.0] - 2026-09-08
 
 ### Changed — openspec-archive CLI 漂移类级收口 (Aria spec `archive-gate-registration-class-and-skill-drift`)
