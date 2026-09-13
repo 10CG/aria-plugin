@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.73.3] - 2026-09-13
+
+### Fixed
+
+- **`check_bare_issue_refs.py` 报错只打印违规行, 不告诉人该怎么写** (`10CG/aria-plugin#196` 第一件) — owner 2026-09-13 裁定修法 B
+  (写法约定进 `standards/conventions/content-integrity.md` §4.4「Issue / PR 引用写法」, 检查器豁免集不放宽); 完整做法的第二半是
+  检查器把读者指到那一节。现在有违规时在计数行后打印 `CONVENTION_HINT`: 规范路径 + 规则 1 (跨仓一律 `<org>/<repo>#<n>`) +
+  规则 2 (`#` 只留给 issue / PR, 文内编号直接写数字) + 三类豁免; 零违规不打印 (提示不是横幅)。
+- **仓名带 `.` 的全限定引用被判成裸引用** (`10CG/aria-plugin#196` 第二件) — 旧版 `QUALIFIED` 的 repo 段一律禁 `.` (为了拒
+  `a/b.md#1` 单级路径伪装), 结果真仓 `10CG/10cg.local#40` 也被拒; 2026-09-13 写 `10CG/10cg.local#40` / `10CG/Aether#404` 草稿时各误报一次。
+  修法: repo 段允许 `.`, 但以**封闭扩展名集** `FILE_EXTENSIONS` (md / py / yaml / json / sh 等) 结尾的仍按路径伪装拒
+  (`_is_path_disguise`); 两级路径 (两个 `/`) 的排除不变。最新 handoff 实扫 33 → 19, 少掉的 14 条全是 `10cg.local` 引用。
+  封闭集是 fail-CLOSED 精神下的唯一扩展点: 采用方撞到新扩展名往里加, 不做开放式启发。
+
+### Changed (注释, 无行为变化)
+
+- 同版收入 `v1.73.2` 之后两个未发版的纯注释合并 `308ccce` / `fcbc8ac`: `multi_remote.py` / `runtime_probe.py` / `spec_complete.py` /
+  `phase1_gate.py` 四处代码注释里的步骤编号由带圈数字改用普通数字 (对齐 content-integrity §4.5)。
+
+### Verification
+
+- `tests/test_check_bare_issue_refs.py` 新增 6 条: 旧代码 **3 红** (带 `.` 仓名放行 / 放行区间只覆盖自己 / 违规输出含规范指引)
+  + 3 护栏绿 (单级路径伪装含 `10cg.local.md` 变体仍拒 / 两级路径仍拒 / 零违规无指引), 修后 22/22 绿
+- 规范文件 `content-integrity.md` 自扫仍 rc 0; 全量 harness `skills/run_all_tests.sh`: 7 OK / 0 FAIL / 4 SKIP (未装 pytest), 2003 → 2009; state-scanner 1599 → 1605
+
+### Notes
+
+- Rule #6: 改动为 deterministic 手动自检脚本 + 其测试, 不在任何 SKILL.md 指令面, description 未动 ⇒ substitute (改前必红的结构化测试)。
+- 该脚本仍是手动自检工具, **不是**已启用闸门 (owner 2026-09-13 裁定暂不注册进 `.aria/state-checks.yaml`); Spec 不得把「整份文件 rc 0」写成验收门槛。
+
 ## [1.73.2] - 2026-09-13
 
 ### Fixed
