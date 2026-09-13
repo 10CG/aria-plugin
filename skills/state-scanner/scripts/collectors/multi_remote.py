@@ -671,8 +671,8 @@ BENIGN_UNCONDITIONAL_REASONS = _BENIGN_UNCONDITIONAL_REASONS
 def _benign_unknown(parity: str | None, reason: str | None, evidence_eligible: bool) -> bool:
     """parity==unknown that is benign (does NOT block overall_parity).
 
-    ① fetch-independent reasons (detached_head / shallow_clone / remote_branch_missing
-    — ls-remote answers authoritatively) are unconditionally benign. ② the
+    (1) fetch-independent reasons (detached_head / shallow_clone / remote_branch_missing
+    — ls-remote answers authoritatively) are unconditionally benign. (2) the
     no_local_tracking_ref assertion ("really never published") is benign ONLY when the
     evidence is world-time fresh. Everything else (incl. None / parse_error / Spec B
     catch-all values) is NOT benign.
@@ -1155,7 +1155,7 @@ def _overall_parity(
         if e.get("parity") in ("behind", "diverged"):
             return False
         # evidence_grade=="fresh" ⟺ 证据资格(r) (E) by _evidence_grade's definition,
-        # so it is the correct gate for _benign_unknown's ② no_local_tracking_ref branch.
+        # so it is the correct gate for _benign_unknown's (2) no_local_tracking_ref branch.
         if _blocking_unknown(
             e.get("parity"), e.get("reason"), e.get("evidence_grade") == "fresh"
         ):

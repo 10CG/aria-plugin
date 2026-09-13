@@ -2,7 +2,7 @@
 """Generalized runtime-invocation probe (#95 follow-up A, TASK-001/002).
 
 Spec: openspec/changes/runtime-probe-archive-gate-integration/proposal.md
-      (§What Changes ①② — DEC-20260705-001)
+      (§What Changes items 1 and 2 — DEC-20260705-001)
 
 Generalizes the single-purpose ``coordination_probe.py`` (DEC-20260704-002,
 TASK-012) into a reusable library: any spec can declare a ``runtime_probe``
