@@ -82,6 +82,8 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py
 时才成立 (字段见 `references/state-snapshot-schema.md` 的 `coordination_fetch` 段)。
 两者任一不成立即按**未核实**处理, 不得当作「无碰撞」。
 
+> **aria-plugin#197 修复前, 这条谓词量错了对象**: 扫描的协调 ref fetch 当时只写 `FETCH_HEAD`, 本地 ref 不动, 两个字段却照样为真 —— 谓词通过, 本地视图可能已落后数天。修复后 Fetch 2 带目标 refspec, `coordination_ref_present == true` 意味着本地 ref 已与 origin 对齐; 本地领先或分叉时为 `null`, 按未核实处理。
+
 ### degraded 处置
 
 fetch 降级时**不重跑 fetch** —— 心跳的职责是刷新, 不是把协调视图修好。
