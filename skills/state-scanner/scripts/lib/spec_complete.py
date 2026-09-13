@@ -1633,7 +1633,7 @@ def gate_result(spec_dir: str | Path) -> dict:
             # fold instead of returning — otherwise a clean yaml-only spec could
             # reach `pass` with a DECLARED probe never evaluated (a false-green
             # corner that did not exist while the blanket warn covered it).
-            # Deliberately scoped: the reversal of DEC-20260705-001 §What Changes ③
+            # Deliberately scoped: the reversal of DEC-20260705-001 §What Changes item 3
             # R3 applies to the yaml-PRESENT subclass only — its premise ("spec
             # structurally incomplete ⇒ probe meaningless") is what the precise
             # parser invalidates. The bare proposal-only subclass below keeps the

@@ -1502,7 +1502,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
         print(json.dumps(hb_out, ensure_ascii=False, indent=2))
         return rc
 
-    # 模式校验 (⑦, 落法 (a): 不用 subparsers, 不拆脚本)。把 required 从 flag 上摘掉
+    # 模式校验 (第 7 项, 落法 (a): 不用 subparsers, 不拆脚本)。把 required 从 flag 上摘掉
     # 会连 acquire 路径也一起放开, 而那条路径必须继续 fail-fast —— 所以在这里补回。
     if not args.raw_track_id:
         parser.error("--raw-track-id 是必需的 (只有 --heartbeat-only 模式可省略)")
@@ -1555,7 +1555,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
                 )
         except Exception as exc:  # fail-soft: overlap advisory must not break the gate
             logger.warning("phase1_gate: linked_issue overlap check skipped (%s)", exc)
-            # BOTH keys go null, unconditionally (SC-33 + Impact ④⑥). Assigning
+            # BOTH keys go null, unconditionally (SC-33 + Impact items 4 and 6). Assigning
             # only one leaves the other absent, and an absent key reads as 0/[]
             # downstream — the same silent-zero-evidence bug in a new costume.
             out["linked_issue_overlap"] = None
