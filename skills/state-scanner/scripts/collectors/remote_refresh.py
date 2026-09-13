@@ -410,7 +410,19 @@ def _do_fetch_leg(leg: _Leg, fetch_timeout: int) -> _LegOutcome:
     coordination_soft_error: str | None = None
 
     if leg.run_coordination_fetch:
-        cmd2 = ["git", "fetch", leg.remote, "--no-tags", COORDINATION_REF]
+        # Destination refspec is load-bearing (aria-plugin#197): a source-only
+        # `refs/aria/coordination` writes ONLY FETCH_HEAD — the local ref never
+        # moves, yet this leg used to report present=True, so the freshness
+        # predicate (success AND present, layer-l-integration.md) passed on a
+        # stale local view. Deliberately NOT forced (`+`): a local ref that is
+        # ahead of / diverged from the remote (claims written but not yet pushed)
+        # is REJECTED instead of clobbered, and that rejection falls into the
+        # non-benign branch below (present=None + soft_error label `non_ff`),
+        # i.e. "local view not verified fresh".
+        cmd2 = [
+            "git", "fetch", leg.remote, "--no-tags",
+            f"{COORDINATION_REF}:{COORDINATION_REF}",
+        ]
         rc2, _, err2 = _run(cmd2, cwd=leg.repo_dir, timeout=fetch_timeout)
         if rc2 == 0:
             coordination_ref_present = True

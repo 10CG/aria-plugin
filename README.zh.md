@@ -2,7 +2,7 @@
 
 # Aria Plugin
 
-> **版本**: 1.73.1 | **发布日期**: 2026-09-12
+> **版本**: 1.73.2 | **发布日期**: 2026-09-13
 >
 > Claude Code 的 AI-DDD 方法论完整插件 — 34 个面向用户 Skills + 7 个内部 + 11 个 Agents + 5 个 Hooks（含默认 secret-guard）
 

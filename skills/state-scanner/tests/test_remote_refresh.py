@@ -91,7 +91,8 @@ def _fetch1_cmd(remote: str) -> tuple:
 
 
 def _fetch2_cmd(remote: str) -> tuple:
-    return ("git", "fetch", remote, "--no-tags", "refs/aria/coordination")
+    # Destination refspec (aria-plugin#197): without it git writes only FETCH_HEAD.
+    return ("git", "fetch", remote, "--no-tags", "refs/aria/coordination:refs/aria/coordination")
 
 
 def _remotes_cmd() -> tuple:

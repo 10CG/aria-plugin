@@ -56,7 +56,7 @@ Snapshot 字段: `remote_refresh` (真 SOT, Phase 0.5)。
 
 历史行为回顾 (v1.46.0, #141 — 两条独立 fetch 的语义仍在, 只是执行主体换成了 Phase 0.5):
 - **Fetch 1 (载重, 先跑)**: `git fetch <remote> --no-tags --prune +refs/heads/*:refs/remotes/<remote>/*` — 分支头, 必须独立成功; F3′ 增加了 `--prune` (Phase 2A gitlink-orphan 检查前提, RC-1)。
-- **Fetch 2 (仅 Fetch 1 成功后, 仅 `(".", "origin")` 这一条 leg 跑)**: `git fetch origin --no-tags refs/aria/coordination` — 协调 ref; 缺失 (三重 AND benign 闸) 视为良性"未发布" (`coordination_ref_present=False`), 不报错。
+- **Fetch 2 (仅 Fetch 1 成功后, 仅 `(".", "origin")` 这一条 leg 跑)**: `git fetch origin --no-tags refs/aria/coordination:refs/aria/coordination` — 协调 ref, **带目标 refspec** (aria-plugin#197: 只写源时 git 只落 `FETCH_HEAD`, 本地 ref 不动却报「已刷新」); 本地领先或分叉时 git 拒绝更新 (不覆盖本地未推送的 claim), 按非良性失败处理 (`coordination_ref_present=None` + soft_error 标签 `non_ff`); 缺失 (三重 AND benign 闸) 视为良性"未发布" (`coordination_ref_present=False`), 不报错。
 - Fetch 1 失败时不崩溃: 短路不跑 Fetch 2, `success=False` + `error_kind` 由派生函数从 leg 的 `error_kind` 标签映射得出 (不再自己跑 `_classify_error`)。
 
 Snapshot 字段: `coordination_fetch` (additive, schema v1.0+; `coordination_ref_present` 见 #141/v1.46.0; **SOT 已迁移**, 详见 `references/state-snapshot-schema.md` §`coordination_fetch` 派生映射公式 + `collectors/coordination_fetch.py` 模块 docstring)。

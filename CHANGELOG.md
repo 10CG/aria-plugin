@@ -10,6 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.73.2] - 2026-09-13
+
+### Fixed
+
+- **state-scanner 扫描后本地协调 ref 不更新, 却报「已刷新」** (`aria-plugin#197`) — Phase 0.5 `remote_refresh` 的 Fetch 2 原为
+  `git fetch origin --no-tags refs/aria/coordination` (只有源, 没有目标): git 只写 `FETCH_HEAD`, 本地 `refs/aria/coordination` 不动,
+  leg 却报 `coordination_ref_present=True` ⇒ `layer-l-integration.md` 的新鲜度谓词 (`success AND coordination_ref_present`) 在落后的本地视图上照样通过。
+  2026-09-12 实测本地落后 origin 7 个提交 / 3 天; `--heartbeat-only` 不自带 fetch, 会在这份旧基底上刷新 claim。
+  修法: refspec 改为 `refs/aria/coordination:refs/aria/coordination`, **不加 `+`** —— 本地缺失或远端领先时创建 / 快进;
+  本地领先或分叉 (有未推送的 claim) 时 git 拒绝更新、本地不被覆盖, 走既有非良性分支 (`coordination_ref_present=null` +
+  soft_error `coordination_ref_fetch_failed`, 标签 `non_ff`), 即「未核实」; 远端缺失仍按良性处理。
+
+### Changed (语义, 非形状)
+
+- `coordination_ref_present == true` 现在意味着本地 ref 已与 origin 对齐 (此前只意味着 fetch 命令成功); `snapshot_schema_version` 不变。
+  本地领先 / 分叉的仓库会看到新的 `coordination_ref_fetch_failed` soft_error (scan exit 10), 直到本地未推送的协调提交被推出或并集合并。
+
+### Verification
+
+- 新测试 `tests/test_remote_refresh_coordination_local_ref.py`: 真 git + 本地裸仓 6 例 —— 旧代码 **4 红** (远端领先 / 本地缺失 / 本地领先 / 分叉)
+  + 2 护栏绿 (已相等 / 远端缺失), 新代码 6 绿
+- 真实仓库 dogfood: 本地协调 ref 退回一格后扫描, 自动快进回 origin, `present=True`, 无软错误
+- 全量 harness `skills/run_all_tests.sh`: 7 OK / 0 FAIL / 4 SKIP (未装 pytest), 2003 测试; state-scanner 1593 → 1599
+
+### Notes
+
+- Rule #6: 改动为 scan.py collector 代码 + 描述性文档, 无 SKILL.md / description 变动 ⇒ substitute (改前必红的结构化测试)
+- 同期普查的 `aria-plugin#198` (Status 括号内旧状态参与归类) 未随本版修复: 方案影响 31 条状态归类 (30 条在归档区), 数据见该 issue comment 23605
+
 ## [1.73.1] - 2026-09-12
 
 ### Fixed
