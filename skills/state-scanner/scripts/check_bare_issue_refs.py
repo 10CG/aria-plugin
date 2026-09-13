@@ -4,12 +4,18 @@
 判据 **fail-CLOSED**: 先假定每个 `#<n>` 都违规, 只有落进**封闭**豁免集才放过。
 
 封闭豁免集 (仅三类):
-  (a) **全限定** `<org>/<repo>#<n>` —— 恰一个 `/`; repo 段不含 `.`
+  (a) **全限定** `<org>/<repo>#<n>` —— 恰一个 `/`; repo 段可含 `.` (真仓名如 `10cg.local`),
+      但**不得以文件扩展名结尾** (封闭集 FILE_EXTENSIONS)
       (排除 `docs/handoff/x.md#123` 这类**路径伪装**: 它有两个 `/` 且末段带扩展名,
-       不是 issue 引用形态。Phase B 落地复审实测: 旧版单看「有没有 `/`」会放行它)
+       不是 issue 引用形态。Phase B 落地复审实测: 旧版单看「有没有 `/`」会放行它;
+       2026-09-13 aria-plugin#196: 旧版 repo 段一律禁 `.`, 把 `10CG/10cg.local#40` 误报)
   (b) `Rule #N` / `规则 #N` 规则编号
   (c) 命中**允许清单**里某条字面的 `#<n>` —— 且只豁免**落在该字面覆盖区间内**的那个
       `#<n>`, 不豁免整行 (旧版用整行子串包含判定, 同一行后面追加的新裸引用会被连带放行)
+
+写法规范 SOT: `standards/conventions/content-integrity.md` §4.4「Issue / PR 引用写法」
+(owner 2026-09-13 裁定修法 B: `#` 只留给 issue / PR, 文内编号直接写数字; 有违规时本脚本把
+读者指到该节, 不只打印违规行)。
 
 允许清单来源: **从被扫文件向上找最近的** `.aria/bare-issue-ref-allowlist.txt` (与 cwd 无关;
 显式 `--repo-root=DIR` 优先) (每行一条完整字面, `#` 开头
@@ -26,13 +32,37 @@ import sys
 from pathlib import Path
 
 HASH = re.compile(r'#(\d+)')
-# 全限定: 恰一个 `/`; org 段允许 . _ -; repo 段**不含 .** (排除 `a/b.md#1` 这类路径伪装);
-# 左侧不得紧邻 `/` 或字母数字 (排除 `x/a/b#1` 这类多级路径)
+# 全限定: 恰一个 `/`; org 段允许 . _ -; repo 段允许 . _ - (真仓名可带 `.`, 如 `10cg.local`);
+# 左侧不得紧邻 `/` 或字母数字 (排除 `x/a/b#1` 这类多级路径)。
 # 左边界**显式枚举 ASCII**, 不用 `\w` —— Python 的 `\w` 匹配 CJK, 会让「参见10CG/Aria#195」
 # 这种中文紧邻全限定引用的写法被判成裸引用 (落地复审实测)。
-QUALIFIED = re.compile(r'(?<![A-Za-z0-9_./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_-]+#\d+')
+# repo 段命名捕获, 供 `_is_path_disguise` 看末尾扩展名。
+QUALIFIED = re.compile(r'(?<![A-Za-z0-9_./-])[A-Za-z0-9_.-]+/(?P<repo>[A-Za-z0-9_.-]+)#\d+')
+# 单级路径伪装 `a/b.md#1`: repo 段以这些扩展名结尾就不当全限定引用。
+# **封闭集** (fail-CLOSED 精神: 只放这些已知形态, 不做开放式启发); 采用方撞到新扩展名 → 加进来。
+FILE_EXTENSIONS = frozenset((
+    "md", "markdown", "txt", "rst",
+    "py", "sh", "bash", "js", "ts", "go", "rs", "rb", "java", "c", "h", "cpp",
+    "yaml", "yml", "json", "toml", "ini", "cfg", "conf", "env",
+    "html", "htm", "css", "xml", "csv", "log", "lock",
+))
 RULE_BEFORE = re.compile(r'(Rule|规则)\s*$')
 ALLOWLIST_REL = ".aria/bare-issue-ref-allowlist.txt"
+# 有违规时打印的规范指引 (aria-plugin#196 owner 裁定修法 B 的第二半: 报错文案指向规范)。
+CONVENTION_HINT = (
+    "写法规范: standards/conventions/content-integrity.md §4.4「Issue / PR 引用写法」\n"
+    "  规则 1 跨仓一律全限定 <org>/<repo>#<n> (例 10CG/Aria#195), 只写仓名或只写 #数字 都算裸引用\n"
+    "  规则 2 `#` 只留给 issue / PR: 文内编号 (条目 / 表格行 / 步骤) 直接写数字, 不加 `#`\n"
+    "  豁免仅三类: 全限定引用 / Rule #N / 调用仓 .aria/bare-issue-ref-allowlist.txt 所列字面"
+)
+
+
+def _is_path_disguise(m):
+    """`a/b.md#1` 这类单级路径伪装: repo 段以封闭扩展名集里的扩展名结尾。"""
+    repo = m.group("repo")
+    if "." not in repo:
+        return False
+    return repo.rsplit(".", 1)[1].lower() in FILE_EXTENSIONS
 
 
 def _find_allowlist(start):
@@ -68,7 +98,8 @@ def scan(path, allowlist):
     lines = Path(path).read_text(encoding="utf-8").split("\n")
     for n, line in enumerate(lines, 1):
         # 豁免区间: 全限定引用 + 允许清单字面各自占据的字符区间
-        spans = [(m.start(), m.end()) for m in QUALIFIED.finditer(line)]
+        spans = [(m.start(), m.end()) for m in QUALIFIED.finditer(line)
+                 if not _is_path_disguise(m)]
         for lit in allowlist:
             start = 0
             while True:
@@ -117,6 +148,8 @@ def main(argv=None):
             print("  %s:%d %s  %s" % (Path(t).name, n, tok, ctx))
             total += 1
     print("裸 issue 引用: %d" % total)
+    if total:
+        print(CONVENTION_HINT)
     return 1 if total else 0
 
 

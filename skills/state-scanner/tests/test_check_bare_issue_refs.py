@@ -7,7 +7,7 @@ CJK 左边界 + cwd 依赖), 而交付时零测试覆盖 —— 发布前验证�
 
 判据是 **fail-CLOSED**: 先假定每个 `#<n>` 都违规, 只有落进封闭豁免集才放过。
 封闭豁免集仅三类:
-  (a) 全限定 `<org>/<repo>#<n>` —— 恰一个 `/`, repo 段不含 `.`
+  (a) 全限定 `<org>/<repo>#<n>` —— 恰一个 `/`, repo 段可含 `.` 但不以文件扩展名结尾
   (b) `Rule #N` / `规则 #N`
   (c) 落在允许清单某条字面**覆盖的字符区间内**的 `#<n>`
 
@@ -65,6 +65,34 @@ class ExemptionBoundaries(unittest.TestCase):
         """左边界用 `\\w` 会把 CJK 当单词字符 ⇒ 中文紧邻的全限定引用被误报。"""
         self.assertEqual(self._scan_one("参见10CG/Aria#195 那条\n"), [])
 
+    # --- (a′) 仓名带 `.` 的全限定引用 (10CG/aria-plugin#196 第二件) ---
+    def test_dotted_repo_name_is_exempt(self):
+        """`10CG/10cg.local#40` 是真仓 (仓名含 `.`), 旧版 repo 段一律禁 `.` ⇒ 误报。
+
+        2026-09-13 写 `10CG/10cg.local#40` / `10CG/Aether#404` 草稿时各撞一次。
+        """
+        self.assertEqual(self._scan_one("见 10CG/10cg.local#40\n"), [])
+        self.assertEqual(self._scan_one("参见10CG/10cg.local#40 那条\n"), [])
+
+    def test_dotted_repo_span_covers_only_itself(self):
+        """放行带 `.` 的仓名不得连带放行同一行后面的裸引用。"""
+        hits = self._scan_one("见 10CG/10cg.local#40 与 #41\n")
+        self.assertEqual([h[1] for h in hits], ["#41"])
+
+    def test_single_slash_path_with_file_extension_is_violation(self):
+        """允许 `.` 进仓名后, 单级路径伪装 `a/b.md#1` 必须仍被拒 —— 靠封闭扩展名集。
+
+        反事实: 若只是把 repo 段的字符类加上 `.`, 这三条会被放行。
+        """
+        for text in ("见 docs/x.md#12\n", "见 scripts/scan.py#7\n", "见 conf/a.yaml#3\n",
+                     "见 10CG/10cg.local.md#4\n"):
+            self.assertEqual(len(self._scan_one(text)), 1, text)
+
+    def test_two_level_path_with_dotted_tail_is_still_violation(self):
+        """两级路径 (两个 `/`) 的排除不因仓名放宽而失效。"""
+        self.assertEqual(len(self._scan_one("见 docs/handoff/x.md#123\n")), 1)
+        self.assertEqual(len(self._scan_one("见 a/b/10cg.local#5\n")), 1)
+
     # --- (b) 规则编号 ---
     def test_rule_number_is_exempt(self):
         self.assertEqual(self._scan_one("按 Rule #6 处置\n"), [])
@@ -103,6 +131,32 @@ class RcContract(unittest.TestCase):
             rc, out, _ = _run([str(f)])
             self.assertEqual(rc, 1)
             self.assertIn("#777", out)
+
+    # --- 报错文案指向规范 (10CG/aria-plugin#196 第一件, owner 裁定修法 B) ---
+    def test_violation_output_points_to_convention_section(self):
+        """有违规时, 输出必须把人指到 content-integrity §4.4, 不能只打印违规行。
+
+        修法 B 的完整做法 = 写法约定 + 检查器报错指向该约定 (aria-plugin#196 owner 裁定)。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "t.md"
+            f.write_text("见 #777\n", encoding="utf-8")
+            rc, out, _ = _run([str(f)])
+            self.assertEqual(rc, 1)
+            self.assertIn("content-integrity.md", out)
+            self.assertIn("4.4", out)
+            # 两条规则的要点都要出现, 读者不用翻文件就知道怎么改
+            self.assertIn("<org>/<repo>#<n>", out)
+            self.assertIn("文内编号", out)
+
+    def test_clean_output_has_no_convention_pointer(self):
+        """零违规时不打印规范指引 —— 指引是修复提示, 不是横幅 (反事实: 无条件打印会让这条红)。"""
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "t.md"
+            f.write_text("见 10CG/Aria#195\n", encoding="utf-8")
+            rc, out, _ = _run([str(f)])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("content-integrity.md", out)
 
     def test_rc2_when_target_unreadable(self):
         rc, _, err = _run(["/nonexistent/nope.md"])
