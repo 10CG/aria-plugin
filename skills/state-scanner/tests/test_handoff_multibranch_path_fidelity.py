@@ -101,19 +101,42 @@ def _frontmatter(track_id: str, oc: str = "tester/c0ffee01", status: str = "acti
     )
 
 
-def _publish(tmp: str) -> str:
-    """Commit the working tree and publish the tip to refs/remotes/origin/<branch>.
+def _commit(tmp: str, msg: str = "handoffs", *, date: "str | None" = None) -> None:
+    """Stage everything and commit, optionally pinning the commit's dates.
+
+    ``date`` sets BOTH ``GIT_AUTHOR_DATE`` and ``GIT_COMMITTER_DATE`` for this
+    one commit. Pinning is mandatory wherever a criterion distinguishes two
+    commits by date: ``%aI`` has second resolution, and two commits made by the
+    same test in the same second otherwise carry the identical stamp — measured
+    behaviour, and the reason SC-4 / SC-13 call this out explicitly. ``_GIT_ENV``
+    pins identity but deliberately does NOT pin dates.
+    """
+    env = dict(_GIT_ENV)
+    if date is not None:
+        env["GIT_AUTHOR_DATE"] = date
+        env["GIT_COMMITTER_DATE"] = date
+    subprocess.run(["git", "add", "-A"], cwd=tmp, check=True, capture_output=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=tmp, check=True,
+                   capture_output=True, env=env)
+
+
+def _publish_ref(tmp: str) -> str:
+    """Publish the current tip to refs/remotes/origin/<branch> and return the branch.
 
     No real remote and no clone: ``collect_handoff_multibranch`` only ever reads
     ``refs/remotes/origin/*``, so writing that ref directly is enough (the
     technique test_collision.py and test_p1_layer_h.py already use).
     """
-    _git(tmp, "add", "-A")
-    _git(tmp, "commit", "-q", "-m", "handoffs")
     branch = _git_out(tmp, "rev-parse", "--abbrev-ref", "HEAD")
     sha = _git_out(tmp, "rev-parse", "HEAD")
     _git(tmp, "update-ref", f"refs/remotes/origin/{branch}", sha)
     return branch
+
+
+def _publish(tmp: str, *, date: "str | None" = None) -> str:
+    """One-commit convenience: commit the working tree, then publish the tip."""
+    _commit(tmp, date=date)
+    return _publish_ref(tmp)
 
 
 def _init_repo(tmp: str, *, quote_path: bool = True) -> Path:
@@ -442,6 +465,186 @@ class TestUnexpectedPrefixGuard(unittest.TestCase):
             self.assertEqual(_kinds(r).count(_UNEXPECTED_PREFIX), 0,
                              "a well-formed enumeration must report no violation")
             self.assertEqual(len(r.data["tracks"]), 2, "both files must be collected")
+
+
+class TestDatesAndLegacyIdentity(unittest.TestCase):
+    """SC-4 / SC-13 — committer dates and legacy identity follow the real path."""
+
+    def test_moved_file_dates(self):
+        """SC-4 — ``updated_at`` semantics split across three cases.
+
+        Case 1 is RECORDING-ONLY (same value before and after the change): a file
+        committed at the top level and later ``git mv``-ed into ``archive/`` has
+        BOTH its old and its new path touched by the move commit, so
+        ``git log -1`` returns the move date either way. It exists so that
+        whoever later reaches for ``--follow`` on ``_get_file_commit_date`` sees
+        on the spot that it would not help.
+
+        Case 2 is the discriminating one: a file that has NEVER existed at the
+        top level gets a real, non-empty date only if the log is queried through
+        its real relative path.
+
+        Case 3: frontmatter wins over any git date.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+
+            # Case 1, step 1: born at the top level.
+            _write(root, "2026-05-09-moved.md", "# no frontmatter\n")
+            _commit(tmp, "born at top level", date="2026-05-09T10:00:00+00:00")
+            # Case 1, step 2: moved into archive/ on a DIFFERENT date.
+            (root / "docs" / "handoff" / "archive").mkdir(parents=True, exist_ok=True)
+            _git(tmp, "mv", "docs/handoff/2026-05-09-moved.md",
+                 "docs/handoff/archive/2026-05-09-moved.md")
+            _commit(tmp, "move into archive", date="2026-08-15T10:00:00+00:00")
+
+            # Case 2: never at the top level, no frontmatter.
+            _write(root, "archive/2026-06-01-x.md", "# no frontmatter either\n")
+            _commit(tmp, "archive-only file", date="2026-06-01T10:00:00+00:00")
+
+            # Case 3: same shape but WITH frontmatter.
+            _write(root, "archive/2026-07-01-with-fm.md",
+                   _frontmatter("archive-fm-track", updated_at="2026-07-01T00:00:00Z"))
+            branch = _publish(tmp, date="2026-08-20T10:00:00+00:00")
+
+            r = collect_handoff_multibranch(root)
+            tracks = r.data["tracks"]
+
+            moved = _rows_by(tracks, branch=branch, filename="2026-05-09-moved.md")
+            self.assertEqual(len(moved), 1, "the moved file must yield one row")
+            self.assertTrue(
+                moved[0]["updated_at"].startswith("2026-08-15"),
+                f"recording-only: the move date is what git log returns, got "
+                f"{moved[0]['updated_at']!r}")
+
+            never_top = _rows_by(tracks, branch=branch, filename="2026-06-01-x.md")
+            self.assertEqual(len(never_top), 1)
+            self.assertTrue(
+                never_top[0]["updated_at"].startswith("2026-06-01"),
+                f"a file that never existed at the top level must still get its "
+                f"own real commit date, got {never_top[0]['updated_at']!r}")
+
+            with_fm = _rows_by(tracks, branch=branch, filename="2026-07-01-with-fm.md")
+            self.assertEqual(len(with_fm), 1)
+            self.assertEqual(with_fm[0]["updated_at"], "2026-07-01T00:00:00Z",
+                             "frontmatter must win over any git date")
+
+    def test_legacy_track_id_uses_rel_path(self):
+        """SC-13 — two same-named files at different depths are two distinct tracks.
+
+        ``docs/handoff/x.md`` and ``docs/handoff/archive/x.md``, both WITHOUT
+        frontmatter, land in separate commits with explicitly pinned and
+        different dates.
+
+        RED on the B.1 baseline: enumeration reduces both to ``x.md``, so both
+        rows get ``legacy:<branch>:x.md`` as their id and both resolve their date
+        through the top-level path.
+
+        Note (deliberately NOT asserted): these two legacy rows never fold into
+        one another even today — ``dedupe_latest_per_track_container`` skips rows
+        whose ``status`` is ``legacy`` before grouping, a documented passthrough.
+        A "does not fold" assertion would therefore be green regardless of this
+        change and was dropped from the criterion.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "x.md", "# top level, no frontmatter\n")
+            _commit(tmp, "top-level x", date="2026-03-01T10:00:00+00:00")
+            _write(root, "archive/x.md", "# archived, no frontmatter\n")
+            branch = _publish(tmp, date="2026-04-01T10:00:00+00:00")
+
+            r = collect_handoff_multibranch(root)
+            tracks = r.data["tracks"]
+            legacy_rows = [t for t in tracks if t["legacy"]]
+
+            self.assertEqual(len(legacy_rows), 2, f"expected two legacy rows, got {tracks!r}")
+            self.assertEqual(
+                {t["track_id"] for t in legacy_rows},
+                {f"legacy:{branch}:x.md", f"legacy:{branch}:archive/x.md"},
+                "legacy track_id must carry the relative path, not the basename")
+
+            by_id = {t["track_id"]: t for t in legacy_rows}
+            top = by_id[f"legacy:{branch}:x.md"]
+            arch = by_id[f"legacy:{branch}:archive/x.md"]
+            self.assertTrue(top["updated_at"].startswith("2026-03-01"),
+                            f"top-level row must take its own commit date, got "
+                            f"{top['updated_at']!r}")
+            self.assertTrue(arch["updated_at"].startswith("2026-04-01"),
+                            f"archived row must take its own commit date, got "
+                            f"{arch['updated_at']!r}")
+            self.assertNotEqual(top["updated_at"], arch["updated_at"],
+                                "the two rows must not share a date")
+            self.assertEqual(top["rel_path"], "x.md")
+            self.assertEqual(arch["rel_path"], "archive/x.md")
+
+
+class TestUnreadableAccounting(unittest.TestCase):
+    """SC-5 / SC-14 — unreadable files are counted, never faked into legacy."""
+
+    def test_unreadable_not_downgraded_to_legacy(self):
+        """SC-5 — a file that cannot be read is reported, not invented as legacy.
+
+        ``_read_file_content`` is patched to fail for one specific file so the
+        failure is precise and independent of git's own error surface.
+
+        RED on the B.1 baseline: the failure path currently appends a synthetic
+        ``legacy: True`` row, so ``tracks[]`` contains it, ``legacy_count`` is
+        bumped, and ``unreadable_count`` does not exist at all.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "readable.md", _frontmatter("readable-track"))
+            _write(root, "archive/unreadable.md", _frontmatter("unreadable-track"))
+            branch = _publish(tmp)
+
+            real_read = hmb._read_file_content
+
+            def fake_read(project_root, branch_name, filename):
+                if "unreadable" in filename:
+                    return (None, "git show failed for <ref> (other, rc=128)")
+                return real_read(project_root, branch_name, filename)
+
+            with mock.patch.object(hmb, "_read_file_content", fake_read):
+                r = collect_handoff_multibranch(root)
+
+            tracks = r.data["tracks"]
+            self.assertIn(_GIT_SHOW_FAILED, _kinds(r), "the failure must be signalled")
+            self.assertEqual(
+                _rows_by(tracks, branch=branch, filename="unreadable.md"), [],
+                "an unreadable file must NOT be invented as a legacy track")
+            self.assertEqual(r.data["legacy_count"], 0,
+                             "an unreadable file is not a legacy track")
+            self.assertEqual(r.data["unreadable_count"], 1)
+            self.assertEqual(len(_rows_by(tracks, branch=branch, filename="readable.md")), 1,
+                             "the readable neighbour must still be collected")
+
+    def test_unreadable_count_present_on_failsoft_early_return(self):
+        """SC-14 — the fail-soft early return carries ``unreadable_count`` too.
+
+        The field claims to always exist with a default of 0; without this the
+        only coverage would be the happy path, and the early-return dict is
+        exactly where a "only fixed the normal path" implementation breaks
+        consumers that index it directly.
+
+        RED on the B.1 baseline: the early-return dict has six keys and
+        ``unreadable_count`` is not one of them, so the direct index raises
+        ``KeyError``.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "unused.md", _frontmatter("unused-track"))
+            _publish(tmp)
+
+            def fake_list(project_root):
+                return ([], "git for-each-ref permission denied (rc=128)")
+
+            with mock.patch.object(hmb, "_list_origin_branches", fake_list):
+                r = collect_handoff_multibranch(root)
+
+            self.assertIn("handoff_multibranch_branch_list_failed", _kinds(r))
+            self.assertTrue(r.data["errors"], "the message channel must be non-empty")
+            self.assertEqual(r.data["tracks"], [])
+            self.assertEqual(r.data["unreadable_count"], 0)
 
 
 if __name__ == "__main__":
