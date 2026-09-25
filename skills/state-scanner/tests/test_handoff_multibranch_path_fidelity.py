@@ -647,5 +647,257 @@ class TestUnreadableAccounting(unittest.TestCase):
             self.assertEqual(r.data["unreadable_count"], 0)
 
 
+# ── SC-2 frozen-baseline fixture ──────────────────────────────────────────────
+#
+# The fixture repo below is the SOT for both the frozen JSON under fixtures/ and
+# the test that compares against it. Its file list AND its per-commit dates are
+# part of the criterion: the no-frontmatter row takes its ``updated_at`` from
+# ``git log -1 --format=%aI``, so without pinned dates the frozen JSON could
+# never match a second run and the red would be unreproducible.
+_FLAT_BASELINE_FIXTURE = "handoff-multibranch-flat-baseline-2026-09-25.json"
+_FLAT_BASELINE_FILES = (
+    # (rel path under docs/handoff, has frontmatter, commit date)
+    ("2026-09-01-alpha.md", True, "2026-09-01T10:00:00+00:00"),
+    ("2026-09-02-beta.md", False, "2026-09-02T10:00:00+00:00"),
+)
+
+
+def build_flat_baseline_repo(tmp: str) -> "tuple[Path, str]":
+    """Build the SC-2 hermetic flat repo. Public: the fixture generator imports it.
+
+    Single ``master`` branch, fixed file set, one commit per file with explicitly
+    pinned dates. A hermetic repo (rather than this repo) is mandatory: the
+    collector enumerates every ``refs/remotes/origin/*`` and emits one row per
+    (branch, file), so running against a live repo would gain roughly one row per
+    handoff doc the moment any branch is pushed.
+    """
+    root = _init_repo(tmp)
+    for rel, has_fm, date in _FLAT_BASELINE_FILES:
+        stem = rel[:-3]
+        content = _frontmatter(f"flat-{stem}", updated_at="2026-09-01T00:00:00Z") \
+            if has_fm else "# no frontmatter\n"
+        _write(root, rel, content)
+        _commit(tmp, f"add {rel}", date=date)
+    branch = _publish_ref(tmp)
+    return root, branch
+
+
+def _load_freeze_corpus():
+    """Import ``tests/fixtures/freeze_corpus.py`` by path.
+
+    Loaded by file rather than re-typing its ``FIELDS`` tuple: that constant is
+    the projection's single source of truth, and a copied literal would drift the
+    moment the corpus schema changes.
+    """
+    import importlib.util
+
+    path = _TESTS_DIR / "fixtures" / "freeze_corpus.py"
+    spec = importlib.util.spec_from_file_location("_freeze_corpus_for_fidelity", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestCrossFileConsumers(unittest.TestCase):
+    """SC-6 / SC-17 / SC-2 — consumers downstream of the collector."""
+
+    def test_scan_ancestry_consumer_uses_relative_path(self):
+        """SC-6 — the AC-5 ancestry probe must query the file's REAL path.
+
+        ``tracks_data`` is produced end-to-end by ``collect_handoff_multibranch``
+        on the same temp repo; hand-rolling it would mean the collector is never
+        exercised and the counterfactual would go false.
+
+        All four preconditions of ``_same_branch_head_unreachable_tracks`` are
+        configured explicitly (non-empty ``current_branch``, ``detached_head``
+        false, non-empty ``enforced_remotes``, and the track's ``branch`` equal to
+        ``current_branch``) — any one of them missing makes the function return
+        early with empty lists, which is green for the wrong reason.
+
+        ``enforced_remotes`` deliberately contains a remote with no
+        remote-tracking ref, which forces that track into ``inconclusive[]``.
+        That is where assertion (c) lives — a REGRESSION LOCK, not a
+        baseline-failing assertion: the reported ``filename`` must STAY a
+        basename even though the git path composed for the probe becomes the
+        relative path. Both values come from the same track, and keeping them
+        apart is precisely what this change is about. Do not delete (c) for
+        "not being red on the baseline" — it locks "must not change".
+        """
+        import scan
+
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "archive/2026-05-09-session-end.md",
+                   _frontmatter("session-end-20260509"))
+            branch = _publish(tmp)
+
+            tracks_data = collect_handoff_multibranch(root).data
+            git_data = {"current_branch": branch, "detached_head": False}
+            seen_cmds: "list[list[str]]" = []
+            real_run = scan._run
+
+            def spy(cmd, cwd, timeout=5):
+                seen_cmds.append(list(cmd))
+                return real_run(cmd, cwd, timeout=timeout)
+
+            with mock.patch.object(scan, "_run", spy):
+                _offenders, inconclusive = scan._same_branch_head_unreachable_tracks(
+                    root, git_data, tracks_data, ["origin", "upstream"])
+
+            log_paths = [c[-1] for c in seen_cmds if c[:3] == ["git", "log", "-1"]]
+            self.assertIn("docs/handoff/archive/2026-05-09-session-end.md", log_paths,
+                          f"the probe must query the real path, got {log_paths!r}")
+
+            origin_probe = [c for c in seen_cmds
+                            if c[:3] == ["git", "log", "-1"] and f"origin/{branch}" in c]
+            self.assertEqual(len(origin_probe), 1, "origin must be probed exactly once")
+            rc, out, _ = real_run(origin_probe[0], root, timeout=5)
+            self.assertEqual(rc, 0, "the origin probe must succeed")
+            self.assertTrue(out.strip(), "the origin probe must return a non-empty SHA")
+
+            self.assertEqual(len(inconclusive), 1,
+                             f"the unreachable remote must land in inconclusive, got "
+                             f"{inconclusive!r}")
+            self.assertEqual(inconclusive[0]["filename"], "2026-05-09-session-end.md",
+                             "the REPORTED filename must stay a basename")
+            self.assertNotIn("/", inconclusive[0]["filename"])
+
+    def test_subdir_track_opens_cross_owner_collision(self):
+        """SC-17 — a subdir handoff can flip ``collision.kind`` to ``cross_owner``.
+
+        Two well-formed handoffs for the SAME ``track_id`` under DIFFERENT owner
+        containers, one at the top level and one under ``archive/``, both with
+        ``updated_at`` inside the Layer H window. ``now`` is pinned through the
+        collector's own parameter — without it the criterion would silently turn
+        red as the calendar moves past the window.
+
+        RED on the B.1 baseline: the archived one is demoted to legacy with
+        ``owner_container`` of ``"unknown"``, which the collidable filter drops,
+        so only one container is left and ``kind`` stays ``"none"``.
+        """
+        from datetime import datetime, timezone
+
+        pinned_now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "2026-05-09-shared.md",
+                   _frontmatter("shared-track", oc="simonfish/c1", status="active",
+                                updated_at="2026-05-09T10:00:00Z"))
+            _write(root, "archive/2026-05-10-shared.md",
+                   _frontmatter("shared-track", oc="aria-runner-bot/c2", status="active",
+                                updated_at="2026-05-10T10:00:00Z"))
+            _publish(tmp)
+
+            r = collect_handoff_multibranch(root, now=pinned_now)
+
+            self.assertEqual(r.data["legacy_count"], 0,
+                             "both handoffs must be read as first-class tracks")
+            self.assertNotIn(_GIT_SHOW_FAILED, _kinds(r))
+            self.assertEqual(r.data["collision"]["kind"], "cross_owner")
+            self.assertEqual(len(r.data["collision"]["groups"]), 1)
+
+    def test_flat_repo_matches_frozen_baseline_projection(self):
+        """SC-2 — a flat repo's behaviour is unchanged, compared through the projection.
+
+        Fixture (file list and dates are part of the criterion): ``master`` only,
+        ``2026-09-01-alpha.md`` WITH frontmatter committed at
+        ``2026-09-01T10:00:00+00:00``, ``2026-09-02-beta.md`` WITHOUT frontmatter
+        committed at ``2026-09-02T10:00:00+00:00``. The second file's
+        ``updated_at`` comes from ``git log``, which is why the dates are pinned.
+
+        Comparison goes through ``freeze_corpus.FIELDS`` (imported by path, not
+        re-typed), an eight-field projection that does NOT include ``rel_path``.
+        Comparing whole dicts would be permanently red under the adopted design,
+        and the documented consequence of a permanently red assertion is that
+        somebody trims it.
+        """
+        fc = _load_freeze_corpus()
+        fixture = _TESTS_DIR / "fixtures" / _FLAT_BASELINE_FIXTURE
+        self.assertTrue(fixture.exists(), f"frozen baseline missing: {fixture}")
+        frozen = __import__("json").loads(fixture.read_text(encoding="utf-8"))
+        self.assertEqual(tuple(frozen["fields"]), fc.FIELDS,
+                         "the frozen projection must use the current FIELDS tuple")
+
+        with TemporaryDirectory() as tmp:
+            root, _branch = build_flat_baseline_repo(tmp)
+            r = collect_handoff_multibranch(root)
+
+        self.assertEqual(fc.trim(r.data["tracks"]), frozen["tracks"],
+                         "a flat repo must project identically to the frozen baseline")
+        self.assertEqual(r.data["legacy_count"], frozen["legacy_count"])
+
+
+class TestDedupeSortKey(unittest.TestCase):
+    """SC-7 and the fifth sort-key level."""
+
+    @staticmethod
+    def _row(rel_path: str, filename: str = "2026-07-19-x.md") -> dict:
+        return {
+            "track_id": "tie-track",
+            "owner_container": "simonfish/c1",
+            "phase": "B.2",
+            "status": "active",
+            "updated_at": "2026-07-19T10:00:00Z",
+            "branch": "master",
+            "filename": filename,
+            "rel_path": rel_path,
+            "legacy": False,
+        }
+
+    def test_dedupe_tiebreak_prefers_lexicographic_max_path(self):
+        """characterization test — hypothetical input: dictionary-max filename wins.
+
+        Two rows in one group with identical ``updated_at`` and ``filename``
+        values of ``2026-07-19-x.md`` and ``archive/2026-07-19-x.md``: the
+        dictionary-greatest one is selected.
+
+        Under the adopted design the collector CANNOT produce a ``filename`` of
+        ``archive/…`` (``filename`` is always a basename), so this records the
+        dedupe function's behaviour on a hypothetical input rather than any
+        behaviour change of this spec. It exists so that whoever later changes
+        the sort semantics sees the current answer on the spot.
+        """
+        from collectors.handoff_multibranch import dedupe_latest_per_track_container
+
+        top = self._row("2026-07-19-x.md", filename="2026-07-19-x.md")
+        arch = self._row("archive/2026-07-19-x.md", filename="archive/2026-07-19-x.md")
+        for rows in ([top, arch], [arch, top]):
+            deduped, _stats = dedupe_latest_per_track_container(list(rows))
+            self.assertEqual(len(deduped), 1)
+            self.assertEqual(deduped[0]["filename"], "archive/2026-07-19-x.md",
+                             "dictionary-max filename must win regardless of input order")
+
+    def test_dedupe_fifth_level_prefers_toplevel_rel_path(self):
+        """Fifth sort-key level — a top-level row beats any nested one, order-invariantly.
+
+        Same-basename-different-directory rows tie on all four existing levels
+        (parse_ok, updated_at, filename, branch), so today the winner is whichever
+        row ``max()`` happened to see first — reverse the input and the winner
+        changes. The fifth level makes the pick depend only on the rows' own
+        fields: the top-level row (``rel_path == filename``) wins; among nested
+        rows the dictionary-greatest ``rel_path`` wins.
+
+        RED on the B.1 baseline: with only four levels the reversed input selects
+        the other row.
+        """
+        from collectors.handoff_multibranch import dedupe_latest_per_track_container
+
+        top = self._row("x.md", filename="x.md")
+        arch = self._row("archive/x.md", filename="x.md")
+        for rows in ([top, arch], [arch, top]):
+            deduped, _stats = dedupe_latest_per_track_container(list(rows))
+            self.assertEqual(len(deduped), 1)
+            self.assertEqual(deduped[0]["rel_path"], "x.md",
+                             "the top-level row must win regardless of input order")
+
+        nested_a = self._row("archive/x.md", filename="x.md")
+        nested_b = self._row("old/x.md", filename="x.md")
+        for rows in ([nested_a, nested_b], [nested_b, nested_a]):
+            deduped, _stats = dedupe_latest_per_track_container(list(rows))
+            self.assertEqual(len(deduped), 1)
+            self.assertEqual(deduped[0]["rel_path"], "old/x.md",
+                             "among nested rows the dictionary-max rel_path must win")
+
+
 if __name__ == "__main__":
     unittest.main()
