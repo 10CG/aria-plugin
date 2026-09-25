@@ -32,6 +32,7 @@ Return dict schema:
         "action":        "pointer" | "banner" | "skipped",
         "path":          str,          # absolute path written
         "content_lines": int,          # number of lines written
+        "degraded_reason": str | None, # None | "missing_filename" | "target_in_subdir"
     }
 
 Spec:  openspec/changes/multi-terminal-coordination/tasks.md §1.6
@@ -107,11 +108,20 @@ def _get_legacy_tracks(snapshot: dict) -> list[dict]:
 # ── Content renderers ──────────────────────────────────────────────────────────
 
 
-def _render_pointer(track: dict, now: datetime) -> str:
-    """Render the single-track pointer content.
+def _render_pointer(track: dict, now: datetime) -> tuple[str, str | None]:
+    """Render the single-track pointer content, plus its machine-readable reason.
 
-    Falls back to a "(pointer 不可用)" banner when the filename cannot be
-    determined from the track dict (edge case: legacy track missing filename).
+    Returns ``(content, reason)``. ``reason`` is ``None`` when a real pointer was
+    written, and otherwise names why it could not be — ``missing_filename`` or
+    ``target_in_subdir``. Callers publish that value verbatim as
+    ``degraded_reason``: it is decided HERE and nowhere else, so the page text
+    and the machine-readable field cannot disagree. (They used to be two
+    independent computations that only agreed by coincidence.)
+
+    A pointer in ``latest.md`` is relative, and the consumer that reads it back
+    (``collectors/handoff.py``) scans ``docs/handoff/`` NON-recursively. A target
+    under a subdirectory is therefore unaddressable rather than merely awkward,
+    which is why it degrades instead of writing a link that resolves to nothing.
     """
     filename: str | None = track.get("filename") or None
     track_id: str = track.get("track_id") or "(unknown)"
@@ -121,7 +131,18 @@ def _render_pointer(track: dict, now: datetime) -> str:
     if not filename:
         # Edge case: active track but filename missing (should not happen with
         # well-formed frontmatter, but handle gracefully).
-        return _render_pointer_unavailable(track_id, now)
+        return _render_pointer_unavailable(track_id, now, reason="missing_filename")
+
+    # Guard on the DATA, never on the shape of the string: `filename` is always a
+    # basename by contract, so sniffing it for "/" would be a predicate that can
+    # never fire. The relative path is what carries the directory segment, and a
+    # track predating that key falls back to the basename — which compares equal
+    # and keeps the flat world writing real pointers (10CG/Aria#195).
+    rel = track.get("rel_path") or track.get("filename")
+    if rel != filename:
+        return _render_pointer_unavailable(
+            track_id, now, reason="target_in_subdir", rel=rel
+        )
 
     # Build the "updated=<date>" display value: use the ISO string's date portion
     # if available, otherwise the raw string, otherwise "unknown".
@@ -137,7 +158,7 @@ def _render_pointer(track: dict, now: datetime) -> str:
         "",
         "> 此文件指向最近一次 session handoff。Aria 项目内部约定:",
         "> 始终 Read 本文件作为 next session 入口,内容指向具体的日期版 handoff。",
-        "> 自 v1.22.x 起,本 pointer 仅在**单 active track** 场景下写真实指针;",
+        "> 自 v1.22.x 起,本 pointer 仅在**单 active track** 且**目标在 `docs/handoff/` 顶层**时写真实指针;",
         "> **多 track** 场景由 state-scanner 多 track 看板 surface,本文件成为 deprecation banner。",
         "",
         f"**Latest**: [{filename}](./{filename})"
@@ -145,28 +166,54 @@ def _render_pointer(track: dict, now: datetime) -> str:
         "",
         _COMPAT_NOTE,
     ]
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n", None
 
 
-def _render_pointer_unavailable(track_id: str, now: datetime) -> str:
-    """Fallback when single active track has no filename."""
+def _render_pointer_unavailable(
+    track_id: str,
+    now: datetime,
+    *,
+    reason: str,
+    rel: str | None = None,
+) -> tuple[str, str]:
+    """Fallback page for the two cases where no real pointer can be written.
+
+    ``reason`` is returned verbatim and is one of the two non-``None`` members of
+    the ``degraded_reason`` enum:
+
+    - ``missing_filename`` — the single active track carries no filename.
+    - ``target_in_subdir`` — the target lives under a subdirectory of
+      ``docs/handoff/``. A relative pointer cannot address it, because the
+      consumer reading ``latest.md`` back scans that directory non-recursively.
+
+    ``rel`` is the relative path, quoted into the page for the subdir case so a
+    human sees which file was meant.
+    """
     now_iso = now.strftime("%Y-%m-%dT%H:%MZ")
+    if reason == "target_in_subdir":
+        cause = (
+            f"> _原因: 目标在 docs/handoff/ 的子目录下 (`{rel}`),"
+            " latest.md 的相对指针无法指向它 —— 读回 pointer 的"
+            " `collectors/handoff.py` 只扫顶层、不递归, 指过去也读不到。_"
+        )
+    else:
+        cause = "> _原因: active track 数据缺少 filename 字段,无法构建指针。_"
     lines: list[str] = [
         "# Aria Handoff — Latest",
         "",
         "> 此文件指向最近一次 session handoff。Aria 项目内部约定:",
         "> 始终 Read 本文件作为 next session 入口,内容指向具体的日期版 handoff。",
-        "> 自 v1.22.x 起,本 pointer 仅在**单 active track** 场景下写真实指针;",
+        "> 自 v1.22.x 起,本 pointer 仅在**单 active track** 且**目标在 `docs/handoff/` 顶层**时写真实指针;",
         "> **多 track** 场景由 state-scanner 多 track 看板 surface,本文件成为 deprecation banner。",
         "",
         f"**Latest**: (pointer 不可用) — track={track_id} @ {now_iso}",
         "",
-        "> _原因: active track 数据缺少 filename 字段,无法构建指针。_",
+        cause,
         "> _请运行 `/aria:state-scanner` 获取完整看板。_",
         "",
         _COMPAT_NOTE,
     ]
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n", reason
 
 
 def _render_banner(active_tracks: list[dict], legacy_tracks: list[dict], now: datetime) -> str:
@@ -279,6 +326,8 @@ def write_latest_md(
             ``action``        — "pointer" | "banner" | "skipped"
             ``path``          — str(output_path) as written
             ``content_lines`` — number of newline-separated lines written
+            ``degraded_reason`` — always present; None when a real pointer was
+                                  written, else "missing_filename" | "target_in_subdir"
 
     Never raises for missing/malformed snapshot data — all edge cases
     produce graceful fallback content.  OSError from the filesystem is
@@ -288,6 +337,8 @@ def write_latest_md(
         active count == 0  → "skipped" action, zero-track placeholder
         active count == 1  → "pointer" action, backward-compatible pointer
         active count >= 2  → "banner"  action, deprecation banner + table
+        count == 1, target in subdir → "pointer" action, degraded_reason="target_in_subdir"
+            (a degraded page naming the cause, instead of a link that resolves to nothing)
     """
     if now is None:
         now = datetime.now(tz=timezone.utc)
@@ -295,12 +346,19 @@ def write_latest_md(
     active_tracks = _get_active_tracks(snapshot)
     n_active = len(active_tracks)
 
+    # Initialised before the dispatch so every branch publishes the key. Only the
+    # single-track branch can change it, and it does so by UNPACKING the renderer's
+    # own verdict — this function must never recompute that judgement, or the page
+    # text and this field become two independent computations that agree only by
+    # coincidence (10CG/Aria#195).
+    degraded_reason: str | None = None
+
     if n_active == 0:
         content = _render_zero_tracks(now)
         action = "skipped"
 
     elif n_active == 1:
-        content = _render_pointer(active_tracks[0], now)
+        content, degraded_reason = _render_pointer(active_tracks[0], now)
         action = "pointer"
 
     else:
@@ -317,4 +375,9 @@ def write_latest_md(
         "action": action,
         "path": str(output_path),
         "content_lines": content_lines,
+        # Always present, on all three branches: the public contract in
+        # references/phase-1-collectors.md declares a fixed-shape dict, and a key
+        # that exists on only one branch is exactly the "contract says one thing,
+        # implementation does another" defect this change exists to remove.
+        "degraded_reason": degraded_reason,
     }
