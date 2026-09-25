@@ -899,5 +899,199 @@ class TestDedupeSortKey(unittest.TestCase):
                              "among nested rows the dictionary-max rel_path must win")
 
 
+class TestPointerRoundtrip(unittest.TestCase):
+    """SC-15 — writer/collector pointer roundtrip across all six layouts.
+
+    ``errors[]`` below always means the kind set of the ``CollectorResult``
+    returned by ``collect_handoff`` — never ``data["errors"]``, which that
+    collector does not even have.
+    """
+
+    _POINTER_MISSING = "handoff_pointer_target_missing"
+
+    @staticmethod
+    def _snapshot(tracks: "list[dict]") -> dict:
+        return {"tracks_multibranch": {"tracks": tracks}}
+
+    @staticmethod
+    def _active_track(track_id: str, filename: str) -> dict:
+        """Eight-field active row WITHOUT ``rel_path`` (old-snapshot shape).
+
+        Mirrors ``test_p1_layer_h.py``'s own ``_active_track`` factory, which
+        always carries ``filename`` and never ``rel_path`` — that is exactly the
+        old-snapshot shape layout 3 needs.
+        """
+        return {
+            "track_id": track_id,
+            "owner_container": "devbox-A/sess-001",
+            "phase": "B.2",
+            "status": "active",
+            "updated_at": "2026-05-20T10:00:00Z",
+            "branch": "feature/test",
+            "filename": filename,
+            "legacy": False,
+        }
+
+    def _write_latest(self, root: Path, snapshot: dict) -> dict:
+        from writers.latest_md_writer import write_latest_md
+
+        return write_latest_md(snapshot, root / "docs" / "handoff" / "latest.md")
+
+    def _handoff_kinds(self, root: Path) -> "list[str]":
+        from collectors.handoff import collect_handoff
+
+        return [e.get("error") for e in collect_handoff(root).errors]
+
+    def test_pointer_roundtrip_toplevel(self):
+        """SC-15 layout 1 — flat world roundtrip stays intact.
+
+        Mostly a REGRESSION LOCK: the flat roundtrip already works on the B.1
+        baseline, and what this guards is an over-eager guard breaking it.
+        Assertion (i) is the baseline-failing part — ``degraded_reason`` is read
+        with a DIRECT index on purpose: the baseline has no such key, so the
+        index raises ``KeyError``. Written as ``.get()`` it would return ``None``
+        on a missing key and be permanently green.
+
+        All three steps run for real: collector, then writer, then the handoff
+        collector reading back what the writer produced.
+        """
+        from collectors.handoff import collect_handoff
+
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "2026-08-20-x.md", _frontmatter("toplevel-track", status="active"))
+            _publish(tmp)
+
+            tracks_data = collect_handoff_multibranch(root).data
+            result = self._write_latest(root, self._snapshot(tracks_data["tracks"]))
+
+            latest_text = (root / "docs" / "handoff" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("[2026-08-20-x.md](./2026-08-20-x.md)", latest_text,
+                          "(a) a real pointer must be written")
+
+            handoff_data = collect_handoff(root).data
+            self.assertEqual(handoff_data["latest_source"], "pointer", "(b)")
+            self.assertEqual(handoff_data["latest_filename"], "2026-08-20-x.md", "(b)")
+            self.assertNotIn(self._POINTER_MISSING, self._handoff_kinds(root), "(c)")
+            self.assertIsNone(result["degraded_reason"], "(i) machine-readable face")
+
+    def test_pointer_roundtrip_subdir_guarded(self):
+        """SC-15 layout 2 — a subdir target must degrade, with a stated reason.
+
+        FIXTURE COMPOSITION IS PART OF THE CRITERION: besides the one active
+        track under ``archive/``, the top level keeps a non-active ``.md``. Take
+        the fixture "minimally" (archive-only) and ``handoff.py``'s
+        ``canonical_files`` comes back empty, ``collect_handoff`` returns early,
+        and ``handoff_pointer_target_missing`` becomes structurally impossible —
+        assertion (e) would then be green no matter whether the guard exists.
+
+        (d) has two halves with different power. The first half ("no real
+        pointer") is ALSO true on the baseline, but for an unrelated reason: the
+        archived file is demoted to legacy there, leaving zero active tracks, so
+        the writer takes the ``skipped`` branch and writes a placeholder page.
+        Only the second half — the degraded text naming the subdir reason — is
+        baseline-failing. (h) is the machine-readable counterpart.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            _write(root, "archive/2026-08-20-x.md",
+                   _frontmatter("subdir-track", status="active"))
+            _write(root, "2026-05-01-old.md",
+                   _frontmatter("old-track", status="done",
+                                updated_at="2026-05-01T10:00:00Z"))
+            _publish(tmp)
+
+            tracks_data = collect_handoff_multibranch(root).data
+            result = self._write_latest(root, self._snapshot(tracks_data["tracks"]))
+
+            latest_text = (root / "docs" / "handoff" / "latest.md").read_text(encoding="utf-8")
+            self.assertNotIn("**Latest**: [", latest_text,
+                             "(d) first half: no real pointer line")
+            self.assertNotIn("[2026-08-20-x.md](./2026-08-20-x.md)", latest_text,
+                             "(d) without the guard the writer emits exactly this "
+                             "basename link, with no directory segment")
+            self.assertIn("子目录", latest_text,
+                          "(d) second half: the degraded text must name the subdir reason")
+            self.assertNotIn(self._POINTER_MISSING, self._handoff_kinds(root),
+                             "(e) regression lock on the guard")
+            self.assertEqual(result["degraded_reason"], "target_in_subdir", "(h)")
+
+    def test_pointer_written_when_rel_path_key_absent(self):
+        """SC-15 layout 3 — an old snapshot without ``rel_path`` still gets a pointer.
+
+        REGRESSION LOCK for the missing-key fallback, plus (j) as the
+        baseline-failing half. This is the ONLY layout that covers the
+        missing-key branch: layouts 1 and 2 are produced end-to-end by the new
+        collector, where ``rel_path`` always exists.
+
+        Counterfactual it guards: writing the predicate as
+        ``track.get("rel_path") != filename`` makes a missing key compare as
+        ``None != filename`` — permanently true — so every old snapshot would
+        degrade.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            (root / "docs" / "handoff").mkdir(parents=True, exist_ok=True)
+            snapshot = self._snapshot([self._active_track("old-snap-track", "x.md")])
+
+            result = self._write_latest(root, snapshot)
+
+            latest_text = (root / "docs" / "handoff" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("[x.md](./x.md)", latest_text,
+                          "(g) a missing rel_path key must still yield a real pointer")
+            self.assertIsNone(result["degraded_reason"], "(j) machine-readable face")
+
+    def test_degraded_reason_present_when_no_active_track(self):
+        """SC-15 layout 4 — the ``skipped`` branch carries the key too.
+
+        Pins the "always present" contract on the branch the other layouts never
+        reach. Without it, an implementation that adds the key only on the
+        pointer branch passes every other assertion while the public contract in
+        ``references/phase-1-collectors.md`` declares a key that does not exist
+        on two of three branches.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            result = self._write_latest(root, self._snapshot([]))
+
+            self.assertEqual(result["action"], "skipped")
+            self.assertIsNone(result["degraded_reason"])
+
+    def test_degraded_reason_present_on_multi_track_banner(self):
+        """SC-15 layout 5 — the ``banner`` branch carries the key too.
+
+        Same contract as layout 4, on the other non-pointer branch.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            snapshot = self._snapshot([
+                self._active_track("track-a", "2026-05-20-a.md"),
+                self._active_track("track-b", "2026-05-21-b.md"),
+            ])
+            result = self._write_latest(root, snapshot)
+
+            self.assertEqual(result["action"], "banner")
+            self.assertIsNone(result["degraded_reason"])
+
+    def test_degraded_reason_missing_filename_when_filename_absent(self):
+        """SC-15 layout 6 — the third enumeration value, ``missing_filename``.
+
+        ``degraded_reason`` is a three-value enum, and this branch has zero tests
+        today: every ``_active_track`` factory in the suite always carries
+        ``filename``. Without this layout an implementation could emit any string
+        here — even reuse ``target_in_subdir`` — and stay green, while this spec
+        is actively changing that very function's signature and wording.
+        """
+        with TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            track = self._active_track("no-filename-track", "placeholder.md")
+            del track["filename"]
+            result = self._write_latest(root, self._snapshot([track]))
+
+            self.assertEqual(result["action"], "pointer",
+                             "a single active track still takes the pointer branch")
+            self.assertEqual(result["degraded_reason"], "missing_filename")
+
+
 if __name__ == "__main__":
     unittest.main()
