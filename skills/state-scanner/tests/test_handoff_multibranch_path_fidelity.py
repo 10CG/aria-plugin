@@ -440,9 +440,16 @@ class TestUnexpectedPrefixGuard(unittest.TestCase):
             self.assertEqual(
                 len(_rows_by(tracks, branch=self._BRANCH, filename="2026-05-04-good.md")), 1,
                 "the other file on the same branch must still be collected")
+            # (d) dual channel. The assertion is on the OFFENDING PATH, not on the
+            # kind literal: this repo's four pre-existing kinds all publish the
+            # SAME message string through both channels, and that string never
+            # embeds the kind name. What matters is that the snapshot's own
+            # tracks_multibranch.errors[] can see this violation at all — a
+            # single-channel implementation leaves it empty and this goes red.
             self.assertTrue(
-                any(_UNEXPECTED_PREFIX in m for m in r.data["errors"]),
-                "the message channel must carry the kind as well")
+                any("docs/other/2026-05-04-stray.md" in m for m in r.data["errors"]),
+                f"the message channel must carry the violation too, got "
+                f"{r.data['errors']!r}")
 
     def test_flat_enumeration_reports_no_prefix_violation(self):
         """SC-9 (c) — the trailing empty segment must not be reported.
