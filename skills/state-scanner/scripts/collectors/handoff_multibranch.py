@@ -17,7 +17,10 @@ Return schema (top-level snapshot key: ``tracks_multibranch``):
         "exists": bool,         # True when ≥1 track found across all branches
         "tracks": list[dict],   # One entry per (branch, file) pair — see below
         "branches_scanned": int,
-        "legacy_count": int,    # Tracks that fell back to legacy (no frontmatter)
+        "legacy_count": int,    # Tracks READ successfully but whose frontmatter was
+                                #   absent/incomplete. A file that could not be read at all
+                                #   is NOT one of these — it goes to unreadable_count and
+                                #   produces no row (10CG/Aria#195).
         "unreadable_count": int, # Enumerated files whose content could not be read
         "collision": {          # TASK-000 (#133) — additive, ADVISORY-ONLY
             "kind": str,        # "none" | "cross_owner" | "self_multi_container"
@@ -38,7 +41,7 @@ Each entry in ``tracks`` is:
         "owner_container": str,   # frontmatter["owner-container"] OR "unknown"
         "phase": str,             # frontmatter["phase"] OR "unknown"
         "status": str,            # frontmatter["status"] OR "legacy"
-        "updated_at": str,        # frontmatter["updated-at"] OR git log committer date (ISO)
+        "updated_at": str,        # frontmatter["updated-at"] OR git log author date (ISO, %aI)
         "branch": str,            # short branch name (no "origin/" prefix)
         "filename": str,          # basename of the handoff file
         "rel_path": str,          # path relative to docs/handoff/ (equals filename at top level)
@@ -58,8 +61,9 @@ Design notes:
   ``(track_id, owner/container)`` — the SESSION segment of ``owner_container``
   does NOT participate in the grouping key (round 3, finding [m]; split via
   ``lib.collision.split_owner_container``, read-only import) — newest
-  ``updated_at`` wins, ties broken by dictionary-max filename then
-  dictionary-max branch (round 3, finding [M1]; fully deterministic,
+  ``updated_at`` wins, ties broken by dictionary-max filename, then
+  dictionary-max branch, then the ``rel_path`` element (top-level row first,
+  otherwise dictionary-max ``rel_path`` — 10CG/Aria#195; fully deterministic,
   input-order-invariant) — fix for aria-plugin#155: stale ``status: active``
   historical handoff rows for an already-closed track were keeping
   ``tracks_multibranch.collision.kind`` at ``self_multi_container`` forever,
@@ -93,8 +97,9 @@ signature changed to ``-> (deduped, stats)``; ``collision.dedupe`` counts now
 exclude legacy rows (``legacy_passthrough`` added); ``renderers/track_board.py``
 now imports and applies the same function so the board's COLLISION lines and
 this collector's ``collision.groups`` never diverge.
-Round 3 (same task, second post-review): [M1] the sort key gained a 4th
-level, ``branch`` (dictionary-max), closing the remaining non-determinism on
+Round 3 (same task, second post-review): [M1] the sort key grew by one
+element, ``branch`` (dictionary-max), later joined by ``rel_path`` for the
+same-basename-different-depth tie (10CG/Aria#195), closing the non-determinism on
 the mainline multi-branch shape — the SAME handoff file reachable from
 multiple branches (identical track_id/owner_container/updated_at/filename),
 where round 2's 3-level key still silently fell back to branch-scan-order.
@@ -341,7 +346,7 @@ def _read_file_content(
 ) -> tuple[str | None, str | None]:
     """Return (content, error_msg|None) for a handoff file on a remote branch.
 
-    Uses ``git show origin/<branch>:docs/handoff/<filename>`` to read the file
+    Uses ``git show origin/<branch>:docs/handoff/<rel_path>`` to read the file
     object without checking out the branch.
     """
     ref = f"{_REMOTE}/{branch}:{_HANDOFF_TREE_PATH}/{filename}"
@@ -356,9 +361,9 @@ def _read_file_content(
 def _get_file_commit_date(
     project_root: Path, branch: str, filename: str
 ) -> str:
-    """Return the ISO 8601 UTC committer date for the most recent commit touching a file.
+    """Return the ISO 8601 author date of the most recent commit touching a file.
 
-    Uses ``git log -1 --format=%aI origin/<branch> -- docs/handoff/<filename>``.
+    Uses ``git log -1 --format=%aI origin/<branch> -- docs/handoff/<rel_path>``.
     %aI = strict ISO 8601 format of author date (UTC-aware).
 
     Falls back to empty string if git log fails or returns nothing.
@@ -400,7 +405,7 @@ def _make_legacy_track_id(branch: str, filename: str) -> str:
 # (track_id, owner/container) — dropping the session segment (round 3,
 # finding [m] — see dedupe_latest_per_track_container's own docstring for
 # why session must not participate in the grouping key) — the row that sorts
-# greatest under the four-level key below wins — and feed ONLY that deduped
+# greatest under the compound key below wins — and feed ONLY that deduped
 # view to classification. ``tracks_multibranch.tracks[]`` itself is never
 # touched (schema-additive; see module docstring).
 #
@@ -413,9 +418,9 @@ def _make_legacy_track_id(branch: str, filename: str) -> str:
 # ``tracks[]``, so it could still show a phantom COLLISION line for a track
 # this collector had already stopped flagging).
 #
-# Tie-break, finalized (round 3): the sort key is FOUR levels, all
-# comparable, fully deterministic —
-# ``(parse_ok, parsed_updated_at, filename, branch)``.
+# Tie-break, finalized (10CG/Aria#195): the sort key is all-comparable and
+# fully deterministic —
+# ``(parse_ok, parsed_updated_at, filename, branch, (rel_path == filename, rel_path))``.
 #
 # Level 2 filename (round 2, major finding a): round 1's sort key was
 # ``(parse_ok, parsed_datetime)`` only. When two rows in the same group parse
@@ -500,8 +505,8 @@ def _dedupe_sort_key(row: dict) -> tuple[int, datetime, str, str, tuple[bool, st
     reversal.
 
     ``(rel_path == filename, rel_path)`` is the 5th level (10CG/Aria#195). Once the
-    same basename can legitimately appear at two different depths, the first
-    four levels tie COMPLETELY — same ``updated_at``, same ``filename`` (it IS
+    same basename can legitimately appear at two different depths, every
+    preceding element ties COMPLETELY — same ``updated_at``, same ``filename`` (it IS
     the basename), same ``branch`` — and the winner fell back to whichever row
     ``max()`` happened to see first, so reversing the input list changed the
     answer. This level resolves it from the rows' own fields: ``True`` sorts
@@ -550,7 +555,8 @@ def dedupe_latest_per_track_container(
 
     Keeps only the row that sorts greatest under ``_dedupe_sort_key`` —
     updated_at-latest, ties broken by dictionary-max filename, then
-    dictionary-max branch (see module comment above ``_dedupe_sort_key``).
+    dictionary-max branch, then ``rel_path`` (top-level first; see the module
+    comment above ``_dedupe_sort_key``).
     ``status == "legacy"`` rows pass through UNCHANGED, un-grouped: a legacy
     track_id already embeds branch+rel_path (``legacy:<branch>:<rel_path>``),
     so two legacy rows can never share a dedupe key with each other or with a
@@ -775,7 +781,7 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
                 )
             else:
                 # No frontmatter or incomplete schema: legacy fallback per §2.3.4.
-                # updated_at = git log committer date (superior to local mtime for
+                # updated_at = git log author date (superior to local mtime for
                 # cross-branch files where mtime is not stable). Queried through
                 # `rel`, or a file that never existed at the top level resolves to
                 # no commit at all and the date comes back empty.
@@ -810,8 +816,8 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
         try:
             # aria-plugin#155: collapse to one row per (track_id,
             # owner/container — session segment dropped, round 3 finding [m])
-            # — newest updated_at wins (filename then branch dictionary-max
-            # tie-break, rounds 2/3) — BEFORE classifying, so stale
+            # — newest updated_at wins (filename, then branch dictionary-max,
+            # then the rel_path element) — BEFORE classifying, so stale
             # historical "active" rows from an already-closed track can no
             # longer manufacture a permanent self_multi_container/cross_owner
             # false positive. tracks[] itself is untouched.
