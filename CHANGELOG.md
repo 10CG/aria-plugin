@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
-## [1.74.0] - 2026-09-27 — handoff-multibranch-subdir-path-fidelity (`10CG/Aria#195`; owner 2026-09-12 裁 MINOR: 三个恒存在机读字段 + 采用方可见的行为变化, 同 v1.70.0 D5 先例)
+## [1.74.0] - 2026-09-28 — handoff-multibranch-subdir-path-fidelity (`10CG/Aria#195`; owner 2026-09-12 裁 MINOR: 三个恒存在机读字段 + 采用方可见的行为变化, 同 v1.70.0 D5 先例)
 
 ### Fixed
 - **state-scanner `collectors/handoff_multibranch.py` — 放在子目录里的交接文件读不到**: 枚举用 `git ls-tree -r` 递归, 却只把 basename 交给下游, 下游再用写死的 `docs/handoff/<basename>` 拼回路径 ⇒ 任何放在 `docs/handoff/archive/` 这类子目录里的 `.md` 都拼出一个不存在的路径, `git show` 失败, 每个文件一条 `handoff_multibranch_git_show_failed`, `scan.py` 恒 exit 10。现在枚举交出相对 `docs/handoff/` 的路径, 全部四个拼路径点 (collector 内读内容 / 取提交日 / legacy track_id 三处, 加 `scan.py` 里 AC-5 ancestry 检查 `_same_branch_head_unreachable_tracks` 一处) 都从它拼, 前缀一律从常量 `_HANDOFF_TREE_PATH` 派生。连带修掉两件: 同名不同目录的两份文件不再串读成同一份内容; 子目录里无 frontmatter 的老交接不再因路径拼错拿到空 `updated_at`。
