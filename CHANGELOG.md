@@ -10,6 +10,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.74.0] - 2026-09-28 — handoff-multibranch-subdir-path-fidelity (`10CG/Aria#195`; owner 2026-09-12 裁 MINOR: 三个恒存在机读字段 + 采用方可见的行为变化, 同 v1.70.0 D5 先例)
+
+### Fixed
+- **state-scanner `collectors/handoff_multibranch.py` — 放在子目录里的交接文件读不到**: 枚举用 `git ls-tree -r` 递归, 却只把 basename 交给下游, 下游再用写死的 `docs/handoff/<basename>` 拼回路径 ⇒ 任何放在 `docs/handoff/archive/` 这类子目录里的 `.md` 都拼出一个不存在的路径, `git show` 失败, 每个文件一条 `handoff_multibranch_git_show_failed`, `scan.py` 恒 exit 10。现在枚举交出相对 `docs/handoff/` 的路径, 全部四个拼路径点 (collector 内读内容 / 取提交日 / legacy track_id 三处, 加 `scan.py` 里 AC-5 ancestry 检查 `_same_branch_head_unreachable_tracks` 一处) 都从它拼, 前缀一律从常量 `_HANDOFF_TREE_PATH` 派生。连带修掉两件: 同名不同目录的两份文件不再串读成同一份内容; 子目录里无 frontmatter 的老交接不再因路径拼错拿到空 `updated_at`。
+- **非 ASCII 文件名 (条件式)**: 枚举改用 `git ls-tree -z`, 使 `docs/handoff/` 的枚举**不再依赖** `core.quotePath` —— 该配置为默认值 (true) 时, 非 ASCII 文件名此前被转义并加引号, 在 `.md` 过滤处被静默丢弃 (看板上没有这份文件, 也不报任何错); 设为 `false` 的采用方此前不受影响。
+- **读不到的文件不再伪造 legacy track**: `git show` 失败时, 旧代码追加一条 `status: legacy` / `owner_container: unknown` 的假 track —— 上游看着像真数据, 下游每个 collidable 过滤都把它丢掉, 整类交接隐形而快照照常。现在只报 `handoff_multibranch_git_show_failed` 并计入新字段 `unreadable_count`, 不产出 `tracks[]` 行。
+
+### Added
+- `tracks_multibranch.tracks[].rel_path` (**恒存在**, 真 track 与 legacy 行都有): 相对 `docs/handoff/` 的路径, 顶层文件等于 `filename`, 子目录文件形如 `archive/x.md`。所有 git 对象路径都从它拼; `filename` 保持 basename, 永不带目录段。
+- `tracks_multibranch.unreadable_count` (**恒存在, 默认 0**, 分支枚举失败的早退形状里也有): 枚举到但内容读不到 (`git show` 失败) 的文件数。前缀守卫跳过的行、名字不是合法 UTF-8 的路径**都不计入**。
+- `write_latest_md` 返回键 `degraded_reason` (**三支恒存在**): `None` (写出了真指针) / `"missing_filename"` / `"target_in_subdir"`; `skipped` 与 `banner` 两支恒为 `None`。取值由 renderer 回传, 页面文字与机读字段出自同一次判定。
+- 两个新 soft_error kind, 与既有四个一样双通道发布 (`CollectorResult.errors` 与 `tracks_multibranch.errors[]`): `handoff_multibranch_unexpected_path_prefix` (枚举到不在 `docs/handoff/` 之下的路径: 只跳过该行, 不上升为整支分支的错误) / `handoff_multibranch_undecodable_path` (名字不是合法 UTF-8: 显式跳过)。
+- 测试: `tests/test_handoff_multibranch_path_fidelity.py` (新建, 22 条) + 夹具 `tests/fixtures/handoff-multibranch-flat-baseline-2026-09-25.json` (平铺仓基线, 钉「平铺仓取值逐字节不变」)。
+
+### Changed
+- **`legacy_count` 语义收窄**: 只计「读到了、但 frontmatter 缺失或不完整」的文件; 读不到的文件改计 `unreadable_count`, 不再混进 legacy。
+- **子目录采用方的 `collision.kind` 可能由 `none` 翻到 `cross_owner`**: 子目录里带真 `owner-container` 的交接此前被伪造成 `owner_container: unknown` 的 legacy 行 (被 collidable 过滤排除), 修复后成为真 track 进入碰撞判定。这是修复的预期结果, 但读 `collision.kind != none` 的面 (`SKILL.md` coordination 闸门、`references/rules/advanced-rules.md` 规则 1.54) 可能**突然开始**出现并发碰撞告警。同理 `collision.identity_advisories[]` 可能多出条目 (legacy 行此前本就被跳过, 故只有加法、没有减法)。
+- **顶层 `errors[]` 可新增 `snapshot_self_contradiction` / `snapshot_consistency_inconclusive`**: AC-5 ancestry 检查此前对子目录 track 拼错路径、拿到空 SHA 后静默跳过; 修好后首次真的走到 `git merge-base --is-ancestor`, 这两个 kind 就是这项真检查的产物 (各带 `tracks` 子键)。track 缺 `rel_path` 时直接跳过, 不再拿 basename 猜路径。
+- **dedupe 排序键加第 5 级** `(rel_path == filename, rel_path)`: 同一 basename 可合法出现在不同深度之后, 前四级 `(parse_ok, updated_at, filename, branch)` 会完全并列, 胜者退回迭代顺序; 现在顶层行优先, 子目录行之间取字典序最大的 `rel_path`, 结果与 `tracks[]` 的构建顺序无关。legacy track_id 公式随之由 `legacy:<branch>:<filename>` 改为 `legacy:<branch>:<rel_path>` (平铺仓两者相同)。
+- **`latest_md_writer` 单 active track 且目标在子目录时写降级页, 不写真指针**: 相对指针无法指向子目录 (读回指针的 `collectors/handoff.py` 只扫顶层、不递归, 链过去也读不到), 改写一页注明原因的降级页; `action` 仍为 `"pointer"`, `degraded_reason = "target_in_subdir"`。
+- **触碰的文档面**: `references/state-snapshot-schema.md` §`tracks_multibranch` (新字段 / 读不到不产出行 / 非 ASCII / 五级排序键 / 两个新 kind; `latest.md` 排除句勘正为任意深度 (现状, 非新行为); `updated_at` 注释勘正为 author date `%aI`; fail-soft 早退形状补 `unreadable_count` 并勘正 `collision` 为三键) · collector 模块与各函数 docstring · `_HANDOFF_TREE_PATH` 常量注释 (旧注释「trailing slash required」与取值不符, 已勘正) · `latest_md_writer` 返回契约与页面文字 · `references/phase-1-collectors.md` (writer 返回 dict) · `references/layer-l-integration.md` (单 track 行补子目录限定) · standards `conventions/session-handoff.md` §2.3 latest.md 派生行为 (**Amended**: 新增「目标不在顶层」第三态, 仅适用于经机械 `latest_md_writer` 写入的路径; 该文件 Version 同批升 1.4.0)。
+- **已知边界**:
+  1. 非 ASCII 修复只覆盖**可解码 UTF-8** 的名字, 且准确含义是「枚举不再依赖 `core.quotePath`」, 不是无条件修掉一个漏扫 bug。
+  2. 名字不是合法 UTF-8 的路径 (解码后带 U+FFFD) 显式跳过并报 `handoff_multibranch_undecodable_path`, **不**计入 `unreadable_count`。
+  3. `tests/fixtures/reference-snapshot-aria.json` 本轮未重采样 (其 `tracks_multibranch` 仍无 `rel_path` / `unreadable_count`)。
+  4. `n_active` 可由 1 翻到 ≥2: 子目录归档件转成真 active track 后被 `_get_active_tracks` 收进, `write_latest_md` 可从 pointer 支翻到 banner 支, 而 banner 不含 `**Latest**: [` 行 ⇒ 姊妹 collector 的 `latest_source` 静默退回 `"mtime"` 且零 soft_error。该分支行为在任何多 active track 的仓里早已如此, 本版只扩大了可达人群。
+  5. 被 `git mv` 进子目录的无 frontmatter 老交接, `updated_at` 仍取 mv 那次提交的日期 (`git log -1` 取最近一次触碰该路径的提交, 加 `--follow` 也一样) —— 这是「无 frontmatter 时拿提交日当会话日」这一 fallback 的固有语义, 本版不处理, 也不加 `--follow`。
+
+### Notes
+- **读侧遗留缺口不在本版**: `collectors/handoff.py` 仍按扁平布局读 `latest.md` 指针 (子目录下的指针读不回, 也认不出「没有真指针」), `phase-d-closer/references/handoff-mechanics.md` 的 AI 手改路径也未同步第三态 —— 跟踪见 `10CG/aria-plugin#204`。
+- **平铺仓 (含 Aria 自身) 零行为变化**: `filename` / `track_id` / `legacy_count` 取值逐字节不变, 冻结语料未重生成; `snapshot_schema_version` 保持 `"1.0"` (纯 additive)。
+- **Rule #6**: 照跑 state-scanner AB (判据表第四行「拿不准 ⇒ 照跑」)。13 个 eval 两臂同为 50/78, `delta.pass_rate = +0.0000`, 与跑前预测相符; 结论「未被有效测试」(套件对 collector 输出零覆盖, 本仓也没有子目录输入), owner 2026-09-27 裁放行。鉴别力由 substitute 证据承担 (RED 记录 + 三步法反事实 + 全量回归 + 活体 dogfood); 套件缺口开 `10CG/aria-plugin#205`。结果在主仓 `aria-plugin-benchmarks/ab-results/2026-09-27-handoff-multibranch-rule6/`。
+- **测试**: state-scanner `run_tests.py` **1627** 全绿 (1605 → +22); pytest 腿 `test_collision.py` 28 条 + phase-d-closer 11 条全绿。
+
 ## [1.73.3] - 2026-09-13
 
 ### Fixed

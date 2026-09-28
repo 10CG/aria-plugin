@@ -1,0 +1,37 @@
+{
+ "schema": "handoff-tracks-frozen/1",
+ "fields": [
+  "track_id",
+  "owner_container",
+  "status",
+  "phase",
+  "updated_at",
+  "filename",
+  "branch",
+  "legacy"
+ ],
+ "row_count": 2,
+ "legacy_count": 1,
+ "tracks": [
+  {
+   "track_id": "flat-2026-09-01-alpha",
+   "owner_container": "tester/c0ffee01",
+   "status": "active",
+   "phase": "B.2",
+   "updated_at": "2026-09-01T00:00:00Z",
+   "filename": "2026-09-01-alpha.md",
+   "branch": "master",
+   "legacy": false
+  },
+  {
+   "track_id": "legacy:master:2026-09-02-beta.md",
+   "owner_container": "unknown",
+   "status": "legacy",
+   "phase": "unknown",
+   "updated_at": "2026-09-02T10:00:00+00:00",
+   "filename": "2026-09-02-beta.md",
+   "branch": "master",
+   "legacy": true
+  }
+ ]
+}

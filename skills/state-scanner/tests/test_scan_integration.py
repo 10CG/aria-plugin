@@ -162,7 +162,15 @@ class TestSnapshotSelfConsistencyAC5(unittest.TestCase):
 
     HEALTHY_GIT = {"current_branch": "master", "detached_head": False}
     HEALTHY_TRACKS = {
-        "tracks": [{"track_id": "t-1", "filename": "2026-07-19-x.md", "branch": "master"}]
+        "tracks": [{
+            "track_id": "t-1",
+            "filename": "2026-07-19-x.md",
+            # Top-level file, so rel_path equals filename. The key is required:
+            # _same_branch_head_unreachable_tracks composes the git path from
+            # rel_path and early-exits without it (10CG/Aria#195).
+            "rel_path": "2026-07-19-x.md",
+            "branch": "master",
+        }]
     }
     CLAIMS_PARITY = {
         "multi_remote": {"overall_parity": True, "enforced_remotes_resolved": ["origin"]},

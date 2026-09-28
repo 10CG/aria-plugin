@@ -17,7 +17,11 @@ Return schema (top-level snapshot key: ``tracks_multibranch``):
         "exists": bool,         # True when ≥1 track found across all branches
         "tracks": list[dict],   # One entry per (branch, file) pair — see below
         "branches_scanned": int,
-        "legacy_count": int,    # Tracks that fell back to legacy (no frontmatter)
+        "legacy_count": int,    # Tracks READ successfully but whose frontmatter was
+                                #   absent/incomplete. A file that could not be read at all
+                                #   is NOT one of these — it goes to unreadable_count and
+                                #   produces no row (10CG/Aria#195).
+        "unreadable_count": int, # Enumerated files whose content could not be read
         "collision": {          # TASK-000 (#133) — additive, ADVISORY-ONLY
             "kind": str,        # "none" | "cross_owner" | "self_multi_container"
             "groups": list,     # list[list[str]] — per colliding track_id: oc members
@@ -33,13 +37,14 @@ Return schema (top-level snapshot key: ``tracks_multibranch``):
 Each entry in ``tracks`` is:
 
     {
-        "track_id": str,          # frontmatter["track-id"] OR "legacy:<branch>:<filename>"
+        "track_id": str,          # frontmatter["track-id"] OR "legacy:<branch>:<rel_path>"
         "owner_container": str,   # frontmatter["owner-container"] OR "unknown"
         "phase": str,             # frontmatter["phase"] OR "unknown"
         "status": str,            # frontmatter["status"] OR "legacy"
-        "updated_at": str,        # frontmatter["updated-at"] OR git log committer date (ISO)
+        "updated_at": str,        # frontmatter["updated-at"] OR git log author date (ISO, %aI)
         "branch": str,            # short branch name (no "origin/" prefix)
         "filename": str,          # basename of the handoff file
+        "rel_path": str,          # path relative to docs/handoff/ (equals filename at top level)
         "legacy": bool,           # True when frontmatter was absent/incomplete
     }
 
@@ -56,8 +61,9 @@ Design notes:
   ``(track_id, owner/container)`` — the SESSION segment of ``owner_container``
   does NOT participate in the grouping key (round 3, finding [m]; split via
   ``lib.collision.split_owner_container``, read-only import) — newest
-  ``updated_at`` wins, ties broken by dictionary-max filename then
-  dictionary-max branch (round 3, finding [M1]; fully deterministic,
+  ``updated_at`` wins, ties broken by dictionary-max filename, then
+  dictionary-max branch, then the ``rel_path`` element (top-level row first,
+  otherwise dictionary-max ``rel_path`` — 10CG/Aria#195; fully deterministic,
   input-order-invariant) — fix for aria-plugin#155: stale ``status: active``
   historical handoff rows for an already-closed track were keeping
   ``tracks_multibranch.collision.kind`` at ``self_multi_container`` forever,
@@ -91,8 +97,9 @@ signature changed to ``-> (deduped, stats)``; ``collision.dedupe`` counts now
 exclude legacy rows (``legacy_passthrough`` added); ``renderers/track_board.py``
 now imports and applies the same function so the board's COLLISION lines and
 this collector's ``collision.groups`` never diverge.
-Round 3 (same task, second post-review): [M1] the sort key gained a 4th
-level, ``branch`` (dictionary-max), closing the remaining non-determinism on
+Round 3 (same task, second post-review): [M1] the sort key grew by one
+element, ``branch`` (dictionary-max), later joined by ``rel_path`` for the
+same-basename-different-depth tie (10CG/Aria#195), closing the non-determinism on
 the mainline multi-branch shape — the SAME handoff file reachable from
 multiple branches (identical track_id/owner_container/updated_at/filename),
 where round 2's 3-level key still silently fell back to branch-scan-order.
@@ -108,8 +115,8 @@ groups.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
-from pathlib import Path
+from typing import Callable, Optional
+from pathlib import Path, PurePosixPath
 
 # Note (Round 6 review): `git show` / `git ls-tree` invocations below intentionally
 # omit the `--` ref/path separator because `for-each-ref` upstream already filters
@@ -174,7 +181,11 @@ _POINTER_FILENAME: str = "latest.md"
 # The remote name that remote_refresh.py fetches from (F3′, Phase 0.5).
 _REMOTE: str = "origin"
 
-# docs/handoff/ tree path (trailing slash required by git ls-tree --name-only)
+# docs/handoff/ tree path, written WITHOUT a trailing slash: it is passed to
+# `git ls-tree` as the pathspec and is also the prefix that enumerated paths are
+# made relative to (one "/" is appended where a separator is needed). Every
+# path composition and prefix strip derives from this constant — do not
+# reintroduce the literal elsewhere (10CG/Aria#195).
 _HANDOFF_TREE_PATH: str = "docs/handoff"
 
 # Short timeout for per-file git show (content read).
@@ -237,14 +248,33 @@ def _list_origin_branches(project_root: Path) -> tuple[list[str], str | None]:
     return branches, None
 
 
-def _list_handoff_files(project_root: Path, branch: str) -> tuple[list[str], str | None]:
-    """Return (filenames, error_msg|None) of handoff .md files on a remote branch.
+def _list_handoff_files(
+    project_root: Path,
+    branch: str,
+    report_unexpected_prefix: Optional[Callable[[str, str], None]] = None,
+) -> tuple[list[str], str | None]:
+    """Return (rel_paths, error_msg|None) of handoff .md files on a remote branch.
 
-    Uses ``git ls-tree -r --name-only origin/<branch> -- docs/handoff/``.
-    Excludes ``latest.md`` (navigation pointer).
+    Uses ``git ls-tree -r --name-only -z origin/<branch> -- docs/handoff``.
+    Excludes ``latest.md`` (navigation pointer) at any depth.
 
-    Returns only the basename (not the full path) for each file so callers
-    compose the full git-object path as needed.
+    Each element is the file's path relative to ``docs/handoff/`` — a bare
+    ``2026-05-09-x.md`` for a top-level file, ``archive/2026-05-09-x.md`` for one
+    nested in a subdirectory. Callers compose the git object path by joining the
+    element back onto the tree path, and derive the basename wherever a display
+    name is wanted. (10CG/Aria#195: this used to hand back the basename alone, so
+    every file living under a subdirectory was re-composed into a path that does
+    not exist, failed ``git show``, and was published as a fake ``legacy`` row.)
+
+    ``-z`` is required, not cosmetic: without it ``git`` quotes and octal-escapes
+    any path containing non-ASCII bytes, and the escaped name then loses its
+    ``.md`` suffix behind a closing quote and is silently dropped.
+
+    ``report_unexpected_prefix``, when given, is called as ``(path, message)``
+    once per enumerated path that does not sit under the tree path. Such a row is
+    skipped on its own — one strange line must never take the rest of the
+    branch's files down with it, which is what returning a branch-level error
+    here would do.
     """
     ref = f"{_REMOTE}/{branch}"
     cmd = [
@@ -252,6 +282,7 @@ def _list_handoff_files(project_root: Path, branch: str) -> tuple[list[str], str
         "ls-tree",
         "-r",
         "--name-only",
+        "-z",
         ref,
         "--",
         _HANDOFF_TREE_PATH,
@@ -269,25 +300,45 @@ def _list_handoff_files(project_root: Path, branch: str) -> tuple[list[str], str
         cls = classify_git_error(rc, stderr, "git ls-tree")
         return [], f"git ls-tree failed for {ref} ({cls.label}, rc={cls.rc})"
 
-    filenames: list[str] = []
-    for line in stdout.splitlines():
-        path = line.strip()
+    # Separator derived from the tree-path constant, never re-typed as a literal.
+    prefix = f"{_HANDOFF_TREE_PATH}/"
+    rel_paths: list[str] = []
+    for raw in stdout.split("\0"):
+        path = raw.strip()
         if not path:
+            # `-z` TERMINATES each record, so the final split is always empty.
+            # Feeding that empty segment to the prefix guard below would emit one
+            # spurious report per branch — precisely the alarm noise 10CG/Aria#195
+            # exists to remove.
             continue
-        basename = Path(path).name
+        if not path.startswith(prefix):
+            # Pathspec-filtered output should never land here. Report and skip
+            # the single row; do NOT convert this into a branch-level error.
+            msg = (
+                f"enumerated path outside {_HANDOFF_TREE_PATH} on branch "
+                f"'{branch}': {path}"
+            )
+            if report_unexpected_prefix is not None:
+                report_unexpected_prefix(path, msg)
+            log.warning("handoff_multibranch: %s", msg)
+            continue
+        rel = path[len(prefix):]
+        basename = PurePosixPath(rel).name
         if not basename.endswith(".md"):
             continue
         if basename == _POINTER_FILENAME:
-            # Exclude navigation pointer per feedback_collector_exclude_navigation_pointer
+            # Exclude navigation pointer per feedback_collector_exclude_navigation_pointer.
+            # Comparing the basename keeps this depth-agnostic: an archived
+            # `archive/latest.md` is excluded too.
             log.debug(
                 "handoff_multibranch: excluding pointer file '%s' on branch '%s'",
-                basename,
+                rel,
                 branch,
             )
             continue
-        filenames.append(basename)
+        rel_paths.append(rel)
 
-    return filenames, None
+    return rel_paths, None
 
 
 def _read_file_content(
@@ -295,7 +346,7 @@ def _read_file_content(
 ) -> tuple[str | None, str | None]:
     """Return (content, error_msg|None) for a handoff file on a remote branch.
 
-    Uses ``git show origin/<branch>:docs/handoff/<filename>`` to read the file
+    Uses ``git show origin/<branch>:docs/handoff/<rel_path>`` to read the file
     object without checking out the branch.
     """
     ref = f"{_REMOTE}/{branch}:{_HANDOFF_TREE_PATH}/{filename}"
@@ -310,9 +361,9 @@ def _read_file_content(
 def _get_file_commit_date(
     project_root: Path, branch: str, filename: str
 ) -> str:
-    """Return the ISO 8601 UTC committer date for the most recent commit touching a file.
+    """Return the ISO 8601 author date of the most recent commit touching a file.
 
-    Uses ``git log -1 --format=%aI origin/<branch> -- docs/handoff/<filename>``.
+    Uses ``git log -1 --format=%aI origin/<branch> -- docs/handoff/<rel_path>``.
     %aI = strict ISO 8601 format of author date (UTC-aware).
 
     Falls back to empty string if git log fails or returns nothing.
@@ -329,7 +380,9 @@ def _get_file_commit_date(
 def _make_legacy_track_id(branch: str, filename: str) -> str:
     """Construct a deterministic legacy track_id from branch + filename.
 
-    Format: ``legacy:<branch>:<filename>`` per task spec §Impl notes.
+    Format: ``legacy:<branch>:<rel_path>`` per task spec §Impl notes. The
+    relative path (not the basename) is what makes two same-named files at
+    different depths two distinct tracks instead of one (10CG/Aria#195).
     The branch separator is ":" which is invalid in git branch names,
     so there is no ambiguity.
     """
@@ -352,7 +405,7 @@ def _make_legacy_track_id(branch: str, filename: str) -> str:
 # (track_id, owner/container) — dropping the session segment (round 3,
 # finding [m] — see dedupe_latest_per_track_container's own docstring for
 # why session must not participate in the grouping key) — the row that sorts
-# greatest under the four-level key below wins — and feed ONLY that deduped
+# greatest under the compound key below wins — and feed ONLY that deduped
 # view to classification. ``tracks_multibranch.tracks[]`` itself is never
 # touched (schema-additive; see module docstring).
 #
@@ -365,9 +418,9 @@ def _make_legacy_track_id(branch: str, filename: str) -> str:
 # ``tracks[]``, so it could still show a phantom COLLISION line for a track
 # this collector had already stopped flagging).
 #
-# Tie-break, finalized (round 3): the sort key is FOUR levels, all
-# comparable, fully deterministic —
-# ``(parse_ok, parsed_updated_at, filename, branch)``.
+# Tie-break, finalized (10CG/Aria#195): the sort key is all-comparable and
+# fully deterministic —
+# ``(parse_ok, parsed_updated_at, filename, branch, (rel_path == filename, rel_path))``.
 #
 # Level 2 filename (round 2, major finding a): round 1's sort key was
 # ``(parse_ok, parsed_datetime)`` only. When two rows in the same group parse
@@ -425,9 +478,9 @@ def _updated_at_sort_key(updated_at: str | None) -> tuple[int, datetime]:
         return (0, datetime.min.replace(tzinfo=timezone.utc))
 
 
-def _dedupe_sort_key(row: dict) -> tuple[int, datetime, str, str]:
-    """Full dedupe "latest wins" sort key: four levels, all-comparable,
-    fully deterministic — ``(parse_ok, updated_at, filename, branch)``.
+def _dedupe_sort_key(row: dict) -> tuple[int, datetime, str, str, tuple[bool, str]]:
+    """Full dedupe "latest wins" sort key: five levels, all-comparable,
+    fully deterministic — ``(parse_ok, updated_at, filename, branch, (rel_path == filename, rel_path))``.
 
     ``filename`` is the round-2 tie-break (see the module-comment block above
     for the real-data motivation): when two rows in a group parse to the
@@ -450,9 +503,22 @@ def _dedupe_sort_key(row: dict) -> tuple[int, datetime, str, str]:
     max wins) makes the pick depend only on the row's OWN fields — invariant
     to `tracks[]`'s build order regardless of branch scan order or list
     reversal.
+
+    ``(rel_path == filename, rel_path)`` is the 5th level (10CG/Aria#195). Once the
+    same basename can legitimately appear at two different depths, every
+    preceding element ties COMPLETELY — same ``updated_at``, same ``filename`` (it IS
+    the basename), same ``branch`` — and the winner fell back to whichever row
+    ``max()`` happened to see first, so reversing the input list changed the
+    answer. This level resolves it from the rows' own fields: ``True`` sorts
+    above ``False`` under ``max()``, so a top-level row (whose ``rel_path``
+    equals its basename) beats any nested one, and among nested rows the
+    dictionary-greatest ``rel_path`` wins. A row predating the key falls back to
+    its ``filename``, so it reads as top-level rather than raising.
     """
     bucket, dt = _updated_at_sort_key(row.get("updated_at"))
-    return (bucket, dt, row.get("filename") or "", row.get("branch") or "")
+    filename = row.get("filename") or ""
+    rel = row.get("rel_path") or filename
+    return (bucket, dt, filename, row.get("branch") or "", (rel == filename, rel))
 
 
 def dedupe_latest_per_track_container(
@@ -489,9 +555,10 @@ def dedupe_latest_per_track_container(
 
     Keeps only the row that sorts greatest under ``_dedupe_sort_key`` —
     updated_at-latest, ties broken by dictionary-max filename, then
-    dictionary-max branch (see module comment above ``_dedupe_sort_key``).
+    dictionary-max branch, then ``rel_path`` (top-level first; see the module
+    comment above ``_dedupe_sort_key``).
     ``status == "legacy"`` rows pass through UNCHANGED, un-grouped: a legacy
-    track_id already embeds branch+filename (``legacy:<branch>:<filename>``),
+    track_id already embeds branch+rel_path (``legacy:<branch>:<rel_path>``),
     so two legacy rows can never share a dedupe key with each other or with a
     real track, and every legacy row's ``owner_container`` is ``"unknown"``
     — which ``classify()`` already excludes from collision attribution
@@ -573,6 +640,16 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
     r = CollectorResult()
     error_messages: list[str] = []
 
+    def _report_unexpected_prefix(_path: str, message: str) -> None:
+        """Dual-channel report for an enumerated path outside the tree path.
+
+        Both channels on purpose: all four pre-existing kinds are paired this way,
+        and a kind that only reaches ``CollectorResult.errors`` would be invisible
+        in the snapshot's own ``tracks_multibranch.errors[]``.
+        """
+        error_messages.append(message)
+        r.soft_error("handoff_multibranch_unexpected_path_prefix", message)
+
     # Resolve the scan cap (env > config > default 20; #71 v1.38.0). Resolved
     # once per run so the value is stable across the cap check + soft_error text.
     max_branches = resolve_max_branches_scanned(project_root)
@@ -590,6 +667,7 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
             "tracks": [],
             "branches_scanned": 0,
             "legacy_count": 0,
+            "unreadable_count": 0,
             "collision": {"kind": "none", "groups": [], "identity_advisories": []},
             "errors": [list_err],
         }
@@ -612,11 +690,19 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
     # ── Scan each branch ──────────────────────────────────────────────────────
     tracks: list[dict] = []
     legacy_count: int = 0
+    # Files enumerated but not readable. Distinct from legacy_count on purpose:
+    # a legacy row is a file we DID read but whose frontmatter was absent or
+    # incomplete, while this counts files we never got the content of. Rows
+    # dropped by the prefix guard and names that are not valid UTF-8 are NOT
+    # counted here — neither is an unreadable file.
+    unreadable_count: int = 0
     branches_scanned: int = 0
 
     for branch in branches:
         # List handoff files on this branch
-        filenames, ls_err = _list_handoff_files(project_root, branch)
+        rel_paths, ls_err = _list_handoff_files(
+            project_root, branch, _report_unexpected_prefix
+        )
         if ls_err is not None:
             msg = f"[{branch}] {ls_err}"
             error_messages.append(msg)
@@ -625,36 +711,49 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
             branches_scanned += 1
             continue
 
-        if not filenames:
+        if not rel_paths:
             # Branch has no docs/handoff/ tree or only latest.md — silently skip.
             branches_scanned += 1
             continue
 
         branches_scanned += 1
 
-        for filename in filenames:
-            # Read file content via git show
-            content, show_err = _read_file_content(project_root, branch, filename)
+        for rel in rel_paths:
+            # `rel` is the path relative to the tree path and is what every git
+            # object path is composed from; `filename` stays the basename, which
+            # is what the reporting surfaces publish (10CG/Aria#195 keeps these two
+            # deliberately separate).
+            filename = PurePosixPath(rel).name
+
+            # A path whose bytes are not valid UTF-8 reaches us already carrying
+            # replacement characters (the decode upstream substitutes them), so
+            # testing for that character is the judgement that actually holds —
+            # a `rel.encode("utf-8")` round-trip would never raise here and the
+            # guard would be dead code. Skip it explicitly and say so: letting it
+            # through would send a nonexistent path to `git show` and report the
+            # result as an unreadable FILE, which it is not.
+            if chr(0xFFFD) in rel:
+                msg = (
+                    f"undecodable path on branch '{branch}': {rel!r} "
+                    f"(name is not valid UTF-8)"
+                )
+                error_messages.append(msg)
+                r.soft_error("handoff_multibranch_undecodable_path", msg)
+                continue
+
+            # Read file content via git show, composing the path from `rel`
+            content, show_err = _read_file_content(project_root, branch, rel)
 
             if show_err is not None or content is None:
-                # git show failed: mark as legacy + soft_error
-                msg = f"[{branch}/{filename}] git show failed: {show_err or 'empty content'}"
+                # Unreadable: report and count it, and publish NOTHING. 10CG/Aria#195:
+                # this branch used to append a synthetic `legacy` row whose
+                # owner_container was "unknown" — upstream it looked like real
+                # data, downstream every collidable filter dropped it, so a whole
+                # class of handoffs was invisible while the snapshot stayed green.
+                msg = f"[{branch}/{rel}] git show failed: {show_err or 'empty content'}"
                 error_messages.append(msg)
                 r.soft_error("handoff_multibranch_git_show_failed", msg)
-                fallback_date = _get_file_commit_date(project_root, branch, filename)
-                tracks.append(
-                    {
-                        "track_id": _make_legacy_track_id(branch, filename),
-                        "owner_container": "unknown",
-                        "phase": "unknown",
-                        "status": "legacy",
-                        "updated_at": fallback_date,
-                        "branch": branch,
-                        "filename": filename,
-                        "legacy": True,
-                    }
-                )
-                legacy_count += 1
+                unreadable_count += 1
                 continue
 
             # Attempt frontmatter parse (stdlib parser since v1.30.2, no external dep)
@@ -671,6 +770,7 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
                         "updated_at": fm["updated-at"],
                         "branch": branch,
                         "filename": filename,
+                        "rel_path": rel,
                         "legacy": False,
                     }
                 )
@@ -681,18 +781,21 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
                 )
             else:
                 # No frontmatter or incomplete schema: legacy fallback per §2.3.4.
-                # updated_at = git log committer date (superior to local mtime for
-                # cross-branch files where mtime is not stable).
-                fallback_date = _get_file_commit_date(project_root, branch, filename)
+                # updated_at = git log author date (superior to local mtime for
+                # cross-branch files where mtime is not stable). Queried through
+                # `rel`, or a file that never existed at the top level resolves to
+                # no commit at all and the date comes back empty.
+                fallback_date = _get_file_commit_date(project_root, branch, rel)
                 tracks.append(
                     {
-                        "track_id": _make_legacy_track_id(branch, filename),
+                        "track_id": _make_legacy_track_id(branch, rel),
                         "owner_container": "unknown",
                         "phase": "unknown",
                         "status": "legacy",
                         "updated_at": fallback_date,
                         "branch": branch,
                         "filename": filename,
+                        "rel_path": rel,
                         "legacy": True,
                     }
                 )
@@ -700,7 +803,7 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
                 log.debug(
                     "handoff_multibranch: legacy fallback for '%s' on branch '%s' "
                     "(no frontmatter or incomplete schema)",
-                    filename,
+                    rel,
                     branch,
                 )
 
@@ -713,8 +816,8 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
         try:
             # aria-plugin#155: collapse to one row per (track_id,
             # owner/container — session segment dropped, round 3 finding [m])
-            # — newest updated_at wins (filename then branch dictionary-max
-            # tie-break, rounds 2/3) — BEFORE classifying, so stale
+            # — newest updated_at wins (filename, then branch dictionary-max,
+            # then the rel_path element) — BEFORE classifying, so stale
             # historical "active" rows from an already-closed track can no
             # longer manufacture a permanent self_multi_container/cross_owner
             # false positive. tracks[] itself is untouched.
@@ -749,6 +852,7 @@ def collect_handoff_multibranch(  # noqa: C901 — linear collector, kept in one
         "tracks": tracks,
         "branches_scanned": branches_scanned,
         "legacy_count": legacy_count,
+        "unreadable_count": unreadable_count,
         "collision": collision,
         "errors": error_messages,
     }

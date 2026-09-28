@@ -99,6 +99,6 @@ Snapshot 字段: `coordination_fetch` (additive, schema v1.0+; `coordination_ref
 - 多 track 防接错棒由 `render_track_board(snapshot)` 提供 (读全分支 frontmatter 重建看板), **不依赖** latest.md 重写
 - 老 session 读 latest.md 保持向后兼容 (最近一次 D.3 写的内容仍在)
 
-Writer path: `aria/skills/state-scanner/scripts/writers/latest_md_writer.py`。Return dict: `{action: "pointer"|"banner"|"skipped", path: str, content_lines: int}`. 依赖: `snapshot["tracks_multibranch"]["tracks"]` (TASK-004 产出)。
+Writer path: `aria/skills/state-scanner/scripts/writers/latest_md_writer.py`。Return dict: `{action: "pointer"|"banner"|"skipped", path: str, content_lines: int, degraded_reason: str|None}` —— `degraded_reason` 恒存在于三支 (10CG/Aria#195), 取值 `None` (写出了真指针) / `"missing_filename"` / `"target_in_subdir"`; 由 renderer 回传而非 `write_latest_md` 自行重算, 故正文面与机读面不会各算一遍. 依赖: `snapshot["tracks_multibranch"]["tracks"]` (TASK-004 产出)。
 
 phase-d-closer D.3 集成实施由 TASK-029 (文档同步) 或独立 follow-up task 承担, **不阻塞 P2**。完整决策记录见 `.aria/notes/multi-terminal-coordination-p1-closeout.md §Finding #2`。

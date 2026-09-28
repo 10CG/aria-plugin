@@ -882,7 +882,7 @@ class TestDedupeTiebreakByBranchWhenUpdatedAtAndFilenameTie(unittest.TestCase):
         row ``max()`` saw FIRST while iterating — i.e. the FORWARD list's
         first element and the REVERSED list's first element, which are
         DIFFERENT rows — making the result depend on ``tracks[]`` build
-        order. The fixed 4-level key must pick the SAME row
+        order. The fixed ``(parse_ok, updated_at, filename, branch)`` key must pick the SAME row
         (``"zzz-branch"``, dictionary-greater) in both directions.
         """
         row_a = self._row("aaa-branch", "active")
@@ -1159,7 +1159,7 @@ class TestDedupeRound3Residuals(unittest.TestCase):
 
     def test_sort_key_prefers_filename_over_branch(self):
         """Equal updated_at; row A has the GREATER filename but LESSER branch,
-        row B the reverse. The 4-level key (parse_ok, updated_at, filename,
+        row B the reverse. The key ordering (parse_ok, updated_at, filename,
         branch) picks A. How it goes red: a (…, branch, filename) key picks B."""
         a = _row("t1", "alice/box", "done", "2026-08-01T00:00:00Z", "2026-08-01-zzz.md", branch="aaa")
         b = _row("t1", "alice/box", "active", "2026-08-01T00:00:00Z", "2026-08-01-aaa.md", branch="zzz")

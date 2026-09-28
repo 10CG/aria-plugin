@@ -180,10 +180,19 @@ def _same_branch_head_unreachable_tracks(
         filename = t.get("filename")
         if not filename:
             continue
+        # The git path is composed from rel_path; `filename` stays the basename and
+        # is what the two report surfaces below publish. A handoff living under
+        # docs/handoff/archive/ has a basename that resolves to nothing at the top
+        # level, which is what made this probe silently inconclusive (10CG/Aria#195).
+        # No `or filename` fallback on purpose: a snapshot predating the key must
+        # early-exit here rather than probe a path that does not exist.
+        rel_path = t.get("rel_path")
+        if not rel_path:
+            continue
         for remote in enforced_remotes:
             cmd = [
                 "git", "log", "-1", "--format=%H",
-                f"{remote}/{branch}", "--", f"docs/handoff/{filename}",
+                f"{remote}/{branch}", "--", f"docs/handoff/{rel_path}",
             ]
             rc, out, err = _run(cmd, project_root, timeout=timeout)
             if rc != 0:

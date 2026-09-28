@@ -102,7 +102,7 @@ Phase 1.17 tracks_multibranch snapshot
           │
           └──▶ writers/latest_md_writer.write_latest_md(snapshot)
                     → D.3 scoped (由 phase-d-closer 调用, 非 scan.py 自动)
-                    → 单 track: 更新 latest.md pointer
+                    → 单 track: 更新 latest.md pointer (目标在子目录时改写降级页, 见 session-handoff.md §2.3)
                     → 多 track: 写 deprecation banner (不覆盖 track pointer)
 ```
 
