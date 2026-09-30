@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.74.1] - 2026-09-30 — issue_scan 翻页取全并显式标注截断 (`10CG/aria-plugin#182`; PATCH: 缺陷修复, 新增字段均为 additive)
+
+### Fixed
+- **state-scanner `collectors/issue_scan.py` — open issue 超过 `limit` 的仓被静默截断**: 每个仓只发一次 `limit=20` 的请求, 并把 `len(items)` 当 `open_count`; Forgejo 按新→老返回, 丢掉的恒是最老的单。实测 scanner 报 48, 同一时刻 API 分页全量 130 (`10CG/Aria` 20/46, `10CG/aria-plugin` 20/76), 被藏的含泄露类 issue。现在 Forgejo 翻页直到服务端返回**空页**; GitHub 一次 `gh issue list --limit 1001` (上限 1000 + 1 行探针)。
+- **旧缓存不再被当完整数据服务**: `issue_status.schema_version` 1.1 → 1.2, reader 只接受 1.2 —— 1.0 / 1.1 缓存至多 `limit` 条且无法判断是否被截断, 升级后一次性重新拉取 (否则 15 分钟 TTL 内继续服务截断结果)。
+
+### Added
+- `issue_status.truncated` (顶层) 与 `issue_status.repos[*].truncated` / `truncated_reason` (**恒存在**, 含失败条目): 列举是否提前结束。`truncated_reason` 封闭集: `max_items` (触及单 repo 1000 条安全上限, 按整页取整) / `pagination_stalled` (服务端整页返回已见过的条目, 即无视 `page`)。触顶时 `open_count` 只是下界。
+- 测试: `tests/test_issue_scan_pagination.py` (新建, 23 条; 未改生产代码时 22 红 1 绿) + `tests/_helpers.py` 共享谓词 `past_last_issues_page` (三个只 mock 首页的测试替身共用)。
+
+### Changed
+- **`limit` 由事实上的总量上限改为每页条数** (Forgejo 夹到 1..50; GitHub 不使用该值)。既有的 `limit: 20` 配置继续有效, 结果从「最新 20 条」变为「全部」。
+- 首页请求 URL 与修复前逐字节相同 (无 `page=`), 第 2 页起追加 `&page=N`; 终点判据是**空页**而非「短页」(服务端页大小可被夹小, 短页不等于最后一页); 重叠页按 issue 号去重。
+- 首页之后某一页失败 → 整个 repo 记 `fetch_error`, 不返回残缺列表 (与修复前单次请求失败的粒度一致)。
+- **触碰的文档面**: `references/state-snapshot-schema.md` (issue_status 字段 + 「Pagination and truncation」小节) / `references/issue-scanning.md` (v1.2 小节 / 缓存兼容表 / `limit` 配置行 / prose 手工路径只取首页的说明) / `config-loader/SKILL.md` (`limit` 语义两行 YAML 注释)。
+- **已知边界**:
+  1. 触顶上限按整页取整 (`1000 // 页大小`), 页大小不能整除 1000 时实际保留略少于 1000 条; 标注本身仍准确 (探针页保证)。
+  2. GitHub 大仓 (数百条 issue) 的 `gh` 单次调用受 `api_timeout_seconds` 约束, 可能由「静默截断」变为 `timeout` (显式失败)。
+  3. 手工 prose 路径 (`mechanical_mode=false`, 计划移除) 仍只取首页, 不写 `truncated`; 以 `scan.py` 为准。
+  4. 没有加 `10CG/aria-plugin#182` 建议的 `total_available` (默认取全后恒等于 `open_count`, 冗余) 与「取样规则可配置」(已无 cap, 无对象)。
+
+### Notes
+- **同形缺陷未在本版处理**: `issue-triage` 的 `collectors/_inflight.py` (开放 PR 列表) 与 `collectors/_issue.py` (评论列表) 同为单次 `limit=50` 请求, 超过 50 条会静默丢数据 —— 跟踪见 `10CG/aria-plugin#208`。
+- **Rule #6**: 判据表第 1 行 (描述性 + 纯 collector 代码, 先例 v1.60.0) ⇒ substitute: 结构化 baseline-failing 测试 (新增 23 条, 基线 22 红) + 10 种坏实现变异全被抓 + 真实 Forgejo 两态负控 (完整态 130 = API 全量; 触顶态标注出现 / 消失), **未跑 AB** (`description_changed: no`; 套件对 collector 输出零覆盖, 见 `10CG/aria-plugin#205`)。唯一碰到 SKILL.md 的一处是 `config-loader/SKILL.md` 两行注释, 按「事实性同步」归类。该归类为 AI 依 `skill-benchmark-exemption.md` §2 自行判定, 已交接请 owner 复议。
+- 全插件 `skills/run_all_tests.sh`: 11 OK / 0 FAIL / 0 SKIP, 共 2205 个测试。
+
 ## [1.74.0] - 2026-09-28 — handoff-multibranch-subdir-path-fidelity (`10CG/Aria#195`; owner 2026-09-12 裁 MINOR: 三个恒存在机读字段 + 采用方可见的行为变化, 同 v1.70.0 D5 先例)
 
 ### Fixed
