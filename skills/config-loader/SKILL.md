@@ -117,6 +117,8 @@ state_scanner.issue_scan.api_timeout_seconds:
   range: [1, 30]
   default: 5
 
+# 每页请求条数 (page size), 不是总量上限: 翻页直到取完 (10CG/aria-plugin#182)。
+# 大于 50 会被夹到 50 (Forgejo 默认页大小上限); GitHub 不使用该值 (gh 自行翻页)。
 state_scanner.issue_scan.limit:
   type: integer
   range: [1, 100]
