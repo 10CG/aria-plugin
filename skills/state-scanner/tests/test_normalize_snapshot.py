@@ -25,7 +25,7 @@ from normalize_snapshot import (  # noqa: E402
     normalize,
 )
 
-from _helpers import tmp_repo, write_file  # noqa: E402
+from _helpers import past_last_issues_page, tmp_repo, write_file  # noqa: E402
 from collectors.issue_scan import collect_issue_scan  # noqa: E402
 
 SCAN_PY = _SCRIPTS / "scan.py"
@@ -483,6 +483,8 @@ class TestOfflineFreezeFaultFixture(unittest.TestCase):
 
             def fake_run(cmd, cwd, timeout=5):
                 key = tuple(cmd)
+                if past_last_issues_page(key):
+                    return (0, "[]", "")
                 return run_table.get(key, (1, "", f"unmocked: {' '.join(cmd)}"))
 
             with mock.patch("collectors.issue_scan._run", side_effect=fake_run):

@@ -846,12 +846,13 @@ rule (see `RECOMMENDATION_RULES.md` / `references/rules/basic-rules.md`).
 Only present when `.aria/config.json` has `state_scanner.issue_scan.enabled: true`.
 
 ```yaml
-schema_version: str             # writer always "1.1"; reader accepts {"1.0", "1.1"}
+schema_version: str             # writer always "1.2"; reader accepts {"1.2"} (1.0 / 1.1 caches predate pagination → cold)
 fetched_at: str                 # ISO 8601, min() across repos (conservative)
 source: str                     # enum: "cache" | "live" | "unavailable"
 fetch_error: str|null           # see fetch_error enum below
 platform: str|null              # enum: "forgejo" | "github" | null
-open_count: int
+open_count: int                 # sum over repos; a lower bound when `truncated` is true
+truncated: bool                 # true iff any repo listing ended early (see repos[*].truncated_reason)
 items: list[IssueItem]          # aggregated flat view
 open_issues: list[IssueItem]    # v1.0 alias, same list object
 repos: dict[str, {              # v1.1+: grouped by "owner/repo" key
@@ -860,6 +861,8 @@ repos: dict[str, {              # v1.1+: grouped by "owner/repo" key
   fetch_error: str|null,
   fetched_at: str,
   open_count: int,
+  truncated: bool,                # this repo's listing ended before the end
+  truncated_reason: str|null,     # "max_items" | "pagination_stalled" | null
   items: list[IssueItem]
 }]
 label_summary: dict[str, int]   # label → count across all repos
@@ -890,6 +893,25 @@ IssueItem:
 | 8 | `platform_unknown` | all 4 platform-detection tiers failed |
 | 9 | `parse_error` | JSON decode failure |
 | 10 | `unknown` | catch-all |
+
+### Pagination and truncation (10CG/aria-plugin#182)
+
+`state_scanner.issue_scan.limit` is the **page size** of each request (clamped to 1..50, Forgejo's default
+maximum), not a total cap. Forgejo is listed page by page until the server returns an **empty** page; a short
+page does not end the listing because a server may clamp the page size below what was asked. The first request
+URL is byte-identical to the pre-pagination one (no `page=`); page 2 onward append `&page=N`. GitHub is one
+`gh issue list --limit 1001` call (ceiling + 1 as the probe row), since `gh` has no page parameter.
+
+`truncated` is `true` only when the listing stopped before the end. `truncated_reason` is a closed set:
+
+| Value | Meaning |
+|---|---|
+| `max_items` | the per-repo safety ceiling (1000, honoured in whole pages) was reached and more issues exist |
+| `pagination_stalled` | the server returned a whole page of issues already seen (it ignores `page`) |
+
+A repo with `truncated: true` reports a lower-bound `open_count`. A page that fails after the first fails the
+**whole repo** (`fetch_error` set, `items` empty) rather than returning a silently partial list. `truncated`
+only says the listing ended early: `label_filter` removing issues does not set it.
 
 ### PR filtering (QA-C2)
 
