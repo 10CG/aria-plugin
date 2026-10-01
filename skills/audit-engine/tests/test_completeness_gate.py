@@ -1550,7 +1550,7 @@ class CompletenessGateTests(unittest.TestCase):
             }, mode="adaptive")
             self._commit(
                 repo,
-                "sc15.10: four non-excluded explicit, pre_merge unwritten, no Level line anywhere",
+                "sc15.10: three non-excluded explicit (+ post_brainstorm off), pre_merge unwritten, no Level line anywhere",
             )
             proc = self._run_gate(repo, repo, "master", change_ids=["x"])
             self.assertEqual(proc.returncode, 1, proc.stderr)
@@ -1562,6 +1562,38 @@ class CompletenessGateTests(unittest.TestCase):
             self.assertIsNotNone(entry, data.get("results"))
             self.assertEqual(entry["status"], "missing")
             self.assertNotIn("spec_level_undetermined", proc.stderr)
+
+        # (10b) 锁住同一裁定 (lazy) 的另一半「audit.mode 写错」(决策单第 8 项第
+        # 3 条, 2026-10-01 补格): 相对上一格, 差别在锚点与 audit.mode 两处; 相
+        # 对 SC-15.5-typo-mode, 差别才只在 checkpoints 块 -- 这里锚点换回常规写
+        # 法 (level=2, 含 ## Tasks), 三个非排除 checkpoint 全部显式 (无需 Level
+        # 解析), pre_merge 不写, 但 audit.mode 本身是枚举外的非法值
+        # ('typo-mode', 与 SC-15.5-typo-mode 同值)。lazy 读法下
+        # resolved(pre_merge) 只在纳入集为空的 P5 才求值 (mode 校验挂在那条优先
+        # 级链上), 这里纳入集为 {post_spec@x} 非空, 从不触达, post_spec@x 照常
+        # 求值 (zero reports -> missing); eager 读法会在 P4 为 pre_merge 走 2a
+        # 优先级链时先触发 mode 校验并报 config_unreadable。
+        with self.subTest(cell="SC-15.10-typo-mode-lazy-when-inclusion-nonempty"):
+            repo = self._new_repo()
+            self._write_anchor(repo, "x", level=2, inline_tasks=True)
+            self._write_config(repo, {
+                "post_brainstorm": "off", "post_spec": "convergence",
+                "post_planning": "off", "post_implementation": "off",
+            }, mode="typo-mode")
+            self._commit(
+                repo,
+                "sc15.10 typo-mode: three non-excluded explicit (+ post_brainstorm off), pre_merge unwritten, audit.mode is an invalid enum value",
+            )
+            proc = self._run_gate(repo, repo, "master", change_ids=["x"])
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertIsNone(data["error_kind"])
+            self.assertEqual(data["verdict"], "fail")
+            self.assertEqual(data["checked_checkpoints"], ["post_spec"])
+            entry = self._find_result(data, "post_spec", "x")
+            self.assertIsNotNone(entry, data.get("results"))
+            self.assertEqual(entry["status"], "missing")
+            self.assertNotIn("config_unreadable", proc.stderr)
 
     # ------------------------------------------------------------------
     # SC-15(4) (proposal.md:471) -- legacy experiments.agent_team_audit
