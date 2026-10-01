@@ -1515,6 +1515,54 @@ class CompletenessGateTests(unittest.TestCase):
             self.assertEqual(data["verdict"], "pass")
             self.assertTrue(data["no_prior_checkpoints"])
 
+        # (10) resolved(pre_merge) 的求值时机 -- lazy, not eager (owner ruling
+        # .aria/decisions/2026-09-30-199-b2-group1-spec-drift-rulings.md
+        # 第 6 项, 2026-10-01): proposal.md:114 (P4's own note) reads as
+        # though resolved(pre_merge) is computed unconditionally alongside
+        # every other checkpoint ("在此步一并算出"), while :298-299 (格 C's
+        # row -- "本格只在纳入集为空时求值") and the :311 partition proof's
+        # point (3) ("纳入集非空 ⇒ 五格全不求值 … 直接进 P6") read as though it
+        # is computed only once the inclusion set turns out empty, i.e. as
+        # part of P5. resolved(pre_merge)'s only consumer is the
+        # five-bucket determination (P5); P6's pairwise evaluation never
+        # reads it. Ruling: keep the current (lazy) reading.
+        #
+        # This cell isolates the two readings: every non-pre_merge,
+        # non-excluded checkpoint is pinned EXPLICIT (level 1 -- none of
+        # them need Level resolution on their own), pre_merge is left
+        # unwritten under mode='adaptive' (resolving it would need Level
+        # N via priority-chain level 2a, proposal.md:235), and the anchor
+        # has no parseable Level line anywhere. Lazy: the inclusion set is
+        # {post_spec@x} (post_planning/post_implementation resolve "off"
+        # via level 1 explicit, post_brainstorm is "off" either way) --
+        # non-empty, so P5's five-bucket branch, and therefore
+        # resolved(pre_merge), is never reached; post_spec@x is evaluated
+        # normally (zero reports -> missing) and spec_level_undetermined
+        # never surfaces. An eager reading would instead attempt Level
+        # resolution for pre_merge during P4 and fail before post_spec@x
+        # is ever evaluated.
+        with self.subTest(cell="SC-15.10-pre-merge-lazy-when-inclusion-nonempty"):
+            repo = self._new_repo()
+            self._write_anchor_no_level(repo, "x")
+            self._write_config(repo, {
+                "post_brainstorm": "off", "post_spec": "convergence",
+                "post_planning": "off", "post_implementation": "off",
+            }, mode="adaptive")
+            self._commit(
+                repo,
+                "sc15.10: four non-excluded explicit, pre_merge unwritten, no Level line anywhere",
+            )
+            proc = self._run_gate(repo, repo, "master", change_ids=["x"])
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertIsNone(data["error_kind"])
+            self.assertEqual(data["verdict"], "fail")
+            self.assertEqual(data["checked_checkpoints"], ["post_spec"])
+            entry = self._find_result(data, "post_spec", "x")
+            self.assertIsNotNone(entry, data.get("results"))
+            self.assertEqual(entry["status"], "missing")
+            self.assertNotIn("spec_level_undetermined", proc.stderr)
+
     # ------------------------------------------------------------------
     # SC-15(4) (proposal.md:471) -- legacy experiments.agent_team_audit
     # mapping, carve-out cells (§1.0 (1)(3) carve-out table row 2): the
