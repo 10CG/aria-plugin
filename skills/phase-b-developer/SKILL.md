@@ -201,7 +201,7 @@ B.mid - 审计引擎 (条件触发):
   on_skip: 继续任务执行循环
   output:
     mid_audit_verdict: "PASS"             # PASS | PASS_WITH_WARNINGS | FAIL (如触发)
-    mid_audit_report: ".aria/audit-reports/mid_implementation-{timestamp}.md"
+    mid_audit_report: ".aria/audit-reports/mid_implementation-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md"
 ```
 
 ### Mid-Post-Spec spec 漂移检查点 (Aria #79, 条件触发)
@@ -274,7 +274,7 @@ B.post - 审计引擎 (可选):
   on_skip: 继续到 Phase C (审计未启用)
   output:
     audit_verdict: "PASS"                 # PASS | PASS_WITH_WARNINGS | FAIL (如启用)
-    audit_report: ".aria/audit-reports/post_implementation-{timestamp}.md"
+    audit_report: ".aria/audit-reports/post_implementation-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md"
 ```
 
 ### 输出

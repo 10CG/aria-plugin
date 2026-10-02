@@ -37,6 +37,10 @@
 - 旧文件名 `{checkpoint}-{timestamp}.md` (无 round/role suffix) 视为单 agent 单轮 (R1, role=`legacy`)
 - finding aggregation 时 legacy 文件归入对应 checkpoint 的 R1, 与新 R1 文件并集
 - writer 仅生成新 schema (本 Spec 合并即生效, 不再回写旧格式)
+- completeness gate 归属匹配认含 `-{spec_id}-` 或以 `-{spec_id}.md` 结尾的文件 (末段形态是本仓 62 份真实报告的实际形态)
+- 真 2-field 旧 schema 不计入并以 `excluded_legacy_count` 显影; 有 id 段但 id 不在 `openspec/{changes,archive}` 内的以 `unattributed_count` + 文件名清单显影 —— 两者不得混计
+- 子目录内的报告不计入完整性证据: 完整性扫描只读 `.aria/audit-reports/` 顶层 (`scanned_dir_depth: 1`)
+- 不以任何 checkpoint 名开头的文件 (如 `*-audit-trail.md` 族) 三个桶都不收 —— 既不进 `matched`, 也不进 `unattributed_count` / `excluded_legacy_count`
 
 ### 为何引入此 schema (Round-2 audit P0.2 finding)
 
