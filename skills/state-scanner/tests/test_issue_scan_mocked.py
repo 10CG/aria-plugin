@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import collectors.issue_scan as issue_scan_mod
-from _helpers import tmp_project, tmp_repo, write_file
+from _helpers import past_last_issues_page, tmp_project, tmp_repo, write_file
 from collectors.issue_scan import (
     DEFAULT_CONFIG,
     ERR_AUTH_FAILED,
@@ -51,6 +51,8 @@ def _make_run(table):
         for k, v in table.items():
             if len(k) <= len(key) and tuple(key[: len(k)]) == k:
                 return v
+        if past_last_issues_page(key):
+            return (0, "[]", "")
         return (1, "", f"unmocked: {' '.join(cmd)}")
     return fake
 
@@ -199,7 +201,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, source = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            items, ferr, source, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(source, "live")
         self.assertIsNone(ferr)
         self.assertEqual(len(items), 1)
@@ -209,16 +211,17 @@ class TestFetchRepoMocked(unittest.TestCase):
             {"number": 5, "title": "x", "labels": [{"name": "bug"}], "url": "/issues/5"},
         ])
         run_table = {
+            # gh has no page parameter: it is asked for the ceiling (1000) + 1 in one call
             ("gh", "issue", "list", "--repo", "foo/bar", "--state", "open",
-             "--limit", "20", "--json", "number,title,labels,url,body"): (0, body, ""),
+             "--limit", "1001", "--json", "number,title,labels,url,body"): (0, body, ""),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, source = _fetch_repo("github", "foo/bar", 20, [], 5)
+            items, ferr, source, *_ = _fetch_repo("github", "foo/bar", 20, [], 5)
         self.assertEqual(source, "live")
         self.assertEqual(items[0]["labels"], ["bug"])
 
     def test_unknown_platform(self):
-        items, ferr, source = _fetch_repo("gitlab", "foo/bar", 20, [], 5)
+        items, ferr, source, *_ = _fetch_repo("gitlab", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_PLATFORM_UNKNOWN)
         self.assertEqual(items, [])
 
@@ -229,7 +232,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, source = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            items, ferr, source, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_NETWORK_UNAVAILABLE)
         self.assertEqual(source, "unavailable")
 
@@ -240,7 +243,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, _src = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            items, ferr, _src, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_PARSE_ERROR)
 
     def test_dict_response_with_401(self):
@@ -251,7 +254,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, _src = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            items, ferr, _src, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_AUTH_FAILED)
 
     def test_dict_response_with_404(self):
@@ -262,7 +265,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, _src = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            items, ferr, _src, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_NOT_FOUND)
 
     def test_dict_response_unknown(self):
@@ -273,7 +276,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            _items, ferr, _src = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            _items, ferr, _src, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_PARSE_ERROR)
 
     def test_non_list_non_dict_response(self):
@@ -284,7 +287,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            _items, ferr, _src = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            _items, ferr, _src, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(ferr, ERR_PARSE_ERROR)
 
     def test_label_filter_applied(self):
@@ -298,7 +301,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, _ferr, _src = _fetch_repo("forgejo", "foo/bar", 20, ["bug"], 5)
+            items, _ferr, _src, *_ = _fetch_repo("forgejo", "foo/bar", 20, ["bug"], 5)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["number"], 1)
 
@@ -309,7 +312,7 @@ class TestFetchRepoMocked(unittest.TestCase):
             ),
         }
         with mock.patch("collectors.issue_scan._run", side_effect=_make_run(run_table)):
-            items, ferr, source = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
+            items, ferr, source, *_ = _fetch_repo("forgejo", "foo/bar", 20, [], 5)
         self.assertEqual(items, [])
         self.assertIsNone(ferr)
 
@@ -467,7 +470,7 @@ class TestCollectorEndToEnd(unittest.TestCase):
             cache_file = repo / ".aria" / "cache" / "issues.json"
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(json.dumps({
-                "schema_version": "1.1",
+                "schema_version": SCHEMA_VERSION,
                 "fetched_at": _now_iso(),
                 "ttl_seconds": 900,
                 "scan_submodules": False,
@@ -613,6 +616,8 @@ class TestCollectorEndToEnd(unittest.TestCase):
                     return (0, body_main, "")
                 if cmd_t == ("forgejo", "GET", "/repos/foo/sub/issues?state=open&type=issues&limit=20"):
                     return (0, body_sub, "")
+                if past_last_issues_page(cmd_t):
+                    return (0, "[]", "")
                 return (1, "", f"unmocked: {' '.join(cmd)}")
 
             with mock.patch("collectors.issue_scan._run", side_effect=fake_run):
@@ -728,7 +733,7 @@ class TestOfflineFreeze(unittest.TestCase):
             self._enable_config(repo)
             cache_file = repo / ".aria" / "cache" / "issues.json"
             write_file(cache_file, json.dumps({
-                "schema_version": "1.1",
+                "schema_version": SCHEMA_VERSION,
                 "fetched_at": _now_iso(),
                 "ttl_seconds": 900,
                 "scan_submodules": False,

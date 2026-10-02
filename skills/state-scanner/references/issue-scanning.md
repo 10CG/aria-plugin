@@ -56,7 +56,7 @@ issue_status:
 
 ```yaml
 issue_status:
-  schema_version: "1.1"                 # v1.1.0 固定
+  schema_version: "1.1"                 # v1.1.0 样例; 现行 writer 写 "1.2", 见下方「v1.2 — 翻页与截断可见」
   fetched_at: "2026-04-15T10:00:00Z"    # 聚合 fetched_at (最后一次全量 refresh 时间)
   source: live                          # 以主 repo 为准
   fetch_error: null                     # 聚合 error (任一 repo 失败则降级显示)
@@ -88,13 +88,33 @@ issue_status:
     enhancement: 4
 ```
 
+**v1.2 — 翻页与截断可见** (10CG/aria-plugin#182; `scan.py` writer 现行版本, 始终写 `schema_version: "1.2"`):
+
+```yaml
+issue_status:
+  schema_version: "1.2"
+  open_count: 130                       # 各 repo 完整列出后的总数; truncated=true 时只是下界
+  truncated: false                      # 新增: 任一 repo 的列举提前结束 → true (逐 repo 见 repos[*].truncated_reason)
+  repos:
+    "10CG/Aria":
+      open_count: 46
+      truncated: false                  # 新增: 该 repo 的列举是否提前结束
+      truncated_reason: null            # 新增: null | "max_items" | "pagination_stalled" (封闭枚举)
+      # ... 其余字段同 v1.1
+```
+
+- `limit` 是**每页条数**, 不是总量上限。Forgejo 翻页直到服务端返回**空页**为止; 不以「短页」判终点 (服务端页大小可能被夹小, 短页不等于最后一页)。首页请求 URL 与翻页前逐字节相同, 第 2 页起追加 `&page=N`。
+- `max_items` = 触及单 repo 安全上限 (1000, 按整页取整) 且仍有更多; `pagination_stalled` = 服务端整页返回已见过的条目 (忽略 `page`)。二者都表示 `open_count` 只是下界。
+- 首页之后的某一页失败 → **整个 repo** 记 `fetch_error`, 不返回残缺列表。GitHub 一次 `gh issue list --limit 1001` (上限 + 1 作探针行), 不翻页。
+- `1.0` / `1.1` 缓存写于翻页之前 (每 repo 至多 `limit` 条, 且无法判断是否被截断), reader 视为冷缓存, 一次性重新拉取。
+
 **字段规则**:
 - 所有字符串字段缺失时降级为空字符串 `""`，不使用 `null`
 - `labels` 缺失时降级为空数组 `[]`
 - `fetch_error` 为 `null` 表示成功，否则为 10 个枚举值之一
 - `source: unavailable` 时 `items` 为空数组，`open_count` 为 0
 - **v1.1.0+ 向后兼容**: `open_issues` 与 `items` 始终指向同一份数据 (writer 同步双写). v1.0 消费者读 `open_issues` 仍然可用, v1.1 消费者应优先读 `items`. 未来 v2.x 可移除 `open_issues` 别名 (deprecation 至少跨 2 个 MINOR 版本)
-- **v1.1.0+ schema_version**: 必填字段. `"1.0"` = 仅主 repo 扁平结构, `"1.1"` = 含 `repos` 分组视图. 读取端应先判断 `schema_version` 再决定消费策略
+- **v1.1.0+ schema_version**: 必填字段. `"1.0"` = 仅主 repo 扁平结构, `"1.1"` = 含 `repos` 分组视图. 读取端应先判断 `schema_version` 再决定消费策略; `"1.2"` = 另含 `truncated` / `truncated_reason` (writer 现行版本, reader 只接受 1.2)
 - **v1.1.0+ per-repo fetched_at**: `repos[owner/repo].fetched_at` 独立, 允许部分 refresh (某 repo 缓存命中, 其他 repo live fetch). 聚合视图 `issue_status.fetched_at` = 所有 repo 中 **最早** 的 `fetched_at` (保守, 表达"整体新鲜度下限")
 
 ---
@@ -172,12 +192,12 @@ if [ -f "$cache_path" ]; then
   # v1.1 修复 C1: schema_version 守卫
   cache_schema=$(jq -r '.schema_version // "0.0"' "$cache_path" 2>/dev/null)
   case "$cache_schema" in
-    "1.0"|"1.1")
-      : # 兼容, 继续
+    "1.2")
+      : # 兼容, 继续 (1.0 / 1.1 写于翻页之前, 可能被截断, 走冷缓存)
       ;;
     *)
       # 未知或 pre-v1.1 schema → 冷缓存, 跳过本次读取, 下次写入时重建
-      echo "[info] cache schema $cache_schema < 1.0, treating as cold cache (one-time re-fetch)"
+      echo "[info] cache schema $cache_schema is not 1.2 (older caches may be truncated), treating as cold cache (one-time re-fetch)"
       # 不 rm, 让 step 8 原子覆写; 继续到 API 调用
       schema_invalid=1
       ;;
@@ -206,12 +226,14 @@ fi
 
 | cache 中 schema_version | reader 行为 |
 |---|---|
-| 缺失 / `"0.0"` / `"0.x"` | 视为 pre-v1.1 旧 cache, **忽略内容**, 一次性 re-fetch, 下次写回时附带 `"1.1"` |
-| `"1.0"` | 兼容读取 (仅 `items[]` + `open_issues` 别名) |
-| `"1.1"` | 完整读取 (`items[]` + `repos{}` 分组视图) |
-| `"1.2"` 或未来更高 | 未来版本, 视为 downgrade 场景, 保守 fail-soft 重新 fetch + warning |
+| 缺失 / `"0.0"` / `"0.x"` | 视为旧 cache, **忽略内容**, 一次性 re-fetch, 下次写回时附带 `"1.2"` |
+| `"1.0"` / `"1.1"` | 写于翻页之前 (每 repo 至多 `limit` 条, 无法判断是否被截断), **忽略内容**, 一次性 re-fetch |
+| `"1.2"` | 完整读取 (`items[]` + `repos{}` 分组视图 + `truncated` / `truncated_reason`) |
+| 高于 `"1.2"` | 未来版本, 视为 downgrade 场景, 保守 fail-soft 重新 fetch + warning |
 
 ### 步骤 5: API 调用
+
+> ⚠️ 本节与后面的「缓存写回」是**手工 prose 路径** (`mechanical_mode=false`, 计划移除): 它只取**首页**, 也不写 `truncated` / `schema_version: "1.2"`。完整翻页只在 `scan.py` (`collectors/issue_scan.py`) 实现 (10CG/aria-plugin#182), 以其输出为准。
 
 总阶段超时 12s，单次 API 调用超时 5s (修复 m9)：
 
@@ -648,7 +670,7 @@ fi
 | `cache_path` | string | `.aria/cache/issues.json` | 缓存文件路径 |
 | `stage_timeout_seconds` | integer | `12` | 整阶段超时 (修复 m9) |
 | `api_timeout_seconds` | integer | `5` | 单次 API 调用超时 |
-| `limit` | integer | `20` | 单次拉取 open issue 上限 |
+| `limit` | integer | `20` | **每页**请求条数 (夹到 1..50), 翻页取完, 不是总量上限; GitHub 不使用 (一次调用取上限) |
 | `label_filter` | array | `[]` | 标签过滤；空数组表示不过滤，如 `["bug","blocker"]` |
 
 **默认关闭原因**: 需要网络连接和 CLI token 配置，离线场景下强制启用会产生无意义错误。
@@ -1041,6 +1063,8 @@ aggregate_fetched_at=$(echo "$all_repos_json" | jq -r '
 ```
 
 ### 步骤 5: 缓存写回 (多 repo 结构 + v1.1 schema_version)
+
+> ⚠️ 手工 prose 路径写出的 `schema_version: "1.1"` cache, 会被 `scan.py` 的 reader 视为冷缓存 (一次性重新拉取), 无害; 现行格式见上方「v1.2 — 翻页与截断可见」。
 
 写入时必须携带 `schema_version` 标识 + 每 repo 独立 `fetched_at` (修复 R1 C1/C2) + `open_issues` 别名 (修复 R1 I1 向后兼容):
 

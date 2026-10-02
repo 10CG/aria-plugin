@@ -2,7 +2,7 @@
 
 Implements the `issue_status` snapshot section specified in
 `aria/skills/state-scanner/SKILL.md` §阶段 1.13 and the companion reference
-`references/issue-scanning.md` (schema v1.1, submodule-aware).
+`references/issue-scanning.md` (schema v1.2, submodule-aware).
 
 Design invariants (do not break without a snapshot_schema_version bump):
 - `enabled: false` (default) → returns `{"enabled": false}` with **no**
@@ -10,8 +10,13 @@ Design invariants (do not break without a snapshot_schema_version bump):
   to emit the section at all. Soft-error list stays empty.
 - All fetch failures are fail-soft: recorded via `fetch_error` enum and
   `soft_error` on the `CollectorResult`; the scan never aborts.
-- Writer ALWAYS stamps `schema_version="1.1"` (no branching on
-  `scan_submodules`) — reader is the one tolerating `{"1.0","1.1"}`.
+- Writer ALWAYS stamps `schema_version="1.2"` (no branching on
+  `scan_submodules`). The reader accepts ONLY `{"1.2"}`: 1.0 / 1.1 caches predate
+  pagination, so every repo entry in them was cut to `limit` rows with no way to
+  tell — they are treated as cold, not compatible (10CG/aria-plugin#182).
+- Listing is complete or says it is not: every repo entry carries `truncated` /
+  `truncated_reason`, and `issue_status.truncated` rolls them up. `limit` is the
+  PAGE SIZE, never a total cap; a later page that fails fails the whole repo.
 - `items[]` and `open_issues[]` are the *same list object* (reference-equal
   in the Python dict) so v1.0 consumers still work. This is stronger than
   "sync-write" because a later mutation to one updates both.
@@ -37,7 +42,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ._common import (
     CollectorResult,
@@ -51,8 +56,17 @@ from .git import _enumerate_submodule_paths
 
 # ----- Constants ------------------------------------------------------------
 
-SCHEMA_VERSION = "1.1"
-SCHEMA_COMPAT = {"1.0", "1.1"}  # reader accepts both as valid cache
+SCHEMA_VERSION = "1.2"
+SCHEMA_COMPAT = {"1.2"}  # 1.0 / 1.1 caches predate pagination (truncated to `limit`) → cold
+
+# Pagination (10CG/aria-plugin#182). `limit` in config is the PAGE SIZE, not a total cap.
+_PAGE_SIZE_MAX = 50  # Forgejo's default MAX_RESPONSE_ITEMS; larger requests are clamped server-side
+_MAX_ITEMS = 1000    # per-repo safety ceiling, honoured in whole pages (_MAX_ITEMS // page size);
+                     # reaching it is reported as truncated, never hidden
+
+# `truncated_reason` values (closed set — keep in sync with references/state-snapshot-schema.md).
+TRUNCATED_MAX_ITEMS = "max_items"
+TRUNCATED_STALLED = "pagination_stalled"  # server kept returning rows already seen (ignores `page`)
 
 # fetch_error enum (10 values) — do not add to this list without a Spec update.
 ERR_NETWORK_UNAVAILABLE = "network_unavailable"
@@ -82,7 +96,7 @@ DEFAULT_CONFIG = {
     "cache_path": ".aria/cache/issues.json",
     "stage_timeout_seconds": None,   # None = compute adaptively
     "api_timeout_seconds": 5,
-    "limit": 20,
+    "limit": 20,                     # page size per request (clamped to 1..50), NOT a total cap
     "label_filter": [],
     "scan_submodules": False,
 }
@@ -460,20 +474,31 @@ def _apply_heuristics(
 # ----- API calls ------------------------------------------------------------
 
 
-def _fetch_forgejo(owner_repo: str, limit: int, timeout: int) -> tuple[int, str, str]:
-    """Call forgejo wrapper. Returns (rc, stdout, stderr).
+def _fetch_forgejo(
+    owner_repo: str, limit: int, timeout: int, page: int = 1
+) -> tuple[int, str, str]:
+    """Call forgejo wrapper for one page. Returns (rc, stdout, stderr).
 
     QA-C2 fix (post_implementation audit R1): Forgejo's /issues endpoint returns
     BOTH issues and pull requests by default. Adding `type=issues` excludes PRs
     at the API level. Client-side filter in the normalizer is the second line of
     defense (older Forgejo versions may ignore the parameter).
+
+    Page 1 deliberately omits `page=`: that URL is byte-identical to the
+    pre-pagination request (Forgejo defaults to page 1); later pages append it.
     """
     endpoint = f"/repos/{owner_repo}/issues?state=open&type=issues&limit={limit}"
+    if page > 1:
+        endpoint += f"&page={page}"
     return _run(["forgejo", "GET", endpoint], Path.cwd(), timeout=timeout)
 
 
 def _fetch_github(owner_repo: str, limit: int, timeout: int) -> tuple[int, str, str]:
-    """Call gh CLI. Returns (rc, stdout, stderr)."""
+    """Call gh CLI. Returns (rc, stdout, stderr).
+
+    `gh issue list` has no page parameter: `--limit` is a TOTAL cap and gh pages
+    internally, so callers pass the safety ceiling here, not the page size.
+    """
     return _run(
         [
             "gh", "issue", "list",
@@ -487,48 +512,145 @@ def _fetch_github(owner_repo: str, limit: int, timeout: int) -> tuple[int, str, 
     )
 
 
+class RepoFetch(NamedTuple):
+    """Outcome of listing one repo's open issues."""
+
+    items: list[dict[str, Any]]
+    fetch_error: str | None
+    source: str  # "live" | "unavailable"
+    truncated: bool = False  # the listing stopped before the end (see truncated_reason)
+    truncated_reason: str | None = None
+
+
+def _parse_issue_list(out: str) -> tuple[list[Any] | None, str | None]:
+    """Decode one response body into a raw issue list, or a `fetch_error` enum."""
+    # Forgejo wrapper uses curl; an HTTP error body may come back as JSON with
+    # a 'message' field but rc==0. Guard against that.
+    try:
+        parsed = json.loads(out) if out.strip() else []
+    except json.JSONDecodeError:
+        return None, ERR_PARSE_ERROR
+
+    if isinstance(parsed, dict):
+        msg = str(parsed.get("message", "")).lower()
+        if "unauthorized" in msg or parsed.get("status") in (401, 403):
+            return None, ERR_AUTH_FAILED
+        if "not found" in msg or parsed.get("status") == 404:
+            return None, ERR_NOT_FOUND
+        # Unknown dict response → parse error
+        return None, ERR_PARSE_ERROR
+
+    if not isinstance(parsed, list):
+        return None, ERR_PARSE_ERROR
+    return parsed, None
+
+
+def _page_timeout(timeout: int, deadline: float | None) -> int | None:
+    """Per-request timeout, clamped to what is left of the stage budget.
+
+    Returns None once the budget is spent; the caller reports that as a timeout.
+    """
+    if deadline is None:
+        return timeout
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return None
+    return max(1, min(timeout, int(left) or 1))
+
+
+def _list_forgejo(
+    owner_repo: str, limit: int, timeout: int, deadline: float | None
+) -> tuple[list[Any], str | None, bool, str | None]:
+    """Walk the paginated issues endpoint → (raw_rows, fetch_error, truncated, reason).
+
+    Ends on an EMPTY page, never on a short one: a server may clamp the page size
+    below what was asked, which makes a non-final page look short and would cut
+    the listing without a trace. Any page that fails fails the whole repo — a
+    silently partial list is the defect this replaces (10CG/aria-plugin#182).
+    """
+    page_size = max(1, min(int(limit), _PAGE_SIZE_MAX))
+    max_pages = max(1, _MAX_ITEMS // page_size)
+    rows: list[Any] = []
+    seen: set[int] = set()
+    # One page past the ceiling is a probe: empty → the listing ended exactly
+    # there (complete); non-empty → more exist, so report truncated (rows dropped).
+    for page in range(1, max_pages + 2):
+        call_timeout = _page_timeout(timeout, deadline)
+        if call_timeout is None:
+            return [], ERR_TIMEOUT, False, None
+        rc, out, err = _fetch_forgejo(owner_repo, page_size, call_timeout, page)
+        if rc != 0:
+            return [], _classify_error(rc, err, out), False, None
+        parsed, parse_err = _parse_issue_list(out)
+        if parse_err is not None:
+            return [], parse_err, False, None
+        if not parsed:
+            return rows, None, False, None
+        if page > max_pages:
+            return rows, None, True, TRUNCATED_MAX_ITEMS
+        # An issue opened between two requests shifts the window, so a page may
+        # repeat rows of the previous one: keep each issue number once.
+        fresh = [
+            r for r in parsed
+            if not (isinstance(r, dict) and r.get("number") in seen)
+        ]
+        if not fresh:  # a whole page of rows already seen: the server ignores `page`
+            return rows, None, True, TRUNCATED_STALLED
+        seen.update(
+            r["number"] for r in fresh
+            if isinstance(r, dict) and isinstance(r.get("number"), int)
+        )
+        rows.extend(fresh)
+    return rows, None, True, TRUNCATED_MAX_ITEMS  # unreachable: the probe page returns above
+
+
+def _list_github(
+    owner_repo: str, timeout: int, deadline: float | None
+) -> tuple[list[Any], str | None, bool, str | None]:
+    """One `gh issue list` call for the ceiling + 1 → same 4-tuple as `_list_forgejo`.
+
+    The extra row is the probe that tells "exactly full" from "overflowed".
+    """
+    call_timeout = _page_timeout(timeout, deadline)
+    if call_timeout is None:
+        return [], ERR_TIMEOUT, False, None
+    rc, out, err = _fetch_github(owner_repo, _MAX_ITEMS + 1, call_timeout)
+    if rc != 0:
+        return [], _classify_error(rc, err, out), False, None
+    parsed, parse_err = _parse_issue_list(out)
+    if parse_err is not None:
+        return [], parse_err, False, None
+    if len(parsed) > _MAX_ITEMS:
+        return parsed[:_MAX_ITEMS], None, True, TRUNCATED_MAX_ITEMS
+    return parsed, None, False, None
+
+
 def _fetch_repo(
     platform: str,
     owner_repo: str,
     limit: int,
     label_filter: list[str],
     timeout: int,
-) -> tuple[list[dict[str, Any]], str | None, str]:
-    """Fetch open issues for one repo.
+    deadline: float | None = None,
+) -> RepoFetch:
+    """Fetch every open issue for one repo.
 
-    Returns (normalized_items, fetch_error_or_none, source).
-    source is 'live' on success, 'unavailable' on failure.
+    `limit` is the Forgejo PAGE SIZE (clamped to 1..50); GitHub is asked for the
+    safety ceiling in one call. `timeout` bounds each request, `deadline` (a
+    `time.monotonic()` stamp) bounds the whole listing. `source` is 'live' on
+    success, 'unavailable' on failure.
     """
     if platform == "forgejo":
-        rc, out, err = _fetch_forgejo(owner_repo, limit, timeout)
+        raw, ferr, truncated, reason = _list_forgejo(owner_repo, limit, timeout, deadline)
     elif platform == "github":
-        rc, out, err = _fetch_github(owner_repo, limit, timeout)
+        raw, ferr, truncated, reason = _list_github(owner_repo, timeout, deadline)
     else:
-        return [], ERR_PLATFORM_UNKNOWN, "unavailable"
+        return RepoFetch([], ERR_PLATFORM_UNKNOWN, "unavailable")
 
-    if rc != 0:
-        return [], _classify_error(rc, err, out), "unavailable"
+    if ferr is not None:
+        return RepoFetch([], ferr, "unavailable")
 
-    # Forgejo wrapper uses curl; an HTTP error body may come back as JSON with
-    # a 'message' field but rc==0. Guard against that.
-    try:
-        parsed = json.loads(out) if out.strip() else []
-    except json.JSONDecodeError:
-        return [], ERR_PARSE_ERROR, "unavailable"
-
-    if isinstance(parsed, dict):
-        msg = str(parsed.get("message", "")).lower()
-        if "unauthorized" in msg or parsed.get("status") in (401, 403):
-            return [], ERR_AUTH_FAILED, "unavailable"
-        if "not found" in msg or parsed.get("status") == 404:
-            return [], ERR_NOT_FOUND, "unavailable"
-        # Unknown dict response → parse error
-        return [], ERR_PARSE_ERROR, "unavailable"
-
-    if not isinstance(parsed, list):
-        return [], ERR_PARSE_ERROR, "unavailable"
-
-    items = _normalize_items(parsed, platform)
+    items = _normalize_items(raw, platform)
 
     # Client-side label filter — Forgejo wrapper path doesn't always honor
     # `labels=` query, so apply locally for consistent behaviour across
@@ -537,7 +659,7 @@ def _fetch_repo(
         wanted = set(label_filter)
         items = [it for it in items if wanted.intersection(it.get("labels", []))]
 
-    return items, None, "live"
+    return RepoFetch(items, None, "live", truncated, reason)
 
 
 # ----- Submodule enumeration ------------------------------------------------
@@ -566,7 +688,23 @@ def _build_empty_repo_entry(
         "fetch_error": fetch_error,
         "fetched_at": None,
         "open_count": 0,
+        "truncated": False,
+        "truncated_reason": None,
         "items": [],
+    }
+
+
+def _live_repo_entry(platform: str, fetched: RepoFetch) -> dict[str, Any]:
+    """Per-repo entry for a successful live listing."""
+    return {
+        "platform": platform,
+        "source": fetched.source,
+        "fetch_error": None,
+        "fetched_at": _now_iso(),
+        "open_count": len(fetched.items),
+        "truncated": fetched.truncated,
+        "truncated_reason": fetched.truncated_reason,
+        "items": fetched.items,
     }
 
 
@@ -625,6 +763,7 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
     scan_subs = bool(cfg.get("scan_submodules"))
     submodule_paths = _enumerate_submodule_paths(project_root) if scan_subs else []
     stage_budget = _stage_budget(cfg, len(submodule_paths))
+    deadline = stage_start + stage_budget
 
     def _budget_left() -> float:
         return stage_budget - (time.monotonic() - stage_start)
@@ -664,22 +803,15 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
                 main_entry = _build_empty_repo_entry(main_platform, ERR_NETWORK_UNAVAILABLE)
             else:
                 per_call_timeout = max(1, min(api_timeout, int(_budget_left()) or 1))
-                items, ferr, source = _fetch_repo(
-                    main_platform, main_key, limit, label_filter, per_call_timeout
+                fetched = _fetch_repo(
+                    main_platform, main_key, limit, label_filter, per_call_timeout, deadline
                 )
-                if ferr is not None:
-                    r.soft_error(ferr, f"repo={main_key}")
-                    main_entry = _build_empty_repo_entry(main_platform, ferr)
+                if fetched.fetch_error is not None:
+                    r.soft_error(fetched.fetch_error, f"repo={main_key}")
+                    main_entry = _build_empty_repo_entry(main_platform, fetched.fetch_error)
                 else:
-                    _apply_heuristics(items, openspec_changes)
-                    main_entry = {
-                        "platform": main_platform,
-                        "source": source,
-                        "fetch_error": None,
-                        "fetched_at": _now_iso(),
-                        "open_count": len(items),
-                        "items": items,
-                    }
+                    _apply_heuristics(fetched.items, openspec_changes)
+                    main_entry = _live_repo_entry(main_platform, fetched)
 
     repos: dict[str, dict[str, Any]] = {main_key: main_entry}
 
@@ -732,22 +864,15 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
                 r.soft_error(ERR_NETWORK_UNAVAILABLE, f"repo={sub_owner_repo} (offline)")
                 continue
             per_call_timeout = max(1, min(api_timeout, int(_budget_left()) or 1))
-            items, ferr, source = _fetch_repo(
-                sub_platform, sub_owner_repo, limit, label_filter, per_call_timeout
+            fetched = _fetch_repo(
+                sub_platform, sub_owner_repo, limit, label_filter, per_call_timeout, deadline
             )
-            if ferr is not None:
-                repos[sub_owner_repo] = _build_empty_repo_entry(sub_platform, ferr)
-                r.soft_error(ferr, f"repo={sub_owner_repo}")
+            if fetched.fetch_error is not None:
+                repos[sub_owner_repo] = _build_empty_repo_entry(sub_platform, fetched.fetch_error)
+                r.soft_error(fetched.fetch_error, f"repo={sub_owner_repo}")
                 continue
-            _apply_heuristics(items, openspec_changes)
-            repos[sub_owner_repo] = {
-                "platform": sub_platform,
-                "source": source,
-                "fetch_error": None,
-                "fetched_at": _now_iso(),
-                "open_count": len(items),
-                "items": items,
-            }
+            _apply_heuristics(fetched.items, openspec_changes)
+            repos[sub_owner_repo] = _live_repo_entry(sub_platform, fetched)
 
     # ---- Aggregation ------------------------------------------------------
     flat_items: list[dict[str, Any]] = []
@@ -760,6 +885,10 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
             flat_items.append(merged)
 
     open_count = len(flat_items)
+    # Any repo whose listing ended early makes the aggregate count a lower bound.
+    truncated = any(
+        e.get("truncated") for e in repos.values() if e.get("fetch_error") is None
+    )
     label_summary: dict[str, int] = {}
     for it in flat_items:
         for lbl in it.get("labels") or []:
@@ -782,6 +911,7 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
         "warning": warning,
         "platform": agg_platform,
         "open_count": open_count,
+        "truncated": truncated,
         "items": flat_items,
         # open_issues is the SAME list object as items — v1.0 consumers keep
         # working and future mutations stay consistent.
@@ -808,6 +938,7 @@ def collect_issue_scan(project_root: Path) -> CollectorResult:
             "scan_submodules": scan_subs,
             "platform": agg_platform,
             "open_count": open_count,
+            "truncated": truncated,
             "items": flat_items,
             "open_issues": flat_items,
             "label_summary": label_summary,

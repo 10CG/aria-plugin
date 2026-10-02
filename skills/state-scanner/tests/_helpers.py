@@ -74,6 +74,19 @@ def write_file(path: Path, content: str) -> Path:
     return path
 
 
+def past_last_issues_page(key: tuple[str, ...]) -> bool:
+    """True for a forgejo issues-list request for page 2 or later.
+
+    issue_scan walks pages until it sees an empty one, and the real API answers
+    `[]` past the last page; a test double that only mocks page 1 answers the
+    later pages with this.
+    """
+    return (
+        len(key) == 3 and key[:2] == ("forgejo", "GET")
+        and "/issues?" in key[2] and "&page=" in key[2]
+    )
+
+
 def make_openspec(root: Path, specs: list[tuple[str, str]] | None = None) -> Path:
     """Create an `openspec/` dir with the given (spec_id, status) pairs.
 
