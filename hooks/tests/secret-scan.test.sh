@@ -22,6 +22,16 @@ set -u
 # ~/.claude/logs (the isolation itself is a separate block that must come AFTER this line).
 _wpa_orig_home="${HOME:-}"
 
+# W6 test hygiene (secret-net-l3-and-bypass-paths): this suite never writes into the caller's real HOME. A hook run logs to $HOME/.claude/logs (secret-scan.log);
+# without this block every run of the suite appended its fixture events to the real audit log. The temp dir is removed on exit. Keep the block after the
+# _wpa_orig_home line above (the W6 case compares against it) and before the first hook run.
+_TEST_HOME="$(mktemp -d)"
+case "$_TEST_HOME" in /*) ;; *) _TEST_HOME="$PWD/$_TEST_HOME" ;; esac
+if [[ -z "$_TEST_HOME" || ! -d "$_TEST_HOME" ]]; then echo "secret-scan.test.sh: cannot create a private HOME (mktemp -d failed)" >&2; exit 1; fi
+HOME="$_TEST_HOME"
+export HOME
+trap 'rm -rf "$_TEST_HOME"' EXIT
+
 HOOK="$(dirname "$0")/../secret-scan.sh"
 pass=0
 fail=0
@@ -97,38 +107,43 @@ expect_pass() {
 }
 
 # ── DETECTION cases (per-pattern / per-tag coverage — validates real detection) ──
+#
+# W7 (secret-net-l3-and-bypass-paths): the fixtures below are ASSEMBLED AT RUN TIME. Every span that a scan pattern matches carries one empty quote pair ("" or '')
+# inside it, so the shell builds exactly the string the hook must detect while the TEXT of this file no longer looks like a leak: reading or printing the suite would
+# otherwise inject a "treat as already-leaked" alert on every look (and the SC-15 case at the end scans this very text). Do not tidy the pairs away; a new fixture
+# gets one too (put it inside the span, not at its edge). The hook itself has no per-path exemption: nothing is hidden from it, only from the reader of this file.
 
-expect_detect "PEM private key (single line)"  "pem-private-key-block"  "snippet: -----BEGIN RSA PRIVATE KEY----- MIIE... -----END RSA PRIVATE KEY-----"
+expect_detect "PEM private key (single line)"  "pem-private-key-block"  "snippet: -----""BEGIN RSA PRIVATE KEY----- MIIE... -----END RSA PRIVATE KEY-----"
 # R3 audit NEW-I-1: multi-line PEM body must also be fully detected (not just BEGIN header)
-expect_detect "PEM private key (multi-line body)" "pem-private-key-block" "$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEArandomBase64BodyAcrossManyLines\nMoreBase64Body\nMoreLines\n-----END RSA PRIVATE KEY-----')"
+expect_detect "PEM private key (multi-line body)" "pem-private-key-block" "$(printf -- '-----''BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEArandomBase64BodyAcrossManyLines\nMoreBase64Body\nMoreLines\n-----END RSA PRIVATE KEY-----')"
 
 # R3 audit C-1 + C-2: PGP block + encrypted PEM with hyphen-bearing headers
-expect_detect "PGP private key BLOCK" "pem-private-key-block" "$(printf -- '-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n\nsecretPGPbodyAcrossLines\nMoreBase64\n-----END PGP PRIVATE KEY BLOCK-----')"
-expect_detect "encrypted PEM (Proc-Type+DEK-Info)" "pem-private-key-block" "$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-256-CBC,1234567890ABCDEF\n\nencryptedbase64bodySECRET\n-----END RSA PRIVATE KEY-----')"
-expect_detect "OPENSSH PEM block" "pem-private-key-block" "$(printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nopensshSECRETbody\n-----END OPENSSH PRIVATE KEY-----')"
-expect_detect "JWT token"            "jwt"                 "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-expect_detect "SilkNode API key"     "silknode-api-key"    "API key: sk-silk-FAKEFIXTUREPLEASEDoNotDetectMeABCDEFGH01234567890123456789"
-expect_detect "OpenAI sk-proj key"   "openai-api-key"      "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJ12345678"
-expect_detect "Anthropic key"        "anthropic-api-key"   "ANTHROPIC_API_KEY=sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZabcdefghijklmnop_-_QR"
-expect_detect "Stripe live secret"   "stripe-live-secret"  "STRIPE_SECRET_KEY=sk_live_51HabcXYZdefGHIjklMNOpqr"
-expect_detect "Stripe webhook"       "stripe-webhook"      "STRIPE_WEBHOOK_SECRET=whsec_abc123XYZdef456GHI789"
-expect_detect "GitHub PAT"           "github-pat"          "Token: ghp_FAKEFIXTUREPLEASEDoNotDetectMeABCD00"
-expect_detect "GitLab PAT"           "gitlab-pat"          "GITLAB_TOKEN=glpat-aBcDeFgHiJkLmNoPqRsT"
-expect_detect "AWS access key"       "aws-access-key-id"   "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"
-expect_detect "Aliyun AK"            "aliyun-access-key-id" "OSS_ACCESS_KEY_ID=LTAI5tF5ZVYwy1cgwgYpiPtJ"
-expect_detect "Discord webhook"      "discord-webhook"     "https://discord.com/api/webhooks/123456789012345678/aBcDeFgHiJkLmNoPqRsTuVwXyZ"
-expect_detect "Slack webhook"        "slack-webhook"       "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
-expect_detect "Postgres URL"         "postgres-url"        "DATABASE_URL=postgresql://luxeno:abc123XYZ@prod-db:5432/luxeno_prod"
-expect_detect "Redis URL"            "redis-url"           "REDIS_URL=redis://default:secretpass123@redis:6379"
-expect_detect "MongoDB URL"          "mongodb-url"         "MONGO_URL=mongodb+srv://admin:mongopass456@cluster0.example.net/db"
-expect_detect "Basic auth URL"       "basic-auth-url"      "curl https://admin:supersecret123@internal.example.com/api"
-expect_detect "Bearer token"         "bearer-token"        "curl -H 'Authorization: Bearer ya29.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789' ..."
-expect_detect "X-API-Key header"     "x-api-key-header"    "curl -H 'X-API-Key: abc123XYZdef456GHI789'"
-expect_detect "env-line SECRET kw"   "env-line-secret-keyword" "NEXTAUTH_SECRET=8A4z5ifo7jMghdmu0LQ_u4NGOVEFueOZ8MjOSyUldM"
-expect_detect "JSON password field"  "json-secret-field"   '{"username":"admin","password":"verysecret123!"}'
-expect_detect "JSON api_key field"   "json-secret-field"   '{"data":{"api_key":"abc123XYZdef456"}}'
+expect_detect "PGP private key BLOCK" "pem-private-key-block" "$(printf -- '-----''BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n\nsecretPGPbodyAcrossLines\nMoreBase64\n-----END PGP PRIVATE KEY BLOCK-----')"
+expect_detect "encrypted PEM (Proc-Type+DEK-Info)" "pem-private-key-block" "$(printf -- '-----''BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-256-CBC,1234567890ABCDEF\n\nencryptedbase64bodySECRET\n-----END RSA PRIVATE KEY-----')"
+expect_detect "OPENSSH PEM block" "pem-private-key-block" "$(printf -- '-----''BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nopensshSECRETbody\n-----END OPENSSH PRIVATE KEY-----')"
+expect_detect "JWT token"            "jwt"                 "Bearer eyJ""hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+expect_detect "SilkNode API key"     "silknode-api-key"    "API key: sk-""silk-FAKEFIXTUREPLEASEDoNotDetectMeABCDEFGH01234567890123456789"
+expect_detect "OpenAI sk-proj key"   "openai-api-key"      "OPENAI_API_KEY=sk-""proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJ12345678"
+expect_detect "Anthropic key"        "anthropic-api-key"   "ANTHROPIC_API_KEY=sk-""ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZabcdefghijklmnop_-_QR"
+expect_detect "Stripe live secret"   "stripe-live-secret"  "STRIPE_SECRET_KEY=sk_""live_51HabcXYZdefGHIjklMNOpqr"
+expect_detect "Stripe webhook"       "stripe-webhook"      "STRIPE_WEBHOOK_SECRET=whs""ec_abc123XYZdef456GHI789"
+expect_detect "GitHub PAT"           "github-pat"          "Token: ghp""_FAKEFIXTUREPLEASEDoNotDetectMeABCD00"
+expect_detect "GitLab PAT"           "gitlab-pat"          "GITLAB_TOKEN=glp""at-aBcDeFgHiJkLmNoPqRsT"
+expect_detect "AWS access key"       "aws-access-key-id"   "AWS_ACCESS_KEY_ID=AKI""AIOSFODNN7EXAMPLE"
+expect_detect "Aliyun AK"            "aliyun-access-key-id" "OSS_ACCESS_KEY_ID=LTA""I5tF5ZVYwy1cgwgYpiPtJ"
+expect_detect "Discord webhook"      "discord-webhook"     "htt""ps://discord.com/api/webhooks/123456789012345678/aBcDeFgHiJkLmNoPqRsTuVwXyZ"
+expect_detect "Slack webhook"        "slack-webhook"       "htt""ps://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+expect_detect "Postgres URL"         "postgres-url"        "DATABASE_URL=pos""tgresql://luxeno:abc123XYZ@prod-db:5432/luxeno_prod"
+expect_detect "Redis URL"            "redis-url"           "REDIS_URL=red""is://default:secretpass123@redis:6379"
+expect_detect "MongoDB URL"          "mongodb-url"         "MONGO_URL=mon""godb+srv://admin:mongopass456@cluster0.example.net/db"
+expect_detect "Basic auth URL"       "basic-auth-url"      "curl htt""ps://admin:supersecret123@internal.example.com/api"
+expect_detect "Bearer token"         "bearer-token"        "curl -H 'Aut""horization: Bearer ya29.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789' ..."
+expect_detect "X-API-Key header"     "x-api-key-header"    "curl -H 'X-A""PI-Key: abc123XYZdef456GHI789'"
+expect_detect "env-line SECRET kw"   "env-line-secret-keyword" "NEXTAUTH_S""ECRET=8A4z5ifo7jMghdmu0LQ_u4NGOVEFueOZ8MjOSyUldM"
+expect_detect "JSON password field"  "json-secret-field"   '{"username":"admin","pa''ssword":"verysecret123!"}'
+expect_detect "JSON api_key field"   "json-secret-field"   '{"data":{"ap''i_key":"abc123XYZdef456"}}'
 expect_detect "bcrypt hash"          "bcrypt-hash"         "password_hash=\$2b\$12\$abcdefghijklmnopqrstuvabcdefghijklmnopqrstuvwxyzABCDE"
-expect_detect "GCP private_key_id"   "gcp-private-key-id"  '{"type":"service_account","private_key_id":"abc123def456789012345678901234567890abcd"}'
+expect_detect "GCP private_key_id"   "gcp-private-key-id"  '{"type":"service_account","pr''ivate_key_id":"abc123def456789012345678901234567890abcd"}'
 
 # ── PASS-THROUGH cases (no secret, no false-positive) ──────────────────────
 
@@ -150,7 +165,7 @@ expect_pass "fake low-entropy pass"  "password=hunter2"   # too short for env-li
 expect_pass "empty output"           ""
 
 # Read tool with secret content → detection warning present + tag named.
-read_stdout="$(build_post_read "DATABASE_URL=postgresql://luxeno:abc123XYZ@prod-db:5432/luxeno_prod" | "$HOOK" 2>/dev/null)"
+read_stdout="$(build_post_read "DATABASE_URL=pos""tgresql://luxeno:abc123XYZ@prod-db:5432/luxeno_prod" | "$HOOK" 2>/dev/null)"
 read_addl="$(printf '%s' "$read_stdout" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
 read_sys="$(printf '%s' "$read_stdout" | jq -r '.systemMessage // empty' 2>/dev/null)"
 if [[ -n "$read_addl" && -n "$read_sys" ]] && printf '%s' "$read_sys" | grep -q "postgres-url"; then
@@ -161,8 +176,8 @@ else
 fi
 
 # Multiple matches in one output → detection count >= 2 (in additionalContext).
-multi="STRIPE=sk_live_aaaaaaaaaaaaaaaaaaaa
-NEXTAUTH_SECRET=abc123XYZdef456GHI789"
+multi="STRIPE=sk_""live_aaaaaaaaaaaaaaaaaaaa
+NEXTAUTH_SE""CRET=abc123XYZdef456GHI789"
 multi_stdout="$(build_post "Bash" "$multi" | "$HOOK" 2>/dev/null)"
 multi_addl="$(printf '%s' "$multi_stdout" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
 if printf '%s' "$multi_addl" | grep -qE 'DETECTED [0-9]+ secret-shape'; then
@@ -179,7 +194,7 @@ else
 fi
 
 # AC-7: exit-0-on-match — hook exits 0 even when it detects a secret.
-build_post "Bash" "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE" | "$HOOK" >/dev/null 2>&1
+build_post "Bash" "AWS_ACCESS_KEY_ID=AKI""AIOSFODNN7EXAMPLE" | "$HOOK" >/dev/null 2>&1
 match_exit=$?
 if [[ "$match_exit" == "0" ]]; then
   pass=$((pass + 1))
@@ -192,7 +207,7 @@ fi
 # and emits the "detection skipped" warning (NOT any "redact"/"UNREDACTED" text).
 jq_stub_dir="$(mktemp -d)"
 ln -sf "$(command -v bash)" "$jq_stub_dir/bash" 2>/dev/null
-jq_missing_combined="$(build_post "Bash" "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE" | PATH="$jq_stub_dir" "$HOOK" 2>&1; echo "exit=$?")"
+jq_missing_combined="$(build_post "Bash" "AWS_ACCESS_KEY_ID=AKI""AIOSFODNN7EXAMPLE" | PATH="$jq_stub_dir" "$HOOK" 2>&1; echo "exit=$?")"
 rm -rf "$jq_stub_dir"
 jq_missing_exit="${jq_missing_combined##*exit=}"
 jq_missing_msg="${jq_missing_combined%exit=*}"
@@ -249,7 +264,7 @@ else
 fi
 
 # Bidirectional non-vacuous (Spec C1): pristine copy = tool_type CR-strip removed.
-crlf_secret='AKIAIOSFODNN7EXAMPLE'
+crlf_secret='AKI''AIOSFODNN7EXAMPLE'
 crlf_input="$(build_post "Bash" "config has $crlf_secret embedded")"
 crlf_pristine="$(crlf_make_pristine_copy "$HOOK" '/would fail the type gate below/d')"
 # (a) pristine (no fix) under CRLF shim → expect silent bypass (no DETECTED)
@@ -271,7 +286,7 @@ rm -f "$crlf_pristine"
 # key (structural absence of any output-mutation) AND (2) detection still fires
 # on CR-containing content (additionalContext warning present for input with a
 # CR + a secret). This is a detection test, not a mutation-fidelity test.
-fidelity_content="$(printf 'alpha\rbeta has AKIAIOSFODNN7EXAMPLE token\rgamma')"
+fidelity_content="$(printf 'alpha\rbeta has AKI''AIOSFODNN7EXAMPLE token\rgamma')"
 fidelity_stdout="$(build_post "Bash" "$fidelity_content" | "$HOOK" 2>/dev/null)"
 fidelity_has_tr="$(printf '%s' "$fidelity_stdout" | jq -r 'has("tool_response")' 2>/dev/null)"
 fidelity_addl="$(printf '%s' "$fidelity_stdout" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"

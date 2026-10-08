@@ -20,6 +20,16 @@ set -u
 # ~/.claude/logs (the isolation itself is a separate block that must come AFTER this line).
 _wpa_orig_home="${HOME:-}"
 
+# W6 test hygiene (secret-net-l3-and-bypass-paths): this suite never writes into the caller's real HOME. A guard:ack bypass is logged to $HOME/.claude/logs
+# (guard-bypass.log); without this block every run of the suite appended its ack events to the real audit log. The temp dir is removed on exit. Keep the block
+# after the _wpa_orig_home line above (the W6 case compares against it) and before the first hook run.
+_TEST_HOME="$(mktemp -d)"
+case "$_TEST_HOME" in /*) ;; *) _TEST_HOME="$PWD/$_TEST_HOME" ;; esac
+if [[ -z "$_TEST_HOME" || ! -d "$_TEST_HOME" ]]; then echo "secret-guard.test.sh: cannot create a private HOME (mktemp -d failed)" >&2; exit 1; fi
+HOME="$_TEST_HOME"
+export HOME
+trap 'rm -rf "$_TEST_HOME"' EXIT
+
 HOOK="$(dirname "$0")/../secret-guard.sh"
 pass=0
 fail=0

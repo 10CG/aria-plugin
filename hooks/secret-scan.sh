@@ -129,17 +129,42 @@ tool_type="${tool_type%$'\r'}"   # crlf-strip(#132 sibling): Windows native jq e
 tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)"
 tool="${tool%$'\r'}"   # crlf-strip(#132 sibling): comparison/log value → strip trailing CR. NOTE: `content` below is the data body being SCANNED — deliberately NOT CR-stripped (would corrupt user content).
 
+# Event (secret-net-l3-and-bypass-paths W1): this hook is registered for PostToolUse AND PostToolUseFailure. A failed tool call (a Bash command that exits
+# non-zero, ...) does not trigger PostToolUse: it arrives as PostToolUseFailure with NO tool_response and the call's text (`Exit code N` + stderr + stdout) in the
+# top-level `error`. hookSpecificOutput.hookEventName must name the event that fired — the harness rejects a mismatch and the alert never reaches the model. A substring
+# pre-check keeps the common path free of an extra jq process; jq confirms, so output text that merely MENTIONS the word does not flip the event.
+hook_event="PostToolUse"
+if [[ "$input" == *PostToolUseFailure* ]]; then
+  ev_name="$(printf '%s' "$input" | jq -r '.hook_event_name // ""' 2>/dev/null)"
+  ev_name="${ev_name%$'\r'}"   # crlf-strip: comparison value
+  [[ "$ev_name" == "PostToolUseFailure" ]] && hook_event="PostToolUseFailure"
+fi
+
 # Extract output content depending on tool — different tools shape result differently.
-# Bash: tool_response.output (or .stdout / .stderr); Read: tool_response.content (file body)
-# Try multiple field names since Claude Code versions vary.
-content="$(printf '%s' "$input" | jq -r '  # crlf-ok: data body being SCANNED (internal counting scratch only) — must NOT CR-strip (would corrupt user content, Spec C2)
+# Bash: tool_response.stdout (older: .output); Read: tool_response.file.content (older: .content); Write: tool_response.content;
+# a failed call (PostToolUseFailure): .error. Try multiple field names since Claude Code versions vary.
+# The filter is kept in a variable so that the NUL-delimited second view below runs the very same program.
+_content_prog='  # crlf-ok: data body being SCANNED (internal counting scratch only) — must NOT CR-strip (would corrupt user content, Spec C2)
   .tool_response.output //
   .tool_response.content //
   .tool_response.stdout //
+  .tool_response.file.content //
   .tool_result.content //
   .tool_result.output //
+  .error //
   ""
-' 2>/dev/null)"
+'
+content="$(printf '%s' "$input" | jq -r "$_content_prog" 2>/dev/null)"   # crlf-ok: data body being SCANNED (internal counting scratch only) — must NOT CR-strip
+
+# NUL bytes (W1). Bash drops them inside a command substitution: that is the view above, and why text with a NUL after every character (UTF-16LE shown by a tool)
+# scans as the ASCII it spells. A NUL-DELIMITED body (/proc/<pid>/environ, `env -0`) is glued into one line by that view, so `KEY=value` records lose their line
+# starts. When the raw envelope holds a JSON \u0000 escape (one string comparison; no extra process otherwise) a SECOND view is appended: the same extraction with
+# NUL -> newline. It is appended only when it differs from the first, so input without a real NUL is scanned exactly as before (a text that merely MENTIONS the six
+# characters \u0000 leaves the two views equal). Any transformation of the input must be a superset of what the baseline view detects — hence a second view, not a replacement.
+if [[ "$input" == *'\u0000'* ]]; then
+  nul_view="$(printf '%s' "$input" | jq -r "$_content_prog" 2>/dev/null | tr '\000' '\n')"   # crlf-ok: data body being SCANNED (same filter, NUL -> newline)
+  [[ -n "$nul_view" && "$nul_view" != "$content" ]] && content="${content}"$'\n'"${nul_view}"
+fi
 
 [[ -z "$content" ]] && exit 0
 
@@ -366,9 +391,9 @@ printf '%s\t%s\t%s\tSCAN-DETECT\ttool=%s\tmatches=%s\tbreakdown=%s\tsize=%s\n' \
 # redact (PostToolUse architectural limit, hooks-guide 891).
 addl_msg="[secret-scan] DETECTED ${matches_total} secret-shape match(es) in tool output — treat as already-leaked; do NOT repeat the value(s) in your reply; recommend rotating the affected credential(s). (This hook detects+warns only; it cannot redact — PostToolUse runs after the tool result is already produced.)"
 sys_msg="[secret-scan] Detected ${matches_total} secret-shape match(es) (${matches_breakdown% }); rotate affected credential(s)."
-jq -n --arg addl "$addl_msg" --arg sys "$sys_msg" '{
+jq -n --arg ev "$hook_event" --arg addl "$addl_msg" --arg sys "$sys_msg" '{
   hookSpecificOutput: {
-    hookEventName: "PostToolUse",
+    hookEventName: $ev,
     additionalContext: $addl
   },
   systemMessage: $sys

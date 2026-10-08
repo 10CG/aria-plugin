@@ -71,6 +71,18 @@
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Read|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-scan.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
