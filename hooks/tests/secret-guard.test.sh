@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 786 cases (780 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 789 cases (783 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -1614,10 +1614,12 @@ esac
 # change, main-loop verified) -- i.e. printf is structurally non-spanning and
 # is covered by SC-6's block-char degrade family, not SC-19. The check below
 # therefore excludes printf and asserts full coverage of the remaining
-# spanning families. census family_count is asserted ==60: 57 was the #128
+# spanning families. census family_count is asserted ==64: 57 was the #128
 # baseline; +3 = the #153 Forgejo credential-endpoint patterns (2026-08-20,
 # deliberate additions -- each carries its own SC-19 probe below); +1 = the
 # Aria #179 claude-config reader row (2026-08-22, GRP: ... |jq), probe below.
+# +3 = the W8 app.ini reader row, the W11 /proc row (rewritten in place: its leading group is now a two-branch group, a new key) and the W11 remote / shell
+# wrapper row (secret-net-l3-and-bypass-paths TASK-005, 2026-10-08, deliberate; each carries its own SC-19 probe below).
 sc19_census_json="$(python3 "$(dirname "$0")/corpus_census.py" 2>/dev/null)"
 sc19_family_count="$(echo "$sc19_census_json" | jq -r '.families.family_count // "ERR"')"
 sc19_families="$(echo "$sc19_census_json" | jq -r '.families.family_table | keys[]' 2>/dev/null)"
@@ -1632,9 +1634,9 @@ while IFS= read -r sc19_fam; do
   grep -qF "# family='${sc19_fam}'" "$0" || sc19_missing+=("$sc19_fam")
 done <<< "$sc19_families"
 
-if [[ "$sc19_family_count" != "61" ]]; then
+if [[ "$sc19_family_count" != "64" ]]; then
   fail=$((fail + 1))
-  failures+=("FAIL [SC-19: census family_count]: want 61, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
+  failures+=("FAIL [SC-19: census family_count]: want 64, got $sc19_family_count -- census grouping has drifted from the spec's own baseline; investigate before trusting the per-family check below")
 elif [[ ${#sc19_missing[@]} -eq 0 ]]; then
   pass=$((pass + 1))
 else
@@ -1659,6 +1661,19 @@ bash_case "SC-19 fam:forgejo-oauth2 cross-seg" 0 \
 # family='GRP:(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)' | 2->0 by construction (#179 row is new; no pre-#179 baseline)
 bash_case "SC-19 fam:claude-config-reader cross-seg" 0 \
   'cat notes.txt; echo ~/.claude/settings.json'
+# ── W8 / W11 additions to the SC-19 spanning set (3 new families, secret-net-l3-and-bypass-paths TASK-005, 2026-10-08) ──
+# Same engineered shape as the probes above: the whole string hits the family's row, every top-level segment individually misses it -- per-segment allows (exit 0) =
+# the documented cross-segment fail-open class (#138 tracks the cure). The census evaluates the array WITHOUT the shared name variables, which is why the W8 row's key is
+# GRP:() (its reader group is empty there) and the /proc key shows `/proc//`. The /proc probe uses a reader (sed) and a pid token ($$) that only the NEW branch has.
+# family='GRP:()' | 2->0 by construction (W8 row is new; no pre-W8 baseline exists)
+bash_case "SC-19 fam:srvcfg-reader cross-seg" 0 \
+  'cat notes.txt; echo /etc/forgejo/app.ini'
+# family='GRP:((cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/proc/(self|[0-9]+)/(environ|status|cmdline)|(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev|xargs|sed|grep|rg|cut|paste|nl|sort|base64|cp|dd)[[:space:]]+[^|]*/proc//(task/[^/[:space:]]+/)?(environ|cmdline))' | 2->0 by construction (the sed / $$ branch is new; the baseline /proc row had the key of the cat|head|... reader group)
+bash_case "SC-19 fam:proc-reader-relaxed cross-seg" 0 \
+  'sed notes.txt; echo /proc/$$/environ'
+# family='GRP:(ssh|docker[[:space:]]+(compose[[:space:]]+)?exec|kubectl[[:space:]]+exec|nomad[[:space:]]+alloc[[:space:]]+exec|pct[[:space:]]+exec|lxc[[:space:]]+exec|podman[[:space:]]+exec|(sh|bash|zsh|dash)[[:space:]]+-c|watch)' | 2->0 by construction (W11 wrapper row is new; no pre-W11 baseline exists)
+bash_case "SC-19 fam:ps-wrapper cross-seg" 0 \
+  'ssh myhost uptime; echo ps aux'
 
 # ── TASK-019 (SC-17): self-check — no duplicate case names in this file ────
 # Covers every *_case() helper defined above (bash/read/edit/run/crlf/static/

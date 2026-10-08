@@ -383,6 +383,28 @@ _SG_CLAUDE_CFG='\.claude/+(\./+)*settings\.json|\.claude/+(\./+)*settings\.local
 _SG_PP_NAME="(^|[[:space:]\"'=/])"
 _SG_PP_SUFFIX="(^|[[:space:]\"'=/*A-Za-z0-9_.-])"
 
+# ── secret-net-l3-and-bypass-paths (W8 / W11): shared names, single definition, several consumers ──
+# W8: server-side config files of Forgejo / Gitea (JWT_SECRET, SECRET_KEY, INTERNAL_TOKEN live in app.ini; 10CG/aria-plugin#203). A path component holding
+# `forgejo` or `gitea` (a word-internal prefix is fine: `git-forgejo`), then any non-blank non-quote characters of the same path, then `app.ini`; or
+# `custom/conf/app.ini`. The right boundary (no letter / digit / `_` right after `app.ini`: the backup `app.ini.bak` is covered, `app.inix` is not) is added by
+# each consumer. Consumers: the Bash-face reader row, the python3 -c / node -e source groups, the credit tightening below; the Read/Edit-face regex spells the
+# same group in lower case. No \b anywhere in the new text (BSD regex does not support it, same family as 10CG/aria-plugin#144).
+_SG_SRVCFG='[A-Za-z0-9._-]*(forgejo|gitea)[^[:space:]|;&"'"'"']*app\.ini|custom/conf/app\.ini'
+# The printing readers of the W8 row: the 13 of the claude-config row plus nl tac rev sort uniq cut paste diff cmp comm xxd od hexdump base64 column fold (29).
+_SG_READERS_PRINT='cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq|nl|tac|rev|sort|uniq|cut|paste|diff|cmp|comm|xxd|od|hexdump|base64|column|fold'
+# W11: process-table enumeration that prints argv / environ -- ps (procps semantics) in its argv-exposing spellings, pgrep / pstree `-a`, top `-c`, docker top,
+# docker ps --no-trunc -- at a command position behind an optional launcher / absolute directory prefix, and behind remote / shell wrappers. The three rule rows in
+# risky_patterns spell the same text as literals (a rule row that is only a variable is an empty string for the census, SC-31 31c); the copies below are what the
+# credit tightening matches. _SG_PROCTAB_ALL is the tight copy: the ps family ONLY -- the env / printenv alternatives of the wrapper row exist in the rule row
+# alone, they keep the baseline credit (a dump followed by `| cut -d= -f1` or `| wc -l` stays allowed). The two copies must not drift (SC-22 22bm / 22bn).
+_SG_PROCTAB='(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*((then|do|else|elif)[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env|time|eval|setsid|ionice|unbuffer|command|exec)([[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]|;&()<>`"'"'"'][^[:space:]|;&()<>`"'"'"']*)?|[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c))'
+_SG_PS_REMOTE_T='(ssh|docker[[:space:]]+(compose[[:space:]]+)?exec|kubectl[[:space:]]+exec|nomad[[:space:]]+alloc[[:space:]]+exec|pct[[:space:]]+exec|lxc[[:space:]]+exec|podman[[:space:]]+exec|(sh|bash|zsh|dash)[[:space:]]+-c|watch)[^|]*[[:space:]'"'"'"(`](((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c)))'
+_SG_PS_DOCKER='(docker|podman)[[:space:]]+((compose|container)[[:space:]]+)?top([^[:alnum:]_-]|$)|(docker|podman)[[:space:]]+(container[[:space:]]+)?(ps|ls)[[:space:]]+([^|;&]*[[:space:]])?--no-trunc'
+_SG_PROCTAB_ALL="(${_SG_PROCTAB}|${_SG_PS_REMOTE_T}|${_SG_PS_DOCKER})"
+# W11 /proc: the pid position of /proc/<pid>/environ|cmdline -- self, thread-self, digits, $$ $!, a glob token holding * or ?, $name, ${...}, $(...). A placeholder
+# word (/proc/<pid>/cmdline, /proc/[pid]/environ) is prose, not a pid.
+_SG_PIDTOK='(self|[0-9]+|[^/[:space:]]*[*?][^/[:space:]]*|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$\([^)]*\)|thread-self|\$[$!])'
+
 _sg_compute_credit() {
   local seg="$1"
   # ── Filter detection (only REDACTING filters count) ────────────────────────
@@ -402,8 +424,11 @@ _sg_compute_credit() {
   # exist to protect; line/column filters (grep anchor, grep -v, sed, cut, awk)
   # are unreliable redaction for JSON (values span/nest lines). Non-claude
   # sources keep every existing credit rule unchanged.
+  # W8 / W11 (secret-net-l3-and-bypass-paths): the same tightening for the Forgejo / Gitea app.ini name group and for the ps family of the process-table rows --
+  # `ps -ef | grep -v grep` and `cat .../app.ini | grep '^JWT_SECRET'` still print whole command lines / the credential line, so a row-level filter is no credit.
+  # wc / hash / discard / name-only credits stay.
   local tight=0
-  if [[ "$seg" =~ ($_SG_CLAUDE_CFG) ]]; then
+  if [[ "$seg" =~ ($_SG_CLAUDE_CFG|$_SG_SRVCFG) ]] || [[ "$seg" =~ $_SG_PROCTAB_ALL ]]; then
     tight=1
   fi
 
@@ -638,9 +663,11 @@ case "$tool" in
     # secret file paths a future-Claude might Read without realizing.
     # Note: lowercased file_path for the match.
     lower_path="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
-    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/+(\./+)*settings\.json$|/\.claude/+(\./+)*settings\.local\.json$|/\.claude\.json$'; then
+    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/+(\./+)*settings\.json$|/\.claude/+(\./+)*settings\.local\.json$|/\.claude\.json$|[a-z0-9._-]*(forgejo|gitea)[^ ]*app\.ini([^a-z0-9_]|$)|custom/conf/app\.ini([^a-z0-9_]|$)'; then
       # (last three branches: Aria #179 — Claude Code config files, env node
       #  holds API tokens; mirrors the Bash-face claude-config row)
+      # (last two branches: W8 secret-net-l3-and-bypass-paths — Forgejo / Gitea app.ini, the lower-cased spelling of $_SG_SRVCFG with the same right
+      #  boundary; a Read / Edit of it is blocked, the ack nonce path below stays the escape hatch)
       # R3-C-9 fix: SECRET_GUARD_ACK_PATH cannot be unset across processes
       # (env var lives in the parent shell, hook subprocess can't unset it).
       # Previously hook just emitted "consumed" NOTE which was dead code.
@@ -814,6 +841,11 @@ declare -a risky_patterns=(
   # Source-name group lives in $_SG_CLAUDE_CFG (shared with credit tightening).
   "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)[[:space:]]+([^|]*${_SG_PP_NAME})?(${_SG_CLAUDE_CFG})(\b|/|$|[[:space:]])"
 
+  # W8 (secret-net-l3-and-bypass-paths): Forgejo / Gitea app.ini. The 29 printing readers (one by one in SC-16 16q) with their OWN left boundary -- the baseline reader
+  # groups have none (`chmod` holds `od`) -- and the NAME front whitelist of Aria #179 before the path; right boundary: no letter / digit / `_` after app.ini.
+  # Tight credit (_sg_compute_credit). python3 -c / node -e: see the two source groups below.
+  "(^|[^[:alnum:]_.-])(${_SG_READERS_PRINT})[[:space:]]+(([^|]*${_SG_PP_NAME})?(${_SG_SRVCFG}))([^[:alnum:]_]|$)"
+
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
   '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/(var/)?run/secrets/'
@@ -890,8 +922,9 @@ declare -a risky_patterns=(
   # Aria #179: + claude-config source group (python3 -c / node -e inline scripts
   # reading ~/.claude/settings.json etc.). Kept on the narrow `-c`/`-e` rows —
   # NOT merged into the generic reader alternation (prose-FP surface).
-  "python3?[[:space:]]+-c([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
-  "node[[:space:]]+-e([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
+  # W8 / W11 (secret-net-l3-and-bypass-paths): + the Forgejo / Gitea app.ini name group and the /proc/<pid>/environ|cmdline names (same pid position as the /proc rows).
+  "python3?[[:space:]]+-c([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG}|${_SG_SRVCFG}|/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
+  "node[[:space:]]+-e([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG}|${_SG_SRVCFG}|/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
 
   # Decryption tools — assume targeted at secret files
   'sops[[:space:]]+(-d|--decrypt)'
@@ -929,8 +962,18 @@ declare -a risky_patterns=(
   # R3-C-4 fix: /proc/PID/environ direct reads
   'cat[[:space:]]+/proc/[0-9]+/environ'
   'cat[[:space:]]+/proc/self/environ'
-  '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/proc/(self|[0-9]+)/(environ|status|cmdline)'
-  '<[[:space:]]*/proc/(self|[0-9]+)/(environ|status|cmdline)'
+  # W11 (secret-net-l3-and-bypass-paths): the two rows above are rewritten IN PLACE. Baseline part unchanged (13 readers; (self|digits); environ|status|cmdline). Added: for
+  # environ|cmdline ONLY, 11 more readers (xargs sed grep rg cut paste nl sort base64 cp dd) and the wider pid position _SG_PIDTOK (glob tokens, $$, $name, ${...}, $(...)),
+  # plus the task/<tid>/ sub-path. `status` stays on the narrow baseline part (a metadata read such as grep VmRSS /proc/N/status stays allowed). Not a tight family.
+  "((cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/proc/(self|[0-9]+)/(environ|status|cmdline)|(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev|xargs|sed|grep|rg|cut|paste|nl|sort|base64|cp|dd)[[:space:]]+[^|]*/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
+  "(<[[:space:]]*/proc/(self|[0-9]+)/(environ|status|cmdline)|<[[:space:]]*/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
+  # W11 (secret-net-l3-and-bypass-paths): process-table enumeration, three rows spelled as literals (see _SG_PROCTAB for the text and the credit copy).
+  # 1. ps / pgrep / pstree / top in an argv-exposing form at a command position, optionally behind one launcher (15 words) and an absolute directory prefix;
+  # 2. the same, and whole-environment dumps (env / printenv), behind remote / shell wrappers (ssh, docker|podman|kubectl|lxc exec, nomad alloc exec, pct exec,
+  #    sh|bash -c, watch); 3. docker top and docker ps --no-trunc (podman alike). Reject (exit 2) with the shared BLOCKED text.
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*((then|do|else|elif)[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env|time|eval|setsid|ionice|unbuffer|command|exec)([[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]|;&()<>`"'"'"'][^[:space:]|;&()<>`"'"'"']*)?|[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c))'
+  '(ssh|docker[[:space:]]+(compose[[:space:]]+)?exec|kubectl[[:space:]]+exec|nomad[[:space:]]+alloc[[:space:]]+exec|pct[[:space:]]+exec|lxc[[:space:]]+exec|podman[[:space:]]+exec|(sh|bash|zsh|dash)[[:space:]]+-c|watch)[^|]*[[:space:]'"'"'"(`](((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c))|printenv([[:space:]'"'"'"]|[;&|)}<>`]|$)|env([[:blank:]]*($|[;&|)}<>'"'"'"`])))'
+  '(docker|podman)[[:space:]]+((compose|container)[[:space:]]+)?top([^[:alnum:]_-]|$)|(docker|podman)[[:space:]]+(container[[:space:]]+)?(ps|ls)[[:space:]]+([^|;&]*[[:space:]])?--no-trunc'
 
   # R3-C-5 fix: container runtime exec with env / env-extraction
   'nsenter[[:space:]]+[^|]*[[:space:]](env|printenv|cat[[:space:]]+/etc/passwd|cat[[:space:]]+/run/secrets)'
