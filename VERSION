@@ -161,7 +161,7 @@
 - PreToolUse Write|Edit|NotebookEdit → handoff-location-guard.sh (v1.21.0, Rule #9 L1 enforcement)
 - PreToolUse Bash → secret-guard.sh (v1.24.0 新增, Rule #7 Layer 2 enforcement)
 - PreToolUse Read|Edit|Write|MultiEdit → secret-guard.sh (v1.24.0 新增, file_path scan)
-- PostToolUse Bash|Read|Edit|Write|MultiEdit → secret-scan.sh (v1.24.0 新增, output REDACT)
+- PostToolUse Bash|Read|Edit|Write|MultiEdit → secret-scan.sh (v1.24.0 新增, output detect + warn, 不改写 tool_response)
 
 ## v1.15.0 核心成果 — US-012 多远程一致性保障
 

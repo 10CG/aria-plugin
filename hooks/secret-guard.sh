@@ -5,7 +5,7 @@
 #
 # What this hook IS:
 #   A blacklist-based speed-bump that catches accidental secret reads emitted
-#   by Claude (the LLM) in response to operator prompts. It covers the ~100
+#   by Claude (the LLM) in response to operator prompts. It covers the
 #   most common patterns: cloud secret managers (AWS/GCP/Aliyun/Doppler/etc.),
 #   K8s/Vault/Nomad secret APIs, .env / id_rsa / .pem / .aws/credentials /
 #   kubeconfig file reads, psql sensitive-column queries, base64-pipe-bash and
@@ -18,9 +18,9 @@
 #     mangling tool_name input shape.
 #   - Not a content scanner. The hook acts BEFORE tool execution, so it never
 #     sees the output. If a command returns secrets and isn't in the blacklist,
-#     they flow to LLM context unguarded. Phase 2 would add PostToolUse hook
-#     that regex-scans output for `^[A-Z_]+=.+$` style env lines + redacts —
-#     out of scope for current implementation.
+#     they flow to LLM context unguarded. The companion PostToolUse hook
+#     secret-scan.sh scans the output after the fact (detect + warn only, it
+#     cannot undo the leak) — see its header and secret-hygiene.md §5.
 #   - Not a defense against malicious operators. Anyone with shell access can
 #     `chmod -x` this file or set SECRET_GUARD_BYPASS_NO_JQ=1.
 #
@@ -59,8 +59,36 @@
 #   The 2026-05-16 incident was a TYPICAL pattern — raw curl to Nomad var
 #   endpoint, no jq filter, no malice. The hook prevents the same pattern +
 #   ~80% of cousin patterns. Combined with operator awareness training (see
-#   docs/operations/secret-rotation-runbook.md §1.3 principles) it's a
+#   standards/conventions/secret-hygiene.md §1 principles) it's a
 #   meaningful defense layer, not a guarantee.
+#
+# === Project extension + residual gaps (secret-net-l3-and-bypass-paths) ===
+#
+# Extension: <project root>/.aria/secret-guard.paths adds blocks without touching
+#   this file. One LITERAL substring per line (case-insensitive, `#` comments, 4-200
+#   bytes per entry, at most 200 entries, file at most 32 KiB); the project root is
+#   CLAUDE_PROJECT_DIR, else the stdin cwd. It can only ADD: every built-in verdict
+#   comes first, and the first 64 occurrences of an entry in one command are checked.
+#   A missing or invalid file turns the extension off SILENTLY (the built-in list is
+#   unaffected). Coverage = the readers of the built-in app.ini row + Read/Edit; the
+#   Grep tool, redirected reads, `source`, `dd`, `xargs cat`, `find -exec` and the
+#   65th occurrence onwards are not covered. List the SHORTEST distinctive substring
+#   (a file name), not a full path. Details: secret-hygiene.md §5.6.
+# Residual gaps, all unfixed on purpose:
+#   - `systemctl status` and `docker inspect <container>` (full JSON with Config.Env)
+#     are allowed: common health checks, the false-positive cost is too high.
+#     Credential-shaped lines in their output are alerted after the fact by
+#     secret-scan.sh (failed calls too).
+#   - The shared BLOCKED text lists `Acceptable filters` such as `| grep '^SAFE_PREFIX='`.
+#     The tight families (claude-config, app.ini, the ps / pgrep -a / top -c /
+#     docker top rows, extension entries) give no credit to line filters, so a
+#     retry that follows the text is blocked again; the text is unchanged on
+#     purpose (secret-hygiene.md §2.5, note).
+#   - Shell variable indirection (`f=...; cat "$f"`) is covered only in part: literal
+#     assignments are expanded in a second pass (at most 16 assignments, 8 replacements
+#     per variable). Arrays, `read <<<`, quote-spliced paths, `cd` + a relative name,
+#     globs, `set --`, `$(printf ...)` and variables across two tool calls pass; the
+#     output side is left to secret-scan.sh.
 #
 # === History ===
 #   v1.0: PR #429 initial — basic regex blacklist for Bash tool only
@@ -111,6 +139,19 @@
 #             .aria/notes/secret-guard-179-pattern-rows.md for the full
 #             row-by-row rationale of what's in/out of scope.
 #         3 known residual gaps of (3) listed above under "Coverage gaps".
+#   secret-net-l3-and-bypass-paths (10CG/aria-plugin#154, #203; 10CG/Aria#221):
+#         (1) Forgejo / Gitea app.ini joins the manifest on BOTH planes (Bash
+#             readers, python3 -c / node -e, Read/Edit path regex) with tight credit.
+#         (2) Process-table enumeration rows: ps with full command lines, pgrep -a,
+#             top -c, docker top, wrapped env dumps, /proc/<pid>/environ|cmdline.
+#         (3) Project extension .aria/secret-guard.paths (above): literal substrings,
+#             judged by the built-in app.ini judgement, can only add blocks.
+#         (4) Shell-variable indirection, a second pass after every built-in verdict
+#             allowed (partial coverage, see the residual gaps above).
+#         (5) Two false positives removed: os.environ single-key reads and the
+#             metadata-only jq forms keys_unsorted / map_values(length).
+#         The BLOCKED text is unchanged (the advice on credentials in argv lives in
+#         secret-hygiene.md §3.8, not in this text).
 #
 # Operator bypass (logged to ~/.claude/logs/guard-bypass.log):
 #   Bash:        ... # guard:ack: <reason ≥ 8 non-whitespace chars describing why>

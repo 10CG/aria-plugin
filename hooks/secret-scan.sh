@@ -12,15 +12,21 @@
 # It ALSO prints a summary to stderr and appends a line to
 # ~/.claude/logs/secret-scan.log.
 #
+# The alert names the matched tags and the tool the output came from, never any
+# text of tool_input; the log line carries an fp= field (one fingerprint per
+# counted span, never the value). Scanned: Bash output, a Read result
+# (tool_response.file.content), a Write response, and — through the
+# PostToolUseFailure event — the error text of a failed call.
+#
 # It CANNOT redact or rewrite the tool output. A PostToolUse hook runs AFTER
-# the tool result has already been produced: Claude Code exposes no field to
-# replace tool_response, and hook stdout does not substitute the captured
-# result (official hooks-guide line 891: "PostToolUse hooks can't undo actions
-# since the tool has already executed"). This is an architectural limit, not a
-# version-dependent behaviour. Detection here is a mitigation (stop Claude from
-# echoing the value + prompt rotation), NOT prevention. The real prevention
-# layer is the PreToolUse `secret-guard` hook, which blocks risky commands
-# BEFORE they run.
+# the tool result has already been produced, and hook stdout does not substitute
+# the captured result (official hooks-guide line 891: "PostToolUse hooks can't
+# undo actions since the tool has already executed"). The Claude Code 2.1.285
+# schema of the PostToolUse hook output does list updatedToolOutput; that is
+# unverified end to end and unused by this hook. Detection here is a mitigation
+# (stop Claude from echoing the value + prompt rotation), NOT prevention. The
+# real prevention layer is the PreToolUse `secret-guard` hook, which blocks
+# risky commands BEFORE they run.
 #
 # === Threat model ===
 #
@@ -30,8 +36,8 @@
 # debug log accidentally containing prior leaked values).
 #
 # Together they implement the layered defense:
-#   PreToolUse:  "Don't run this command"      (49 known bypass classes; effective prevention)
-#   PostToolUse: "This output leaked a secret"  (~15 secret-shape patterns; detect + warn only)
+#   PreToolUse:  "Don't run this command"      (effective prevention)
+#   PostToolUse: "This output leaked a secret"  (detect + warn only)
 #
 # silent-failure-hunter (PR #429 R5) on PostToolUse:
 #   "The remaining surface is genuinely long-tail and the right answer for it
@@ -49,8 +55,15 @@
 #   - PostgreSQL / Redis / MongoDB connection strings with embedded creds
 #   - PEM private keys (RSA/EC/Ed25519)
 #   - Basic-auth URLs (user:pass@host)
-#   - bcrypt / argon2 password hashes
+#   - bcrypt password hashes
 #   - bearer tokens in Authorization headers
+#   - generic key-shape tags (secret-net-l3-and-bypass-paths): json-credential-field,
+#     json-env-secret-key, kv-secret-assign (`KEY = value` in INI / env / YAML),
+#     auth-header-token (`Authorization: token|Basic`), cf-access-client-secret,
+#     cli-secret-flag (`--token=<value>`). A placeholder whitelist (FAKE / PLACEHOLDER /
+#     [REDACTED] markers, <...>, ${...}, masks) keeps json-secret-field and these tags
+#     silent; an entropy floor, file-path values and dotted identifier chains
+#     (process.env.X) are silent for the new tags too.
 #
 # Match → the hook counts the occurrences and warns (additionalContext +
 # systemMessage + stderr summary + log line). It does not alter the output.
@@ -61,37 +74,54 @@
 #   require entropy heuristics + heavy false-positive risk
 # - Internal-business-logic secrets that don't match standard shapes
 # - Secrets split across multiple lines
-# - Secrets encoded base64 / hex / etc (without telltale prefix)
+# - Secrets encoded base64 / hex / etc (without telltale prefix AND without a credential key name)
+# - Under the key-shape tags: values shorter than 16 characters or of a single
+#   character class, lower-case YAML / INI keys, space-separated CLI arguments
 # - Secrets in binary tool output (assumes text)
+# - Successful Edit / MultiEdit results (their response holds no scanned field)
 #
 # These are accepted residual risk per threat model. Operator awareness +
 # rotation cadence are the answers.
 #
 # === Hook contract ===
 #
-# Input (stdin JSON):
+# Input (stdin JSON; a union of the shapes Claude Code 2.1.285 sends):
 #   {
-#     "tool_name": "Bash" | "Read" | "Edit" | ...,
+#     "hook_event_name": "PostToolUse" | "PostToolUseFailure",
+#     "tool_name": "Bash" | "Read" | "Edit" | "Write" | "MultiEdit",
 #     "tool_input": {...},
-#     "tool_response": {
-#       "output": "...",        // Bash stdout/stderr combined
-#       "content": "..."        // Read file content
-#     }
+#     "tool_response": {                       // PostToolUse only
+#       "stdout": "...",                       // Bash (older versions: "output")
+#       "file": {"content": "..."},            // Read: tool_response.file.content
+#       "filePath": "...", "content": "..."    // Write: tool_response.content
+#     },
+#     "error": "..."                           // PostToolUseFailure only: `Exit code N` + stderr + stdout
 #   }
+# A failed call (a Bash command that exits non-zero, ...) arrives as
+# PostToolUseFailure with NO tool_response; its text is the top-level error.
 #
 # Output:
 #   - On no-match: exit 0 silently, no stdout.
 #   - On match:    exit 0 + JSON on stdout:
-#       {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-#         "additionalContext": "[secret-scan] DETECTED N ..."},
+#       {"hookSpecificOutput": {"hookEventName": "PostToolUse" | "PostToolUseFailure",
+#         "additionalContext": "[secret-scan] DETECTED N ... (tags: ...; source: <tool>) ..."},
 #        "systemMessage": "[secret-scan] Detected N ..."}
 #     plus a stderr summary and a log line. NO tool_response mutation is
 #     emitted — this hook cannot redact (see architectural limit above).
+#     hookEventName must name the event that fired: the harness rejects a mismatch.
 #
 # === Performance ===
 #
 # Budget: skip scan if input > 1 MB. Large outputs (build logs, dump files)
 # rarely contain secret credentials worth scanning at runtime cost.
+#
+# === History ===
+#   v1.24.0: initial PostToolUse detector (detect + warn only).
+#   secret-net-l3-and-bypass-paths (10CG/aria-plugin#154, #203): a Read result,
+#         NUL-delimited bodies and the error text of failed calls
+#         (PostToolUseFailure) are scanned; the key-shape tags above, the
+#         placeholder whitelist, fp= value fingerprints in the log and
+#         tags + source in the alert text were added.
 
 set -uo pipefail
 

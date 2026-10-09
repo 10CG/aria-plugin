@@ -1,5 +1,5 @@
 {
-  "description": "Aria Hooks: SessionStart workflow recovery + PreToolUse handoff-location/secret-guard + PostToolUse secret-scan + submodule-gate-telemetry",
+  "description": "Aria Hooks: SessionStart workflow recovery + PreToolUse handoff-location/secret-guard + PostToolUse/PostToolUseFailure secret-scan + submodule-gate-telemetry",
   "hooks": {
     "SessionStart": [
       {
