@@ -452,6 +452,12 @@ _sg_compute_credit() {
   if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?(.+\|[[:space:]]*)?(keys|length|paths|leaf_paths)[\"']?[[:space:]]*(\$|\|)" "$seg"; then
     has_filter=1
   fi
+  # W12 (secret-net-l3-and-bypass-paths): anchored metadata-only forms -- the program is quoted, may start with ONE simple dotted path plus `|`, then exactly
+  # one token (keys_unsorted | map_values(length)), and the closing quote follows the token at once. Deliberately NOT added to the word list above: that list
+  # accepts anything after `word |`, so `jq 'keys_unsorted | $ENV'` would pass. No tight gate: the form is valid under the claude-config tightening too.
+  if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"'](\.[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*\|[[:space:]]*)?(keys_unsorted|map_values\(length\))[\"'][[:space:]]*(\$|\|)" "$seg"; then
+    has_filter=1
+  fi
   # Whitelisted: `jq '{alias: .safe_field}'` — single-line allowlist projection.
   # Recognize the `{...}` object-construction shape as projection allowlist.
   if [[ $tight -eq 0 ]] && _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?\{" "$seg"; then
@@ -1076,9 +1082,20 @@ _sg_redact_echo() {
 # stderr byte-for-byte, zero new lines).
 _sg_judge_one() {
   local seg="$1" mode="$2" pat
-  local credit=""
+  local credit="" subj="$1" _w
+  # W12 (secret-net-l3-and-bypass-paths): an os.environ single-key read (.environ.get( / .environb.get( / .environ[ / .environb[) is the same information as the
+  # allowed os.getenv, but its `.env` prefix trips the interpreter rows. Every occurrence of the four literal substrings is cut out of the COPY that is
+  # matched ($subj) and replaced by a neutral token without `.env`; the whole-table forms (os.environ, dict(os.environ), .items(), ...) are not in the list
+  # and stay blocked. Prefix + length-based remainder concatenation, no ${s//p/r} and no eval: the key texts are never executed. credit and the BLOCKED
+  # text keep working on the original $seg / $command.
+  if [[ "$subj" == *environ* ]]; then
+    while [[ "$subj" == *".environ.get("* ]]; do _w="${subj%%".environ.get("*}"; subj="${_w}.ek_(${subj:$(( ${#_w} + 13 ))}"; done
+    while [[ "$subj" == *".environb.get("* ]]; do _w="${subj%%".environb.get("*}"; subj="${_w}.ek_(${subj:$(( ${#_w} + 14 ))}"; done
+    while [[ "$subj" == *".environ["* ]]; do _w="${subj%%".environ["*}"; subj="${_w}.ek_[${subj:$(( ${#_w} + 9 ))}"; done
+    while [[ "$subj" == *".environb["* ]]; do _w="${subj%%".environb["*}"; subj="${_w}.ek_[${subj:$(( ${#_w} + 10 ))}"; done
+  fi
   for pat in "${risky_patterns[@]}"; do
-    if [[ "$seg" =~ $pat ]]; then
+    if [[ "$subj" =~ $pat ]]; then
       if [[ -z "$credit" ]]; then
         if _sg_compute_credit "$seg"; then credit=1; else credit=0; fi
       fi
