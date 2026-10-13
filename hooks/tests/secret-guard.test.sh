@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 789 cases (783 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 805 cases (799 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -2505,6 +2505,133 @@ wpa_use_none
 wpa_marker_case "W10 SC-21v rg: when a built-in rule blocks, the variable pass never runs (all segments are judged first)" '_sg_vx_pass' none Bash 2 'f=/etc/hosts; cat "$f"; cat .env'
 wpa_use_none
 wpa_marker_case "W10 SC-21w bf: when every built-in verdict is allow, the variable pass IS run (no dead code)" '_sg_vx_pass' "_sg_vx_pass" Bash 0 'f=/etc/hosts; cat "$f"'
+wpa_use_none
+
+# ── review M6 (TASK-014): the second pass has a LENGTH BUDGET -- three limits, each pinned to the character on both sides (21aa-21ap) ──
+# Without them the judged copy is the segment plus references x value length, one level of chaining multiplies a value by 8 per level, and the pass overran the 5 s hook
+# timeout on a 5 KB command (a timeout lets the command through). Beyond a limit the variable / the copy / the rest of the command passes -- like 21y: no error, no block.
+# The numbers are part of the contract (_SGV_SMAX 8192 = one substituted copy, _SGV_VMAX 4096 = one collected value, _SGV_TMAX 65536 = all copies of one command); changing one
+# means changing these cases. The pad value p has 4000 characters: every `$p` adds 3998 to a copy, the reader `$f` (the 20-character app.ini name) adds 18.
+wpa_rep() { printf '%*s' "$2" '' | tr ' ' "$1"; }                                   # <char> <count>
+wpa_vx_pad="$(wpa_rep x 4000)"
+wpa_vx_fill() { [[ "$1" -ge 2 ]] && printf ' %s' "$(wpa_rep y $(( $1 - 1 )))"; return 0; }   # <n> -> a filler word of exactly n characters (a space and n-1 y); nothing for n < 2
+# 21aa / 21ab: the segment ` echo $p $p<filler> | cat $f` has 20 characters + the filler and becomes 2 x 4000 + 34 + filler: a 158-character filler makes exactly 8192, 159 makes 8193
+wpa_vx_cmd() { printf 'f=%s; p=%s; echo $p $p%s | cat $f' "$wpa_AI" "$wpa_vx_pad" "$(wpa_vx_fill "$1")"; }
+wpa_one_bash_case "W10 SC-21aa bf: copy limit, last accepted — a substituted segment of exactly 8192 characters is judged and blocked" Bash 2 "$(wpa_vx_cmd 158)"
+wpa_one_bash_case "W10 SC-21ab kl: copy limit exceeded passes — 8193 characters: the copy is not judged (padding passes)" Bash 0 "$(wpa_vx_cmd 159)"
+# 21ac / 21ad: a collected value of exactly 4096 characters (a path that ends in the app.ini name) is expanded, one character more is dropped and the variable stays text
+wpa_vx_val() { printf '/%s%s' "$(wpa_rep d $(( $1 - 21 )))" "$wpa_AI"; }            # <length> -> a path of exactly that many characters ending in the app.ini name
+wpa_one_bash_case "W10 SC-21ac bf: value limit, last accepted — a collected value of exactly 4096 characters is expanded and its read blocked" Bash 2 "f=$(wpa_vx_val 4096); cat \$f"
+wpa_one_bash_case "W10 SC-21ad kl: value limit exceeded passes — a 4097-character value is dropped, the variable is not expanded" Bash 0 "f=$(wpa_vx_val 4097); cat \$f"
+# 21ae: one level of chaining multiplies a value (20 -> 160 -> 1280 -> 6400 characters); the copy of d (about 6.4 KB) is inside the copy limit, so only the value limit decides here
+wpa_vx_chain="a=$wpa_AI; b=\$a\$a\$a\$a\$a\$a\$a\$a; c=\$b\$b\$b\$b\$b\$b\$b\$b; d=\$c\$c\$c\$c\$c"
+wpa_begin_bash_case "W10 SC-21ae kl: chained values multiply — c (1280 characters) is expanded and its read blocked, d (6400, past the value limit) is dropped and passes"
+wpa_x Bash 2 "$wpa_vx_chain; cat \$c"; wpa_x Bash 0 "$wpa_vx_chain; cat \$d"
+wpa_end_case
+# 21af / 21ag: the dense shape of the review -- the caps' worst case: 16 assignments (15 padding + the reader's f), ONE segment with 8 references to every padding variable
+wpa_vx_dense() {   # <padding value length> -> the command
+  local len="$1" i k out="" refs=""
+  for ((i = 0; i < 15; i++)); do out="${out}v$i=$(wpa_rep a "$len"); "; for ((k = 0; k < 8; k++)); do refs="$refs \$v$i"; done; done
+  printf '%sf=%s; echo%s | cat $f' "$out" "$wpa_AI" "$refs"
+}
+wpa_one_bash_case "W10 SC-21af bf: a dense command inside the budget — 15 assignments of 50 B, 8 references each, then the reader: the 6.2 KB copy is judged and blocked" Bash 2 "$(wpa_vx_dense 50)"
+wpa_one_bash_case "W10 SC-21ag kl: the dense shape of the review (15 assignments of 300 B, 8 references each: a 36 KB copy; 16 x 300 B x 8 took 5.4 s) is over the copy limit and passes" Bash 0 "$(wpa_vx_dense 300)"
+# 21ah / 21ai: all copies of one command together stay within 65536. Seven heavy segments ` echo $p $p<185>` (copy 8192 each), a last one (8167 or 8168) and the reader ` cat $f` (25):
+# 7 x 8192 + 8167 + 25 = 65536 exactly -- the reader is judged; one character more and it is not
+wpa_vx_many() {   # <filler length of the last heavy segment> -> the command
+  local j out="f=$wpa_AI; p=$wpa_vx_pad"
+  for ((j = 0; j < 7; j++)); do out="$out; echo \$p \$p$(wpa_vx_fill 185)"; done
+  printf '%s; echo $p $p%s; cat $f' "$out" "$(wpa_vx_fill "$1")"
+}
+wpa_one_bash_case "W10 SC-21ah bf: pass-wide limit, last accepted — copies adding up to exactly 65536 characters (7 x 8192, 8167 and the reader's 25): the reader is judged and blocked" Bash 2 "$(wpa_vx_many 160)"
+wpa_one_bash_case "W10 SC-21ai kl: pass-wide limit exceeded passes — one character more (65537): the reader is not judged (padding passes)" Bash 0 "$(wpa_vx_many 161)"
+# 21aj: a segment whose copy is over the copy limit is refused cheaply, but it still counts as a whole copy (8192) against the pass-wide limit
+wpa_vx_over() {   # <n> -> n segments of three 4000-character references (a 12 KB copy each), then the reader
+  local j out="f=$wpa_AI; p=$wpa_vx_pad"
+  for ((j = 0; j < $1; j++)); do out="$out; echo \$p \$p \$p"; done
+  printf '%s; cat $f' "$out"
+}
+wpa_begin_bash_case "W10 SC-21aj kl: an over-limit attempt counts as a whole copy (8192) of the pass-wide limit — after seven of them the reader (25) is still judged and blocked, after eight it is not"
+wpa_x Bash 2 "$(wpa_vx_over 7)"; wpa_x Bash 0 "$(wpa_vx_over 8)"
+wpa_end_case
+# 21ak (rg): the pass-wide limit bounds the WORK too -- once it is used up the pass stops applying instead of building and dropping the copy of every later segment. The command has
+# 9 heavy segments (the 9th takes the total past 65536), then two more references and the reader; _sg_vx_apply is entered 12 times (2 assignment segments, 9 heavy ones, and the
+# W9 extension's look at the whole command after the pass), not 15 -- a patched COPY of the hook writes one line per entry into a marker file
+wpa_vx_calls() {   # <command> -> how many times _sg_vx_apply was entered
+  local mk="$wpa_tmp/vx-calls"
+  : > "$mk"
+  WPA_HOOK="$(wpa_hook_copy calls 'echo x >> "${WPA_MARKER:-/dev/null}"' '_sg_vx_apply')"; WPA_ENV=("${WPA_ENV[@]}" "WPA_MARKER=$mk")
+  wpa_rc Bash "$1" >/dev/null
+  wpa_use_none
+  wc -l < "$mk" | tr -d ' '
+}
+wpa_vx_late() {   # 9 heavy segments (copy 8192 each), then two segments with one reference and the reader
+  local j out="f=$wpa_AI; p=$wpa_vx_pad"
+  for ((j = 0; j < 9; j++)); do out="$out; echo \$p \$p$(wpa_vx_fill 185)"; done
+  printf '%s; echo $p; echo $p; cat $f' "$out"
+}
+wpa_begin_bash_case "W10 SC-21ak rg: the pass-wide limit bounds the work too — after it is used up the pass stops applying (12 entries of _sg_vx_apply, not 15)"
+wpa_chk "_sg_vx_apply entries" 12 "$(wpa_vx_calls "$(wpa_vx_late)")"
+wpa_end_case
+# 21al: the copy limit holds for the braced form ${NAME} too (it goes through _sg_vx_replace, not through the $NAME loop). A brace makes the command unsafe to split, so the unit is the WHOLE
+# command: with a 2700-character pad value, `f=<app.ini>; p=<pad>; echo ${p} ${p}<filler> | cat ${f}` has 53 + 2700 + filler characters and its copy 2 x 2696 + 16 more -- 8161 + filler,
+# so a 31-character filler makes exactly 8192
+wpa_vx_braced() { printf 'f=%s; p=%s; echo ${p} ${p}%s | cat ${f}' "$wpa_AI" "$(wpa_rep x 2700)" "$(wpa_vx_fill "$1")"; }     # <filler length>
+wpa_begin_bash_case "W10 SC-21al kl: the copy limit holds for the braced form too — a substituted whole command of exactly 8192 characters is judged and blocked, 8193 passes"
+wpa_x Bash 2 "$(wpa_vx_braced 31)"; wpa_x Bash 0 "$(wpa_vx_braced 32)"
+wpa_end_case
+# 21am: the value limit holds for a value that chaining builds from two others: b=$a$c with |a| = 2048 and |c| = 2048 (4096 in all, the path at its end) is expanded, with |c| = 2049 (4097) it is dropped
+wpa_vx_pair() { printf 'a=/%s; c=/%s%s; b=$a$c; cat $b' "$(wpa_rep d 2047)" "$(wpa_rep e $(( $1 - 2048 - 21 )))" "$wpa_AI"; }     # <length of b>
+wpa_begin_bash_case "W10 SC-21am kl: the value limit holds for a chained value — b of exactly 4096 characters is expanded and its read blocked, 4097 is dropped and passes"
+wpa_x Bash 2 "$(wpa_vx_pair 4096)"; wpa_x Bash 0 "$(wpa_vx_pair 4097)"
+wpa_end_case
+# 21an (rg): the functions themselves -- _sg_vx_collect, _sg_vx_apply and _SG_SUB (names of the contract, like _sg_vx_pass) in a fresh shell, over seven shapes: a copy that was built
+# is never longer than 8192 characters, a refused copy leaves _SG_SUB untouched (status 2), no collected value is longer than 4096, and the status is the expected one
+wpa_vx_probe="$wpa_tmp/vx-probe.sh"
+cat > "$wpa_vx_probe" <<'WPA_VX_EOF'
+source "$1"
+rep() { printf '%*s' "$2" '' | tr ' ' "$1"; }
+fill() { [[ "$1" -ge 2 ]] && printf ' %s' "$(rep y $(( $1 - 1 )))"; return 0; }
+probe() {   # <label> <command> <segment> <expected status>
+  local mx=0 i ok=yes rc
+  _sg_vx_collect "$2"
+  for ((i = 0; i < ${#_SGV_V[@]}; i++)); do (( ${#_SGV_V[i]} > mx )) && mx=${#_SGV_V[i]}; done
+  _sg_vx_apply "$3"; rc=$?
+  [[ "$rc" == "$4" ]] || ok=no
+  (( mx > 4096 )) && ok=no
+  [[ $rc -eq 0 && ${#_SG_SUB} -gt 8192 ]] && ok=no
+  [[ $rc -ne 0 && "$_SG_SUB" != "$3" ]] && ok=no
+  printf '%s ok=%s\n' "$1" "$ok"
+}
+dense() {   # <value length> -> cmd, seg: 16 assignments, one segment with 8 references to every variable
+  local i k; cmd=""; seg=" echo"
+  for ((i = 0; i < 16; i++)); do cmd="${cmd}v$i=$(rep a "$1"); "; for ((k = 0; k < 8; k++)); do seg="$seg \$v$i"; done; done
+  cmd="$cmd${seg# }"
+}
+ai=/etc/forgejo/app.ini
+dense 300; probe dense300 "$cmd" "$seg" 2
+dense 50;  probe dense50 "$cmd" "$seg" 0
+cmd="a0=$ai"; for i in 1 2 3 4 5 6; do cmd="$cmd; a$i=\$a$((i - 1))\$a$((i - 1))\$a$((i - 1))\$a$((i - 1))\$a$((i - 1))\$a$((i - 1))\$a$((i - 1))\$a$((i - 1))"; done
+probe chain "$cmd; cat \$a6" " cat \$a6" 0
+seg=" echo \$p \$p$(fill 158) | cat \$f"; probe edge8192 "f=$ai; p=$(rep x 4000);$seg" "$seg" 0
+seg=" echo \$p \$p$(fill 159) | cat \$f"; probe edge8193 "f=$ai; p=$(rep x 4000);$seg" "$seg" 2
+v4096="/$(rep d 4075)$ai"; probe val4096 "f=$v4096; cat \$f" " cat \$f" 0
+v4097="/$(rep d 4076)$ai"; probe val4097 "f=$v4097; cat \$f" " cat \$f" 1
+WPA_VX_EOF
+wpa_begin_bash_case "W10 SC-21an rg: the functions hold the limits — a built copy is at most 8192 characters, a refused one leaves _SG_SUB untouched, no collected value is over 4096 (dense 300 B refused, dense 50 B built, a chain past the value limit, both sides of the copy edge and of the value edge)"
+wpa_chk "probe shapes" "dense300 ok=yes dense50 ok=yes chain ok=yes edge8192 ok=yes edge8193 ok=yes val4096 ok=yes val4097 ok=yes" "$(bash "$wpa_vx_probe" "$wpa_hook" 2>&1 | tr '\n' ' ' | sed 's/ $//')"
+wpa_end_case
+# 21ao: whole-command mode (the command degrades because of a `(`) obeys the same copy limit -- the unit is the whole command: 6069 + filler, so a 2123-character filler makes 8192
+wpa_vx_whole() { printf 'f=%s; p=%s; echo $p $p%s | cat $f; (true)' "$wpa_AI" "$(wpa_rep x 2000)" "$(wpa_vx_fill "$1")"; }    # <filler length>
+wpa_begin_bash_case "W10 SC-21ao kl: whole-command mode obeys the copy limit — a whole copy of exactly 8192 characters is judged and blocked, 8193 passes"
+wpa_x Bash 2 "$(wpa_vx_whole 2123)"; wpa_x Bash 0 "$(wpa_vx_whole 2124)"
+wpa_end_case
+# 21ap: the W9 extension looks at the substituted WHOLE command too (the listed path reached through a variable, 19i) and obeys the same copy limit: 6075 + filler, 2117 makes 8192
+wpa_vx_ext() { printf 'f=%s; p=%s; echo $p $p%s | cat $f' "$wpa_P" "$(wpa_rep x 2000)" "$(wpa_vx_fill "$1")"; }     # <filler length>
+wpa_use_proj "$wpa_pr_ok"
+wpa_begin_bash_case "W10 SC-21ap kl: the extension's look at the substituted whole command obeys the copy limit — 8192 characters: the listed path is found and blocked, 8193 passes"
+wpa_x Bash 2 "$(wpa_vx_ext 2117)"; wpa_x Bash 0 "$(wpa_vx_ext 2118)"
+wpa_end_case
 wpa_use_none
 
 # ═════════════════════════════ W11 — process-table enumeration ═════════════════════════════

@@ -86,9 +86,11 @@
 #     purpose (secret-hygiene.md §2.5, note).
 #   - Shell variable indirection (`f=...; cat "$f"`) is covered only in part: literal
 #     assignments are expanded in a second pass (at most 16 assignments, 8 replacements
-#     per variable). Arrays, `read <<<`, quote-spliced paths, `cd` + a relative name,
-#     globs, `set --`, `$(printf ...)` and variables across two tool calls pass; the
-#     output side is left to secret-scan.sh.
+#     per variable, values up to 4096 characters, a substituted segment up to 8192
+#     characters and 65536 characters of substituted text per command; beyond a limit
+#     the variable or the segment passes). Arrays, `read <<<`, quote-spliced paths, `cd`
+#     + a relative name, globs, `set --`, `$(printf ...)` and variables across two tool
+#     calls pass; the output side is left to secret-scan.sh.
 #
 # === History ===
 #   v1.0: PR #429 initial — basic regex blacklist for Bash tool only
@@ -570,14 +572,28 @@ _sg_compute_credit() {
 # values substituted in. TEXT ONLY: prefix + suffix concatenation with the remainder taken BY LENGTH (${s:N}); no eval (a value may hold a command substitution or back
 # quotes: they must never run inside the hook), no ${s//p/r} (bash 5.2 patsub_replacement and the quote semantics of bash < 4.3 disagree about quotes and `&` in the
 # replacement), no ${s#*"$pat"} (O(n^2) when the hit sits late in a long string).
+# LENGTH BUDGET (review M6): without it the judged string is the segment plus references x value length, and one level of chaining multiplies a value by 8, so a 5 KB
+# command overran the 5 s hook timeout (and a timeout lets the command through). Three limits, counted in characters, all "beyond the limit passes" like the counts above
+# (SC-21 21y): never an error, never a block, the BLOCKED text is untouched. (1) _SGV_VMAX: a value longer than that (as collected, or after chaining) is dropped -- its
+# variable stays text and is never expanded; 4096 is PATH_MAX, a longer value is not one path. (2) _SGV_SMAX: a substituted copy (a segment, or the whole command) that would
+# become longer is not judged (status 2 of _sg_vx_apply). 8192 because a BLOCK verdict costs the square of the copy length (_sg_compute_credit on one long line: about 0.9 s at
+# 8 KB, 3 s at 16 KB, 13 s at 32 KB) and a verdict that arrives after the timeout is lost; a larger copy would keep the pass cheap only for commands that are not blocked.
+# (3) _SGV_TMAX: all copies of one command together (an over-limit attempt counts as _SGV_SMAX); once used up, this segment and the later ones are not judged -- what many
+# dense segments can cost is bounded too. _sg_vx_collect, _sg_vx_apply and _SG_SUB are names of the contract, like _sg_vx_pass: the budget probes of the suite use them.
 _SGV_N=(); _SGV_V=()
 _SG_SUB=""
 _SG_RP=""
-# _sg_vx_replace S PAT REP : literal replace-all of PAT in S, at most 8 replacements -> _SG_RP
+_SGV_VMAX=4096
+_SGV_SMAX=8192
+_SGV_TMAX=65536
+# _sg_vx_replace S PAT REP [MAX] : literal replace-all of PAT in S, at most 8 replacements -> _SG_RP; with MAX (characters) it stops with status 1 as soon as the result would be
+# longer than MAX (_SG_RP is then S unchanged)
 _sg_vx_replace() {
-  local s="$1" pat="$2" rep="$3" out="" g=0 pre
+  local s="$1" pat="$2" rep="$3" max="${4:-0}" out="" g=0 pre
+  _SG_RP="$s"
   while (( g < 8 )) && [[ "$s" == *"$pat"* ]]; do
     g=$((g+1)); pre="${s%%"$pat"*}"; out="${out}${pre}${rep}"; s="${s:$(( ${#pre} + ${#pat} ))}"
+    (( max > 0 && ${#out} + ${#s} > max )) && return 1
   done
   _SG_RP="${out}${s}"
 }
@@ -593,7 +609,7 @@ _sg_vx_collect() {
     pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
     [[ "$val" == \"*\" && ${#val} -ge 2 ]] && val="${val:1:${#val}-2}"
     [[ "$val" == \'*\' && ${#val} -ge 2 ]] && val="${val:1:${#val}-2}"
-    [[ -z "$val" || "$val" == *"\$$name"* || "$val" == *"\${$name}"* ]] && continue
+    [[ -z "$val" || ${#val} -gt $_SGV_VMAX || "$val" == *"\$$name"* || "$val" == *"\${$name}"* ]] && continue
     dup=0
     for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
       [[ "${_SGV_N[i]}" == "$name" && "${_SGV_V[i]}" == "$val" ]] && dup=1
@@ -606,34 +622,42 @@ _sg_vx_collect() {
     (( n += 1 ))
     m="${BASH_REMATCH[0]}"; name="${BASH_REMATCH[2]}"; val="${BASH_REMATCH[3]}"
     pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
-    [[ -z "$val" ]] && continue
+    [[ -z "$val" || ${#val} -gt $_SGV_VMAX ]] && continue
     _SGV_N+=("$name"); _SGV_V+=("$val")
   done
   for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
     for (( j = 0; j < ${#_SGV_N[@]}; j++ )); do
       (( i == j )) && continue
-      _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}"; _SGV_V[i]="$_SG_RP"
-      _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}"; _SGV_V[i]="$_SG_RP"
+      [[ -z "${_SGV_V[j]}" ]] && continue
+      if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else _SGV_V[i]=""; break; fi
+      if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else _SGV_V[i]=""; break; fi
     done
   done
   return 0
 }
+# _sg_vx_apply S : S with the collected values substituted -> _SG_SUB. Status 0 = a copy was built, 1 = nothing to substitute, 2 = the copy would be longer than _SGV_SMAX (not
+# built, _SG_SUB stays S). Per variable: ${NAME} through _sg_vx_replace, then $NAME with the same prefix accumulation (the already substituted text is never scanned again;
+# the remainder keeps the character that ended the match, so $f$f works), at most 8 times.
 _sg_vx_apply() {
-  local s="$1" i n v m tail pre post guard changed=1
+  local s="$1" i n v m tail pre out guard changed=1
   _SG_SUB="$s"
   (( ${#_SGV_N[@]} )) || return 1
   [[ "$s" == *'$'* ]] || return 1
   for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
     n="${_SGV_N[i]}"; v="${_SGV_V[i]}"
-    if [[ "$s" == *"\${$n}"* ]]; then _sg_vx_replace "$s" "\${$n}" "$v"; s="$_SG_RP"; changed=0; fi
-    guard=0
+    [[ -n "$v" ]] || continue
+    if [[ "$s" == *"\${$n}"* ]]; then _sg_vx_replace "$s" "\${$n}" "$v" "$_SGV_SMAX" || return 2; s="$_SG_RP"; changed=0; fi
+    out=""; guard=0
     while (( guard < 8 )) && [[ "$s" =~ \$${n}([^A-Za-z0-9_]|$) ]]; do
       (( guard += 1 ))
       m="${BASH_REMATCH[0]}"; tail="${BASH_REMATCH[1]}"
-      if [[ -z "$tail" ]]; then pre="${s%"$m"}"; post=""; else pre="${s%%"$m"*}"; post="${s:$(( ${#pre} + ${#m} ))}"; fi
+      if [[ -z "$tail" ]]; then pre="${s%"$m"}"; else pre="${s%%"$m"*}"; fi
+      s="${s:$(( ${#pre} + ${#m} - ${#tail} ))}"
       [[ "$pre" == *\\ ]] && pre="${pre%\\}"
-      s="${pre}${v}${tail}${post}"; changed=0
+      out="${out}${pre}${v}"; changed=0
+      (( ${#out} + ${#s} > _SGV_SMAX )) && return 2
     done
+    (( guard )) && s="${out}${s}"
   done
   _SG_SUB="$s"
   return $changed
@@ -641,7 +665,7 @@ _sg_vx_apply() {
 # _sg_vx_pass CMD MODE : the second pass -- judge the substituted copies. MODE is whole or segment, as _sg_core_eval left it in _SG_MODE (in segment mode _SG_SEGS holds
 # the segments). The function name is a contract: the fault-injection and evaluation-order probes locate it by name.
 _sg_vx_pass() {
-  local cmd="$1" mode="$2" seg rc
+  local cmd="$1" mode="$2" seg rc ar spent=0
   _sg_vx_collect "$cmd"
   (( ${#_SGV_N[@]} )) || return 0
   if [[ "$mode" == whole ]]; then
@@ -649,11 +673,15 @@ _sg_vx_pass() {
     return 0
   fi
   for seg in "${_SG_SEGS[@]}"; do
-    if _sg_vx_apply "$seg"; then
-      _sg_judge_one "$_SG_SUB" segment
-      rc=$?
-      [[ $rc -ne 0 ]] && return "$rc"
-    fi
+    _sg_vx_apply "$seg"
+    ar=$?
+    [[ $ar -eq 1 ]] && continue
+    if [[ $ar -eq 2 ]]; then spent=$(( spent + _SGV_SMAX )); else spent=$(( spent + ${#_SG_SUB} )); fi
+    (( spent > _SGV_TMAX )) && break
+    [[ $ar -eq 2 ]] && continue
+    _sg_judge_one "$_SG_SUB" segment
+    rc=$?
+    [[ $rc -ne 0 ]] && return "$rc"
   done
   return 0
 }
