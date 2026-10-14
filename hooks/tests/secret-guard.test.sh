@@ -2536,6 +2536,7 @@ wpa_x_toolarge() {   # <command> <the limit line it must name: wpa_L_*>: refused
   wpa_chk "refused [${p:0:48}]: exit code" 2 "${e##*WPA_RC=}"
   wpa_chk "refused [${p:0:48}]: names the limit that was hit" "$2" "$lim"
   wpa_chk "refused [${p:0:48}]: says to split" yes "$([[ "$e" == *"Split it into smaller commands"* ]] && echo yes || echo no)"
+  wpa_chk "refused [${p:0:48}]: Chinese split line (命令过大)" yes "$([[ "$e" == *"命令过大"* ]] && echo yes || echo no)"
   wpa_chk "refused [${p:0:48}]: not the finding text" no "$([[ "$e" == *"reads a secret-bearing source"* ]] && echo yes || echo no)"
   wpa_chk "refused [${p:0:48}]: not an internal error" no "$([[ "$e" == *"internal error"* ]] && echo yes || echo no)"
   wpa_chk "refused [${p:0:48}]: short (echoes the start of the command only)" yes "$([[ ${#e} -lt 3000 ]] && echo yes || echo no)"
@@ -2564,8 +2565,8 @@ wpa_begin_bash_case "W10 SC-21ac bf: value limit, last accepted — a collected 
 wpa_x_finding "f=$(wpa_vx_val 4096); cat \$f"; wpa_x_finding "for f in $(wpa_vx_val 3000); do cat \"\$f\"; done"
 wpa_x_toolarge "for f in $(wpa_vx_val 4096); do cat \"\$f\"; done" "$wpa_L_whole"
 wpa_end_case
-wpa_begin_bash_case "W10 SC-21ad bf: value limit exceeded is refused — a 4097-character value (an assignment, or the list of a for statement) blocks the command as too large, mentioned or not"
-wpa_x_toolarge "f=$(wpa_vx_val 4097); cat \$f" "$wpa_L_val"; wpa_x_toolarge "f=$(wpa_vx_val 4097); echo \$HOME" "$wpa_L_val"; wpa_x_toolarge "for f in $(wpa_vx_val 4097); do cat \"\$f\"; done" "$wpa_L_val"
+wpa_begin_bash_case "W10 SC-21ad bf: value limit exceeded is refused — a 4097-character value (an assignment, or the list of a for statement) blocks the command as too large, mentioned or not; but a command with no variable reference at all is left alone (the collector's entry gate — removing it would refuse name=value commands that never expand anything)"
+wpa_x_toolarge "f=$(wpa_vx_val 4097); cat \$f" "$wpa_L_val"; wpa_x_toolarge "f=$(wpa_vx_val 4097); echo \$HOME" "$wpa_L_val"; wpa_x_toolarge "for f in $(wpa_vx_val 4097); do cat \"\$f\"; done" "$wpa_L_val"; wpa_x Bash 0 "f=$(wpa_vx_val 4097); echo hi"
 wpa_end_case
 # 21ae: one level of chaining multiplies a value (20 -> 160 -> 1280 -> 6400 characters); the copy of d (about 6.4 KB) is inside the copy limit, so only the value limit decides here
 wpa_vx_chain="a=$wpa_AI; b=\$a\$a\$a\$a\$a\$a\$a\$a; c=\$b\$b\$b\$b\$b\$b\$b\$b"
@@ -3135,8 +3136,8 @@ wpb_RX=('/srv/a(b)c.conf' '/srv/x[1]y.txt' '/srv/p+q.cfg' '/srv/m*n.dat' '/srv/v
 wpb_pr_rx="$(wpa_mkproj r1-rx)";     printf '%s\n' "${wpb_RX[@]}" > "$(wpa_f "$wpb_pr_rx")"
 wpb_pr_meta="$(wpa_mkproj r1-meta)"; printf '%s\n' "${wpa_META[@]}" > "$(wpa_f "$wpb_pr_meta")"
 wpa_use_proj "$wpb_pr_rx"
-wpa_begin_bash_case "W9 SC-R1M8a bf: Read / Edit face, entries are literal — each entry with ( ) [ ] + * ? . is blocked as written, on both tools"
-for wpb_e in "${wpb_RX[@]}"; do wpa_x Read 2 "$wpb_e"; wpa_x Edit 2 "$wpb_e"; done
+wpa_begin_bash_case "W9 SC-R1M8a bf: Read / Edit face, entries are literal — each entry with ( ) [ ] + * ? . is blocked as written AND as a literal substring inside a longer absolute path (relative entry under a prefix), on both tools"
+for wpb_e in "${wpb_RX[@]}"; do wpa_x Read 2 "$wpb_e"; wpa_x Edit 2 "$wpb_e"; wpa_x Read 2 "/opt/app$wpb_e"; wpa_x Edit 2 "/opt/app$wpb_e"; done
 wpa_end_case
 wpa_begin_bash_case "W9 SC-R1M8b ag: Read / Edit face, look-alikes that a regular-expression reading of those entries would hit (abc.conf, x1y.txt, ppq.cfg, nxdat, wXenv2, aXb/dot.conf) stay allowed"
 for wpb_l in /srv/abc.conf /srv/x1y.txt /srv/ppq.cfg /srv/nxdat /srv/wXenv2 /srv/aXb/dot.conf; do wpa_x Read 0 "$wpb_l"; wpa_x Edit 0 "$wpb_l"; done
