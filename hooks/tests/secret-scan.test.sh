@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression test for secret-scan.sh PostToolUse hook (warn-only detector).
 #
-# Coverage: 122 cases (every expect_detect / expect_pass / explicit check below; the count is an assertion: the last case
+# Coverage: 129 cases (every expect_detect / expect_pass / explicit check below; the count is an assertion: the last case
 # compares it with this run's total, so keep it in sync when a case is added or removed).
 #
 # Run: bash aria/hooks/tests/secret-scan.test.sh  (from aria-plugin repo root)
@@ -998,6 +998,96 @@ wpa_nonce="wpahome$(wpa_lower 12)"
 jq -nc --arg t "$wpa_nonce" --arg c "AWS_ACCESS_KEY_ID=$(wpa_akia)" '{tool_name:$t,tool_input:{},tool_response:{output:$c}}' | "$wpa_hook" >/dev/null 2>&1
 wpa_begin "W6 SC-14a bf: a hook run made by this suite (ambient HOME) writes its log line under the suite's private HOME, not the caller's real one"
 wpa_sub "line in the caller's real secret-scan.log" "no" "$(grep -qF -- "tool=$wpa_nonce" "${_wpa_orig_home:-/nonexistent}/.claude/logs/secret-scan.log" 2>/dev/null && echo yes || echo no)"
+wpa_end
+
+# ═════════════════════════════ R1 repair B (TASK-014) — cases for the audit's M4 / M5b / M7 coverage gaps ═════════════════════════════
+# The post-implementation audit rebuilt about 660 faulty copies of the hooks ("mutants") and listed the ones that no case turned red. The cases of this block close the secret-scan
+# side of that list. Each one pins ONE class of mutant; the comment above it names the class and says what turns it red. The current hook passes every case; the evidence
+# that the named mutant does not is in the TASK-014 repair report. Fixtures are assembled at run time like everywhere in this suite (Rule #7: no credential-shaped literal).
+wpb_rep() { printf '%*s' "$2" '' | tr ' ' "$1"; }   # <char> <count>
+
+# M4 -- the 200-span classification cap. 11w uses placeholder values only, so the spans inside the cap never count and a cap one too large or too small cannot show. Here every
+# span is a real value. Red when: the iteration cap (head -n 200) is 199 or 201 (the total reads 200 / 202), or the remainder constant (count - 200) is 199 or 201 (202 / 200).
+wpb_cap_real() {   # <n> -> n assignments with 24-character values of three classes (the first three characters fix the classes)
+  local n="$1" i pool; pool="$(wpa_rand 'A-Za-z0-9' $(( n * 21 )))"
+  for ((i = 0; i < n; i++)); do printf 'K%03d_SECRET = aB3%s\n' "$i" "${pool:i*21:21}"; done
+}
+wpa_l3 "W3 SC-R1M4a bf: classification cap, both sides — 201 REAL assignments: the 200 classified spans and the 1 beyond the cap all count (the cap and the remainder constant agree)" bash "kv-secret-assign=201" "$(wpb_cap_real 201)"
+
+# M4 -- the key-name affixes of kv-secret-assign ({0,64} on each side of the keyword) and the flag-name prefix of cli-secret-flag ({0,40}). The longest name that is allowed
+# must still count and the first one past the bound must stay silent. Red when: a bound is written one smaller (the longest allowed name stops matching) or one larger (the
+# first name that must be silent alerts).
+wpa_begin "W2 SC-R1M4b bf: kv-secret-assign key-name affixes — exactly 64 characters before or after the keyword still make a key, 65 do not"
+wpa_chk bash "64 before the keyword" "kv-secret-assign=1" "$(printf '%s%s = %s' "$(wpb_rep A 64)" TOKEN "$(wpa_alnum 24)")"
+wpa_chk bash "65 before the keyword" silent "$(printf '%s%s = %s' "$(wpb_rep A 65)" TOKEN "$(wpa_alnum 24)")"
+wpa_chk bash "64 after the keyword" "kv-secret-assign=1" "$(printf '%s%s = %s' TOKEN "$(wpb_rep A 64)" "$(wpa_alnum 24)")"
+wpa_chk bash "65 after the keyword" silent "$(printf '%s%s = %s' TOKEN "$(wpb_rep A 65)" "$(wpa_alnum 24)")"
+wpa_end
+wpa_begin "W2 SC-R1M4c bf: cli-secret-flag flag-name prefix — exactly 40 characters in front of the keyword still make a flag, 41 do not"
+wpa_chk bash "40 before the keyword" "cli-secret-flag=1" "$(printf 'tool run --%s%s=%s' "$(wpb_rep a 40)" token "$(wpa_alnum 24)")"
+wpa_chk bash "41 before the keyword" silent "$(printf 'tool run --%s%s=%s' "$(wpb_rep a 41)" token "$(wpa_alnum 24)")"
+wpa_end
+
+# M4 -- the path form needs at least TWO slashes. A value with exactly one slash is a credential (a random base64 value can start with a slash and hold no other), exactly
+# two is a relative path. Red when: `*/*/*` is written `*/*` (the one-slash credential is taken for a path and goes silent) or `*/*/*/*` (the two-slash path alerts).
+wpa_begin "W2 SC-R1M4d bf: the slash count of the path form — a value with exactly one slash counts, one with exactly two is a path and stays silent"
+wpa_chk bash "exactly one slash" "kv-secret-assign=1" "JWT_SECRET = /$(wpa_alnum 24)"
+wpa_chk bash "exactly two slashes" silent "JWT_SECRET = /$(wpa_alnum 8)/$(wpa_alnum 12)"
+wpa_end
+
+# M4 -- the 10-item fingerprint limit as the PEM pre-pass applies it. Ten PEM blocks give ten items (a loop that stops one early gives nine), an eleventh adds none.
+# Red when: the pre-pass loop bound `FP_N < 10` is written `FP_N < 9`. (`< 11` cannot be told apart: _fp_push stops at ten by itself -- an equivalent mutant.)
+wpb_pem_n() {   # <n> -> n small PEM private key blocks
+  local n="$1" i
+  for ((i = 0; i < n; i++)); do printf -- '-----BEGIN %s KEY-----\n%s\n-----END %s KEY-----\n' 'RSA PRIVATE' "$(wpa_rand 'A-Za-z0-9' 32)" 'RSA PRIVATE'; done
+}
+wpa_begin "W4 SC-R1M4e bf: PEM blocks fill the fingerprint list up to ten items and not beyond — 10 blocks, 11 blocks"
+wpa_sub "10 blocks" "-,-,-,-,-,-,-,-,-,-" "$(wpa_fp_of "$(wpb_pem_n 10)")"
+wpa_sub "11 blocks" "-,-,-,-,-,-,-,-,-,-" "$(wpa_fp_of "$(wpb_pem_n 11)")"
+wpa_end
+
+# M5b -- the scanned text is untrusted (the URL branch of _value_of). 7n covers JSON keys only; the password slot of the three URL tags accepts $ ( ) and back quotes, so a
+# value there is the one place a careless eval would run something. The payload uses ${IFS} for the blank (a blank would end the span). basic-auth-url cannot carry a payload:
+# its user and password classes hold no $ ( ) or back quote. Red when: the URL branch evaluates the password text, or the span (the canary file appears).
+wpa_begin "W2 SC-R1M5b rg: no-execution invariant on the URL tags — a command substitution or a back quote in the password slot of a postgres / redis / mongodb URL is only scanned (Bash and Read envelopes)"
+wpb_canary="$wpa_tmp/canary-l3-url"
+for wpb_s in bash read; do
+  for wpb_sch in postgresql redis mongodb; do
+    case "$wpb_sch" in postgresql) wpb_tag=postgres-url ;; redis) wpb_tag=redis-url ;; *) wpb_tag=mongodb-url ;; esac
+    rm -f "$wpb_canary"
+    wpa_sub "$wpb_s $wpb_sch, \$(...): the URL is still detected" "$wpb_tag=1" "$(wpa_got "$wpb_s" "$(wpa_url "$wpb_sch" "\$(touch\${IFS}$wpb_canary)")")"
+    wpa_sub "$wpb_s $wpb_sch, \$(...): canary file" "absent" "$([[ -e "$wpb_canary" ]] && echo present || echo absent)"
+    rm -f "$wpb_canary"
+    wpa_sub "$wpb_s $wpb_sch, back quote: the URL is still detected" "$wpb_tag=1" "$(wpa_got "$wpb_s" "$(wpa_url "$wpb_sch" "\`touch\${IFS}$wpb_canary\`")")"
+    wpa_sub "$wpb_s $wpb_sch, back quote: canary file" "absent" "$([[ -e "$wpb_canary" ]] && echo present || echo absent)"
+  done
+done
+wpa_end
+
+# M7 -- the L3 classification range, tag by tag. The six new tags are listed twice: in CLASSIFIED_TAGS (the W3 whitelist) and in NEW_TAGS (entropy floor, path form, dotted identifier
+# chain). Per tag the suite had only some of the four silent shapes: json-env-secret-key and cf-access-client-secret had none of them (no whitelist line, no entropy / path / dotted
+# line), auth-header-token and cli-secret-flag only the whitelist (SC-11a-11l), not the other three (10i is about kv and json). A tag missing from a list is a false-positive
+# direction -- a value that must stay silent alerts, nothing leaks -- but it is a silent change of what the hook reports. So the whole matrix is one case: per tag a real value
+# counts and the four silent shapes stay silent. Red when: a tag is missing from CLASSIFIED_TAGS (all four silent shapes alert) or from NEW_TAGS (single class, path and dotted chain
+# alert).
+wpb_cls_text() {   # <tag> <value> -> a text in which that tag finds <value>
+  case "$1" in
+    json-credential-field)   wpa_json token "$2" ;;
+    json-env-secret-key)     printf '{"Env":%s}' "$(wpa_json JWT_SECRET "$2")" ;;
+    kv-secret-assign)        printf 'JWT_SECRET = %s' "$2" ;;
+    auth-header-token)       printf 'Authorization: token %s' "$2" ;;
+    cf-access-client-secret) printf 'curl -s -H "CF-Access-Client-Secret: %s" https://ci.example/api' "$2" ;;
+    cli-secret-flag)         printf 'forgejo-runner register --token=%s' "$2" ;;
+  esac
+}
+wpa_begin "W2/W3 SC-R1M7a ag: all six new tags run the whole classifier — a whitelist marker, a single-class value, a file path and a dotted identifier chain stay silent, a real value counts"
+for wpb_tag in json-credential-field json-env-secret-key kv-secret-assign auth-header-token cf-access-client-secret cli-secret-flag; do
+  wpa_chk bash "$wpb_tag: a real value" "$wpb_tag=1" "$(wpb_cls_text "$wpb_tag" "$(wpa_alnum 24)")"
+  wpa_chk bash "$wpb_tag: FAKE_ marker (whitelist)" silent "$(wpb_cls_text "$wpb_tag" "$(wpa_fake 24)")"
+  wpa_chk bash "$wpb_tag: single class (entropy floor)" silent "$(wpb_cls_text "$wpb_tag" "$(wpa_lower 24)")"
+  wpa_chk bash "$wpb_tag: file path (path form)" silent "$(wpb_cls_text "$wpb_tag" "$(wpa_path23)")"
+  wpa_chk bash "$wpb_tag: dotted identifier chain" silent "$(wpb_cls_text "$wpb_tag" "$(wpa_dot3)")"
+done
 wpa_end
 
 # ═════════════════════════════ W7 — fixtures are assembled at run time: the suite text itself must not look like a leak ═════════════════════════════
