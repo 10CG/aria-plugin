@@ -85,10 +85,12 @@
 #     retry that follows the text is blocked again; the text is unchanged on
 #     purpose (secret-hygiene.md §2.5, note).
 #   - Shell variable indirection (`f=...; cat "$f"`) is covered only in part: literal
-#     assignments are expanded in a second pass (at most 16 assignments, 8 replacements
-#     per variable, values up to 4096 characters, a substituted segment up to 8192
-#     characters and 65536 characters of substituted text per command; beyond a limit
-#     the variable or the segment passes). Arrays, `read <<<`, quote-spliced paths, `cd`
+#     assignments are expanded in a second pass (at most 16 assignments and 8 replacements
+#     per variable; beyond those COUNTS the variable passes). The SIZE of the expansion is
+#     bounded as well -- a value up to 4096 characters, a substituted segment up to 8192
+#     characters and 65536 characters of substituted text per command -- and beyond a SIZE
+#     limit the whole command is BLOCKED as too large to scan ("split it", fail-closed,
+#     owner ruling 2026-10-14), never passed. Arrays, `read <<<`, quote-spliced paths, `cd`
 #     + a relative name, globs, `set --`, `$(printf ...)` and variables across two tool
 #     calls pass; the output side is left to secret-scan.sh.
 #
@@ -572,14 +574,20 @@ _sg_compute_credit() {
 # values substituted in. TEXT ONLY: prefix + suffix concatenation with the remainder taken BY LENGTH (${s:N}); no eval (a value may hold a command substitution or back
 # quotes: they must never run inside the hook), no ${s//p/r} (bash 5.2 patsub_replacement and the quote semantics of bash < 4.3 disagree about quotes and `&` in the
 # replacement), no ${s#*"$pat"} (O(n^2) when the hit sits late in a long string).
-# LENGTH BUDGET (review M6): without it the judged string is the segment plus references x value length, and one level of chaining multiplies a value by 8, so a 5 KB
-# command overran the 5 s hook timeout (and a timeout lets the command through). Three limits, counted in characters, all "beyond the limit passes" like the counts above
-# (SC-21 21y): never an error, never a block, the BLOCKED text is untouched. (1) _SGV_VMAX: a value longer than that (as collected, or after chaining) is dropped -- its
-# variable stays text and is never expanded; 4096 is PATH_MAX, a longer value is not one path. (2) _SGV_SMAX: a substituted copy (a segment, or the whole command) that would
-# become longer is not judged (status 2 of _sg_vx_apply). 8192 because a BLOCK verdict costs the square of the copy length (_sg_compute_credit on one long line: about 0.9 s at
-# 8 KB, 3 s at 16 KB, 13 s at 32 KB) and a verdict that arrives after the timeout is lost; a larger copy would keep the pass cheap only for commands that are not blocked.
-# (3) _SGV_TMAX: all copies of one command together (an over-limit attempt counts as _SGV_SMAX); once used up, this segment and the later ones are not judged -- what many
-# dense segments can cost is bounded too. _sg_vx_collect, _sg_vx_apply and _SG_SUB are names of the contract, like _sg_vx_pass: the budget probes of the suite use them.
+# LENGTH BUDGET (review M6; fail-CLOSED, owner ruling 2026-10-14): without it the judged string is the segment plus references x value length, and one level of chaining
+# multiplies a value by 8, so a 5 KB command overran the 5 s hook timeout (and a timeout lets the command through). Three limits, counted in characters. Beyond ANY of them the
+# whole command is BLOCKED with a text of its own ("command too large to scan for secrets ... split it": _sg_emit_blocked with the 4th word oversize, status 2) and never
+# passed: a copy that is not judged is a way past the guard, and padding a value or a chain would be the recipe. The oversize string is never built, expanded further, judged
+# or scanned: the pass stops at the first overrun and nothing behind it is touched, so an overrun costs no more than the budgeted work in front of it (blocking is as cheap as
+# passing was; the 5 s timeout and its fail-open, 10CG/aria-plugin#216, are not touched). (The COUNTS above -- 16 assignments, 8 replacements, 8 for statements -- are another
+# bound and still pass beyond the limit, SC-21 21y.) (1) _SGV_VMAX: a value longer than that (as collected, or after chaining) blocks the
+# command whether or not the variable is mentioned: _sg_vx_collect stops at it and returns 2; 4096 is PATH_MAX, a longer value is not one path. (2) _SGV_SMAX: a substituted
+# copy (a segment, or the whole command) that would become longer blocks the command (status 2 of _sg_vx_apply; the W9 extension's look at the substituted whole command, after
+# the pass, blocks on it only when an extension is in effect -- without one nothing is left unjudged). 8192 because a BLOCK verdict costs the square of the copy length
+# (_sg_compute_credit on one long line: about 0.9 s at 8 KB, 3 s at 16 KB, 13 s at 32 KB) and a verdict that arrives after the timeout is lost. The limit counts the whole judged
+# string, not its growth: a segment (in whole-command mode: the command) over 8192 characters that mentions a collected variable is blocked however small the value is.
+# (3) _SGV_TMAX: all copies of one command together; once used up the command is blocked -- what many dense segments can cost is bounded too.
+# _sg_vx_collect, _sg_vx_apply and _SG_SUB are names of the contract, like _sg_vx_pass: the budget probes of the suite use them.
 _SGV_N=(); _SGV_V=()
 _SG_SUB=""
 _SG_RP=""
@@ -597,6 +605,8 @@ _sg_vx_replace() {
   done
   _SG_RP="${out}${s}"
 }
+# _sg_vx_collect S : fills _SGV_N / _SGV_V from S. Status 0 = collected, 2 = a value is longer than _SGV_VMAX (as collected, or after one level of chaining): it stops at that
+# value at once -- the value is neither stored nor looked at again and nothing behind it is collected -- and the caller blocks the command.
 _sg_vx_collect() {
   local rest="$1" m name val i j n=0 dup pre
   local _q="'" _d='"' _b='`'
@@ -609,7 +619,8 @@ _sg_vx_collect() {
     pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
     [[ "$val" == \"*\" && ${#val} -ge 2 ]] && val="${val:1:${#val}-2}"
     [[ "$val" == \'*\' && ${#val} -ge 2 ]] && val="${val:1:${#val}-2}"
-    [[ -z "$val" || ${#val} -gt $_SGV_VMAX || "$val" == *"\$$name"* || "$val" == *"\${$name}"* ]] && continue
+    (( ${#val} > _SGV_VMAX )) && return 2
+    [[ -z "$val" || "$val" == *"\$$name"* || "$val" == *"\${$name}"* ]] && continue
     dup=0
     for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
       [[ "${_SGV_N[i]}" == "$name" && "${_SGV_V[i]}" == "$val" ]] && dup=1
@@ -622,21 +633,22 @@ _sg_vx_collect() {
     (( n += 1 ))
     m="${BASH_REMATCH[0]}"; name="${BASH_REMATCH[2]}"; val="${BASH_REMATCH[3]}"
     pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
-    [[ -z "$val" || ${#val} -gt $_SGV_VMAX ]] && continue
+    (( ${#val} > _SGV_VMAX )) && return 2
+    [[ -z "$val" ]] && continue
     _SGV_N+=("$name"); _SGV_V+=("$val")
   done
   for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
     for (( j = 0; j < ${#_SGV_N[@]}; j++ )); do
       (( i == j )) && continue
       [[ -z "${_SGV_V[j]}" ]] && continue
-      if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else _SGV_V[i]=""; break; fi
-      if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else _SGV_V[i]=""; break; fi
+      if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
+      if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
     done
   done
   return 0
 }
 # _sg_vx_apply S : S with the collected values substituted -> _SG_SUB. Status 0 = a copy was built, 1 = nothing to substitute, 2 = the copy would be longer than _SGV_SMAX (not
-# built, _SG_SUB stays S). Per variable: ${NAME} through _sg_vx_replace, then $NAME with the same prefix accumulation (the already substituted text is never scanned again;
+# built, _SG_SUB stays S; the caller blocks the command). Per variable: ${NAME} through _sg_vx_replace, then $NAME with the same prefix accumulation (the already substituted text is never scanned again;
 # the remainder keeps the character that ended the match, so $f$f works), at most 8 times.
 _sg_vx_apply() {
   local s="$1" i n v m tail pre out guard changed=1
@@ -663,22 +675,40 @@ _sg_vx_apply() {
   return $changed
 }
 # _sg_vx_pass CMD MODE : the second pass -- judge the substituted copies. MODE is whole or segment, as _sg_core_eval left it in _SG_MODE (in segment mode _SG_SEGS holds
-# the segments). The function name is a contract: the fault-injection and evaluation-order probes locate it by name.
+# the segments). The function name is a contract: the fault-injection and evaluation-order probes locate it by name. An overrun of the length budget (a value, a copy, the total)
+# ends the pass at once with an oversize BLOCK (the size text of _sg_emit_blocked, status 2): nothing behind the overrun is built or judged.
 _sg_vx_pass() {
-  local cmd="$1" mode="$2" seg rc ar spent=0
+  local cmd="$1" mode="$2" seg rc ar cr spent=0
   _sg_vx_collect "$cmd"
+  cr=$?
+  if [[ $cr -eq 2 ]]; then
+    _sg_emit_blocked "a variable value is longer than $_SGV_VMAX characters" "$cmd" "$mode" oversize
+    return 2
+  fi
   (( ${#_SGV_N[@]} )) || return 0
   if [[ "$mode" == whole ]]; then
-    if _sg_vx_apply "$cmd"; then _sg_judge_one "$_SG_SUB" whole; return $?; fi
+    _sg_vx_apply "$cmd"
+    ar=$?
+    if [[ $ar -eq 2 ]]; then
+      _sg_emit_blocked "the command is longer than $_SGV_SMAX characters after variable expansion" "$cmd" whole oversize
+      return 2
+    fi
+    if [[ $ar -eq 0 ]]; then _sg_judge_one "$_SG_SUB" whole; return $?; fi
     return 0
   fi
   for seg in "${_SG_SEGS[@]}"; do
     _sg_vx_apply "$seg"
     ar=$?
     [[ $ar -eq 1 ]] && continue
-    if [[ $ar -eq 2 ]]; then spent=$(( spent + _SGV_SMAX )); else spent=$(( spent + ${#_SG_SUB} )); fi
-    (( spent > _SGV_TMAX )) && break
-    [[ $ar -eq 2 ]] && continue
+    if [[ $ar -eq 2 ]]; then
+      _sg_emit_blocked "a command segment is longer than $_SGV_SMAX characters after variable expansion" "$cmd" segment oversize
+      return 2
+    fi
+    spent=$(( spent + ${#_SG_SUB} ))
+    if (( spent > _SGV_TMAX )); then
+      _sg_emit_blocked "the command segments together are longer than $_SGV_TMAX characters after variable expansion" "$cmd" segment oversize
+      return 2
+    fi
     _sg_judge_one "$_SG_SUB" segment
     rc=$?
     [[ $rc -ne 0 ]] && return "$rc"
@@ -756,9 +786,29 @@ _sg_ext_path_pass() {   # Read/Edit face: entry (lower-cased) as a literal subst
   return 0
 }
 
-# _sg_emit_blocked PAT SEG MODE : the (unchanged) BLOCKED text, shared by every block path.
+# _sg_emit_blocked PAT SEG MODE [oversize] : the (unchanged) BLOCKED text, shared by every block path. With the 4th word `oversize` it prints the SIZE text instead (W10 length
+# budget, fail-closed): nothing was matched, the command is too large to be checked; PAT then names the limit that was hit, SEG and MODE are not used. The size text echoes only
+# the first 200 characters of the command (the command is by definition a large one).
 _sg_emit_blocked() {
-  local pat="$1" seg="$2" mode="$3"
+  local pat="$1" seg="$2" mode="$3" kind="${4:-}"
+  if [[ "$kind" == oversize ]]; then
+    cat >&2 <<EOF
+[secret-guard] BLOCKED: command too large to scan for secrets. Limit hit: $pat
+
+Nothing was matched. After variable expansion the command is bigger than the guard
+can check reliably, and a command that cannot be checked is blocked (fail-closed),
+not allowed.
+
+Split it into smaller commands and run them one at a time:
+  - keep every variable value, and every command after expansion, short;
+  - do not repeat one long \$VAR many times in a single command;
+  - write long files with the Write / Edit tool instead of a heredoc.
+命令过大, 无法扫描其中是否含密钥, 请拆成更小的命令
+
+Command was (first 200 characters): $(_sg_redact_echo "${command:0:200}")
+EOF
+    return 0
+  fi
   cat >&2 <<EOF
 [secret-guard] BLOCKED: command reads a secret-bearing source without a
 value-REDACTING filter. Matched pattern: $pat
@@ -1424,9 +1474,11 @@ _sg_judge_one() {
 # Order (W9 / W10): 1. the built-in judgement (_sg_core_eval: the baseline body of this function, unchanged); 2. only if it allowed, the W10 variable pass (_sg_vx_pass);
 # 3. only if both allowed, the W9 project extension -- on the original command, then on the variable-substituted whole command. A built-in block ends the evaluation
 # before either later stage is even called, so nothing the built-ins decide is postponed or reversed. The extension runs ONLY inside command substitutions; its answer
-# is the literal sentinel BLOCK, anything else (empty, error, fault) means "no extension block". Its own block prints the shared BLOCKED text (W13).
+# is the literal sentinel BLOCK, anything else (empty, error, fault) means "no extension block". Its own block prints the shared BLOCKED text (W13). Length budget: an overrun
+# inside _sg_vx_pass blocks there; the extension's look at the substituted whole command, when that copy is too large to build, blocks here -- but only when an extension is in
+# effect (entries exist: asked inside a command substitution like every other extension call), because without one nothing is left unjudged.
 _sg_per_segment_eval() {
-  local cmd="$1" rc _x
+  local cmd="$1" rc ar _x
   _sg_core_eval "$cmd"
   rc=$?
   [[ $rc -ne 0 ]] && return "$rc"
@@ -1436,8 +1488,15 @@ _sg_per_segment_eval() {
     [[ $rc -ne 0 ]] && return "$rc"
   fi
   _x="$( _sg_ext_pass "$cmd" 2>/dev/null )"
-  if [[ "$_x" != BLOCK ]] && (( ${#_SGV_N[@]} )) && _sg_vx_apply "$cmd"; then
-    _x="$( _sg_ext_pass "$_SG_SUB" 2>/dev/null )"
+  if [[ "$_x" != BLOCK ]] && (( ${#_SGV_N[@]} )); then
+    _sg_vx_apply "$cmd"
+    ar=$?
+    if [[ $ar -eq 0 ]]; then
+      _x="$( _sg_ext_pass "$_SG_SUB" 2>/dev/null )"
+    elif [[ $ar -eq 2 && -n "$( _sg_ext_entries 2>/dev/null )" ]]; then
+      _sg_emit_blocked "the command is longer than $_SGV_SMAX characters after variable expansion, too large for the project extension (.aria/secret-guard.paths) to check" "$cmd" segment oversize
+      return 2
+    fi
   fi
   if [[ "$_x" == BLOCK ]]; then
     _sg_emit_blocked "(extension) .aria/secret-guard.paths" "$cmd" segment
