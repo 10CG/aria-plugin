@@ -148,6 +148,7 @@ C.2 - PR/合并:
         5. 处理 verdict:
            - PASS / PASS_WITH_WARNINGS → 继续推送和创建 PR
            - FAIL → 阻塞合并，输出审计报告
+           - 门 verdict=pass/bypassed 而按步骤 3 同一条链 + execution-modes.md 入口逻辑「2. 确定模式」对 pre_merge 精确推导为 "off" (典型: adaptive 档该 change 的 Level 推导 off, §1.4 格 D) ⇒ 不执行 pre_merge 审计, 按 on_skip 路径继续推送和创建 PR; workflow report 必带 [INFO] 行: completeness gate verdict + pre_merge 精确推导为 "off" + 依据 (enabled_by / Level / 档位); audit_verdict 无值 (与「审计未启用」同形, 不新增取值)
       backward_compat:
         audit.enabled=false: 完全跳过，Phase C 行为与之前完全相同
         旧配置 experiments.agent_team_audit: 由 audit-engine 内部映射处理
@@ -164,7 +165,7 @@ C.2 - PR/合并:
   output:
     pr_url: "https://..."
     pr_number: 123
-    audit_verdict: "PASS"                 # 如审计启用 (PASS | PASS_WITH_WARNINGS | FAIL)
+    audit_verdict: "PASS"                 # 如审计启用 (PASS | PASS_WITH_WARNINGS | FAIL); 门 pass/bypassed 而精确推导为 "off" 未执行审计时无此值
     audit_report: ".aria/audit-reports/pre_merge-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md"
 
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。

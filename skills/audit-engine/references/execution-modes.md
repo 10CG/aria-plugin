@@ -29,16 +29,35 @@
        SC-15.10-typo-mode-lazy-when-inclusion-nonempty 锁住), 不改变其它 checkpoint 的处置
 
 2. 确定模式 (为该 checkpoint 的实际执行选 mode, 此时具体是哪个 change 已明确; 与上方「是否启用」
-   共用级 1, 但 2a 不取上界 —— 直接按该 change 的 Level 精确推导, 见上方 Step 1 括注):
+   共用级 1, 但 2a 不取上界 —— 直接按该 change 的 Level 精确推导 (Level 取不到时例外,
+   按下方「Level 取不到时不当 "off"」一条取值), 见上方 Step 1 括注):
    - mode 参数显式指定 → 使用指定值
    - audit.mode == "adaptive" → 按 adaptive_rules 推导
    - checkpoints 显式配置 > adaptive_rules 推导 > 默认 off
+   - Level 取不到时不当 "off": 三种来源 —— spec_level_undetermined (Level 解析不出:
+     proposal 无 Level 行 / Level 行存在但取不出 1-3 / proposal.md 缺失或不可读) 被
+     allow_incomplete_checkpoints 豁免为 bypassed、allow_dangling_change_ids 的
+     dangling-skip、其余 Level 解析失败但不短路 —— 一律按档位取值: adaptive 档取
+     adaptive_rules 三档的上界 (最严的非 "off" 值, 默认配置 = challenge; 三档全 "off"
+     时上界即 "off", 不执行); convergence / challenge 档取档位值本身 (dangling 的
+     change_id 不改变本步取值); manual 档取 "off"。依据: 两个宽松开关是放宽检查,
+     不是关掉动作 (audit-engine SKILL.md 配置注释「开启后 pre_merge 仍执行」「开启后
+     写盘仍执行」); Level 不知道不等于 owner 配了 off (owner 裁定, 2026-10-15)
+   - 多 change 归约: 作用域含多个 change 时逐 change 按上述规则 (含上一条 Level 取不到
+     的取值) 精确推导后归约 —— 任一 change 非 "off" ⇒ 该 checkpoint 的审计执行, 归约
+     模式取各 change 精确结果中最严的非 "off" 值 (严格度序 off < convergence <
+     challenge); 全部为 "off" 才不执行。与 Pre-merge 门侧 §1.4 的前置归约 R-1 / R-2
+     同口径 (owner 裁定, 2026-10-15)
    - 本步精确推导的结果若为 "off" ⇒ 不执行该 checkpoint 的审计; 对 pre_merge 而言, completeness
      gate 仍照常运行 (不受本步推导结果影响), 其 fail/error 仍按下方 Pre-merge 节 Step 5 阻塞;
      本条只决定门放行之后是否进入 Convergence/Challenge 流程 —— mode 非 off 时放行后进入该
      流程, 精确推导为 off 时放行后 (即便 completeness gate 已判 verdict=pass, 如 Pre-merge 节
      §1.4 的格 D / 格 E) 也不进入: 门的 pass 只确认前置 checkpoint 证据齐全, 不代表 pre_merge
      本身该跑 (两者正交, 见下方 Pre-merge 节 Step 5)
+   - 上条括注里的格 E 例子按「Level 取不到时不当 "off"」一条归约 —— adaptive 档取上界、
+     convergence / challenge 档取档位值, 归约后通常非 "off"、会进入审计; 仅 manual 档与
+     三档全 "off" 的 adaptive 配置归约后仍为 "off"。格 E 的门侧 [INFO] 行文案 (「pre_merge
+     取 "off"」) 描述的是门内逐对解析, 不是本步取值
 
 3. 加载 Agent 分组:
    - agents_config 参数 > config.json teams[checkpoint] > 默认分组
@@ -143,6 +162,7 @@ Checkpoint Report Completeness Gate (pre_merge 专属):
       入口逻辑「2. 确定模式」对 pre_merge 本身精确推导: mode 非 "off" → 进入正常 pre_merge 审计
       流程; 按该 change 的 Level 精确推导为 "off" ⇒ 不执行 pre_merge 审计, 门已判 pass (如
       §1.4 格 D / 格 E) 亦同 —— 门放行只代表前置证据齐全, 不代表 pre_merge 本身该跑
+      (上句括注里的格 E 例子同样按入口逻辑「Level 取不到时不当 "off"」归约, 通常非 "off"; 调用方 phase-c-integrator 步骤 5 对精确推导为 "off" 的一支按 on_skip 继续合并, 见其 SKILL.md)
     verdict == "fail" 或 "error" → 拒绝执行 pre_merge 审计, 输出 ERROR (见下方), 中止
     消费方 fail-closed 义务: exit≠0 或 stdout 非 JSON 或 schema_version 未知 ⇒ 按 fail 处置 (拒绝执行 pre_merge 审计, 输出 ERROR), 不得按 PASS
 ```
