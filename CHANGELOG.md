@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **新放行**: `os.environ` 单键读取; jq `keys_unsorted` / `map_values(length)`。
 - **新静默**: 既有 `json-secret-field` 上的整值占位 / 掩码 / wrapper 占位 / 以 `…` 结尾的截断值; 哨兵回灌造成的重复计数。
 - **日志**: `fp=` 字段 (仓内无读取方)。
-- **性能 (CPU)**: Read 面每次多一次扫描 (整进程 CPU 时间约 0.104 s → 约 0.299 s; 60 KB 无命中文本约 0.345 s); Bash 面无扩展文件时约 +24% CPU、Read 面约 +7%; 含 `$VAR` 引用的命令因变量间接的第二遍约为基线的 1.45–2.5 倍 (内建先判, 已被拦下的命令不付第二遍); 200 条扩展条目约 +30 ms / 次调用; 命令里出现列入的路径时多付一遍内建判定 (约 2 倍, 与出现点数无关); 长单行 L3 输入的匹配与取值对长度线性。以上为 Spec 原型量级, 发版前以 <TASK-010 实测> 复测值替换。
+- **性能 (CPU)**: Read 面每次多一次扫描 (整进程 CPU 时间约 0.104 s → 约 0.299 s; 60 KB 无命中文本约 0.345 s); Bash 面无扩展文件时约 +24% CPU、Read 面约 +7%; 含 `$VAR` 引用的命令因变量间接的第二遍约为基线的 1.45–2.5 倍 (内建先判, 已被拦下的命令不付第二遍); 200 条扩展条目约 +30 ms / 次调用; 命令里出现列入的路径时多付一遍内建判定 (约 2 倍, 与出现点数无关); 长单行 L3 输入的匹配与取值对长度线性。以上为 Spec 原型量级; TASK-010 实测 (268da8f→目标, 交错 CPU min/5): f 1.55–1.72× · g 1.04–1.13× · fh 1.99× · i 1.15–1.23× · i3 固有 1.14–1.74× / 300KB 不带引号 kv 3.04–3.41×; W14 全部 20 个有界档 PASS。
 
 ### Documentation
 
@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 
 - `secret-guard.test.sh` 599 (593 无 zsh) → **822 (816 无 zsh)**, 含 census `family_count` 61 → 64 与新族探针、未绑定变量注入自测、测试内 SC-8 五档延迟闸 (阈值与口径不改); `risky_patterns` 静态行数 149 (预算 ≤ 150)。`secret-scan.test.sh` 49 → **129**, 头注释 `Coverage: K cases` 与一条读取它的自检断言 (K 与实跑总数一致)。standards `secret-hygiene.md` 的计数与二者同步。
-- 验收探针 `baseline_probe.py` 目标态全部 `yes` <TASK-010 填: 命令与结果行>。
+- 验收探针 `baseline_probe.py` (WPA_BASH32 + WPA_REQUIRE_ALL=1) 目标态全部 `yes`, PROBE_EXIT=0 target shape holds (baseline-failing 226 · doc-sync 26 · reverse-guard 82 · allow-guard 70 · known-limit 40 · zero-regression 9; 30a = 另跑的 git-history 腿); SC-30 真 checkout guard 816/816 · scan 129/129; W14 时档 20/20 有界档 PASS。
 
 ### Notes
 
