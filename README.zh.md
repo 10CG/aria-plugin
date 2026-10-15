@@ -2,7 +2,7 @@
 
 # Aria Plugin
 
-> **版本**: 1.74.1 | **发布日期**: 2026-09-30
+> **版本**: 1.75.0 | **发布日期**: 2026-10-15
 >
 > Claude Code 的 AI-DDD 方法论完整插件 — 34 个面向用户 Skills + 7 个内部 + 11 个 Agents + 5 个 Hooks（含默认 secret-guard）
 
@@ -30,7 +30,7 @@
 | `PreToolUse` | Write\|Edit\|NotebookEdit | handoff-location-guard.sh | Rule #9 L1 — 阻断写入 `.aria/handoff/*.md` |
 | `PreToolUse` | Bash | **secret-guard.sh** | Rule #7 Layer 2 — 阻断 raw secret 读取（命令模式扫描），v1.24.0+ |
 | `PreToolUse` | Read\|Edit\|Write\|MultiEdit | **secret-guard.sh** | Rule #7 Layer 2 — 阻断含 secret 的文件路径（.env、id_rsa 等），v1.24.0+ |
-| `PostToolUse` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — 检测 secret 形态输出 + 告警（additionalContext/systemMessage）；无法 redact（PostToolUse 架构限制），真实防线 = PreToolUse secret-guard，v1.24.0+ |
+| `PostToolUse` + `PostToolUseFailure` | Bash\|Read\|Edit\|Write\|MultiEdit | **secret-scan.sh** | Rule #7 Layer 2 — 检测 secret 形态输出 + 告警（additionalContext/systemMessage）；无法 redact（PostToolUse 架构限制），真实防线 = PreToolUse secret-guard，v1.24.0+ |
 
 **禁用 Hooks**：
 ```bash
@@ -150,9 +150,17 @@ export ARIA_HOOKS_DISABLED=true
 # PreToolUse Read|Edit|Write|MultiEdit — 阻断含 secret 的文件路径 (v1.24.0+)
 # → 如读取 .env / id_rsa / .pem / .aws/credentials / .kube/config → BLOCKED
 
+# 项目级敏感路径 (可选): <项目根>/.aria/secret-guard.paths
+# → 一行一个字面子串 (大小写不敏感, `#` 起首为注释); 只在内建名单之上追加拦截, 不能放宽
+# → 条目选最短的特征子串 (如文件名), 不要列完整路径
+# → 覆盖内建 Forgejo/Gitea app.ini 规则的读取器集 + Read/Edit; 不覆盖 Grep 工具
+# → 文件无效 (超过 32 KiB、超过 200 条、不可读) 时整体忽略, 且静默
+
 # PostToolUse * — 扫描输出中的 secret 形态内容, 检测 + 告警 (v1.24.0+)
 # → warn-only (始终 exit 0); 经 additionalContext/systemMessage 检测 + 告警,
 #   不改写 tool_response (PostToolUse 无法 redact — 真实防线 = PreToolUse)
+# → Claude Code 2.1.285 的 PostToolUse 输出 schema 含 updatedToolOutput — 端到端未验证, 本 hook 不使用
+# PostToolUseFailure — 同一扫描也作用于失败工具调用 (非零退出) 的错误文本
 
 # 诊断安装状态:
 bash ${CLAUDE_PLUGIN_ROOT}/skills/aria-doctor/scripts/check_secret_guard_install.sh
