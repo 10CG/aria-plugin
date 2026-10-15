@@ -5,7 +5,7 @@
 #
 # What this hook IS:
 #   A blacklist-based speed-bump that catches accidental secret reads emitted
-#   by Claude (the LLM) in response to operator prompts. It covers the ~100
+#   by Claude (the LLM) in response to operator prompts. It covers the
 #   most common patterns: cloud secret managers (AWS/GCP/Aliyun/Doppler/etc.),
 #   K8s/Vault/Nomad secret APIs, .env / id_rsa / .pem / .aws/credentials /
 #   kubeconfig file reads, psql sensitive-column queries, base64-pipe-bash and
@@ -18,9 +18,9 @@
 #     mangling tool_name input shape.
 #   - Not a content scanner. The hook acts BEFORE tool execution, so it never
 #     sees the output. If a command returns secrets and isn't in the blacklist,
-#     they flow to LLM context unguarded. Phase 2 would add PostToolUse hook
-#     that regex-scans output for `^[A-Z_]+=.+$` style env lines + redacts —
-#     out of scope for current implementation.
+#     they flow to LLM context unguarded. The companion PostToolUse hook
+#     secret-scan.sh scans the output after the fact (detect + warn only, it
+#     cannot undo the leak) — see its header and secret-hygiene.md §5.
 #   - Not a defense against malicious operators. Anyone with shell access can
 #     `chmod -x` this file or set SECRET_GUARD_BYPASS_NO_JQ=1.
 #
@@ -59,8 +59,40 @@
 #   The 2026-05-16 incident was a TYPICAL pattern — raw curl to Nomad var
 #   endpoint, no jq filter, no malice. The hook prevents the same pattern +
 #   ~80% of cousin patterns. Combined with operator awareness training (see
-#   docs/operations/secret-rotation-runbook.md §1.3 principles) it's a
+#   standards/conventions/secret-hygiene.md §1 principles) it's a
 #   meaningful defense layer, not a guarantee.
+#
+# === Project extension + residual gaps (secret-net-l3-and-bypass-paths) ===
+#
+# Extension: <project root>/.aria/secret-guard.paths adds blocks without touching
+#   this file. One LITERAL substring per line (case-insensitive, `#` comments, 4-200
+#   bytes per entry, at most 200 entries, file at most 32 KiB); the project root is
+#   CLAUDE_PROJECT_DIR, else the stdin cwd. It can only ADD: every built-in verdict
+#   comes first, and the first 64 occurrences of an entry in one command are checked.
+#   A missing or invalid file turns the extension off SILENTLY (the built-in list is
+#   unaffected). Coverage = the readers of the built-in app.ini row + Read/Edit; the
+#   Grep tool, redirected reads, `source`, `dd`, `xargs cat`, `find -exec` and the
+#   65th occurrence onwards are not covered. List the SHORTEST distinctive substring
+#   (a file name), not a full path. Details: secret-hygiene.md §5.6.
+# Residual gaps, all unfixed on purpose:
+#   - `systemctl status` and `docker inspect <container>` (full JSON with Config.Env)
+#     are allowed: common health checks, the false-positive cost is too high.
+#     Credential-shaped lines in their output are alerted after the fact by
+#     secret-scan.sh (failed calls too).
+#   - The shared BLOCKED text lists `Acceptable filters` such as `| grep '^SAFE_PREFIX='`.
+#     The tight families (claude-config, app.ini, the ps / pgrep -a / top -c /
+#     docker top rows, extension entries) give no credit to line filters, so a
+#     retry that follows the text is blocked again; the text is unchanged on
+#     purpose (secret-hygiene.md §2.5, note).
+#   - Shell variable indirection (`f=...; cat "$f"`) is covered only in part: literal
+#     assignments are expanded in a second pass (at most 16 assignments and 8 replacements
+#     per variable; beyond those COUNTS the variable passes). The SIZE of the expansion is
+#     bounded as well -- a value up to 4096 characters, a substituted segment up to 8192
+#     characters and 65536 characters of substituted text per command -- and beyond a SIZE
+#     limit the whole command is BLOCKED as too large to scan ("split it", fail-closed,
+#     owner ruling 2026-10-14), never passed. Arrays, `read <<<`, quote-spliced paths, `cd`
+#     + a relative name, globs, `set --`, `$(printf ...)` and variables across two tool
+#     calls pass; the output side is left to secret-scan.sh.
 #
 # === History ===
 #   v1.0: PR #429 initial — basic regex blacklist for Bash tool only
@@ -111,6 +143,19 @@
 #             .aria/notes/secret-guard-179-pattern-rows.md for the full
 #             row-by-row rationale of what's in/out of scope.
 #         3 known residual gaps of (3) listed above under "Coverage gaps".
+#   secret-net-l3-and-bypass-paths (10CG/aria-plugin#154, #203; 10CG/Aria#221):
+#         (1) Forgejo / Gitea app.ini joins the manifest on BOTH planes (Bash
+#             readers, python3 -c / node -e, Read/Edit path regex) with tight credit.
+#         (2) Process-table enumeration rows: ps with full command lines, pgrep -a,
+#             top -c, docker top, wrapped env dumps, /proc/<pid>/environ|cmdline.
+#         (3) Project extension .aria/secret-guard.paths (above): literal substrings,
+#             judged by the built-in app.ini judgement, can only add blocks.
+#         (4) Shell-variable indirection, a second pass after every built-in verdict
+#             allowed (partial coverage, see the residual gaps above).
+#         (5) Two false positives removed: os.environ single-key reads and the
+#             metadata-only jq forms keys_unsorted / map_values(length).
+#         The BLOCKED text is unchanged (the advice on credentials in argv lives in
+#         secret-hygiene.md §3.8, not in this text).
 #
 # Operator bypass (logged to ~/.claude/logs/guard-bypass.log):
 #   Bash:        ... # guard:ack: <reason ≥ 8 non-whitespace chars describing why>
@@ -383,6 +428,28 @@ _SG_CLAUDE_CFG='\.claude/+(\./+)*settings\.json|\.claude/+(\./+)*settings\.local
 _SG_PP_NAME="(^|[[:space:]\"'=/])"
 _SG_PP_SUFFIX="(^|[[:space:]\"'=/*A-Za-z0-9_.-])"
 
+# ── secret-net-l3-and-bypass-paths (W8 / W11): shared names, single definition, several consumers ──
+# W8: server-side config files of Forgejo / Gitea (JWT_SECRET, SECRET_KEY, INTERNAL_TOKEN live in app.ini; 10CG/aria-plugin#203). A path component holding
+# `forgejo` or `gitea` (a word-internal prefix is fine: `git-forgejo`), then any non-blank non-quote characters of the same path, then `app.ini`; or
+# `custom/conf/app.ini`. The right boundary (no letter / digit / `_` right after `app.ini`: the backup `app.ini.bak` is covered, `app.inix` is not) is added by
+# each consumer. Consumers: the Bash-face reader row, the python3 -c / node -e source groups, the credit tightening below; the Read/Edit-face regex spells the
+# same group in lower case. No \b anywhere in the new text (BSD regex does not support it, same family as 10CG/aria-plugin#144).
+_SG_SRVCFG='[A-Za-z0-9._-]*(forgejo|gitea)[^[:space:]|;&"'"'"']*app\.ini|custom/conf/app\.ini'
+# The printing readers of the W8 row: the 13 of the claude-config row plus nl tac rev sort uniq cut paste diff cmp comm xxd od hexdump base64 column fold (29).
+_SG_READERS_PRINT='cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq|nl|tac|rev|sort|uniq|cut|paste|diff|cmp|comm|xxd|od|hexdump|base64|column|fold'
+# W11: process-table enumeration that prints argv / environ -- ps (procps semantics) in its argv-exposing spellings, pgrep / pstree `-a`, top `-c`, docker top,
+# docker ps --no-trunc -- at a command position behind an optional launcher / absolute directory prefix, and behind remote / shell wrappers. The three rule rows in
+# risky_patterns spell the same text as literals (a rule row that is only a variable is an empty string for the census, SC-31 31c); the copies below are what the
+# credit tightening matches. _SG_PROCTAB_ALL is the tight copy: the ps family ONLY -- the env / printenv alternatives of the wrapper row exist in the rule row
+# alone, they keep the baseline credit (a dump followed by `| cut -d= -f1` or `| wc -l` stays allowed). The two copies must not drift (SC-22 22bm / 22bn).
+_SG_PROCTAB='(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*((then|do|else|elif)[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env|time|eval|setsid|ionice|unbuffer|command|exec)([[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]|;&()<>`"'"'"'][^[:space:]|;&()<>`"'"'"']*)?|[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c))'
+_SG_PS_REMOTE_T='(ssh|docker[[:space:]]+(compose[[:space:]]+)?exec|kubectl[[:space:]]+exec|nomad[[:space:]]+alloc[[:space:]]+exec|pct[[:space:]]+exec|lxc[[:space:]]+exec|podman[[:space:]]+exec|(sh|bash|zsh|dash)[[:space:]]+-c|watch)[^|]*[[:space:]'"'"'"(`](((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c)))'
+_SG_PS_DOCKER='(docker|podman)[[:space:]]+((compose|container)[[:space:]]+)?top([^[:alnum:]_-]|$)|(docker|podman)[[:space:]]+(container[[:space:]]+)?(ps|ls)[[:space:]]+([^|;&]*[[:space:]])?--no-trunc'
+_SG_PROCTAB_ALL="(${_SG_PROCTAB}|${_SG_PS_REMOTE_T}|${_SG_PS_DOCKER})"
+# W11 /proc: the pid position of /proc/<pid>/environ|cmdline -- self, thread-self, digits, $$ $!, a glob token holding * or ?, $name, ${...}, $(...). A placeholder
+# word (/proc/<pid>/cmdline, /proc/[pid]/environ) is prose, not a pid.
+_SG_PIDTOK='(self|[0-9]+|[^/[:space:]]*[*?][^/[:space:]]*|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$\([^)]*\)|thread-self|\$[$!])'
+
 _sg_compute_credit() {
   local seg="$1"
   # ── Filter detection (only REDACTING filters count) ────────────────────────
@@ -402,8 +469,11 @@ _sg_compute_credit() {
   # exist to protect; line/column filters (grep anchor, grep -v, sed, cut, awk)
   # are unreliable redaction for JSON (values span/nest lines). Non-claude
   # sources keep every existing credit rule unchanged.
+  # W8 / W11 (secret-net-l3-and-bypass-paths): the same tightening for the Forgejo / Gitea app.ini name group and for the ps family of the process-table rows --
+  # `ps -ef | grep -v grep` and `cat .../app.ini | grep '^JWT_SECRET'` still print whole command lines / the credential line, so a row-level filter is no credit.
+  # wc / hash / discard / name-only credits stay.
   local tight=0
-  if [[ "$seg" =~ ($_SG_CLAUDE_CFG) ]]; then
+  if [[ "$seg" =~ ($_SG_CLAUDE_CFG|$_SG_SRVCFG) ]] || [[ "$seg" =~ $_SG_PROCTAB_ALL ]]; then
     tight=1
   fi
 
@@ -425,6 +495,12 @@ _sg_compute_credit() {
   #
   # Everything else = no filter credit, fall through to risky_patterns check.
   if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"']?(.+\|[[:space:]]*)?(keys|length|paths|leaf_paths)[\"']?[[:space:]]*(\$|\|)" "$seg"; then
+    has_filter=1
+  fi
+  # W12 (secret-net-l3-and-bypass-paths): anchored metadata-only forms -- the program is quoted, may start with ONE simple dotted path plus `|`, then exactly
+  # one token (keys_unsorted | map_values(length)), and the closing quote follows the token at once. Deliberately NOT added to the word list above: that list
+  # accepts anything after `word |`, so `jq 'keys_unsorted | $ENV'` would pass. No tight gate: the form is valid under the claude-config tightening too.
+  if _sg_line_match "\|[[:space:]]*jq([[:space:]]+(-[a-zA-Z]+|--[a-z-]+))*[[:space:]]+[\"'](\.[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*\|[[:space:]]*)?(keys_unsorted|map_values\(length\))[\"'][[:space:]]*(\$|\|)" "$seg"; then
     has_filter=1
   fi
   # Whitelisted: `jq '{alias: .safe_field}'` — single-line allowlist projection.
@@ -484,6 +560,308 @@ _sg_compute_credit() {
   fi
 
   [[ $has_filter -eq 1 ]]
+}
+
+# ── secret-net-l3-and-bypass-paths (W9 / W10 / W13) ──
+# Every function that _sg_judge_one and _sg_per_segment_eval call, directly or through another helper (_sg_core_eval, _sg_emit_blocked, _sg_vx_*, _sg_ext_* and their
+# helpers), is defined HERE, above the unit-test sourcing gate: the SC-8 latency gate of the test suite sources this part and then pulls the two functions out by their
+# anchors; a helper below the gate is command-not-found (rc=127) in that harness and the gate would stay green on a no-op (W14). The two anchored names and the closing
+# `}` on a line of its own must not change. _sg_redact_echo (below the gate since the baseline) only feeds echo text that is discarded in that harness.
+
+# W10 -- path through a shell variable (partial coverage): a SECOND pass that runs only after EVERY built-in verdict allowed (_sg_vx_pass), so the built-in verdict is never
+# postponed or changed and the pass can only add blocks. Literal assignments are collected from the whole command (NAME=value, `for NAME in list`, one level of chaining; at
+# most 16 assignments and 8 replacements per variable); every segment (the whole command when it degraded) that mentions $NAME or ${NAME} is judged once more with the
+# values substituted in. TEXT ONLY: prefix + suffix concatenation with the remainder taken BY LENGTH (${s:N}); no eval (a value may hold a command substitution or back
+# quotes: they must never run inside the hook), no ${s//p/r} (bash 5.2 patsub_replacement and the quote semantics of bash < 4.3 disagree about quotes and `&` in the
+# replacement), no ${s#*"$pat"} (O(n^2) when the hit sits late in a long string).
+# LENGTH BUDGET (review M6; fail-CLOSED, owner ruling 2026-10-14): without it the judged string is the segment plus references x value length, and one level of chaining
+# multiplies a value by 8, so a 5 KB command overran the 5 s hook timeout (and a timeout lets the command through). Three limits, counted in characters. Beyond ANY of them the
+# whole command is BLOCKED with a text of its own ("command too large to scan for secrets ... split it": _sg_emit_blocked with the 4th word oversize, status 2) and never
+# passed: a copy that is not judged is a way past the guard, and padding a value or a chain would be the recipe. The oversize string is never built, expanded further, judged
+# or scanned: the pass stops at the first overrun and nothing behind it is touched, so an overrun costs no more than the budgeted work in front of it (blocking is as cheap as
+# passing was; the 5 s timeout and its fail-open, 10CG/aria-plugin#216, are not touched). (The COUNTS above -- 16 assignments, 8 replacements, 8 for statements -- are another
+# bound and still pass beyond the limit, SC-21 21y.) (1) _SGV_VMAX: a value longer than that (as collected, or after chaining) blocks the
+# command whether or not the variable is mentioned: _sg_vx_collect stops at it and returns 2; 4096 is PATH_MAX, a longer value is not one path. (2) _SGV_SMAX: a substituted
+# copy (a segment, or the whole command) that would become longer blocks the command (status 2 of _sg_vx_apply; the W9 extension's look at the substituted whole command, after
+# the pass, blocks on it only when an extension is in effect -- without one nothing is left unjudged). 8192 because a BLOCK verdict costs the square of the copy length
+# (_sg_compute_credit on one long line: about 0.9 s at 8 KB, 3 s at 16 KB, 13 s at 32 KB) and a verdict that arrives after the timeout is lost. The limit counts the whole judged
+# string, not its growth: a segment (in whole-command mode: the command) over 8192 characters that mentions a collected variable is blocked however small the value is.
+# (3) _SGV_TMAX: all copies of one command together; once used up the command is blocked -- what many dense segments can cost is bounded too.
+# _sg_vx_collect, _sg_vx_apply and _SG_SUB are names of the contract, like _sg_vx_pass: the budget probes of the suite use them.
+_SGV_N=(); _SGV_V=()
+_SG_SUB=""
+_SG_RP=""
+_SGV_VMAX=4096
+_SGV_SMAX=8192
+_SGV_TMAX=65536
+# _sg_vx_replace S PAT REP [MAX] : literal replace-all of PAT in S, at most 8 replacements -> _SG_RP; with MAX (characters) it stops with status 1 as soon as the result would be
+# longer than MAX (_SG_RP is then S unchanged)
+_sg_vx_replace() {
+  local s="$1" pat="$2" rep="$3" max="${4:-0}" out="" g=0 pre
+  _SG_RP="$s"
+  while (( g < 8 )) && [[ "$s" == *"$pat"* ]]; do
+    g=$((g+1)); pre="${s%%"$pat"*}"; out="${out}${pre}${rep}"; s="${s:$(( ${#pre} + ${#pat} ))}"
+    (( max > 0 && ${#out} + ${#s} > max )) && return 1
+  done
+  _SG_RP="${out}${s}"
+}
+# _sg_vx_collect S : fills _SGV_N / _SGV_V from S. Status 0 = collected, 2 = a value is longer than _SGV_VMAX (as collected, or after one level of chaining): it stops at that
+# value at once -- the value is neither stored nor looked at again and nothing behind it is collected -- and the caller blocks the command.
+_sg_vx_collect() {
+  local rest="$1" m name val i j n=0 dup pre
+  local _q="'" _d='"' _b='`'
+  _SGV_N=(); _SGV_V=()
+  [[ "$rest" == *'$'* && "$rest" == *=* ]] || [[ "$rest" == *'$'* && "$rest" == *' in '* ]] || return 0
+  local re="(^|[;&|[:space:](${_d}${_b}${_q}])((export|declare|local|readonly|typeset)[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?([A-Za-z_][A-Za-z0-9_]*)=(${_d}([^${_d}]*)${_d}|${_q}([^${_q}]*)${_q}|\\\$\\([^)]*\\)|${_b}[^${_b}]*${_b}|[^[:space:];&|)${_d}${_b}${_q}]*)"
+  while (( n < 16 )) && [[ "$rest" =~ $re ]]; do
+    (( n += 1 ))
+    m="${BASH_REMATCH[0]}"; name="${BASH_REMATCH[5]}"; val="${BASH_REMATCH[6]}"
+    pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
+    [[ "$val" == \"*\" && ${#val} -ge 2 ]] && val="${val:1:${#val}-2}"
+    [[ "$val" == \'*\' && ${#val} -ge 2 ]] && val="${val:1:${#val}-2}"
+    (( ${#val} > _SGV_VMAX )) && return 2
+    [[ -z "$val" || "$val" == *"\$$name"* || "$val" == *"\${$name}"* ]] && continue
+    dup=0
+    for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
+      [[ "${_SGV_N[i]}" == "$name" && "${_SGV_V[i]}" == "$val" ]] && dup=1
+    done
+    (( dup )) || { _SGV_N+=("$name"); _SGV_V+=("$val"); }
+  done
+  rest="$1"; n=0
+  local rf="(^|[;&|[:space:](])for[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+in[[:space:]]+([^;&|)]*)"
+  while (( n < 8 )) && [[ "$rest" =~ $rf ]]; do
+    (( n += 1 ))
+    m="${BASH_REMATCH[0]}"; name="${BASH_REMATCH[2]}"; val="${BASH_REMATCH[3]}"
+    pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
+    (( ${#val} > _SGV_VMAX )) && return 2
+    [[ -z "$val" ]] && continue
+    _SGV_N+=("$name"); _SGV_V+=("$val")
+  done
+  for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
+    for (( j = 0; j < ${#_SGV_N[@]}; j++ )); do
+      (( i == j )) && continue
+      [[ -z "${_SGV_V[j]}" ]] && continue
+      if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
+      if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
+    done
+  done
+  return 0
+}
+# _sg_vx_apply S : S with the collected values substituted -> _SG_SUB. Status 0 = a copy was built, 1 = nothing to substitute, 2 = the copy would be longer than _SGV_SMAX (not
+# built, _SG_SUB stays S; the caller blocks the command). Per variable: ${NAME} through _sg_vx_replace, then $NAME with the same prefix accumulation (the already substituted text is never scanned again;
+# the remainder keeps the character that ended the match, so $f$f works), at most 8 times.
+_sg_vx_apply() {
+  local s="$1" i n v m tail pre out guard changed=1
+  _SG_SUB="$s"
+  (( ${#_SGV_N[@]} )) || return 1
+  [[ "$s" == *'$'* ]] || return 1
+  for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
+    n="${_SGV_N[i]}"; v="${_SGV_V[i]}"
+    [[ -n "$v" ]] || continue
+    if [[ "$s" == *"\${$n}"* ]]; then _sg_vx_replace "$s" "\${$n}" "$v" "$_SGV_SMAX" || return 2; s="$_SG_RP"; changed=0; fi
+    out=""; guard=0
+    while (( guard < 8 )) && [[ "$s" =~ \$${n}([^A-Za-z0-9_]|$) ]]; do
+      (( guard += 1 ))
+      m="${BASH_REMATCH[0]}"; tail="${BASH_REMATCH[1]}"
+      if [[ -z "$tail" ]]; then pre="${s%"$m"}"; else pre="${s%%"$m"*}"; fi
+      s="${s:$(( ${#pre} + ${#m} - ${#tail} ))}"
+      [[ "$pre" == *\\ ]] && pre="${pre%\\}"
+      out="${out}${pre}${v}"; changed=0
+      (( ${#out} + ${#s} > _SGV_SMAX )) && return 2
+    done
+    (( guard )) && s="${out}${s}"
+  done
+  _SG_SUB="$s"
+  return $changed
+}
+# _sg_vx_pass CMD MODE : the second pass -- judge the substituted copies. MODE is whole or segment, as _sg_core_eval left it in _SG_MODE (in segment mode _SG_SEGS holds
+# the segments). The function name is a contract: the fault-injection and evaluation-order probes locate it by name. An overrun of the length budget (a value, a copy, the total)
+# ends the pass at once with an oversize BLOCK (the size text of _sg_emit_blocked, status 2): nothing behind the overrun is built or judged.
+_sg_vx_pass() {
+  local cmd="$1" mode="$2" seg rc ar cr spent=0
+  _sg_vx_collect "$cmd"
+  cr=$?
+  if [[ $cr -eq 2 ]]; then
+    _sg_emit_blocked "a variable value is longer than $_SGV_VMAX characters" "$cmd" "$mode" oversize
+    return 2
+  fi
+  (( ${#_SGV_N[@]} )) || return 0
+  if [[ "$mode" == whole ]]; then
+    _sg_vx_apply "$cmd"
+    ar=$?
+    if [[ $ar -eq 2 ]]; then
+      _sg_emit_blocked "the command is longer than $_SGV_SMAX characters after variable expansion" "$cmd" whole oversize
+      return 2
+    fi
+    if [[ $ar -eq 0 ]]; then _sg_judge_one "$_SG_SUB" whole; return $?; fi
+    return 0
+  fi
+  for seg in "${_SG_SEGS[@]}"; do
+    _sg_vx_apply "$seg"
+    ar=$?
+    [[ $ar -eq 1 ]] && continue
+    if [[ $ar -eq 2 ]]; then
+      _sg_emit_blocked "a command segment is longer than $_SGV_SMAX characters after variable expansion" "$cmd" segment oversize
+      return 2
+    fi
+    spent=$(( spent + ${#_SG_SUB} ))
+    if (( spent > _SGV_TMAX )); then
+      _sg_emit_blocked "the command segments together are longer than $_SGV_TMAX characters after variable expansion" "$cmd" segment oversize
+      return 2
+    fi
+    _sg_judge_one "$_SG_SUB" segment
+    rc=$?
+    [[ $rc -ne 0 ]] && return "$rc"
+  done
+  return 0
+}
+
+# W9 -- project-level extension <project root>/.aria/secret-guard.paths: one LITERAL substring per line; it can only ADD blocks (the built-in verdict always comes first).
+# ALL extension code lives in _sg_ext_* functions that are called ONLY through command substitution $( ... ): an internal error (set -u, exit, command not found) kills
+# that subshell alone, and the caller treats every output other than the literal sentinel BLOCK as "extension not in effect". The built-in verdict and its fail-closed
+# path are never touched (10CG/Aria#154 session-deadlock lesson). Entries and the command text are data: sliced, concatenated and compared as fixed strings, never
+# evaluated, expanded or used as a pattern.
+_sg_ext_root() {   # prints the project root (CLAUDE_PROJECT_DIR, else stdin cwd) or nothing
+  local r="${CLAUDE_PROJECT_DIR:-}"
+  if [[ -z "$r" && "$input" == *'"cwd"'* ]]; then
+    r="$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null | tr -d '\r')"
+  fi
+  printf '%s' "$r"
+}
+# _sg_ext_entries : the valid entries of the extension file, lower-cased, one per line; prints nothing when the extension is not in effect (no project root, not a
+# readable regular file, > 32 KiB, a NUL byte, no valid entry, > 200 valid entries). An entry has 4..200 BYTES and holds an ASCII letter / digit or a non-ASCII byte;
+# comment lines, blank lines, CRs, a leading UTF-8 BOM and surrounding blanks are dropped. Byte semantics: LC_ALL=C is exported for the readers, so lengths and the
+# case folding (ASCII letters only) do not depend on the caller's locale; sed only (mawk counts bytes, gawk counts characters under UTF-8).
+_sg_ext_entries() {   # prints the valid entries (lower-cased, one per line); prints nothing when the extension is not in effect
+  local root f size
+  local -x LC_ALL=C
+  root="$(_sg_ext_root)"
+  [[ -n "$root" ]] || return 0
+  f="$root/.aria/secret-guard.paths"
+  [[ -f "$f" && -r "$f" ]] || return 0
+  size="$(wc -c < "$f" | tr -d ' ')"
+  (( size <= 32768 )) || return 0
+  tr -d '\000' < "$f" | cmp -s - "$f" || return 0
+  local out
+  out="$(tr -d '\r' < "$f" | tr '[:upper:]' '[:lower:]' | sed -E -e $'1s/^\xef\xbb\xbf//' -e 's/^[[:space:]]+//' -e 's/[[:space:]]+$//' -e '/^#/d' -e '/^.{4,200}$/!d' -e $'/[a-z0-9\x80-\xff]/!d')"
+  [[ -n "$out" ]] || return 0
+  local n
+  n="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  if (( n > 200 )); then   # more than 200 valid entries: the whole file is ignored, not truncated
+    return 0
+  fi
+  printf '%s\n' "$out"
+}
+# _sg_ext_subst TEXT : TEXT with the first 64 occurrences of any entry (fixed strings, one grep pass, case-insensitive) replaced by the built-in app.ini name;
+# prints nothing when no entry occurs.  Byte semantics: `grep -b` gives BYTE offsets, so the slicing counts bytes too (LC_ALL=C, exported).
+_sg_ext_subst() {
+  local text="$1" hits line off match out="" pos=0 n=0
+  local -x LC_ALL=C
+  hits="$(grep -oFib -f <(_sg_ext_entries) <(printf '%s' "$text") 2>/dev/null)"
+  [[ -n "$hits" ]] || return 0
+  while IFS= read -r line; do
+    n=$((n+1)); (( n > 64 )) && break
+    off="${line%%:*}"; match="${line#*:}"
+    out="${out}${text:pos:off-pos}/etc/gitea/app.ini "
+    pos=$(( off + ${#match} ))
+  done <<< "$hits"
+  printf '%s' "${out}${text:pos}"
+}
+# _sg_ext_pass TEXT : prints the sentinel BLOCK iff the BUILT-IN judgement of the substituted copy (_sg_ext_subst) blocks, nothing otherwise (also when no entry occurs).
+# The judgement is _sg_core_eval itself -- _sg_safe_to_split / _sg_split_top / _sg_judge_one, tight credit by the app.ini name -- not a second state machine, so the
+# extension agrees with the built-in app.ini rows on every command shape by construction. Its stdout / stderr (the BLOCKED text) are discarded here; the caller prints it.
+_sg_ext_pass() {
+  local sub
+  sub="$(_sg_ext_subst "$1")"
+  [[ -n "$sub" ]] || return 0
+  _sg_core_eval "$sub" >/dev/null 2>&1
+  [[ $? -eq 2 ]] && printf 'BLOCK'
+  return 0
+}
+
+_sg_ext_path_pass() {   # Read/Edit face: entry (lower-cased) as a literal substring of the path (grep -F -i, one pass)
+  local p="$1"
+  local -x LC_ALL=C
+  if grep -qFi -f <(_sg_ext_entries) <(printf '%s' "$p") 2>/dev/null; then printf 'BLOCK'; fi
+  return 0
+}
+
+# _sg_emit_blocked PAT SEG MODE [oversize] : the (unchanged) BLOCKED text, shared by every block path. With the 4th word `oversize` it prints the SIZE text instead (W10 length
+# budget, fail-closed): nothing was matched, the command is too large to be checked; PAT then names the limit that was hit, SEG and MODE are not used. The size text echoes only
+# the first 200 characters of the command (the command is by definition a large one).
+_sg_emit_blocked() {
+  local pat="$1" seg="$2" mode="$3" kind="${4:-}"
+  if [[ "$kind" == oversize ]]; then
+    cat >&2 <<EOF
+[secret-guard] BLOCKED: command too large to scan for secrets. Limit hit: $pat
+
+Nothing was matched. After variable expansion the command is bigger than the guard
+can check reliably, and a command that cannot be checked is blocked (fail-closed),
+not allowed.
+
+Split it into smaller commands and run them one at a time:
+  - keep every variable value, and every command after expansion, short;
+  - do not repeat one long \$VAR many times in a single command;
+  - write long files with the Write / Edit tool instead of a heredoc.
+命令过大, 无法扫描其中是否含密钥, 请拆成更小的命令
+
+Command was (first 200 characters): $(_sg_redact_echo "${command:0:200}")
+EOF
+    return 0
+  fi
+  cat >&2 <<EOF
+[secret-guard] BLOCKED: command reads a secret-bearing source without a
+value-REDACTING filter. Matched pattern: $pat
+
+Why: raw secrets reaching Claude tool output are sent to Anthropic
+servers + prompt-cached. Treat as public leak per CLAUDE.md "NEVER expose
+secrets" rule + 2026-05-16 incident.
+
+Acceptable filters (must REDACT, not just pass through):
+  | jq 'keys'                            # field NAMES only, no values
+  | jq '{safe_alias: .nested.safe_field}' # explicit safe-field allowlist
+  | grep '^SAFE_PREFIX='                  # specific safe lines
+  | wc -c                                 # count only
+  | sha256sum                             # hash only
+  >/dev/null   (NOT 2>/dev/null)          # stdout discard
+  -o /dev/null                            # curl discard
+
+NOT acceptable (Round 1/2 audit found these create silent bypasses):
+  | jq .  / jq -r .  / jq --raw-output .  # identity, returns full input
+  | cat / cat -n / tr / head / tail / fold # preserve content
+  > /tmp/x.json   # writes file, can be cat'd later
+  2> /dev/null    # only stderr discarded, stdout still flows
+  | jq '.Items'   # returns full object — use 'keys' to list field names
+
+Reviewed one-off bypass (logged to ~/.claude/logs/guard-bypass.log):
+  ... # guard:ack: <reason ≥ 8 NON-WHITESPACE chars describing why>
+
+Command was: $(_sg_redact_echo "$command")
+EOF
+  if [[ "$mode" == "segment" ]]; then
+    echo "Triggering segment: $(_sg_redact_echo "$seg")" >&2
+  fi
+}
+
+# _sg_core_eval CMD : THE built-in judgement -- the baseline body of _sg_per_segment_eval, unchanged (safe-to-split check, top-level split, one _sg_judge_one per segment);
+# it only records how it judged (_SG_MODE) so that the W10 pass knows whether _SG_SEGS holds segments.  The W9 extension calls this same function.
+_SG_MODE=segment
+_sg_core_eval() {
+  local cmd="$1" seg rc
+  if ! _sg_safe_to_split "$cmd"; then
+    _SG_MODE=whole
+    _sg_judge_one "$cmd" whole
+    return $?
+  fi
+  _SG_MODE=segment
+  _sg_split_top "$cmd"
+  if [[ ${#_SG_SEGS[@]} -eq 0 ]]; then _SG_MODE=none; return 0; fi
+  for seg in "${_SG_SEGS[@]}"; do
+    _sg_judge_one "$seg" segment
+    rc=$?
+    [[ $rc -ne 0 ]] && return "$rc"
+  done
+  return 0
 }
 
 # Unit-test sourcing gate (#128): when sourced (not executed), stop here —
@@ -638,9 +1016,21 @@ case "$tool" in
     # secret file paths a future-Claude might Read without realizing.
     # Note: lowercased file_path for the match.
     lower_path="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
-    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/+(\./+)*settings\.json$|/\.claude/+(\./+)*settings\.local\.json$|/\.claude\.json$'; then
+    _sg_hit=0
+    if echo "$lower_path" | grep -qE '\.env(\.[a-z0-9_.-]+)?$|\.envrc$|/secrets?/|/credentials?/|id_rsa$|id_ed25519$|id_ecdsa$|\.ssh/id_[a-z0-9_]+$|\.pem$|\.key$|\.gpg$|\.age$|\.p12$|\.pfx$|\.jks$|\.tfstate$|\.tfstate\.backup$|/\.aws/credentials$|/\.aws/config$|/\.kube/config$|kubeconfig$|/\.docker/config\.json$|service[_-]account.*\.json$|gcp[_-]key.*\.json$|firebase.*\.json$|\.ssh/known_hosts$|/secret[_-]token|/master[_-]key|/encryption[_-]key|/\.claude/+(\./+)*settings\.json$|/\.claude/+(\./+)*settings\.local\.json$|/\.claude\.json$|[a-z0-9._-]*(forgejo|gitea)[^ ]*app\.ini([^a-z0-9_]|$)|custom/conf/app\.ini([^a-z0-9_]|$)'; then
       # (last three branches: Aria #179 — Claude Code config files, env node
       #  holds API tokens; mirrors the Bash-face claude-config row)
+      # (last two branches: W8 secret-net-l3-and-bypass-paths — Forgejo / Gitea app.ini, the lower-cased spelling of $_SG_SRVCFG with the same right
+      #  boundary; a Read / Edit of it is blocked, the ack nonce path below stays the escape hatch)
+      _sg_hit=1
+    fi
+    # W9: the project-level extension adds literal-substring blocks on this face too (one grep pass over the path; ASCII case folding). Called ONLY through $( ): this
+    # dispatch runs in the main shell, outside the fail-closed subshell, so a bare call that dies would end the hook with exit 1 = allow, built-in blocks included.
+    if [[ $_sg_hit -eq 0 ]]; then
+      _sgx="$( _sg_ext_path_pass "$file_path" 2>/dev/null )"
+      [[ "$_sgx" == BLOCK ]] && _sg_hit=1
+    fi
+    if [[ $_sg_hit -eq 1 ]]; then
       # R3-C-9 fix: SECRET_GUARD_ACK_PATH cannot be unset across processes
       # (env var lives in the parent shell, hook subprocess can't unset it).
       # Previously hook just emitted "consumed" NOTE which was dead code.
@@ -814,6 +1204,11 @@ declare -a risky_patterns=(
   # Source-name group lives in $_SG_CLAUDE_CFG (shared with credit tightening).
   "(cat|grep|egrep|fgrep|rg|head|tail|less|more|strings|awk|sed|jq)[[:space:]]+([^|]*${_SG_PP_NAME})?(${_SG_CLAUDE_CFG})(\b|/|$|[[:space:]])"
 
+  # W8 (secret-net-l3-and-bypass-paths): Forgejo / Gitea app.ini. The 29 printing readers (one by one in SC-16 16q) with their OWN left boundary -- the baseline reader
+  # groups have none (`chmod` holds `od`) -- and the NAME front whitelist of Aria #179 before the path; right boundary: no letter / digit / `_` after app.ini.
+  # Tight credit (_sg_compute_credit). python3 -c / node -e: see the two source groups below.
+  "(^|[^[:alnum:]_.-])(${_SG_READERS_PRINT})[[:space:]]+(([^|]*${_SG_PP_NAME})?(${_SG_SRVCFG}))([^[:alnum:]_]|$)"
+
   # R4-C-4 fix: K8s / Docker container-mounted secret paths in Bash
   # (Read|Edit branch already covers via path regex; mirror here for Bash)
   '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/(var/)?run/secrets/'
@@ -890,8 +1285,9 @@ declare -a risky_patterns=(
   # Aria #179: + claude-config source group (python3 -c / node -e inline scripts
   # reading ~/.claude/settings.json etc.). Kept on the narrow `-c`/`-e` rows —
   # NOT merged into the generic reader alternation (prose-FP surface).
-  "python3?[[:space:]]+-c([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
-  "node[[:space:]]+-e([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG})"
+  # W8 / W11 (secret-net-l3-and-bypass-paths): + the Forgejo / Gitea app.ini name group and the /proc/<pid>/environ|cmdline names (same pid position as the /proc rows).
+  "python3?[[:space:]]+-c([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG}|${_SG_SRVCFG}|/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
+  "node[[:space:]]+-e([^|]*${_SG_PP_SUFFIX})?(/v1/var/|secretsmanager|/secrets/|\.env|provider_key|${_SG_CLAUDE_CFG}|${_SG_SRVCFG}|/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
 
   # Decryption tools — assume targeted at secret files
   'sops[[:space:]]+(-d|--decrypt)'
@@ -929,8 +1325,18 @@ declare -a risky_patterns=(
   # R3-C-4 fix: /proc/PID/environ direct reads
   'cat[[:space:]]+/proc/[0-9]+/environ'
   'cat[[:space:]]+/proc/self/environ'
-  '(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/proc/(self|[0-9]+)/(environ|status|cmdline)'
-  '<[[:space:]]*/proc/(self|[0-9]+)/(environ|status|cmdline)'
+  # W11 (secret-net-l3-and-bypass-paths): the two rows above are rewritten IN PLACE. Baseline part unchanged (13 readers; (self|digits); environ|status|cmdline). Added: for
+  # environ|cmdline ONLY, 11 more readers (xargs sed grep rg cut paste nl sort base64 cp dd) and the wider pid position _SG_PIDTOK (glob tokens, $$, $name, ${...}, $(...)),
+  # plus the task/<tid>/ sub-path. `status` stays on the narrow baseline part (a metadata read such as grep VmRSS /proc/N/status stays allowed). Not a tight family.
+  "((cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev)[[:space:]]+[^|]*/proc/(self|[0-9]+)/(environ|status|cmdline)|(cat|head|tail|less|more|strings|hexdump|od|xxd|tr|awk|perl|rev|xargs|sed|grep|rg|cut|paste|nl|sort|base64|cp|dd)[[:space:]]+[^|]*/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
+  "(<[[:space:]]*/proc/(self|[0-9]+)/(environ|status|cmdline)|<[[:space:]]*/proc/${_SG_PIDTOK}/(task/[^/[:space:]]+/)?(environ|cmdline))"
+  # W11 (secret-net-l3-and-bypass-paths): process-table enumeration, three rows spelled as literals (see _SG_PROCTAB for the text and the credit copy).
+  # 1. ps / pgrep / pstree / top in an argv-exposing form at a command position, optionally behind one launcher (15 words) and an absolute directory prefix;
+  # 2. the same, and whole-environment dumps (env / printenv), behind remote / shell wrappers (ssh, docker|podman|kubectl|lxc exec, nomad alloc exec, pct exec,
+  #    sh|bash -c, watch); 3. docker top and docker ps --no-trunc (podman alike). Reject (exit 2) with the shared BLOCKED text.
+  '(^|[;&|(){]|`|[[:cntrl:]])[[:blank:]]*((then|do|else|elif)[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(sudo|doas|nice|timeout|xargs|nohup|stdbuf|env|time|eval|setsid|ionice|unbuffer|command|exec)([[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]|;&()<>`"'"'"'][^[:space:]|;&()<>`"'"'"']*)?|[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*[[:space:]]+)?((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c))'
+  '(ssh|docker[[:space:]]+(compose[[:space:]]+)?exec|kubectl[[:space:]]+exec|nomad[[:space:]]+alloc[[:space:]]+exec|pct[[:space:]]+exec|lxc[[:space:]]+exec|podman[[:space:]]+exec|(sh|bash|zsh|dash)[[:space:]]+-c|watch)[^|]*[[:space:]'"'"'"(`](((/[^[:space:]|;&"'"'"'`$()<>]*/)?(ps[[:blank:]]+([a-zA-Z]+([^[:alnum:]_-]|$)|[0-9]+([^[:alnum:]_.-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*[fF]|([^|;&]*[[:blank:]])?(-[a-zA-Z]*[oO]|--format)[[:blank:]=]*[^[:blank:]|;&]*(args|cmd|command)|([^|;&]*[[:blank:]])?-[a-zA-Z]*O|([^|;&]*[[:blank:]])?-[a-zA-Z]*x[a-zA-Z]*([^[:alnum:]_-]|$)|([^|;&]*[[:blank:]])?-[a-zA-Z]*u[[:blank:]]*($|[|;&)<>]))|pgrep[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--list-full)|pstree[[:blank:]]+([^|;&]*[[:blank:]])?(-[a-zA-Z]*a|--arguments)|top[[:blank:]]+([^|;&]*[[:blank:]])?-[a-zA-Z]*c))|printenv([[:space:]'"'"'"]|[;&|)}<>`]|$)|env([[:blank:]]*($|[;&|)}<>'"'"'"`])))'
+  '(docker|podman)[[:space:]]+((compose|container)[[:space:]]+)?top([^[:alnum:]_-]|$)|(docker|podman)[[:space:]]+(container[[:space:]]+)?(ps|ls)[[:space:]]+([^|;&]*[[:space:]])?--no-trunc'
 
   # R3-C-5 fix: container runtime exec with env / env-extraction
   'nsenter[[:space:]]+[^|]*[[:space:]](env|printenv|cat[[:space:]]+/etc/passwd|cat[[:space:]]+/run/secrets)'
@@ -1033,45 +1439,25 @@ _sg_redact_echo() {
 # stderr byte-for-byte, zero new lines).
 _sg_judge_one() {
   local seg="$1" mode="$2" pat
-  local credit=""
+  local credit="" subj="$1" _w
+  # W12 (secret-net-l3-and-bypass-paths): an os.environ single-key read (.environ.get( / .environb.get( / .environ[ / .environb[) is the same information as the
+  # allowed os.getenv, but its `.env` prefix trips the interpreter rows. Every occurrence of the four literal substrings is cut out of the COPY that is
+  # matched ($subj) and replaced by a neutral token without `.env`; the whole-table forms (os.environ, dict(os.environ), .items(), ...) are not in the list
+  # and stay blocked. Prefix + length-based remainder concatenation, no ${s//p/r} and no eval: the key texts are never executed. credit and the BLOCKED
+  # text keep working on the original $seg / $command.
+  if [[ "$subj" == *environ* ]]; then
+    while [[ "$subj" == *".environ.get("* ]]; do _w="${subj%%".environ.get("*}"; subj="${_w}.ek_(${subj:$(( ${#_w} + 13 ))}"; done
+    while [[ "$subj" == *".environb.get("* ]]; do _w="${subj%%".environb.get("*}"; subj="${_w}.ek_(${subj:$(( ${#_w} + 14 ))}"; done
+    while [[ "$subj" == *".environ["* ]]; do _w="${subj%%".environ["*}"; subj="${_w}.ek_[${subj:$(( ${#_w} + 9 ))}"; done
+    while [[ "$subj" == *".environb["* ]]; do _w="${subj%%".environb["*}"; subj="${_w}.ek_[${subj:$(( ${#_w} + 10 ))}"; done
+  fi
   for pat in "${risky_patterns[@]}"; do
-    if [[ "$seg" =~ $pat ]]; then
+    if [[ "$subj" =~ $pat ]]; then
       if [[ -z "$credit" ]]; then
         if _sg_compute_credit "$seg"; then credit=1; else credit=0; fi
       fi
       if [[ "$credit" == "0" ]]; then
-        cat >&2 <<EOF
-[secret-guard] BLOCKED: command reads a secret-bearing source without a
-value-REDACTING filter. Matched pattern: $pat
-
-Why: raw secrets reaching Claude tool output are sent to Anthropic
-servers + prompt-cached. Treat as public leak per CLAUDE.md "NEVER expose
-secrets" rule + 2026-05-16 incident.
-
-Acceptable filters (must REDACT, not just pass through):
-  | jq 'keys'                            # field NAMES only, no values
-  | jq '{safe_alias: .nested.safe_field}' # explicit safe-field allowlist
-  | grep '^SAFE_PREFIX='                  # specific safe lines
-  | wc -c                                 # count only
-  | sha256sum                             # hash only
-  >/dev/null   (NOT 2>/dev/null)          # stdout discard
-  -o /dev/null                            # curl discard
-
-NOT acceptable (Round 1/2 audit found these create silent bypasses):
-  | jq .  / jq -r .  / jq --raw-output .  # identity, returns full input
-  | cat / cat -n / tr / head / tail / fold # preserve content
-  > /tmp/x.json   # writes file, can be cat'd later
-  2> /dev/null    # only stderr discarded, stdout still flows
-  | jq '.Items'   # returns full object — use 'keys' to list field names
-
-Reviewed one-off bypass (logged to ~/.claude/logs/guard-bypass.log):
-  ... # guard:ack: <reason ≥ 8 NON-WHITESPACE chars describing why>
-
-Command was: $(_sg_redact_echo "$command")
-EOF
-        if [[ "$mode" == "segment" ]]; then
-          echo "Triggering segment: $(_sg_redact_echo "$seg")" >&2
-        fi
+        _sg_emit_blocked "$pat" "$seg" "$mode"
         return 2
       fi
       break
@@ -1085,19 +1471,37 @@ EOF
 # top-level ; && || and judge each segment independently (credit computed
 # fresh per segment — §What.3 SFH-M2, no sticky global). $1 = whole command.
 # Returns 0 = allow, 2 = blocked, propagates _sg_judge_one's return code.
+# Order (W9 / W10): 1. the built-in judgement (_sg_core_eval: the baseline body of this function, unchanged); 2. only if it allowed, the W10 variable pass (_sg_vx_pass);
+# 3. only if both allowed, the W9 project extension -- on the original command, then on the variable-substituted whole command. A built-in block ends the evaluation
+# before either later stage is even called, so nothing the built-ins decide is postponed or reversed. The extension runs ONLY inside command substitutions; its answer
+# is the literal sentinel BLOCK, anything else (empty, error, fault) means "no extension block". Its own block prints the shared BLOCKED text (W13). Length budget: an overrun
+# inside _sg_vx_pass blocks there; the extension's look at the substituted whole command, when that copy is too large to build, blocks here -- but only when an extension is in
+# effect (entries exist: asked inside a command substitution like every other extension call), because without one nothing is left unjudged.
 _sg_per_segment_eval() {
-  local cmd="$1" seg rc
-  if ! _sg_safe_to_split "$cmd"; then
-    _sg_judge_one "$cmd" whole
-    return $?
-  fi
-  _sg_split_top "$cmd"
-  [[ ${#_SG_SEGS[@]} -eq 0 ]] && return 0
-  for seg in "${_SG_SEGS[@]}"; do
-    _sg_judge_one "$seg" segment
+  local cmd="$1" rc ar _x
+  _sg_core_eval "$cmd"
+  rc=$?
+  [[ $rc -ne 0 ]] && return "$rc"
+  if [[ "$_SG_MODE" != none ]]; then
+    _sg_vx_pass "$cmd" "$_SG_MODE"
     rc=$?
     [[ $rc -ne 0 ]] && return "$rc"
-  done
+  fi
+  _x="$( _sg_ext_pass "$cmd" 2>/dev/null )"
+  if [[ "$_x" != BLOCK ]] && (( ${#_SGV_N[@]} )); then
+    _sg_vx_apply "$cmd"
+    ar=$?
+    if [[ $ar -eq 0 ]]; then
+      _x="$( _sg_ext_pass "$_SG_SUB" 2>/dev/null )"
+    elif [[ $ar -eq 2 && -n "$( _sg_ext_entries 2>/dev/null )" ]]; then
+      _sg_emit_blocked "the command is longer than $_SGV_SMAX characters after variable expansion, too large for the project extension (.aria/secret-guard.paths) to check" "$cmd" segment oversize
+      return 2
+    fi
+  fi
+  if [[ "$_x" == BLOCK ]]; then
+    _sg_emit_blocked "(extension) .aria/secret-guard.paths" "$cmd" segment
+    return 2
+  fi
   return 0
 }
 
