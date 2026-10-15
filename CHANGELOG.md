@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
-## [<vNEXT>] - <发布日期> — secret-net-l3-and-bypass-paths: 检测网补洞 + 旁路收口 (`10CG/aria-plugin#154` / `10CG/aria-plugin#203` / `10CG/Aria#221`; MINOR: 新检测能力 + 新输入面 + 新拦截族, 向下兼容)
+## [1.75.0] - 2026-10-15 — secret-net-l3-and-bypass-paths: 检测网补洞 + 旁路收口 (`10CG/aria-plugin#154` / `10CG/aria-plugin#203` / `10CG/Aria#221`; MINOR: 新检测能力 + 新输入面 + 新拦截族, 向下兼容)
 
 ### Security — PostToolUse secret-scan (检测 + 告警, 不改写输出)
 
