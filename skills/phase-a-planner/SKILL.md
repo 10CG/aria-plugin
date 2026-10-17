@@ -264,7 +264,7 @@ A.post - 审计引擎 (可选):
   on_skip: 继续执行 A.2 (审计未启用)
   output:
     audit_verdict: "PASS"         # PASS | PASS_WITH_WARNINGS | FAIL (如启用)
-    audit_report: ".aria/audit-reports/post_spec-{timestamp}.md"
+    audit_report: ".aria/audit-reports/post_spec-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md"
 ```
 
 ---

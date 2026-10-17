@@ -52,6 +52,14 @@ agent-team-audit (单轮执行引擎)
 | `mode` | string | 否 | `convergence` / `challenge` / `adaptive`，默认从配置读取 |
 | `context` | string | 是 | 被审计内容路径 (proposal.md / diff / UPM) |
 | `agents_config` | object | 否 | Agent 分组覆盖，默认从 config.json teams 读取 |
+| `change_id` | string \| list | 否 | 被审 change 的 openspec 目录名; pre_merge 必传, 缺失时脚本走 S2-S4 |
+| `repo_path` | string | **必传** (argparse `required=True`, 无缺省, 不取 cwd) | **锚点面 = 主仓根** (报告目录 / config / `openspec/{changes,archive}` 锚点链 / S2·S3 的 diff 面) |
+| `diff_repo_path` | string | **必传** | **diff 面 = 本次 C.2 合并的目标仓根** (子模块合并 → 子模块根); 同仓形态显式传与 `repo_path` 相同的值; 只喂 §1.3 `not_applicable` (b) 通道 —— 与 `repo_path` 的 git toplevel 不同 (跨仓/子模块合并) 时该通道禁止触发, 一律落 `present`/`missing` |
+| `base` | string | pre_merge 必传 | diff 仓主干的**远程跟踪 ref** (本项目 `origin/master`); 无缺省, 缺失即 argparse exit 2 |
+| `anchor_base` | string | 否 | 锚点仓主干的远程跟踪 ref; 缺省 = `base` |
+| `no_spec` | boolean (flag) | 否, 与 `change_id` 互斥 (同时给出 ⇒ argparse exit 2); Level 1 周期以此代替上一行 `change_id` 传入 (与 phase-c-integrator 步骤 4 一致) —— `change_id` 行「pre_merge 必传」指二者必传其一 | Level 1 声明: 本轮无 spec (`§1.1` S3)。先过 P2a 锚点面核验 (`repo_path` + `anchor_base` 的 diff 非空且不触 `openspec/changes/**`) 才生效, 否则按诊断分流: 触及 `openspec/changes/**` (`no_spec_contradicted`) 恒 exit 2 (不受 `allow_incomplete_checkpoints` 豁免); diff 为空 (`no_spec_unverifiable`) 时, `allow_incomplete_checkpoints=true` 降为 `verdict=bypassed`/exit 0, 否则同 exit 2。核验通过后 `change_ids=[]`、Level 视为 1、`scope_source=no_spec` |
+
+> 上表 `§1.x` 均指 `openspec/changes/pre-merge-completeness-gate-change-scope/proposal.md` 的对应小节 (主仓); 调用串 (各参数的占位符) 见 [references/execution-modes.md `## Pre-merge: Checkpoint Report Completeness Gate`](./references/execution-modes.md) 的 Step 4 ——该节只给调用串, 各参数的定义以上表为准。
 
 ### 检查点列表
 
@@ -74,7 +82,7 @@ agent-team-audit (单轮执行引擎)
 
 ## 执行流程
 
-4 阶段: (1) 入口逻辑 (config + mode + agents 加载) → (2) **Pre-merge gate** — `pre_merge` checkpoint 专属横向完整性检查 (Issue #26, 与 #27 互补) → (3) **Convergence 模式** (全员讨论 → 汇总 → 四元组比较 → 收敛/振荡) → (4) **Challenge 模式** (讨论组+挑战组对抗 → objections resolved 判定)。
+4 阶段: (1) 入口逻辑 (config + mode + agents 加载) → (2) **Pre-merge gate** — 经 `completeness_gate.py` 机械执行, 三态 + fail-closed (10CG/Aria#26, 与 10CG/Aria#27 互补) → (3) **Convergence 模式** (全员讨论 → 汇总 → 四元组比较 → 收敛/振荡) → (4) **Challenge 模式** (讨论组+挑战组对抗 → objections resolved 判定)。
 
 **完整流程定义 (4 阶段 详细 step / pre_merge gate 5-step 流程 + 错误输出 / convergence 4-step / challenge 4-step + Round 计数)**: 见 [references/execution-modes.md](./references/execution-modes.md)。
 
@@ -130,6 +138,19 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/audit-engine/scripts/sibling_spec_pr
 - 探针自带 fetch (双远端约 25s/轮, 不称轻量), Convergence 与 Challenge 两模式块**都**在入口调用 (下游 Level-3 走 Challenge)。
 
 **权威可执行版见 references/execution-modes.md `## 竞品 spec 探针 (per-round 入口)`** (十二字段 stdout 契约 / exit code / `error_kind` 集合 / 三档消费措辞)。
+
+### Pre-merge completeness gate (与上方探针无关的另一条机械检查)
+
+仅 `checkpoint == "pre_merge"` 时、在调用任何 Agent 之前跑一次 (与上方「每轮入口」不是同一回事, 不随 Round 重跑):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/audit-engine/scripts/completeness_gate.py" \
+  --repo-path "<主仓 root>" --diff-repo-path "<C.2 合并目标仓 root>" \
+  --base "<diff 仓主干的远程跟踪 ref>" [--anchor-base "<主仓主干的远程跟踪 ref>"] \
+  [--change-id <id> ...] [--no-spec]
+```
+
+结果按 `references/execution-modes.md` `## Pre-merge: Checkpoint Report Completeness Gate` 的 Step 5 fail-closed 规则路由 (`verdict` 为 `fail`/`error` ⇒ 拒绝执行 pre_merge 审计, 消费方不得按 PASS 放行) —— **不适用**上方竞品探针自身的两条消费规则 (读 verdict 渲染「检测到/未发现竞品」/ not_established 时渲染「未能核实」) 与「不阻断」条款: 两者是不同的检查, 后果也不同 (探针结果只是 advisory, 本门 fail/error 会阻塞合并)。
 
 ---
 
@@ -382,10 +403,12 @@ Verdict 计算: PASS (0 Critical + 0 Major) / PASS_WITH_WARNINGS (0 Critical + �
                                             # 仅用于临时场景 (如遗留 change_id 迁移期)
                                             # 开启后写盘仍执行但记录 [WARN] 日志
                                             # (2026-04-23 新增, 修复 Issue #27)
+                                            # completeness gate 的 S1 锚点校验继承本键 —— true 时锚点缺失降为 [WARN] 并按零报告评估, 与 pre-write-validation.md Step 1 同源
   audit.allow_incomplete_checkpoints: boolean  # 默认 false — 豁免 pre_merge 前序 checkpoint
                                                # 报告完整性校验
                                                # 开启后 pre_merge 仍执行但记录 [WARN] 日志
                                                # (2026-04-23 新增, 修复 Issue #26)
+                                               # 豁免 missing / scope_unresolved / spec_level_undetermined / no_spec_unverifiable, 不豁免 no_spec_contradicted 与 change_id_unanchored
 ```
 
 **优先级**: checkpoints 显式配置 > adaptive_rules 推导 > 默认 off
@@ -420,7 +443,9 @@ else:                                   # 任一业务文件 ∉ skip_paths
 
 ### emergency hotfix lane: pre_merge → convergence (#58)
 
-当 emergency_hotfix lane (state-scanner `emergency_hotfix` 规则触发) 时, pre_merge audit **仅 `audit.enabled=true` 且 pre_merge checkpoint != off** 时降级到 convergence (不 challenge)。与 file-scope 过滤双降级时幂等 (都 → convergence)。phase-c-integrator 在 pre_merge 调用点传递此 lane 信号。
+当 emergency_hotfix lane (state-scanner `emergency_hotfix` 规则触发) 时, pre_merge audit **仅 `audit.enabled=true` 且 pre_merge 按 C.2 pre_hook 步骤 3 的优先级链判为启用时**降级到 convergence (不 challenge)。与 file-scope 过滤双降级时幂等 (都 → convergence)。phase-c-integrator 在 pre_merge 调用点传递此 lane 信号。
+
+降级前提 = pre_merge 的精确 mode 非 off (精确 mode 指 execution-modes.md 入口逻辑「2. 确定模式」判定出的结果, 含级 1 显式值, 不限于按 Level 推导的那一支); 若按该 change 的 Level 精确推导结果为 off, 同样不执行 pre_merge 审计, 不会被本 lane 或 file-scope 过滤抬成 convergence。
 
 ---
 
@@ -430,6 +455,7 @@ else:                                   # 任一业务文件 ∉ skip_paths
 - [references/challenge-mode-schema.md](./references/challenge-mode-schema.md) -- Challenge 模式完整数据流
 - [references/report-format.md](./references/report-format.md) -- 审计报告完整格式规范
 - [references/execution-modes.md `## 竞品 spec 探针 (per-round 入口)`](./references/execution-modes.md) -- per-round 入口探针 stdout 契约 + 三档消费措辞 (Spec `sibling-spec-probe`)
+- [references/execution-modes.md `## Pre-merge: Checkpoint Report Completeness Gate`](./references/execution-modes.md) -- pre_merge 前序 checkpoint 完整性门: stdout 契约 + 三态处置 (present / missing / not_applicable) + fail-closed 义务 (Spec `pre-merge-completeness-gate-change-scope`)
 - [agent-team-audit](../agent-team-audit/SKILL.md) -- 单轮执行引擎 (被本 Skill 调用)
 
 ---

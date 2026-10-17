@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.76.0] - 2026-10-15 — pre-merge-completeness-gate: pre_merge 前置 checkpoint 完整性门 (`10CG/Aria#199`; MINOR: 新脚本 + 新输入面 + 新 stdout 契约, 行为变更见迁移十三条)
+
+### Added — audit-engine `completeness_gate.py` (pre_merge 专属前置完整性门)
+
+- 新脚本 `skills/audit-engine/scripts/completeness_gate.py` (stdlib-only): 在调用任何审计 Agent 之前, 对本次 PR 的作用域逐 (checkpoint, change_id) 做三态判定 (present / missing / not_applicable), 全部非 missing 才放行 (exit 0); 一对 missing 即整体 fail (exit 1)。
+- 五个输入参数: `--repo-path` (锚点仓根) / `--diff-repo-path` (diff 仓根; 同仓形态显式传与 `--repo-path` 相同的值) / `--base` (diff 仓主干远程跟踪 ref, 无缺省) / `--anchor-base` (锚点仓主干远程跟踪 ref, 缺省 = `--base`) / `--change-id` (显式作用域, 可重复; 与 `--no-spec` 互斥)。
+- 16 键 stdout JSON 契约 (含 `elapsed_ms` 墙钟毫秒, `int`); 报告归属按文件名以 `-<change_id>` 结尾的末段界定, 他 change 的报告与子目录内的报告不计入; `[OK]` / `[INFO]` / ERROR 三种人读行。
+
+### Changed — 完整性检查 Step 3-5 改为按 change 匹配与三态
+
+- `audit-engine` 的完整性检查 (execution-modes.md 与 SKILL.md 的 Step 3-5) 从「glob 文件名 + 目录里有报告即过」改为「经 completeness_gate.py 按 (checkpoint, change_id) 三态判定」; Phase A-only (diff 全落 `openspec/changes/<change>/` 与 `.aria/audit-reports/` 下) 的 post_implementation 判 not_applicable 并以 `[INFO]` surface。
+- `phase-c-integrator/SKILL.md` 步骤 5 接线: 门 pass 而精确 off 的跳过分支保留; 同文件另两处同形位置与 `audit-engine/SKILL.md` 的 pre_merge 启用判读一并改为按 C.2 pre_hook 步骤 3 的优先级链 (config 显式值 > `adaptive_rules` 推导值)。
+
+### 迁移 (行为变更十三条 — 全部仅影响 `audit.enabled=true ∧ checkpoints.pre_merge != off` 的采用方; 本仓不在其中)
+
+1. 曾经的假绿 (他 change 的报告、子目录内报告被误计入) 会变成 `missing` 阻断 —— 这是修复本身。
+2. `allow_incomplete_checkpoints` 的豁免面收窄: 仍逐对评估三态并全部留痕, 只把 missing / scope_unresolved / spec_level_undetermined / no_spec_unverifiable 降为 `bypassed` (exit 0) 并短路终止求值; `no_spec_contradicted` / `change_id_unanchored` 不被本键豁免。
+3. 空纳入集分格处置: 官方 config-example 场景 A (manual + 仅 pre_merge 显式开) 与 legacy `agent_team_audit_points: ["pre_merge"]` 仍 pass, 仅新增一行 `[INFO] 无前置 checkpoint 纳入校验` 留痕 (零行为变化); adaptive 档 Level 1 change 落同判的格 D (`[INFO] 文案不同`); `audit.enabled != true` 或 `pre_merge == off` 时脚本被直调, 从静默 pass 变为 exit 2 (`audit_not_enabled` / `pre_merge_not_enabled` —— 生产路径有调用方守卫, 不可达)。
+4. `allow_dangling_change_ids` 继承到 S1 锚点校验 (新增): 开该键的迁移期采用方, 锚点缺失只记 `[WARN]` 并按零报告继续评估, 不 exit 2。
+5. 坏 config JSON: `config_unreadable` exit 2 (fail-closed), 刻意不同于 config-loader 散文的「警告 + 返回默认值」—— 否则损坏的 config 会静默落成空纳入集。
+6. adaptive 档 Level 解析失败 (proposal 无可解析 Level 行): `spec_level_undetermined` exit 2; 逃生口 = `allow_incomplete_checkpoints` (降 bypassed) 或 `allow_dangling_change_ids` (降 `[WARN]` 并跳过 adaptive 推导)。
+7. `adaptive_rules` 推导的 checkpoint 首次真的进入校验面 (改前散文按字面键逐 key): 场景 B/C 采用方会新看到 `missing` —— 这是修复本身 (该跑没跑原查不出); 生产路径可达性由调用方步骤 3 同步改读优先级链保证。
+8. `audit.mode` 取值不在四值枚举内: 从静默 off (空纳入集盖章 pass) 变为 exit 2 (fail-closed)。
+9. 门首次引入 git 依赖: `--base` / `--anchor-base` 解析失败或 merge-base 失败一律 `git_failed` exit 2 —— 浅克隆 / 无远程跟踪 ref / 容器内无 git 的环境从「静默通过」变硬阻。
+10. 跨仓 + Level 1 (`--no-spec`) 且锚点面零 diff: `no_spec_unverifiable` —— 可由 `allow_incomplete_checkpoints` 豁免降 `bypassed` (exit 0); `allow_dangling_change_ids` 不覆盖。
+11. adaptive 档新纳入 checkpoint 的报告在产出侧调用链上不产出 ⇒ 这批采用方会拿到新的假红: ERROR 模板的 Fix 清单已补可执行条 (在 `audit.checkpoints` 里**显式写**该 checkpoint); 产出侧四个调用点的接线改造另有跟踪 issue (号在 Phase D 开出后记周期 handoff)。
+12. audit-engine 入口第二道启用守卫改读优先级链 + adaptive 档取上界: 场景 B/C 采用方的 pre_merge 从「门从不跑」变成「会跑」。
+13. `post_brainstorm` 不再作为前置依赖 (checkpoint 排除五项之一, 与 mid_post_spec 等同列)。
+
+Rule #6: 两个套件照跑 (`ab-suite/audit-engine.json` delta.pass_rate +0.27, 定向 eval 3 without 臂 1/5 < with 臂 5/5; `phase-c-integrator` 套件逐 eval 零回归), 结果 `aria-plugin-benchmarks/ab-results/2026-10-15-pre-merge-completeness-gate-rule6/` (10CG/Aria 主仓)。
+
 ## [1.75.0] - 2026-10-15 — secret-net-l3-and-bypass-paths: 检测网补洞 + 旁路收口 (`10CG/aria-plugin#154` / `10CG/aria-plugin#203` / `10CG/Aria#221`; MINOR: 新检测能力 + 新输入面 + 新拦截族, 向下兼容)
 
 ### Security — PostToolUse secret-scan (检测 + 告警, 不改写输出)

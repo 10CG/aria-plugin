@@ -54,7 +54,7 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Skill
 | `phase_c_integrator.pre_merge_gate.path_coverage_enabled` | `true` | **v1.65.0+** 路径覆盖感知 (aria-plugin #122): 变更路径结构性无 CI workflow 覆盖时产 `not_applicable`, 跳过 (a) PR CI wait ((b) main in-flight 照查)。见 §C.2.4 步骤 2.5 |
 | `phase_c_integrator.pre_merge_gate.no_run_prompt_after_observations` | `3` | **v1.66.5+** (#152) 远端零 run (`pr_ci_status=not_found`) 连续观测达此次数才 prompt; int ≥2, 不提供 1; 非法值 warn + 回落 3 |
 
-当 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时，C.2 合并前触发 audit-engine (pre_merge 检查点)。
+当 `audit.enabled=true` 且 pre_merge 按 C.2 pre_hook 步骤 3 的优先级链判为启用时，C.2 合并前触发 audit-engine (pre_merge 检查点)。
 旧配置 `experiments.agent_team_audit=true` 且 `"pre_merge" in agent_team_audit_points` 自动映射到新配置。
 
 ---
@@ -129,14 +129,26 @@ C.2 - PR/合并:
       步骤:
         1. 通过 config-loader 读取 .aria/config.json audit 块
         2. 检查 audit.enabled — false 则跳过，保持现有行为不变
-        3. 检查 audit.checkpoints.pre_merge — "off" 则跳过
+        3. 按优先级链判定 pre_merge 是否启用 (与 audit-engine 入口守卫 (execution-modes.md 入口逻辑) 同一条链, checkpoints 显式值 > adaptive_rules 推导值 > 默认 off; first-match, 命中即止, 不再往下判)。级 1 的取值视图 = 原始 .aria/config.json 经旧配置兼容映射、未经验证、未与 DEFAULTS.json 合并的视图 (只用于判定 audit.checkpoints 自身是否含 pre_merge 键, 区分「用户显式 off」与「DEFAULTS 填的 off」); mode / adaptive_rules 读步骤 1 取得的 config-loader 合并视图:
+           - 级 1: 该视图 (见上) 的 audit.checkpoints 自身含 pre_merge 键 → 取其值, 到此为止: 非 "off" → 调用门; "off" → 早退跳过
+           - 级 2a: 否则 (原始 checkpoints 未写该键) mode == "adaptive" → 取 adaptive_rules 三档上界, 任一档非 "off" 即视为可能启用, 照常调用门, 由门精确分格
+           - 级 2b: 否则 mode == "convergence" → 视为启用, 照常调用门
+           - 级 2c: 否则 mode == "challenge" → 同 2b, 照常调用门
+           - 级 2d: 否则 mode == "manual" → 视为 off, 早退跳过
+           - 级 3: 其余 mode (不属上述四值枚举) → 照常调用门, 由门判 config_unreadable —— 本步读的是 config-loader 合并视图; 按该表, 验证会对非法值告警并回落缺省 (config-loader/SKILL.md §错误处理 未就此场景逐字写明, 属推断), 真正可能撞到这一档的是直读原始 config、不经 config-loader 校验的 completeness gate 本身。三个非排除 checkpoint 都已显式且纳入集非空时, mode 写错也不会被 completeness gate 暴露 (格 SC-15.10-typo-mode-lazy-when-inclusion-nonempty 锁住), 不改变其它 checkpoint 的处置
         4. 如启用: 调用 audit-engine
            - checkpoint: "pre_merge"
            - mode: 来自配置 (convergence / challenge / adaptive)
            - context: PR diff (branch_name vs base)
+           - change_id: 本 cycle 的 spec 目录名 (来自 A.1 spec 路径 / claim track 的 spec dir; Level 1 传 no_spec=true)
+           - repo_path / diff_repo_path: 两者都必传, 无缺省; 锚点面恒主仓根, diff 面 = 本次 C.2 合并的目标仓根 (子模块合并 → 子模块根); 同仓合并时 diff_repo_path 显式传与 repo_path 相同的值 —— 漏传即 argparse exit 2, 不再静默按同仓处理; 两者的 git toplevel 不同 (跨仓/子模块合并) 时, completeness gate (`openspec/changes/pre-merge-completeness-gate-change-scope/proposal.md` §1.3, 主仓) 的 not_applicable (b) 判据通道结构上禁止触发, 一律落 present/missing —— 判定上 diff_repo_path 只喂这一个通道, 但 --base 仍在 diff_repo_path 这个仓里解析 (toplevel 同仓判定与 --base 的陈旧性检查对两个参数无条件执行, 与 (b) 通道是否触发无关)
+           - base: 主干的远程跟踪 ref (本项目 origin/master, 不是裸 master); 缺失即 argparse exit 2
+           - anchor_base: 锚点仓 (主仓) 的 base revision, 缺省 = base; 跨仓合并时两仓主干名同为 origin/master, 通常无需显式传
+        4.5 completeness gate 三态处置: fail → 阻塞并输出 ERROR; verdict=error (exit 2) 按 fail 阻塞 (见 execution-modes.md Step 5 的消费方 fail-closed 义务); not_applicable → workflow report 必带 [INFO] 行 (completeness gate: not_applicable, 原因见门输出); unattributed_count > 0 → workflow report 必带 [WARN] 行 (unattributed 报告数与文件名清单)
         5. 处理 verdict:
            - PASS / PASS_WITH_WARNINGS → 继续推送和创建 PR
            - FAIL → 阻塞合并，输出审计报告
+           - 门 verdict=pass/bypassed 而按步骤 3 同一条链 + execution-modes.md 入口逻辑「2. 确定模式」对 pre_merge 精确推导为 "off" (典型: adaptive 档该 change 的 Level 推导 off, §1.4 格 D) ⇒ 不执行 pre_merge 审计, 按 on_skip 路径继续推送和创建 PR; workflow report 必带 [INFO] 行: completeness gate verdict + pre_merge 精确推导为 "off" + 依据 (enabled_by / Level / 档位); audit_verdict 无值 (与「审计未启用」同形, 不新增取值)
       backward_compat:
         audit.enabled=false: 完全跳过，Phase C 行为与之前完全相同
         旧配置 experiments.agent_team_audit: 由 audit-engine 内部映射处理
@@ -153,8 +165,8 @@ C.2 - PR/合并:
   output:
     pr_url: "https://..."
     pr_number: 123
-    audit_verdict: "PASS"                 # 如审计启用 (PASS | PASS_WITH_WARNINGS | FAIL)
-    audit_report: ".aria/audit-reports/pre_merge-{timestamp}.md"
+    audit_verdict: "PASS"                 # 如审计启用 (PASS | PASS_WITH_WARNINGS | FAIL); 门 pass/bypassed 而精确推导为 "off" 未执行审计时无此值
+    audit_report: ".aria/audit-reports/pre_merge-R{round}-{timestamp_ms}-{spec_id}-{agent_role}.md"
 
 > **注意**: branch-manager 会自动处理 Cloudflare Access 配置。
 > 统一规范见 `../forgejo-sync/PRE_CHECK.md`
@@ -751,10 +763,11 @@ context_for_next:
 
 ## emergency hotfix: pre_merge → convergence (#58, v1.35.0)
 
-当本 cycle 走 emergency_hotfix lane (state-scanner `emergency_hotfix` 规则触发, `hotfix/*` 分支) 时, C.2 的 pre_merge audit 调用点 **仅 `audit.enabled=true` 且 `audit.checkpoints.pre_merge != "off"` 时**, 把 audit mode 降级到 **convergence** (不 challenge) —— prod 紧急修复不必跑 15-30min challenge ceremony。
+当本 cycle 走 emergency_hotfix lane (state-scanner `emergency_hotfix` 规则触发, `hotfix/*` 分支) 时, C.2 的 pre_merge audit 调用点 **仅 `audit.enabled=true` 且 pre_merge 按 C.2 pre_hook 步骤 3 的优先级链判为启用时**, 把 audit mode 降级到 **convergence** (不 challenge) —— prod 紧急修复不必跑 15-30min challenge ceremony。
 
 - advisory: phase-c-integrator 在 pre_merge 调 audit-engine 时传 emergency_hotfix lane 信号, audit-engine 据此 + file-scope 过滤共同 resolve 最终 mode (双降级幂等, 都 → convergence)。
 - C.2.4 pre-merge precondition gate (CI passing 等) **不豁免** —— hotfix 仍须过 Rule #8 CI gate (紧急不等于跳 CI 验证)。
+- 降级前提 = pre_merge 的精确 mode 非 off: 若按该 change 的 Level 精确推导 (execution-modes.md 入口逻辑「确定模式」) 结果为 off, 不执行 pre_merge 审计, 该 off 不因本 lane 或 file-scope 过滤被抬成 convergence。
 - 详见 [audit-engine SKILL.md](../audit-engine/SKILL.md) §emergency hotfix lane。
 
 ---

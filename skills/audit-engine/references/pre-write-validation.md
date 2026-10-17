@@ -1,6 +1,9 @@
 # Pre-write Validation: change_id 锚点检查
 
 > **关联**: Forgejo Aria #27 dangling reference fix (2026-04-23), 与 Issue #26 FR-1 (checkpoint 报告完整性 gate) 互补。
+>
+> 完整性门自本 spec 起带 change 维度 (Spec `openspec/changes/pre-merge-completeness-gate-change-scope/proposal.md`
+> §1–§4, 主仓; 权威可执行版见 [execution-modes.md `## Pre-merge: Checkpoint Report Completeness Gate`](./execution-modes.md))。
 
 ## 目的
 

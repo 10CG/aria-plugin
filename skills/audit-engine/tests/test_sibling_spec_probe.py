@@ -420,14 +420,29 @@ class TestStructuralConstraints(unittest.TestCase):
         self.assertFalse((_AUDIT_ENGINE / "collectors").exists(), "audit-engine must not define its own collectors/")
 
     def test_scripts_helper_files_are_namespaced(self):
-        """How this goes red: a helper module named e.g. `scripts/git_utils.py`
+        """Allowed entry-script set (exact filename match, not a prefix):
+        ``sibling_spec_probe.py`` (this probe's own entry script) and
+        ``__init__.py`` (package marker, not an entry script) were the
+        original two; ``completeness_gate.py`` was added for spec
+        ``pre-merge-completeness-gate-change-scope`` (10CG/Aria#199) — that
+        spec's entry script lives in this same ``scripts/`` dir and is
+        namespaced by being a distinct top-level name, not by the
+        ``sibling_spec_probe_`` prefix (reserved for *this* probe's own
+        helper modules). The archived sibling-spec-probe plan text
+        (main-repo path ``openspec/archive/2026-09-04-sibling-spec-probe/``,
+        under the anchor phrase "A.2 显式约束") still shows the original
+        two-item allowed set verbatim — it is a frozen record, not kept in
+        sync as this allowed set grows; THIS test case is the current,
+        authoritative definition.
+
+        How this goes red: a helper module named e.g. `scripts/git_utils.py`
         (no `sibling_spec_probe_` prefix) would collide with other skills'
         scripts/ namespaces once multiple skills' scripts/ dirs ever share a
         sys.path entry."""
         scripts_dir = _AUDIT_ENGINE / "scripts"
         if not scripts_dir.is_dir():
             self.skipTest("scripts/ does not exist yet (baseline)")
-        allowed = {"sibling_spec_probe.py", "__init__.py"}
+        allowed = {"sibling_spec_probe.py", "completeness_gate.py", "__init__.py"}
         offenders = [
             p.name for p in scripts_dir.glob("*.py")
             if p.name not in allowed and not p.name.startswith("sibling_spec_probe_")
