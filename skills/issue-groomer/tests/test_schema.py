@@ -1,0 +1,547 @@
+"""TASK-003 — groom-report schema v1 自测 (SC-8 验收面)。
+
+三组断言:
+  (a) schema 自身结构: json.loads 可解析 + draft 2020-12 声明 + 顶层必填/封闭 +
+      additive-only 契约文档化 + labels_payload 键集封闭且无 remove (proposal §3)。
+  (b) 合法样例 report 通过校验: 样例形态取自 2026-10-18 真语料
+      (scratchpad/issues-open-2026-10-18.json: 裸仓名 / title 前缀 / labels 几乎全空),
+      防形态脱节假绿。
+  (c) 含 remove 字段的 labels_payload 判非法 (封闭键集), 外加一组负向样例证明
+      mini-validate 有牙齿 (对已知非法输入必须报错, 防恒绿循环论证)。
+
+双路径校验策略:
+  - mini_validate: 纯 stdlib 结构断言器 (draft 2020-12 关键字子集), 无第三方依赖,
+    任何环境可跑;
+  - jsonschema (try-import): 本机装了 python3-jsonschema 时用标准验证器复核同一批
+    正/负样例 (证明 schema 可被标准验证器直接加载校验), 未装则跳过该路径。
+
+References:
+  openspec/changes/issue-groomer-p1-mvp (proposal §3, SC-8, 裁定-8);
+  DEC-20261018-001 (裁定-3 分层采集 / 裁定-7 Tier A 唯四信号源 / 裁定-8 标签契约)。
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+_SCHEMA_PATH = (
+    Path(__file__).parent.parent / "scripts" / "groom-report.schema.json"
+)
+
+try:  # 双路径第二径: 标准验证器 (可选)
+    import jsonschema
+    from jsonschema.validators import Draft202012Validator
+
+    HAS_JSONSCHEMA = True
+except ImportError:  # pragma: no cover - environment-dependent
+    HAS_JSONSCHEMA = False
+
+
+# ── mini structural validator (stdlib-only, draft 2020-12 subset) ─────────────
+
+
+def _resolve_pointer(root: dict[str, Any], ref: str) -> Any:
+    """Resolve an internal JSON pointer like '#/$defs/IssueEntry'."""
+    if not ref.startswith("#/"):
+        raise AssertionError(f"mini_validate: only internal $ref supported, got {ref!r}")
+    node: Any = root
+    for raw in ref[2:].split("/"):
+        part = raw.replace("~1", "/").replace("~0", "~")
+        node = node[part]
+    return node
+
+
+def _type_matches(value: Any, expected: str) -> bool:
+    """draft 2020-12 type semantics; bool is NOT an integer (Python quirk)."""
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    raise AssertionError(f"mini_validate: unknown type keyword {expected!r}")
+
+
+def mini_validate(
+    instance: Any,
+    schema: dict[str, Any],
+    root: dict[str, Any] | None = None,
+    path: str = "$",
+    errors: list[str] | None = None,
+) -> list[str]:
+    """Validate `instance` against a draft 2020-12 subset schema.
+
+    Supported keywords: $ref (internal), type (string or list), required,
+    properties, additionalProperties (bool or schema), items, enum, const,
+    pattern (re.search semantics, per spec), minLength, minimum, minItems,
+    maxItems. `format` is annotation-only in 2020-12 and intentionally not
+    checked. Returns a list of human-readable error strings (empty = valid).
+    """
+    if errors is None:
+        errors = []
+        root = schema if root is None else root
+    assert root is not None
+
+    if "$ref" in schema:
+        return mini_validate(
+            instance, _resolve_pointer(root, schema["$ref"]), root, path, errors
+        )
+
+    if "type" in schema:
+        expected = schema["type"]
+        candidates = expected if isinstance(expected, list) else [expected]
+        if not any(_type_matches(instance, t) for t in candidates):
+            errors.append(
+                f"{path}: expected type {expected!r}, got {type(instance).__name__}"
+            )
+            return errors  # type mismatch invalidates keyword application below
+
+    if "const" in schema and instance != schema["const"]:
+        errors.append(f"{path}: {instance!r} != const {schema['const']!r}")
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(f"{path}: {instance!r} not in enum {schema['enum']!r}")
+
+    if isinstance(instance, str):
+        if "pattern" in schema and re.search(schema["pattern"], instance) is None:
+            errors.append(f"{path}: {instance!r} fails pattern {schema['pattern']!r}")
+        if "minLength" in schema and len(instance) < schema["minLength"]:
+            errors.append(f"{path}: length {len(instance)} < minLength {schema['minLength']}")
+
+    if isinstance(instance, int) and not isinstance(instance, bool):
+        if "minimum" in schema and instance < schema["minimum"]:
+            errors.append(f"{path}: {instance} < minimum {schema['minimum']}")
+
+    if isinstance(instance, list):
+        if "minItems" in schema and len(instance) < schema["minItems"]:
+            errors.append(f"{path}: {len(instance)} items < minItems {schema['minItems']}")
+        if "maxItems" in schema and len(instance) > schema["maxItems"]:
+            errors.append(f"{path}: {len(instance)} items > maxItems {schema['maxItems']}")
+        if "items" in schema:
+            for i, item in enumerate(instance):
+                mini_validate(item, schema["items"], root, f"{path}[{i}]", errors)
+
+    if isinstance(instance, dict):
+        for key in schema.get("required", []):
+            if key not in instance:
+                errors.append(f"{path}: missing required property {key!r}")
+        properties = schema.get("properties", {})
+        additional = schema.get("additionalProperties", True)
+        for key, value in instance.items():
+            child = f"{path}.{key}"
+            if key in properties:
+                mini_validate(value, properties[key], root, child, errors)
+            elif additional is False:
+                errors.append(
+                    f"{child}: additional property {key!r} not allowed (closed keyset)"
+                )
+            elif isinstance(additional, dict):
+                mini_validate(value, additional, root, child, errors)
+
+    return errors
+
+
+def _assert_invalid(instance: Any, schema: dict[str, Any], needle: str) -> None:
+    """Assert mini_validate flags the instance, with the expected reason substring.
+
+    `needle` guards against a vacuous red: the failure must be the one we
+    constructed, not an unrelated accident.
+    """
+    errors = mini_validate(instance, schema)
+    assert errors, "expected validation errors, got none (vacuous pass)"
+    assert any(needle in e for e in errors), (
+        f"expected an error containing {needle!r}, got: {errors}"
+    )
+
+
+# ── fixtures ──────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def schema() -> dict[str, Any]:
+    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def _valid_report() -> dict[str, Any]:
+    """合法样例 report — 形态取自 2026-10-18 真语料 (三个条目覆盖三种形态):
+    纯 title 前缀信号 / label+staleness 信号 + 完整 assessment + 空差集 /
+    无显式信号 => category=unknown (负面形态)。
+    """
+    return {
+        "snapshot_schema_version": "1.0",
+        "generated_at": "2026-10-19T12:00:00Z",
+        "harness": "claude-code",
+        "repos": [
+            {"repo": "Aria", "open_issues": 2},
+            {"repo": "aria-plugin", "open_issues": 1},
+        ],
+        "issues": [
+            {
+                "repo": "Aria",
+                "number": 236,
+                "title": "[archived] pre-merge-completeness-gate-change-scope 归档跟踪 (10CG/Aria#199, v1.76.0)",
+                "labels": [],
+                "category": "tracker",
+                "signals": [
+                    {
+                        "source": "title_prefix",
+                        "rule": "prefix:tracker",
+                        "detail": "title 前缀 '[archived]' 命中 labels.yaml 前缀映射表 tracker 键",
+                    }
+                ],
+                "confidence_source": ["title_prefix"],
+                "assessment": None,
+                "labels_payload": {
+                    "existing": [],
+                    "suggested": ["tracker"],
+                    "apply_payload": {
+                        "repo": "Aria",
+                        "number": 236,
+                        "add": ["tracker"],
+                        "idempotent": True,
+                    },
+                },
+            },
+            {
+                "repo": "aria-plugin",
+                "number": 208,
+                "title": "issue-list fetch limit=50 静默丢数据",
+                "labels": ["bug"],
+                "category": "bug",
+                "signals": [
+                    {
+                        "source": "label",
+                        "rule": "label:bug",
+                        "detail": "tracker label 'bug' 命中分类键 bug",
+                    },
+                    {
+                        "source": "staleness",
+                        "rule": "staleness:gt-90d",
+                        "detail": "最近更新 2026-07-14, 距今 >90 天",
+                    },
+                ],
+                "confidence_source": ["label", "staleness"],
+                "assessment": {
+                    "verdict_priorities": "P2 — 与全分页 fetch 修复轨相关, 建议随 issue-groomer P1 一并处理",
+                    "suspected_fixed": True,
+                    "owner_decisions": ["是否随 #238 一起验收关单"],
+                    "provenance": {"harness": "claude-code", "model_id": "glm-5.2"},
+                },
+                "labels_payload": {
+                    "existing": ["bug"],
+                    "suggested": ["bug"],
+                    "apply_payload": {
+                        "repo": "aria-plugin",
+                        "number": 208,
+                        "add": [],  # suggested − existing = 空差集 (幂等形态)
+                        "idempotent": True,
+                    },
+                },
+            },
+            {
+                "repo": "Aria",
+                "number": 241,
+                "title": "无显式编码信号的条目 (讨论型, 无前缀无 label)",
+                "labels": [],
+                "category": "unknown",
+                "signals": [],
+                "confidence_source": [],
+                "assessment": None,
+                "labels_payload": {
+                    "existing": [],
+                    "suggested": [],
+                    "apply_payload": {
+                        "repo": "Aria",
+                        "number": 241,
+                        "add": [],
+                        "idempotent": True,
+                    },
+                },
+            },
+        ],
+        "diff": {
+            "new": [
+                {"repo": "Aria", "number": 241, "title": "无显式编码信号的条目 (讨论型, 无前缀无 label)"}
+            ],
+            "closed": [
+                {"repo": "aria-plugin", "number": 199, "title": "已随 v1.76.0 验收合并的条目"}
+            ],
+            "drift": [
+                {
+                    "repo": "aria-plugin",
+                    "number": 208,
+                    "title": "issue-list fetch limit=50 静默丢数据",
+                    "from": "P1",
+                    "to": "P2",
+                }
+            ],
+            "baseline_run": False,
+        },
+        "summary": {
+            "total_issues": 3,
+            "by_category": {"tracker": 1, "bug": 1, "unknown": 1},
+            "by_repo": {"Aria": 2, "aria-plugin": 1},
+            "assessed": 1,
+            "diff_counts": {"new": 1, "closed": 1, "drift": 1},
+        },
+    }
+
+
+@pytest.fixture()
+def valid_report() -> dict[str, Any]:
+    return _valid_report()
+
+
+# ── (a) schema 自身结构断言 ────────────────────────────────────────────────────
+
+
+class TestSchemaSelf:
+    def test_schema_parses_as_json(self, schema: dict[str, Any]) -> None:
+        """(a) schema 文件可被 json.loads (fixture 已隐含, 此处显式钉住加载源)。"""
+        assert _SCHEMA_PATH.exists(), f"schema file missing: {_SCHEMA_PATH}"
+        assert isinstance(schema, dict)
+
+    def test_declares_draft_2020_12(self, schema: dict[str, Any]) -> None:
+        """(a) $schema 声明 draft 2020-12 (标准验证器可据此选验证器)。"""
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+
+    def test_toplevel_required_keyset(self, schema: dict[str, Any]) -> None:
+        """(a) 顶层七个必填键全部声明。"""
+        required = schema["required"]
+        for key in (
+            "snapshot_schema_version",
+            "generated_at",
+            "harness",
+            "repos",
+            "issues",
+            "diff",
+            "summary",
+        ):
+            assert key in required, f"top-level required missing {key!r}"
+
+    def test_toplevel_closed_keyset(self, schema: dict[str, Any]) -> None:
+        """(a) 顶层封闭 (additionalProperties:false) — 未版本化私加字段会被拒。"""
+        assert schema["additionalProperties"] is False
+
+    def test_snapshot_schema_version_is_const_1_0(self, schema: dict[str, Any]) -> None:
+        """(a) snapshot_schema_version 钉 const '1.0'。"""
+        version = schema["properties"]["snapshot_schema_version"]
+        assert version == {"const": "1.0"} or version.get("const") == "1.0"
+
+    def test_additive_only_contract_documented(self, schema: dict[str, Any]) -> None:
+        """(a) SC-8: additive-only 演进纪律写进 $comment/description (文档化断言)。"""
+        comment = schema.get("$comment", "")
+        assert "ADDITIVE-ONLY" in comment
+        assert "minor" in comment and "major" in comment
+        # 演进纪律同款写进 snapshot_schema_version 自身描述
+        version_desc = schema["properties"]["snapshot_schema_version"]["description"]
+        assert "minor" in version_desc and "major" in version_desc
+
+    def test_harness_is_provenance_layer_one(self, schema: dict[str, Any]) -> None:
+        """(a) 顶层 harness 字段存在且为非空字符串 (provenance 第一层, 脚本自报)。"""
+        harness = schema["properties"]["harness"]
+        assert harness["type"] == "string"
+        assert harness.get("minLength") == 1
+
+    def test_no_numeric_confidence_field_anywhere(self, schema: dict[str, Any]) -> None:
+        """(a) 裁定-7: 全树不定义数值 confidence 字段 (confidence = 枚举信号集)。"""
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                assert "confidence" not in node.get("properties", {}), (
+                    "numeric confidence field must not be defined (裁定-7: 枚举信号集非分数)"
+                )
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(schema)
+
+    def test_signal_source_enum_is_closed_four(self, schema: dict[str, Any]) -> None:
+        """(a) 裁定-7: Tier A 信号源封闭枚举 = 唯四显式编码信号。"""
+        source = schema["$defs"]["SignalSource"]
+        assert set(source["enum"]) == {"title_prefix", "label", "staleness", "activity"}
+
+    def test_labels_payload_keyset_closed_and_remove_absent(
+        self, schema: dict[str, Any]
+    ) -> None:
+        """(a) proposal §3: labels_payload / apply_payload 封闭键集, properties 无 remove。"""
+        for def_name in ("LabelsPayload", "ApplyPayload"):
+            node = schema["$defs"][def_name]
+            assert node.get("additionalProperties") is False, (
+                f"{def_name} must close its keyset (additionalProperties:false)"
+            )
+            assert "remove" not in node.get("properties", {}), (
+                f"{def_name} must not define a 'remove' field (裁定-8 只加不删)"
+            )
+
+    def test_apply_payload_idempotent_is_const_true(
+        self, schema: dict[str, Any]
+    ) -> None:
+        """(a) idempotent 恒 true (差集 ⇒ 重复 apply 无操作, schema const 钉死)。"""
+        idem = schema["$defs"]["ApplyPayload"]["properties"]["idempotent"]
+        assert idem.get("const") is True
+
+    def test_assessment_nullable_but_face_always_present(
+        self, schema: dict[str, Any]
+    ) -> None:
+        """(a) assessment 在 IssueEntry 必填且可 null (契约保证面存在, 质量随 harness)。"""
+        issue = schema["$defs"]["IssueEntry"]
+        assert "assessment" in issue["required"]
+        assessment_types = issue["properties"]["assessment"]["type"]
+        assert set(assessment_types) == {"object", "null"}
+        # 非 null assessment 必须带 provenance{harness, model_id} (裁定-3 第二层)
+        assessment = issue["properties"]["assessment"]
+        assert assessment["required"] == ["provenance"]
+        prov = schema["$defs"]["AssessmentProvenance"]
+        assert set(prov["required"]) == {"harness", "model_id"}
+
+    def test_diff_section_shape(self, schema: dict[str, Any]) -> None:
+        """(a) diff 段: new/closed/drift/baseline_run 四键 + drift 有 maxItems 护栏。"""
+        diff = schema["$defs"]["DiffSection"]
+        assert set(diff["required"]) == {"new", "closed", "drift", "baseline_run"}
+        assert diff["properties"]["drift"]["maxItems"] == 100
+        assert diff["properties"]["baseline_run"]["type"] == "boolean"
+
+
+# ── (b) 合法样例通过校验 ───────────────────────────────────────────────────────
+
+
+class TestValidReport:
+    def test_valid_report_passes_mini_validate(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """(b) 真语料形态的合法样例通过纯 stdlib mini-validate。"""
+        errors = mini_validate(valid_report, schema)
+        assert errors == [], f"valid report rejected:\n" + "\n".join(errors)
+
+    @pytest.mark.skipif(
+        not HAS_JSONSCHEMA, reason="python3-jsonschema not installed"
+    )
+    def test_schema_loadable_by_standard_validator(
+        self, schema: dict[str, Any]
+    ) -> None:
+        """(b) 标准验证器可直接加载 (check_schema 对 draft 2020-12 无抱怨)。"""
+        Draft202012Validator.check_schema(schema)
+
+    @pytest.mark.skipif(
+        not HAS_JSONSCHEMA, reason="python3-jsonschema not installed"
+    )
+    def test_valid_report_passes_jsonschema(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """(b) 同一样例经标准 draft 2020-12 验证器校验通过 (双路径一致)。"""
+        validator = Draft202012Validator(schema)
+        errors = sorted(validator.iter_errors(valid_report), key=lambda e: list(e.path))
+        assert not errors, "\n".join(f"{list(e.path)}: {e.message}" for e in errors)
+
+
+# ── (c) 封闭键集与负向样例 (mini-validate 必须有牙齿) ─────────────────────────
+
+
+class TestClosedKeysetAndNegative:
+    def test_labels_payload_with_remove_is_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """(c) proposal §3 核心负向: labels_payload 带 remove 字段 => 非法。"""
+        report = copy.deepcopy(valid_report)
+        report["issues"][0]["labels_payload"]["remove"] = ["stale"]
+        _assert_invalid(report, schema, "remove")
+
+    def test_apply_payload_with_remove_is_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """(c) apply_payload 带 remove 字段 => 同样非法 (封闭键集到叶子)。"""
+        report = copy.deepcopy(valid_report)
+        report["issues"][0]["labels_payload"]["apply_payload"]["remove"] = ["bug"]
+        _assert_invalid(report, schema, "remove")
+
+    @pytest.mark.skipif(
+        not HAS_JSONSCHEMA, reason="python3-jsonschema not installed"
+    )
+    def test_labels_payload_with_remove_rejected_by_jsonschema(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """(c) 标准验证器同样拒绝 remove 字段 (双路径负向一致)。"""
+        report = copy.deepcopy(valid_report)
+        report["issues"][0]["labels_payload"]["remove"] = ["stale"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=report, schema=schema)
+
+    def test_missing_toplevel_harness_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """负向: 删顶层必填 harness => 非法。"""
+        report = copy.deepcopy(valid_report)
+        del report["harness"]
+        _assert_invalid(report, schema, "harness")
+
+    def test_wrong_snapshot_schema_version_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """负向: snapshot_schema_version='2.0' 违 const '1.0' => 非法。"""
+        report = copy.deepcopy(valid_report)
+        report["snapshot_schema_version"] = "2.0"
+        _assert_invalid(report, schema, "const")
+
+    def test_numeric_confidence_top_level_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """负向: 数值 confidence 字段 (裁定-7 明令不设) => 顶层封闭键集拒绝。"""
+        report = copy.deepcopy(valid_report)
+        report["confidence"] = 0.9
+        _assert_invalid(report, schema, "confidence")
+
+    def test_assessment_without_provenance_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """负向: 非 null assessment 缺 provenance => 非法 (裁定-3 复用门比对键不可缺)。"""
+        report = copy.deepcopy(valid_report)
+        del report["issues"][1]["assessment"]["provenance"]
+        _assert_invalid(report, schema, "provenance")
+
+    def test_signal_source_outside_enum_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """负向: 语义猜测型信号源 ('semantic_guess') 不在封闭枚举 => 非法 (裁定-7)。"""
+        report = copy.deepcopy(valid_report)
+        report["issues"][0]["signals"] = [
+            {"source": "semantic_guess", "rule": "vibe", "detail": "看起来像 bug"}
+        ]
+        _assert_invalid(report, schema, "enum")
+
+    def test_idempotent_false_invalid(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """负向: idempotent=false 违 const true => 非法 (差集结构保证)。"""
+        report = copy.deepcopy(valid_report)
+        report["issues"][0]["labels_payload"]["apply_payload"]["idempotent"] = False
+        _assert_invalid(report, schema, "const")
+
+    def test_unknown_category_with_nonempty_signals_shape_still_structural(
+        self, schema: dict[str, Any], valid_report: dict[str, Any]
+    ) -> None:
+        """结构面补充: unknown 条目的 signals/confidence_source 为空数组是 Tier A
+        引擎行为面 (TASK-002/TASK-008 fixture), schema 只钉类型 — 本测试钉住
+        该形态本身合法, 防未来 schema 误收窄把负面 fixture 形态误杀。"""
+        report = copy.deepcopy(valid_report)
+        unknown_entry = report["issues"][2]
+        assert unknown_entry["category"] == "unknown"
+        assert unknown_entry["signals"] == []
+        assert unknown_entry["confidence_source"] == []
+        errors = mini_validate(report, schema)
+        assert errors == []

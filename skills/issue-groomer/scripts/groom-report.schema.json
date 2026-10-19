@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/10CG/aria-plugin/skills/issue-groomer/scripts/groom-report.schema.json",
+  "title": "Groom Report (issue-groomer P1)",
+  "description": "issue-groomer P1 输出契约: 项目内卫星仓 open issue 组合面梳理报告。Tier A 机械粗分面 (groom.py, stdlib-only) + Tier B 语义评估面 (适配层, 可 null; 多 harness 下契约只保证面存在且格式稳定)。生产者 = aria/skills/issue-groomer/scripts/groom.py; 本文件是契约面资产, plugin 外可及 (裁定-13), 任何 harness 与 Layer 1 可直接消费。对应 openspec/changes/issue-groomer-p1-mvp (10CG/Aria#238), 裁定来源 DEC-20261018-001。",
+  "$comment": "ADDITIVE-ONLY 契约 (SC-8): (1) 新增字段 = 向后兼容变更, snapshot_schema_version 与本 schema 同步 minor bump (1.0 -> 1.x); 消费代码必须忽略未识别字段不炸。(2) 删除字段 / 收窄类型 / 变更既有字段语义 = 破坏性变更, 须 major bump (2.0) 并与消费方协调, 不允许在同一 major 内发生。(3) 校验须使用与报告 snapshot_schema_version 同版或更新的 schema; 本树所有 object 节点 additionalProperties:false (动态键计数映射除外), 演进时新字段必须先入本 schema 再出厂, 未版本化的私加字段会被校验拒绝。(4) labels_payload 额外受裁定-8 约束: 封闭键集且键集中无 remove — 删标签动作结构性不可表达。",
+  "type": "object",
+  "required": [
+    "snapshot_schema_version",
+    "generated_at",
+    "harness",
+    "repos",
+    "issues",
+    "diff",
+    "summary"
+  ],
+  "properties": {
+    "snapshot_schema_version": {
+      "const": "1.0",
+      "description": "报告契约版本, 与本 schema 文件版本同款演进 (additive-only): 加字段 = 1.x minor; 删/改字段 = 2.0 major。v1 当前值恒 '1.0'。"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "报告生成时刻, ISO-8601 UTC。",
+      "examples": ["2026-10-19T12:00:00Z"]
+    },
+    "harness": {
+      "type": "string",
+      "minLength": 1,
+      "description": "provenance 第一层 (裁定-3 分层采集): groom.py 调用方自报的 harness 标识 (如 'claude-code')。model id 不在此层 — 由适配层写入 issues[].assessment.provenance.model_id (第二层)。",
+      "examples": ["claude-code"]
+    },
+    "repos": {
+      "type": "array",
+      "description": "本次扫描覆盖的仓库清单 (作用域 = 项目内卫星仓, 裁定-2; 复用 state_scanner.issue_scan 配置形态)。",
+      "items": { "$ref": "#/$defs/RepoEntry" }
+    },
+    "issues": {
+      "type": "array",
+      "description": "全部 open issue 梳理条目 (全量, 非选集; 顶层 summary.total_issues 与本数组计数对账, SC-7)。",
+      "items": { "$ref": "#/$defs/IssueEntry" }
+    },
+    "diff": { "$ref": "#/$defs/DiffSection" },
+    "summary": { "$ref": "#/$defs/SummarySection" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RepoEntry": {
+      "type": "object",
+      "description": "单仓扫描结果。",
+      "required": ["repo", "open_issues"],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "裸仓名, 与 forgejo issue-list 端点返回及语料快照形态一致 (如 'Aria', 'aria-plugin'; 非 owner/name 全名)。",
+          "examples": ["Aria", "aria-plugin", "Aether"]
+        },
+        "open_issues": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "该仓 open issue 计数 (fetch 计数对账面, SC-7)。"
+        },
+        "error": {
+          "type": "string",
+          "description": "repo 级 fetch 失败描述; 成功时省略。失败显式可见不静默 (复刻 issue_scan fetch_error 纪律)。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "IssueEntry": {
+      "type": "object",
+      "description": "单条 issue 梳理条目: 标识事实面 + Tier A 机械粗分面 + Tier B 语义评估面 + 标签信息契约面。",
+      "required": [
+        "repo",
+        "number",
+        "title",
+        "labels",
+        "category",
+        "signals",
+        "confidence_source",
+        "assessment",
+        "labels_payload"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "裸仓名 (同 RepoEntry.repo 形态)。"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "issue 编号。"
+        },
+        "title": {
+          "type": "string",
+          "description": "issue 标题原文 (不裁剪; title 前缀是 Tier A 主要存量分类信号)。"
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "标识字段: tracker 事实面现有标签 (语料实测形态: 几乎全空, label 体系经本能力反向立起)。与 labels_payload.existing 同源, 由 groom.py 组装保证一致。"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tier A 分类键 (裁定-7)。值域 = labels.yaml taxonomy 分类键: 内置保守默认层仅 bug/feature/security/tracker (裁定-1), 项目级 .aria/labels.yaml 可扩展, 故不设封闭 enum。保留值 'unknown' = 无显式编码信号, 不做语义猜测 (负面 fixture 钉为 SC-3 必测)。",
+          "examples": ["bug", "feature", "security", "tracker", "unknown"]
+        },
+        "signals": {
+          "type": "array",
+          "description": "Tier A 命中信号明细 (逐信号枚举, 裁定-7)。无显式信号 ⇒ 空数组且 category='unknown'。",
+          "items": { "$ref": "#/$defs/Signal" }
+        },
+        "confidence_source": {
+          "type": "array",
+          "description": "confidence 的表达 = 枚举命中信号来源集, 非聚合数值分数 (裁定-7; 本 schema 不设数值 confidence 字段)。值域与 signals[].source 一致; 无显式信号 ⇒ 空数组。",
+          "items": { "$ref": "#/$defs/SignalSource" },
+          "examples": [["title_prefix"], ["label", "staleness"], []]
+        },
+        "assessment": {
+          "type": ["object", "null"],
+          "description": "Tier B 语义评估面 (裁定-7: 疑似已修可关单 / 优先级 vs 在制轨道 / owner 决策面抽取), 由适配层 (AI) 产出并持久化于 groom-assessments.json (裁定-4)。null = 当前无有效评估 (机械核直出, 或旧 assessment 经 provenance 门判 stale-assessment 被剔除 — 杜绝跨 harness 静默复用)。契约只保证面存在且格式稳定, 语义质量随 harness 而变 (诚实主张)。",
+          "properties": {
+            "verdict_priorities": {
+              "type": "string",
+              "description": "优先级判读 vs 在制轨道 (OpenSpec/git 轨道交叉参照)。"
+            },
+            "suspected_fixed": {
+              "type": "boolean",
+              "description": "疑似已修可关单 (需项目上下文交叉核验的判断, 机械层不产出)。"
+            },
+            "owner_decisions": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "owner 决策面抽取条目 (需要人裁的事项清单)。"
+            },
+            "provenance": { "$ref": "#/$defs/AssessmentProvenance" }
+          },
+          "required": ["provenance"],
+          "additionalProperties": false
+        },
+        "labels_payload": { "$ref": "#/$defs/LabelsPayload" }
+      },
+      "additionalProperties": false
+    },
+    "SignalSource": {
+      "type": "string",
+      "enum": ["title_prefix", "label", "staleness", "activity"],
+      "description": "Tier A 显式编码信号源封闭枚举 (裁定-7 只用四类: title 前缀 / label / staleness 档 / 活跃度)。新增信号源类别 = schema minor bump (additive)。语义猜测不在此枚举内 — 结构上不可作为 Tier A 信号出现。"
+    },
+    "Signal": {
+      "type": "object",
+      "description": "单条命中信号: 来源 + 规则 + 细节, 完整溯源 (每分类判据的独立反事实 fixture 覆盖, SC-3)。",
+      "required": ["source", "rule", "detail"],
+      "properties": {
+        "source": { "$ref": "#/$defs/SignalSource" },
+        "rule": {
+          "type": "string",
+          "minLength": 1,
+          "description": "命中规则标识 (labels.yaml 前缀映射表/taxonomy 条目, 如 'prefix:bug', 'staleness:gt-180d', 'activity:comment-last-30d')。"
+        },
+        "detail": {
+          "type": "string",
+          "description": "人类可读命中细节 (如命中的前缀原文 / 距今天数)。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AssessmentProvenance": {
+      "type": "object",
+      "description": "Tier B provenance (裁定-3 分层采集第二层): 复用门比对键 = harness + model_id 完整拼接串 (裁定-9); 不同 ⇒ 旧 assessment 不进报告。",
+      "required": ["harness", "model_id"],
+      "properties": {
+        "harness": {
+          "type": "string",
+          "minLength": 1,
+          "description": "与顶层 harness 同源 (groom.py 自报, 脚本层)。"
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "适配层写 assessment 时补全的模型标识 (裁定-3; 含路由层版本化标识符语义由适配层负责)。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LabelsPayload": {
+      "type": "object",
+      "description": "裁定-8 标签信息契约 (只产不写): 供后续 forgejo 打标动作零歧义读取, apply_payload 是自包含动作面 (消费者不需交叉引用 issue 标识字段)。",
+      "$comment": "封闭键集 additionalProperties:false 且 properties 不含 'remove' — 删标签动作在本契约中结构性不可表达 (只加不删为结构面, 可机械验证; 测试 test_labels_payload_remove_field_rejected 钉死)。",
+      "required": ["existing", "suggested", "apply_payload"],
+      "properties": {
+        "existing": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "tracker 事实面现有标签 (与标识字段 labels 同源)。"
+        },
+        "suggested": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "taxonomy 建议标签 (分类键 -> forgejo label 规范名映射, labels.yaml 为 SOT)。"
+        },
+        "apply_payload": { "$ref": "#/$defs/ApplyPayload" }
+      },
+      "additionalProperties": false
+    },
+    "ApplyPayload": {
+      "type": "object",
+      "description": "打标动作 payload (P1 只产不写; P2 label apply CLI 的直接输入)。",
+      "$comment": "封闭键集且无 remove。'forgejo 对已有 label 的 add 为 no-op' 是外部 API 行为断言 (live 实测记录于 references/, mock 不编码该假设, 防断言循环自证 — SC-5)。",
+      "required": ["repo", "number", "add", "idempotent"],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "目标仓 (裸仓名, 同 IssueEntry.repo)。"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "目标 issue 编号。"
+        },
+        "add": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "待添加标签 = suggested - existing 差集 (SC-5, harness 无关断言)。已有标签必然不在 add 内。"
+        },
+        "idempotent": {
+          "const": true,
+          "description": "恒 true (schema const 钉死): add 为差集 ⇒ 重复 apply 为无操作。结构保证, 非运行时承诺。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiffRef": {
+      "type": "object",
+      "description": "diff 段新增/已关闭条目引用 (集合差结果)。",
+      "required": ["repo", "number", "title"],
+      "properties": {
+        "repo": { "type": "string", "minLength": 1 },
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "DriftEntry": {
+      "type": "object",
+      "description": "优先级漂移条目 (仅在有新评估的条目上报告, 裁定-9)。",
+      "required": ["repo", "number", "title", "from", "to"],
+      "properties": {
+        "repo": { "type": "string", "minLength": 1 },
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "from": {
+          "type": "string",
+          "description": "先前判读 (优先级档/评估值)。"
+        },
+        "to": {
+          "type": "string",
+          "description": "本次判读。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiffSection": {
+      "type": "object",
+      "description": "增量 diff 段: 与上次状态 (.aria/cache/groom-state.json) 的集合差 + 漂移 + baseline 标记。",
+      "required": ["new", "closed", "drift", "baseline_run"],
+      "properties": {
+        "new": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiffRef" },
+          "description": "新增条目 (本次有 / 上次无)。"
+        },
+        "closed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiffRef" },
+          "description": "已关闭条目 (上次有 / 本次无)。"
+        },
+        "drift": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/DriftEntry" },
+          "$comment": "top-N 上限防爆量: 运行时 N 由 CLI 参数控制 (SC-4 fixture 面在 groom.py); maxItems=100 是 schema 结构护栏 (运行时 N 不得超过, 超过须先 bump schema minor)。"
+        },
+        "baseline_run": {
+          "type": "boolean",
+          "description": "true = 首跑/状态文件缺失 ⇒ baseline, diff 段 no-diff 语义 (new/closed/drift 恒空数组, 语义显式定义, SC-4 专属 fixture)。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SummarySection": {
+      "type": "object",
+      "description": "机器对账汇总面 (渲染层四段 — 分类汇总/优先级分档/决策面/diff — 由适配层从 issues[]+diff 自算; 本面只承载数字对账)。",
+      "required": ["total_issues", "by_category", "by_repo", "assessed", "diff_counts"],
+      "properties": {
+        "total_issues": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "issues[] 条目计数 (SC-7 dogfood: fetch 计数 vs 快照计数对账)。"
+        },
+        "by_category": {
+          "type": "object",
+          "description": "分类键 -> 计数 (动态键 = taxonomy 分类键, 值模式约束)。",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "by_repo": {
+          "type": "object",
+          "description": "仓 -> open issue 计数 (与 repos[].open_issues 对账一致)。",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "assessed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "assessment 非 null 的条目数 (Tier B 覆盖率面)。"
+        },
+        "diff_counts": {
+          "type": "object",
+          "description": "diff 段三数组计数 (与 diff.new/closed/drift 长度对账一致)。",
+          "required": ["new", "closed", "drift"],
+          "properties": {
+            "new": { "type": "integer", "minimum": 0 },
+            "closed": { "type": "integer", "minimum": 0 },
+            "drift": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
