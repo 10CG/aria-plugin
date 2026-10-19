@@ -16,8 +16,8 @@
   ],
   "properties": {
     "snapshot_schema_version": {
-      "const": "1.0",
-      "description": "报告契约版本, 与本 schema 文件版本同款演进 (additive-only): 加字段 = 1.x minor; 删/改字段 = 2.0 major。v1 当前值恒 '1.0'。"
+      "const": "1.1",
+      "description": "报告契约版本, 与本 schema 文件版本同款演进 (additive-only): 加字段 = 1.x minor; 删/改字段 = 2.0 major。当前值 '1.1' (1.1: DiffSection 新增可选 drift_truncated / drift_total, TASK-006; 1.0 = 未含二者的初始形态, 生产者 groom.py 起步即产 1.1)。"
     },
     "generated_at": {
       "type": "string",
@@ -284,11 +284,20 @@
           "type": "array",
           "maxItems": 100,
           "items": { "$ref": "#/$defs/DriftEntry" },
-          "$comment": "top-N 上限防爆量: 运行时 N 由 CLI 参数控制 (SC-4 fixture 面在 groom.py); maxItems=100 是 schema 结构护栏 (运行时 N 不得超过, 超过须先 bump schema minor)。"
+          "$comment": "top-N 上限防爆量: 运行时 N 由 CLI 参数控制 (SC-4 fixture 面在 groom.py); maxItems=100 是 schema 结构护栏 (运行时 N 不得超过, 超过须先 bump schema minor)。截断与否显式报告于 drift_truncated / drift_total (1.1 起)。"
         },
         "baseline_run": {
           "type": "boolean",
           "description": "true = 首跑/状态文件缺失 ⇒ baseline, diff 段 no-diff 语义 (new/closed/drift 恒空数组, 语义显式定义, SC-4 专属 fixture)。"
+        },
+        "drift_truncated": {
+          "type": "boolean",
+          "description": "drift 面是否经 top-N 截断 (1.1 起可选; 缺省 = 未截断)。true ⇒ 尚有漂移候选未入面, 全量计数见 drift_total — 截断不静默, 消费者可提示「还有 N 条未展示」。"
+        },
+        "drift_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "截断前漂移候选全量计数 (1.1 起可选)。不变量: 未截断时 == len(drift); drift_truncated=true 时 > len(drift)。"
         }
       },
       "additionalProperties": false

@@ -181,7 +181,7 @@ def _valid_report() -> dict[str, Any]:
     无显式信号 => category=unknown (负面形态)。
     """
     return {
-        "snapshot_schema_version": "1.0",
+        "snapshot_schema_version": "1.1",
         "generated_at": "2026-10-19T12:00:00Z",
         "harness": "claude-code",
         "repos": [
@@ -289,6 +289,8 @@ def _valid_report() -> dict[str, Any]:
                 }
             ],
             "baseline_run": False,
+            "drift_truncated": False,
+            "drift_total": 1,
         },
         "summary": {
             "total_issues": 3,
@@ -336,10 +338,11 @@ class TestSchemaSelf:
         """(a) 顶层封闭 (additionalProperties:false) — 未版本化私加字段会被拒。"""
         assert schema["additionalProperties"] is False
 
-    def test_snapshot_schema_version_is_const_1_0(self, schema: dict[str, Any]) -> None:
-        """(a) snapshot_schema_version 钉 const '1.0'。"""
+    def test_snapshot_schema_version_is_const_1_1(self, schema: dict[str, Any]) -> None:
+        """(a) snapshot_schema_version 钉 const '1.1' (1.1 = DiffSection 新增可选
+        drift_truncated/drift_total; 加字段 ⇒ minor bump, 纪律见顶层 $comment)。"""
         version = schema["properties"]["snapshot_schema_version"]
-        assert version == {"const": "1.0"} or version.get("const") == "1.0"
+        assert version.get("const") == "1.1"
 
     def test_additive_only_contract_documented(self, schema: dict[str, Any]) -> None:
         """(a) SC-8: additive-only 演进纪律写进 $comment/description (文档化断言)。"""
@@ -493,7 +496,7 @@ class TestClosedKeysetAndNegative:
     def test_wrong_snapshot_schema_version_invalid(
         self, schema: dict[str, Any], valid_report: dict[str, Any]
     ) -> None:
-        """负向: snapshot_schema_version='2.0' 违 const '1.0' => 非法。"""
+        """负向: snapshot_schema_version='2.0' 违 const '1.1' => 非法。"""
         report = copy.deepcopy(valid_report)
         report["snapshot_schema_version"] = "2.0"
         _assert_invalid(report, schema, "const")
