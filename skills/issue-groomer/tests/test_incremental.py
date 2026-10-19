@@ -78,6 +78,11 @@ CTX_FP = {  # TASK-004 上下文面四分量形态 (内容任意, build 原样�
     "handoff_pointer": "2026-10-18-235-cycle-done.md",
     "taxonomy_hash": TAX_HASH_V1,
 }
+CTX_KEY = fingerprint.context_key(CTX_FP)          # 上下文门比对基元 (DEC 裁定-9)
+CTX_KEY_V2 = fingerprint.context_key({             # 上下文变体: handoff 指针推进
+    **CTX_FP, "handoff_pointer": "2026-10-19-236-context-changed.md",
+})
+assert CTX_KEY != CTX_KEY_V2  # 模块级前提: 变体确实判变 (fixture 自证)
 
 # 时钟锚点 (staleness 跨档: updated=2026-10-01 ⇒ age 4d / 9d)
 NOW_ROUND1 = datetime(2026, 10, 5, 12, 0, 0, tzinfo=timezone.utc)    # "<7d"
@@ -149,7 +154,7 @@ class ContractConstantsTests(unittest.TestCase):
         doc = incremental.ASSESSMENTS_SCHEMA_DOC
         for key in ("schema_version", "assessments", "verdict_priorities",
                     "suspected_fixed", "owner_decisions", "provenance",
-                    "model_id", "created_at", "harness"):
+                    "model_id", "created_at", "harness", "context_key"):
             self.assertIn(key, doc, f"contract doc must document key {key!r}")
         # 反事实: 契约文本漏任一键 ⇒ TASK-010 手抄即漂移。
 
@@ -159,9 +164,19 @@ class ContractConstantsTests(unittest.TestCase):
         self.assertIn("不写", doc)  # groom.py 全程不写该文件 (裁定④)
         self.assertIn(".aria/groom-assessments.json", doc)  # 落点钉死
 
+    def test_schema_doc_pins_context_gate_semantics(self):
+        # DEC 裁定-9 的契约面: 两个 stale reason + 判序必须出现在契约文本里。
+        doc = incremental.ASSESSMENTS_SCHEMA_DOC
+        self.assertIn("context-missing", doc)
+        self.assertIn("context-changed", doc)
+        self.assertIn("DEC", doc)  # 裁定出处锚点
+
     def test_machine_readable_constants_match_doc(self):
         self.assertEqual(incremental.ASSESSMENTS_ROOT_REQUIRED_KEYS, ("schema_version", "assessments"))
-        self.assertEqual(incremental.ASSESSMENTS_ENTRY_REQUIRED_KEYS, ("provenance", "created_at"))
+        self.assertEqual(
+            incremental.ASSESSMENTS_ENTRY_REQUIRED_KEYS,
+            ("provenance", "created_at", "context_key"),
+        )
         self.assertEqual(
             sorted(incremental.ASSESSMENTS_ENTRY_OPTIONAL_KEYS),
             ["owner_decisions", "suspected_fixed", "verdict_priorities"],
@@ -169,6 +184,14 @@ class ContractConstantsTests(unittest.TestCase):
         self.assertEqual(incremental.ASSESSMENTS_PROVENANCE_KEYS, ("harness", "model_id"))
         self.assertEqual(incremental.STATE_SCHEMA_VERSION, 1)
         self.assertEqual(incremental.ASSESSMENTS_SCHEMA_VERSION, 1)
+
+    def test_stale_reasons_closed_set(self):
+        # STALE_REASONS 封闭枚举的终集钉死 (报告层文案面的机读 SOT)。
+        self.assertEqual(incremental.STALE_REASONS, frozenset({
+            "entry-not-object", "provenance-missing", "provenance-invalid",
+            "provenance-mismatch", "context-missing", "context-changed",
+            "created-at-missing", "created-at-unparseable", "ttl-expired",
+        }))
 
 
 # ------------------------------------------------------------- 判据输入快照
@@ -583,6 +606,113 @@ class TierBGateTests(unittest.TestCase):
             self._gate(_assessments_doc({}), provenance={"harness": ""})
 
 
+# ------------------------------------------------------ 上下文门 (DEC 裁定-9)
+
+class ContextGateTests(unittest.TestCase):
+    """Tier B 上下文门 (DEC 裁定-9, plugin#110): entry.context_key ≠ 本轮
+    context_key ⇒ stale (context-changed); 条目缺 context_key 键 ⇒ stale
+    (context-missing, 未来旧档/缺省 fail-closed)。「Tier B 全量 stale 即
+    全量重评」— 重评由适配层做, 引擎只诚实标 stale。
+
+    反事实: 若上下文门退化成恒放行 (比对被删 / 恒等 / 缺键被当匹配),
+    context-changed 与 context-missing 断言必红 — #110 类静默陈旧 (issue
+    本体未动、spec ship 后评估翻转) 即由此复活。
+    """
+
+    @staticmethod
+    def _gate(doc, *, context_key=CTX_KEY, provenance=None, **kw):
+        engine = incremental.IncrementalEngine(
+            "unused-state.json", assessments_reader=lambda: doc, now_fn=lambda: NOW_TTL
+        )
+        return engine.gate_tier_b(
+            provenance if provenance is not None else PROVENANCE,
+            context_key=context_key, **kw
+        )
+
+    def test_context_unchanged_reuses(self):
+        doc = _assessments_doc({"Aria#233": _assessment_entry(context_key=CTX_KEY)})
+        result = self._gate(doc)
+        self.assertEqual(result["reusable"], ["Aria#233"])
+        self.assertEqual(result["stale"], {})
+
+    def test_context_change_makes_stale(self):
+        # 评估时上下文 (CTX_KEY_V2) ≠ 本轮 (CTX_KEY) ⇒ context-changed。
+        doc = _assessments_doc({"Aria#233": _assessment_entry(context_key=CTX_KEY_V2)})
+        result = self._gate(doc)
+        self.assertEqual(result["stale"], {"Aria#233": "context-changed"})
+        self.assertEqual(result["reusable"], [])
+
+    def test_entry_missing_context_key_stale_when_gate_active(self):
+        # v1 旧档形 (无 context_key 键) 在门激活时 ⇒ fail-closed, 不冒充可复用。
+        doc = _assessments_doc({"Aria#233": _assessment_entry()})
+        result = self._gate(doc)
+        self.assertEqual(result["stale"], {"Aria#233": "context-missing"})
+
+    def test_null_context_key_value_is_changed_not_missing(self):
+        # 键缺席 (context-missing) vs 键在值 null (context-changed) 结构可区分。
+        doc = _assessments_doc({"Aria#233": _assessment_entry(context_key=None)})
+        result = self._gate(doc)
+        self.assertEqual(result["stale"], {"Aria#233": "context-changed"})
+
+    def test_gate_disabled_when_context_key_not_passed(self):
+        # None 传参 = 门关闭 (向后兼容, 测试注入/早期调用方):
+        # (a) 无 context_key 的旧形条目照常过 provenance 门;
+        engine = incremental.IncrementalEngine(
+            "unused-state.json",
+            assessments_reader=lambda: _assessments_doc({"Aria#233": _assessment_entry()}),
+            now_fn=lambda: NOW_TTL,
+        )
+        self.assertEqual(engine.gate_tier_b(PROVENANCE)["reusable"], ["Aria#233"])
+        # (b) 门关闭也不抹掉条目自带的陈旧 context_key (比对跳过, 非改写)。
+        engine2 = incremental.IncrementalEngine(
+            "unused-state.json",
+            assessments_reader=lambda: _assessments_doc(
+                {"Aria#233": _assessment_entry(context_key=CTX_KEY_V2)}
+            ),
+            now_fn=lambda: NOW_TTL,
+        )
+        self.assertEqual(engine2.gate_tier_b(PROVENANCE)["reusable"], ["Aria#233"])
+
+    def test_invalid_current_context_key_raises(self):
+        # 本轮 context_key 非法 (空串/非 str) = 调用方接线错误 — loud,
+        # 同 malformed_current_provenance 判 (不静默产全 stale)。
+        for bad in ("", "   ", 42):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    self._gate(_assessments_doc({}), context_key=bad)
+
+    def test_provenance_judged_before_context(self):
+        # 判序钉死 (契约「先身份门后新鲜度门」的身份门内部序):
+        # provenance 违约 + 缺 context_key 双违规 ⇒ 报 provenance-mismatch。
+        entry = _assessment_entry(harness="cursor")  # provenance 不匹配 + 无 context_key
+        result = self._gate(_assessments_doc({"Aria#233": entry}))
+        self.assertEqual(result["stale"], {"Aria#233": "provenance-mismatch"})
+
+    def test_context_judged_before_created_at(self):
+        # 判序钉死: 缺 context_key 且缺 created_at ⇒ 报 context-missing
+        # (上下文身份门先于 ttl 新鲜度门; 实现若倒序本测试必红)。
+        entry = _assessment_entry()
+        del entry["created_at"]
+        result = self._gate(_assessments_doc({"Aria#233": entry}))
+        self.assertEqual(result["stale"], {"Aria#233": "context-missing"})
+
+    def test_context_gate_composes_with_ttl(self):
+        # 上下文未变 + ttl 未过期 ⇒ 可复用; 两门正交合成。
+        doc = _assessments_doc({
+            "Aria#233": _assessment_entry(context_key=CTX_KEY,
+                                          created_at="2026-10-18T08:30:00Z")
+        })
+        result = self._gate(doc, assessments_ttl=7)
+        self.assertEqual(result["reusable"], ["Aria#233"])
+        # 上下文变 ⇒ 即便 ttl 内也 stale (上下文门不因新鲜度豁免)。
+        doc2 = _assessments_doc({
+            "Aria#233": _assessment_entry(context_key=CTX_KEY_V2,
+                                          created_at="2026-10-18T08:30:00Z")
+        })
+        self.assertEqual(self._gate(doc2, assessments_ttl=7)["stale"],
+                         {"Aria#233": "context-changed"})
+
+
 # ------------------------------------------------------ 默认 assessments reader
 
 class DefaultAssessmentsReaderTests(unittest.TestCase):
@@ -637,8 +767,12 @@ class BuildStateTests(unittest.TestCase):
             )
             self.assertEqual(sorted(state), ["issues", "last_run", "schema_version"])
             self.assertEqual(state["schema_version"], 1)
-            self.assertEqual(sorted(state["last_run"]), ["context_fingerprint", "provenance"])
+            self.assertEqual(
+                sorted(state["last_run"]), ["context_fingerprint", "context_key", "provenance"]
+            )
             self.assertEqual(state["last_run"]["context_fingerprint"], CTX_FP)  # 全量保存
+            # 便捷单键 = fingerprint.context_key(全量面) — Tier B 上下文门比对基元
+            self.assertEqual(state["last_run"]["context_key"], fingerprint.context_key(CTX_FP))
             self.assertEqual(state["last_run"]["provenance"], PROVENANCE)
             entry = state["issues"]["Aria#233"]
             self.assertEqual(
@@ -708,6 +842,23 @@ class BuildStateTests(unittest.TestCase):
             self.assertEqual(
                 json.dumps(s1, sort_keys=True), json.dumps(s2, sort_keys=True)
             )  # 同时钟同输入 ⇒ 字节稳定 (跨运行可比性)
+
+    def test_malformed_context_fingerprint_raises(self):
+        # context_fingerprint 缺分量 = 调用方接线错误 — context_key 计算点
+        # fail-closed (ValueError), 不产半键不静默存残面。
+        tmp, state_path, engine = _tmp_engine(now=lambda: NOW_ROUND1)
+        with tmp:
+            issues = [_issue()]
+            plan = {"reused": [], "new": ["Aria#233"], "closed": [], "reclassify": ["Aria#233"]}
+            for bad_ctx in ({},                                   # 全缺
+                            {"openspec_changes_hash": "0f" * 32},  # 单分量
+                            {k: v for k, v in CTX_FP.items() if k != "taxonomy_hash"}):
+                with self.subTest(keys=sorted(bad_ctx)):
+                    with self.assertRaises(ValueError):
+                        engine.build_next_state(
+                            {}, plan, _faces(issues), _classified(issues, NOW_ROUND1),
+                            TAX_HASH_V1, bad_ctx, PROVENANCE,
+                        )
 
 
 # ------------------------------------------------------------------- 原子写

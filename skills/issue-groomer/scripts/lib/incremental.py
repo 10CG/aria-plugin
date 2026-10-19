@@ -19,6 +19,8 @@ state 文件契约 (v1, additive-only)::
 
     {"schema_version": 1,
      "last_run": {"context_fingerprint": <TASK-004 上下文面四分量全量 dict>,
+                  "context_key": <fingerprint.context_key(上者) — 便捷单键,
+                                  Tier B 上下文门的比对基元 (DEC 裁定-9)>,
                   "provenance": <{"harness": str, "model_id": str|None} 全量>},
      "issues": {"<repo>#<number>": {
          "issue_key":        <fingerprint.combined_issue_key — issue 面四元组指纹>,
@@ -41,12 +43,18 @@ judgement_inputs.taxonomy_hash); (issue_key, judgement_inputs) 相等 ⇒ 分类
 任何 prev 条目形状可疑 (缺 issue_key / 缺 tier_a / 缺 judgement_inputs) ⇒
 宁重评不误复用 (fail-closed 方向)。
 
-Tier B provenance 门 (裁定③): 复用门 = ``fingerprint.combined_provenance_key``
-**完整拼接串相等** (harness + model_id 两分量都比对); 不匹配 / 条目形状非法
-/ (assessments_ttl 激活时) created_at 过期 ⇒ 该条进 **stale 集**
-(``{key: reason}``; 报告层以 null 呈现, 引擎不改写不删除)。model_id:
-脚本层未知即 None — None 与任何具体 model_id 不匹配 ⇒ stale (fail-closed:
-宁重评不误复用)。
+Tier B provenance 门 (裁定③) + 上下文门 (DEC 裁定-9, plugin#110): 复用门 =
+``fingerprint.combined_provenance_key`` **完整拼接串相等** (harness +
+model_id 两分量都比对) **且** (``context_key`` 传入时) entry.context_key ==
+本轮上下文指纹键; 不匹配 / 条目形状非法 / (assessments_ttl 激活时)
+created_at 过期 ⇒ 该条进 **stale 集** (``{key: reason}``; 报告层以 null
+呈现, 引擎不改写不删除)。model_id: 脚本层未知即 None — None 与任何具体
+model_id 不匹配 ⇒ stale (fail-closed: 宁重评不误复用)。上下文门分层
+(裁定-9 精确语义): **Tier A 免** — 分类输入 ⊆ issue_key ∪ judgement_inputs
+(taxonomy_hash 已在判据输入), 上下文其余分量数学上不可能改变 Tier A 分类;
+**Tier B 全量 stale 即「上下文一变 ⇒ 全量重评」的实现形态** — 引擎只负责
+诚实标 stale, 重评由适配层做。``context_key=None`` (缺省) = 上下文门不
+启用 (向后兼容: 测试注入 / 早期调用方), 传入即激活。
 
 diff 接口 (TASK-006 消费): ``compute_diff(prev_keys, current_keys)`` 纯集合差
 → ``{"new": [...], "closed": [...], "baseline": bool}`` (排序输出, 确定性)。
@@ -100,6 +108,8 @@ STALE_REASONS = frozenset({
     "provenance-missing",      # 条目缺 provenance 键 (契约必填)
     "provenance-invalid",      # provenance 形状非法 (非 dict / 缺分量)
     "provenance-mismatch",     # combined_provenance_key 与本轮不等 (复用门主判据)
+    "context-missing",         # 条目缺 context_key 键 (契约必填; 上下文门激活时 — 未来旧档/缺省, fail-closed)
+    "context-changed",         # entry.context_key ≠ 本轮 context_key (DEC 裁定-9: 上下文一变 ⇒ Tier B 全量重评)
     "created-at-missing",      # 条目缺 created_at 键 (契约必填)
     "created-at-unparseable",  # created_at 非 ISO 8601 (ttl 激活时才需要解析)
     "ttl-expired",             # created_at + assessments_ttl ≤ now (边界算过期)
@@ -144,18 +154,29 @@ entry (键 = f"{repo}#{number}", 与 issue 身份键同形):
       "harness":  "<非空 str, 调用 harness 自报>",
       "model_id": "<str|None — 适配层补全; None=未补全>"
     },
-    "created_at": "<ISO 8601, 推荐 UTC Z 形态>"   # 必填 — ttl 判定锚点
+    "created_at": "<ISO 8601, 推荐 UTC Z 形态>",  # 必填 — ttl 判定锚点
+    "context_key": "<sha256 hex — fingerprint.context_key(评估时上下文面), "
+                   "必填 — 上下文门比对面 (DEC 裁定-9; 取自评估轮 "
+                   "groom-state.json last_run.context_key)>"
   }
 
 复用门 : entry.provenance 经 fingerprint.combined_provenance_key 得完整拼接串,
-         与本轮 provenance 拼接串**相等**才可复用; 以下任一 ⇒ stale (报告层以
-         null 呈现该条, 引擎返回 stale 集 {key: reason}, 不改写不删除):
+         与本轮 provenance 拼接串**相等**才可复用; 且 (上下文门激活时)
+         entry.context_key 与本轮 fingerprint.context_key 相等。以下任一 ⇒
+         stale (报告层以 null 呈现该条, 引擎返回 stale 集 {key: reason},
+         不改写不删除):
            provenance-mismatch / provenance-missing / provenance-invalid /
-           entry-not-object / created-at-missing / created-at-unparseable /
+           entry-not-object / context-missing (上下文门激活时缺 context_key —
+           未来旧档/缺省, fail-closed) / context-changed (上下文面 (openspec/
+           git HEAD/handoff/taxonomy) 任一分量变 ⇒ Tier B 全量重评, DEC
+           裁定-9: issue 本体未动而 spec ship 后评估翻转的 plugin#110 类
+           静默陈旧由此封堵) / created-at-missing / created-at-unparseable /
            ttl-expired (groom-state.json 的 assessments_ttl 天数激活时,
            created_at + ttl ≤ now 即过期; 边界算过期)。
          model_id=None (脚本层未知) 与任何具体 model_id 不匹配 ⇒ stale —
          fail-closed 方向: 宁重评不误复用。
+         判序: entry-not-object → provenance-* → context-* → created-at-* →
+         ttl-expired (先身份门后新鲜度门; 多违规条目报第一个命中)。
 
 示例   :
   {
@@ -165,7 +186,8 @@ entry (键 = f"{repo}#{number}", 与 issue 身份键同形):
         "verdict_priorities": [{"from": "P2", "to": "P3", "rationale": "..."}],
         "suspected_fixed": {"verdict": false, "rationale": "..."},
         "provenance": {"harness": "claude-code", "model_id": "glm-5.2"},
-        "created_at": "2026-10-19T08:30:00Z"
+        "created_at": "2026-10-19T08:30:00Z",
+        "context_key": "5f2a...c9 (64 hex — 评估轮上下文面指纹)"
       }
     }
   }
@@ -173,7 +195,7 @@ entry (键 = f"{repo}#{number}", 与 issue 身份键同形):
 
 # 机读锚点 (SKILL.md / 渲染层按常量引用, 防手抄漂移; 与上文文档块互为校对)。
 ASSESSMENTS_ROOT_REQUIRED_KEYS = ("schema_version", "assessments")
-ASSESSMENTS_ENTRY_REQUIRED_KEYS = ("provenance", "created_at")
+ASSESSMENTS_ENTRY_REQUIRED_KEYS = ("provenance", "created_at", "context_key")
 ASSESSMENTS_ENTRY_OPTIONAL_KEYS = ("verdict_priorities", "suspected_fixed", "owner_decisions")
 ASSESSMENTS_PROVENANCE_KEYS = ("harness", "model_id")
 
@@ -433,12 +455,21 @@ class IncrementalEngine:
         *,
         current_keys: Iterable[str] | None = None,
         assessments_ttl: int | None = None,
+        context_key: str | None = None,
     ) -> dict[str, Any]:
-        """Tier B provenance 门 (只读 assessments): →
+        """Tier B provenance + 上下文门 (只读 assessments): →
         ``{"reusable": [...], "stale": {key: reason}, "orphaned": [...]}``。
 
         - 复用门 = ``combined_provenance_key`` 完整拼接串相等 (harness +
           model_id 两分量); 失败方向一律 stale, 绝不误复用 (见 STALE_REASONS)。
+        - 上下文门 (DEC 裁定-9): ``context_key`` 传入 (groom.py 从本轮
+          context_fingerprint 取 ``fingerprint.context_key``) 即激活 —
+          entry 缺 ``context_key`` 键 ⇒ "context-missing" (未来旧档/缺省,
+          fail-closed); entry.context_key ≠ 本轮 ⇒ "context-changed"
+          (上下文一变 ⇒ Tier B 全量 stale, 重评由适配层做 — 引擎只诚实
+          标 stale)。``context_key=None`` (缺省) = 门不启用 (向后兼容测试
+          注入 / 早期调用方)。非 None 时须为非空 str, 否则 ValueError
+          (本轮面接线错误 loud, 同 provenance 校验判)。
         - ``current_keys`` 给定 (groom.py 传本轮 issue 键集) 时: 不在其中的
           assessment 键归 ``orphaned`` (issue 已关闭/移出作用域 — 不复用也
           不 stale, 报告层自裁); None = 对全部 assessment 键评门。
@@ -451,6 +482,13 @@ class IncrementalEngine:
         """
         if self._assessments_reader is None:
             return {"reusable": [], "stale": {}, "orphaned": []}
+        if context_key is not None and (
+            not isinstance(context_key, str) or not context_key.strip()
+        ):
+            raise ValueError(
+                f"context_key must be None (门不启用) or a non-empty string "
+                f"(fingerprint.context_key 产物), got {context_key!r}"
+            )
         doc = self._assessments_reader()
         if doc is None:
             return {"reusable": [], "stale": {}, "orphaned": []}
@@ -477,7 +515,9 @@ class IncrementalEngine:
             if key_set is not None and key not in key_set:
                 orphaned.append(key)
                 continue
-            reason = self._entry_stale_reason(entries[key], current_key, assessments_ttl, now)
+            reason = self._entry_stale_reason(
+                entries[key], current_key, assessments_ttl, now, context_key
+            )
             if reason is None:
                 reusable.append(key)
             else:
@@ -490,8 +530,14 @@ class IncrementalEngine:
         current_prov_key: str,
         ttl: int | None,
         now: datetime,
+        current_ctx_key: str | None = None,
     ) -> str | None:
-        """单条 assessment 判门; None = 可复用, 否则返回 STALE_REASONS 成员。"""
+        """单条 assessment 判门; None = 可复用, 否则返回 STALE_REASONS 成员。
+
+        判序 (契约文档钉死): entry-not-object → provenance-* → context-* →
+        created-at-* → ttl-expired — 先身份门 (provenance + 上下文) 后
+        新鲜度门 (ttl); 多违规条目报第一个命中。``current_ctx_key=None``
+        = 上下文门不启用 (skip context-* 两判)。"""
         if not isinstance(entry, dict):
             return "entry-not-object"
         if "provenance" not in entry:
@@ -502,6 +548,11 @@ class IncrementalEngine:
             return "provenance-invalid"
         if entry_key != current_prov_key:
             return "provenance-mismatch"
+        if current_ctx_key is not None:
+            if "context_key" not in entry:
+                return "context-missing"
+            if entry["context_key"] != current_ctx_key:
+                return "context-changed"
         if "created_at" not in entry:
             return "created-at-missing"
         if ttl is not None:
@@ -534,8 +585,11 @@ class IncrementalEngine:
         - 其余本轮键: 新条目 ``{issue_key, tier_a{category,signals},
           judgement_inputs, last_classified_at: now_fn()}``。
         - 上轮已 closed 的键不进下一轮 state (集合差方向)。
-        - ``last_run`` = 本轮 context_fingerprint **全量** + provenance 全量
-          (TASK-004 产物原样; provenance 形状经 combined_provenance_key 校验)。
+        - ``last_run`` = 本轮 context_fingerprint **全量** + 其便捷单键
+          ``context_key`` (``fingerprint.context_key(context_fingerprint)`` —
+          Tier B 上下文门比对基元; 形状经其校验, 缺分量 fail-closed) +
+          provenance 全量 (TASK-004 产物原样; provenance 形状经
+          combined_provenance_key 校验)。
         - ``assessments_ttl``: 缺省 (_UNSET) 续传 prev 值; 显式传值 (含
           None=清除) 覆盖; 值非 None 时写入, None 不写键。
         """
@@ -546,6 +600,7 @@ class IncrementalEngine:
                 f"context_fingerprint must be a mapping, got {type(context_fingerprint).__name__}"
             )
         fingerprint.combined_provenance_key(provenance)  # 形状校验 (fail-closed)
+        ctx_key = fingerprint.context_key(context_fingerprint)  # 形状校验 + 便捷单键
         rows: dict[str, Mapping[str, Any]] = {}
         for rec in classified:
             rows[_issue_key_of(rec, "classified row")] = rec
@@ -574,6 +629,7 @@ class IncrementalEngine:
             "schema_version": STATE_SCHEMA_VERSION,
             "last_run": {
                 "context_fingerprint": dict(context_fingerprint),
+                "context_key": ctx_key,
                 "provenance": dict(provenance),
             },
             "issues": issues,

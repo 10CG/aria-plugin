@@ -39,7 +39,8 @@ incremental / diffseg)。本文件的实现面只有三块:
 编排流程: fetch_all → resolve_taxonomy → classify (now 注入) →
 fingerprint_issues → context_fingerprint (git_roots = project_root +
 卫星仓真实路径, .gitmodules 目录名↔origin 裸仓名映射) → load_state →
-plan_tier_a → gate_tier_b (读 assessments 若在) → build_diff_segment →
+plan_tier_a → gate_tier_b (读 assessments 若在; provenance 门 + 上下文门
+— 上下文门收 fingerprint.context_key(context), DEC 裁定-9) → build_diff_segment →
 组装 report → 自校验 → build_next_state + save_state → 输出。
 
 assessed_keys 面: 本层恒 None (机械层无 Tier B 重评信息; drift 候选 =
@@ -610,7 +611,10 @@ def run_pipeline(
         else state.get("assessments_ttl")
     )
     gate = engine.gate_tier_b(
-        provenance, current_keys=faces.keys(), assessments_ttl=ttl
+        provenance, current_keys=faces.keys(), assessments_ttl=ttl,
+        # DEC 裁定-9: 上下文一变 ⇒ Tier B 全量重评 — 上下文门用本轮
+        # context_fingerprint 的 canonical 键 (CLI 无需新参数, 上下文已采集)。
+        context_key=fingerprint.context_key(context),
     )
     log(
         f"groom: tier_b reusable={len(gate['reusable'])} "

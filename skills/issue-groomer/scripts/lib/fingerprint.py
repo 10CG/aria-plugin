@@ -76,6 +76,12 @@ fetch_error 纪律); 「unknown 与上轮 unknown 比较是否判变」是下游
 (fixed field set + sort_keys) sha256 — 单个稳定串, 供增量引擎逐 issue 比较;
 ``None`` 序列化为 null, 与 ``"unknown"`` (字符串) 及任何时间戳值互不相等
 (三态在 key 层同样互异)。
+
+上下文面比较基元: ``context_key(ctx)`` — 上下文面四分量 dict 的 canonical
+JSON (fixed field set + sort_keys) sha256 (DEC 裁定-9: 上下文一变 ⇒ Tier B
+全量重评)。与 ``combined_issue_key`` 同构: 缺任一分量 ⇒ ValueError
+(fail-closed, 不产半键); ``sort_keys`` 递归作用到 ``git_heads`` 内层 — 键序
+不稳定 (dict 构造顺序) 不影响 key 值, 分量内容变 ⇒ key 必变。
 """
 from __future__ import annotations
 
@@ -101,6 +107,7 @@ __all__ = [
     "openspec_changes_hash",
     "handoff_pointer",
     "context_fingerprint",
+    "context_key",
 ]
 
 # comments 最新 updated_at 的第三态哨兵 (与 None-零评论 / ISO 值三态互斥)。
@@ -117,6 +124,7 @@ _MD_LINK_TARGET_RE = re.compile(r"\]\(([^)]+)\)")
 _MD_LINK_TEXT_RE = re.compile(r"\[([^\]]+)\]")
 
 _ISSUE_FACE_FIELDS = ("title_hash", "body_hash", "labels_hash", "comments_latest_updated_at")
+_CONTEXT_FACE_FIELDS = ("openspec_changes_hash", "git_heads", "handoff_pointer", "taxonomy_hash")
 _PROVENANCE_FIELDS = ("harness", "model_id")
 
 _GIT_TIMEOUT_S = 30.0
@@ -377,3 +385,23 @@ def context_fingerprint(
         "handoff_pointer": handoff_pointer(root),
         "taxonomy_hash": tier_a.taxonomy_hash(taxonomy),  # 单点 SOT, 不自算
     }
+
+
+def context_key(ctx: dict[str, Any]) -> str:
+    """上下文面四分量 → 单个稳定比较串 (canonical JSON sha256)。
+
+    Tier B 复用门的上下文比对基元 (DEC 裁定-9: 上下文一变 ⇒ 全量重评):
+    assessment entry 的 ``context_key`` 与本函数当前值相等才免
+    ``context-changed``。fixed field set + sort_keys ⇒ 与 ``context_fingerprint``
+    产物 dict 构造顺序无关; 缺任一分量 ⇒ ValueError (fail-closed — 不产
+    半键, 调用方接线错误 loud 不静默)。与 ``combined_issue_key`` 同构
+    (三键 canonical 化单点家族), 绝不自算分量 — 只 canonical 化已采集面。
+    """
+    if not isinstance(ctx, dict):
+        raise ValueError(f"context fingerprint must be a dict, got {type(ctx).__name__}")
+    missing = [f for f in _CONTEXT_FACE_FIELDS if f not in ctx]
+    if missing:
+        raise ValueError(f"context fingerprint missing field(s): {missing}")
+    payload = {f: ctx[f] for f in _CONTEXT_FACE_FIELDS}
+    canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

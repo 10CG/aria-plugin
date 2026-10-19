@@ -576,5 +576,82 @@ class ContextFaceTests(_TempProjectMixin):
         self.assertNotEqual(before, self.context(taxonomy=mutated_tax))
 
 
+class ContextKeyTests(_TempProjectMixin):
+    """context_key (DEC 裁定-9): 上下文面四分量 → canonical 单键 — Tier B
+    上下文门的比对基元。
+
+    反事实: 若 context_key 退化成常量 (或漏分量), 「分量变 ⇒ key 必变」
+    断言必红 — 门失去判变面, #110 类静默陈旧复活; 若非 canonical (键序
+    敏感), 确定性断言必红 (跨运行假判变)。
+    """
+
+    def test_key_is_sha256_hex_and_deterministic(self):
+        key = fingerprint.context_key(self.context())
+        self.assertEqual(len(key), 64)
+        int(key, 16)  # hex 形态
+        self.assertEqual(key, fingerprint.context_key(self.context()))
+
+    def test_key_ignores_dict_construction_order(self):
+        # canonical 化: 外层与 git_heads 内层键序都不影响 key (sort_keys 递归)。
+        face = self.context()
+        reordered = {k: face[k] for k in reversed(list(face))}
+        self.assertEqual(
+            fingerprint.context_key(face), fingerprint.context_key(reordered)
+        )
+        two_roots = {**face, "git_heads": {"/repo/a": "a" * 40, "/repo/b": "b" * 40}}
+        two_roots_swapped = {**face, "git_heads": {"/repo/b": "b" * 40, "/repo/a": "a" * 40}}
+        self.assertEqual(
+            fingerprint.context_key(two_roots), fingerprint.context_key(two_roots_swapped)
+        )
+
+    def test_each_component_change_changes_key(self):
+        before = fingerprint.context_key(self.context())
+        # ① openspec 树内容
+        (self.changes / "proposal.md").write_text("proposal v2\n", encoding="utf-8")
+        self.assertNotEqual(before, fingerprint.context_key(self.context()))
+        (self.changes / "proposal.md").write_text("proposal v1\n", encoding="utf-8")
+        # ② git HEAD
+        self.git_fn = _fake_git_head_factory({str(self.root): "d" * 40})
+        self.assertNotEqual(before, fingerprint.context_key(self.context()))
+        self.git_fn = _fake_git_head_factory({str(self.root): "a" * 40})
+        # ③ handoff 指针
+        latest = self.root / "docs" / "handoff" / "latest.md"
+        latest.write_text("**Latest**: [another.md](./another.md)\n", encoding="utf-8")
+        self.assertNotEqual(before, fingerprint.context_key(self.context()))
+        latest.write_text("# Latest Session Handoff\n\n" + REAL_LATEST_LINE + "\n",
+                          encoding="utf-8")
+        # ④ taxonomy
+        self.assertEqual(before, fingerprint.context_key(self.context()))  # 还原 = 复原
+        mutated_tax = {"version": 1, "categories": {"bug": "kind/other"},
+                       "title_prefixes": {}, "label_signals": {}}
+        self.assertNotEqual(
+            before, fingerprint.context_key(self.context(taxonomy=mutated_tax))
+        )
+
+    def test_missing_component_raises(self):
+        face = self.context()
+        for drop in ("openspec_changes_hash", "git_heads", "handoff_pointer",
+                     "taxonomy_hash"):
+            with self.subTest(drop=drop):
+                partial = {k: v for k, v in face.items() if k != drop}
+                with self.assertRaises(ValueError):
+                    fingerprint.context_key(partial)
+
+    def test_non_dict_raises(self):
+        for bad in (None, "face", [("a", 1)]):
+            with self.subTest(bad=type(bad).__name__):
+                with self.assertRaises(ValueError):
+                    fingerprint.context_key(bad)
+
+    def test_degradation_marker_values_distinct(self):
+        # git_heads 失败降级 None (与 SHA 结构可区分) ⇒ key 必变 — 降级方向
+        # = 多判变, 不误稳 (fail-closed 在 key 层保持)。
+        face = self.context()
+        degraded = {**face, "git_heads": {str(self.root): None}}
+        self.assertNotEqual(
+            fingerprint.context_key(face), fingerprint.context_key(degraded)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

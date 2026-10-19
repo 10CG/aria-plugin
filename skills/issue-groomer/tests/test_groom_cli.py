@@ -158,6 +158,15 @@ def state_path_of(tmp_path):
     return tmp_path / ".aria" / "cache" / "groom-state.json"
 
 
+def current_context_key(tmp_path):
+    """从已落盘 state 取本轮上下文指纹键 (DEC 裁定-9 Tier B 上下文门比对面)。
+
+    两段式 fixture 的桥: r1 跑完写 state (last_run.context_key = 记录面),
+    适配层评估条目以该键落档 (契约必填), r2 门激活比对。"""
+    state = json.loads(state_path_of(tmp_path).read_text(encoding="utf-8"))
+    return state["last_run"]["context_key"]
+
+
 def write_assessments(tmp_path, entries):
     path = tmp_path / ".aria" / "groom-assessments.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -300,6 +309,10 @@ class TestIncrementalRerun:
             "openspec_changes_hash", "git_heads", "handoff_pointer",
             "taxonomy_hash",
         }
+        # DEC 裁定-9 记录面: last_run 便捷单键 = 全量面的 canonical 指纹
+        ck = state["last_run"]["context_key"]
+        assert isinstance(ck, str) and len(ck) == 64
+        assert int(ck, 16) >= 0  # hex 形态
         assert set(state["issues"]) == {"Aria#233", "Aria#241", "aria-plugin#208"}
         for key, entry in state["issues"].items():
             assert set(entry) >= {
@@ -311,7 +324,9 @@ class TestIncrementalRerun:
 
 
 class TestAssessmentGate:
-    def _entries(self):
+    def _entries(self, ctx_key):
+        """评估条目 (契约 v1: provenance / created_at / context_key 三必填 —
+        context_key 取评估轮 state 记录面, DEC 裁定-9)。"""
         return {
             "aria-plugin#208": {
                 "verdict_priorities": "P2 — 与全分页 fetch 修复轨相关",
@@ -319,6 +334,7 @@ class TestAssessmentGate:
                 "owner_decisions": ["是否随 #238 一起验收关单"],
                 "provenance": {"harness": "test-harness", "model_id": "test-model"},
                 "created_at": "2026-10-19T10:00:00Z",
+                "context_key": ctx_key,
             },
             "Aria#233": {
                 # assessments 文件面 verdict_priorities 是 list-of-dict
@@ -328,12 +344,15 @@ class TestAssessmentGate:
                                         "rationale": "..."}],
                 "provenance": {"harness": "test-harness", "model_id": "test-model"},
                 "created_at": "2026-10-19T10:00:00Z",
+                "context_key": ctx_key,
             },
         }
 
     def test_matching_provenance_reused_in_report(self, tmp_path):
-        write_assessments(tmp_path, self._entries())
-        report = run(tmp_path, make_corpus())
+        run(tmp_path, make_corpus())  # r1: 落 state (context_key 记录面)
+        write_assessments(tmp_path, self._entries(current_context_key(tmp_path)))
+        # r2: 上下文未变 (tmp 内 openspec/git/handoff/taxonomy 均稳定) ⇒ 门放行
+        report = run(tmp_path, make_corpus(), now=NOW_T1)
         e208 = entry_by_key(report, "aria-plugin#208")
         assert e208["assessment"] is not None
         assert e208["assessment"]["provenance"] == {
@@ -350,32 +369,55 @@ class TestAssessmentGate:
         assert "verdict_priorities" not in e233["assessment"]  # list ⇒ 省略
 
     def test_stale_provenance_nulls_assessment(self, tmp_path):
-        entries = self._entries()
+        run(tmp_path, make_corpus())
+        entries = self._entries(current_context_key(tmp_path))
         entries["aria-plugin#208"]["provenance"] = {
             "harness": "claude-code",  # ≠ test-harness ⇒ provenance-mismatch
-            "model_id": "test-model",
+            "model_id": "test-model",  # (判序: provenance 先于上下文门)
         }
         write_assessments(tmp_path, entries)
-        report = run(tmp_path, make_corpus())
+        report = run(tmp_path, make_corpus(), now=NOW_T1)
         assert entry_by_key(report, "aria-plugin#208")["assessment"] is None
         assert entry_by_key(report, "Aria#233")["assessment"] is not None
         assert report["summary"]["assessed"] == 1
 
+    def test_context_change_nulls_assessments(self, tmp_path):
+        """DEC 裁定-9 E2E: 上下文分量变 (在制 spec 修订) ⇒ Tier B 全量 stale
+        (context-changed) — issue 本体一字未动 (同 corpus), 评估不再被复用。
+
+        反事实: 若 CLI 未把 context_key 接进门 (或门恒放行), 本测试必红
+        (#110 类静默陈旧: spec ship 后评估翻转而引擎照旧复用)。"""
+        run(tmp_path, make_corpus())
+        write_assessments(tmp_path, self._entries(current_context_key(tmp_path)))
+        # 上下文分量变: openspec 在制 spec 出现 + 修订 (两步都动 openspec 面)
+        spec = tmp_path / "openspec" / "changes" / "issue-groomer-p1-mvp"
+        spec.mkdir(parents=True)
+        (spec / "proposal.md").write_text("proposal v1\n", encoding="utf-8")
+        report_mid = run(tmp_path, make_corpus(), now=NOW_T1)
+        assert report_mid["summary"]["assessed"] == 0  # 上下文已变 ⇒ 全 stale
+        (spec / "proposal.md").write_text("proposal v1\namended\n", encoding="utf-8")
+        report = run(tmp_path, make_corpus(), now=NOW_T1)
+        assert report["summary"]["assessed"] == 0
+        for key in ("Aria#233", "aria-plugin#208", "Aria#241"):
+            assert entry_by_key(report, key)["assessment"] is None
+
     def test_assessments_file_bytes_unchanged(self, tmp_path):
-        path = write_assessments(tmp_path, self._entries())
+        run(tmp_path, make_corpus())
+        path = write_assessments(tmp_path, self._entries(current_context_key(tmp_path)))
         before = path.read_bytes()
-        run(tmp_path, make_corpus())            # 第一轮
-        run(tmp_path, make_corpus(), now=NOW_T1)  # 第二轮 (state 重写)
+        run(tmp_path, make_corpus(), now=NOW_T1)  # state 重写 (含门读 assessments)
         assert path.read_bytes() == before      # 裁定④: 字节不变
 
     def test_orphaned_assessment_key_not_in_report(self, tmp_path):
-        entries = self._entries()
+        run(tmp_path, make_corpus())
+        entries = self._entries(current_context_key(tmp_path))
         entries["Aria#999"] = {  # 本轮不在册 (已关闭/移出作用域)
             "provenance": {"harness": "test-harness", "model_id": "test-model"},
             "created_at": "2026-10-19T10:00:00Z",
+            "context_key": entries["Aria#233"]["context_key"],
         }
         write_assessments(tmp_path, entries)
-        report = run(tmp_path, make_corpus())
+        report = run(tmp_path, make_corpus(), now=NOW_T1)
         keys = {f"{e['repo']}#{e['number']}" for e in report["issues"]}
         assert "Aria#999" not in keys
         assert report["summary"]["assessed"] == 2  # 只算在册 reusable
@@ -510,19 +552,26 @@ class TestCliSmoke:
         assert state["last_run"]["provenance"]["harness"] == "cli-smoke"
 
     def test_cli_preserves_assessments_and_writes_state(self, tmp_path):
+        # 两段式: r1 落 state 取 context_key, 评估条目带键落档 (契约必填),
+        # r2 门全过 — 使「报告面 null 拒绝」保持为被测路径 (不被
+        # context-missing 提前拦截)。
+        proc = _run_cli(tmp_path, make_corpus())
+        assert proc.returncode == 0, proc.stderr
         path = write_assessments(tmp_path, {
             "aria-plugin#208": {
                 "owner_decisions": ["决策面条目"],
                 "provenance": {"harness": "cli-smoke", "model_id": None},
                 "created_at": "2026-10-19T10:00:00Z",
+                "context_key": current_context_key(tmp_path),
             },
         })
         before = path.read_bytes()
-        proc = _run_cli(tmp_path, make_corpus())
+        proc = _run_cli(tmp_path, make_corpus(), extra=["--now", NOW_T1])
         assert proc.returncode == 0, proc.stderr
         assert path.read_bytes() == before  # 裁定④ 不变量 (CLI 面)
         assert state_path_of(tmp_path).is_file()
-        # model_id=None 与本轮 None 匹配 (复用门), 但报告面 null 非法 ⇒ null
+        # model_id=None 与本轮 None 匹配 (复用门 + 上下文门均过), 但报告面
+        # null 非法 ⇒ 该条整体降级 null
         report = json.loads(proc.stdout)
         assert entry_by_key(report, "aria-plugin#208")["assessment"] is None
 
