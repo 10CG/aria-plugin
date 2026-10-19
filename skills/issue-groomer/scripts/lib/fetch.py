@@ -41,9 +41,15 @@ stderr 尾部行)。CLI 通道可注入 (runner 协议 = ``call(method, endpoint
 4. **PR 混同双保险**: ``type=issues`` 请求参数 + 客户端过滤 (``pull_request``
    为非空 dict, 或 html_url/url 含 ``/pulls/``) — QA-C2 结论, 两者都做。
 5. **多仓隔离**: 每仓独立 try — 一仓挂不连坐。失败面: issue-list 失败 =
-   该仓 repo 条目 ``error`` + ``open_issues=0`` + 零条目; comments 失败 =
-   逐条 ``comments_error`` + repo 条目 ``error`` 汇总 (计数 + issue 号清单,
-   超过 20 条折叠)。重复仓名去重 (保序)。
+   该仓 repo 条目 ``error`` + ``open_issues=0`` + 零条目; **normalize 阶段
+   ValueError (行形态非法) 同入该仓 ``error``** (E-1: 归一化失败 = 该仓数据
+   不可信, 不连坐其他仓, 也不静默丢行); comments 失败 = 逐条
+   ``comments_error`` + repo 条目 ``error`` 汇总 (计数 + issue 号清单,
+   超过 20 条折叠)。重复仓去重按 ``split_repo_spec`` 后的 **(owner, repo)
+   二元组** (E-3: 别名双写 — 如 ``"Aria"`` 与 ``"10CG/Aria"`` — 不重复
+   抓取; 保序)。**rc=0 + 空 stdout (runner 返回 None) ≠ 空页**: 空页是
+   JSON ``[]``; None = 响应面结构违规 ⇒ FetchError (A-2), 绝不当空页
+   (空 stdout 当空页 = 把「端点哑了」静默折成「仓里没 issue」)。
 6. **限速礼貌**: 每两次请求之间 sleep ``request_interval`` (默认 0.1s; 含
    重试请求; 首个请求前不 sleep; 置 0 关闭)。
 
@@ -249,7 +255,12 @@ def list_repo_issues(
         endpoint = base if page == 1 else f"{base}&page={page}"
         batch = session.get(endpoint)  # issue-list 页失败不重试 (模块契约第 3 条)
         if batch is None:
-            batch = []
+            # rc=0 + 空 stdout ≠ 空页 (空页是 JSON "[]") — 结构违规 fail-closed (A-2)。
+            raise FetchError(
+                f"{endpoint}: issue-list returned no content (rc=0, empty body) — "
+                "an empty page must be a JSON '[]', not no-content",
+                endpoint=endpoint,
+            )
         if not isinstance(batch, list):
             raise FetchError(
                 f"{endpoint}: issue-list expected a JSON array, got {type(batch).__name__}",
@@ -312,7 +323,12 @@ def fetch_issue_comments(
     endpoint = f"/repos/{owner}/{repo}/issues/{number}/comments?limit={page_size}"
     batch = session.get(endpoint, attempts=attempts)
     if batch is None:
-        batch = []
+        # 同判 issue-list (A-2): 零评论的端点形态是 "[]", 非 no-content。
+        raise FetchError(
+            f"{endpoint}: comments endpoint returned no content (rc=0, empty body) "
+            "— zero comments must be a JSON '[]', not no-content",
+            endpoint=endpoint,
+        )
     if not isinstance(batch, list):
         raise FetchError(
             f"{endpoint}: comments endpoint expected a JSON array, got {type(batch).__name__}",
@@ -403,8 +419,12 @@ def fetch_all(
     """
     session = Session(runner if runner is not None else ForgejoCliRunner(), request_interval)
     result: dict[str, Any] = {"repos": [], "issues": []}
-    for spec in dict.fromkeys(repos):  # 去重保序
+    seen: set[tuple[str, str]] = set()
+    for spec in repos:
         owner, bare = split_repo_spec(spec, default_owner)
+        if (owner, bare) in seen:
+            continue  # (owner, repo) 二元组去重 (E-3): 别名双写 ("Aria" vs "10CG/Aria") 不重复抓取
+        seen.add((owner, bare))
         entry: dict[str, Any] = {"repo": bare, "open_issues": 0, "error": None}
         try:
             raws = list_repo_issues(session, owner, bare, state=state,
@@ -414,7 +434,14 @@ def fetch_all(
             result["repos"].append(entry)
             continue
 
-        rows = [normalize_issue(r, bare) for r in raws]
+        try:
+            rows = [normalize_issue(r, bare) for r in raws]
+        except ValueError as exc:
+            # E-1: 归一化行形态非法 = 该仓数据不可信 ⇒ 该仓 error, 不连坐其他仓,
+            # 也不静默丢行 (半份归一列表静默出厂 = 假绿)。
+            entry["error"] = f"issue row normalization failed: {exc}"
+            result["repos"].append(entry)
+            continue
         entry["open_issues"] = len(rows)
 
         failed: list[int] = []

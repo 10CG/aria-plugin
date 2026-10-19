@@ -552,5 +552,110 @@ class TierAContractTests(unittest.TestCase):
         self.assertNotIn("activity", {s["kind"] for s in classified[0]["signals"]})
 
 
+# ------------------------------------------- B.3: no-content ≠ empty page (A-2)
+
+class NoContentIsNotEmptyPageTests(unittest.TestCase):
+    """rc=0 + 空 stdout (runner 返回 None) ≠ 空页: 空页是 JSON "[]"。
+
+    反事实: 若 None 被折成 [] (旧行为), issue-list page1 静默终止 ⇒ 半份
+    (乃至零份) 语料当全量出厂; comments 端点则把「端点哑了」折成零评论
+    — 断言必红。
+    """
+
+    def test_issue_list_none_page_raises_fetch_error(self):
+        session = session_with({list_ep(1): None})
+        with self.assertRaises(fetch.FetchError) as ctx:
+            fetch.list_repo_issues(session, "10CG", "Aria")
+        self.assertIn("no content", str(ctx.exception))
+        self.assertIn("JSON '[]'", str(ctx.exception))
+
+    def test_issue_list_none_page_fails_repo_not_empty_listing(self):
+        routes = {list_ep(1): None, list_ep(2): [make_issue(1)]}
+        out = fetch.fetch_all(["Aria"], runner=FakeRunner(routes), request_interval=0)
+        self.assertEqual(out["issues"], [])  # 半份列表不出厂
+        self.assertIsNotNone(out["repos"][0]["error"])  # 整仓 error 显式可见
+        self.assertIn("issue-list fetch failed", out["repos"][0]["error"])
+        self.assertIn("no content", out["repos"][0]["error"])
+
+    def test_issue_list_none_on_later_page_also_raises(self):
+        # 翻页中途端点哑了 (page1 有数据, page2 no-content) — 同判 fail-closed,
+        # 绝不把「中途失声」折成「正好到此为止」。
+        session = session_with({list_ep(1): [make_issue(1)], list_ep(2): None})
+        with self.assertRaises(fetch.FetchError) as ctx:
+            fetch.list_repo_issues(session, "10CG", "Aria")
+        self.assertIn("no content", str(ctx.exception))
+
+    def test_comments_none_is_unknown_not_zero_comments(self):
+        routes = {
+            list_ep(1): [make_issue(7, comments=2)],
+            list_ep(2): [],
+            com_ep(7): None,
+        }
+        out = fetch.fetch_all(["Aria"], runner=FakeRunner(routes), request_interval=0)
+        row = out["issues"][0]
+        self.assertIsNone(row["comments"])  # unknown 三态, 不冒充 []
+        self.assertIsNotNone(row["comments_error"])
+        self.assertIn("no content", row["comments_error"])
+
+
+# --------------------------------------- B.3: normalize 隔离 + 别名去重 (E-1/E-3)
+
+class NormalizeIsolationTests(unittest.TestCase):
+    """E-1: normalize_issue 行形态 ValueError ⇒ 该仓 error, 不连坐其他仓。"""
+
+    def test_bad_labels_row_fails_only_that_repo(self):
+        bad = make_issue(1)
+        bad["labels"] = "oops"  # list_repo_issues 不查 labels; normalize 才炸
+        routes = {
+            list_ep(1, repo="Aria"): [make_issue(5, title="[bug] x")],
+            list_ep(2, repo="Aria"): [],
+            list_ep(1, repo="Other"): [bad],
+            list_ep(2, repo="Other"): [],
+            com_ep(5): [],
+        }
+        out = fetch.fetch_all(
+            ["Aria", "Other"], runner=FakeRunner(routes), request_interval=0
+        )
+        by_repo = {e["repo"]: e for e in out["repos"]}
+        self.assertIsNone(by_repo["Aria"]["error"])
+        self.assertEqual(by_repo["Aria"]["open_issues"], 1)
+        self.assertIn("normalization failed", by_repo["Other"]["error"])
+        self.assertIn("'labels' is not a list", by_repo["Other"]["error"])
+        self.assertEqual([i["repo"] for i in out["issues"]], ["Aria"])  # 好仓数据保留
+
+
+class AliasDedupTests(unittest.TestCase):
+    """E-3: (owner, repo) 二元组去重 — 别名双写 ("Aria" vs "10CG/Aria") 免疫。"""
+
+    def test_alias_specs_fetch_once(self):
+        issue = make_issue(1, title="[bug] dedup")
+        routes = simple_fetch_routes([issue])
+        runner = FakeRunner(routes)
+        out = fetch.fetch_all(
+            ["Aria", "10CG/Aria", "Aria"], runner=runner, request_interval=0
+        )
+        self.assertEqual(len(out["repos"]), 1)  # 单仓条目
+        self.assertEqual(out["repos"][0]["repo"], "Aria")
+        self.assertEqual(len(out["issues"]), 1)  # 条目不重复
+        # page1 只被请求一次 (page2 空页各一次)
+        self.assertEqual(runner.count(list_ep(1)), 1)
+
+    def test_same_bare_name_different_owner_kept(self):
+        # 同裸名不同 owner = 两个真仓, 不得互吃。
+        routes = {
+            list_ep(1, repo="Widget"): [make_issue(1)],
+            list_ep(2, repo="Widget"): [],
+            list_ep(1, owner="acme", repo="Widget"): [make_issue(2)],
+            list_ep(2, owner="acme", repo="Widget"): [],
+            com_ep(1, repo="Widget"): [],
+            com_ep(2, owner="acme", repo="Widget"): [],
+        }
+        out = fetch.fetch_all(
+            ["Widget", "acme/Widget"], runner=FakeRunner(routes), request_interval=0
+        )
+        self.assertEqual([e["repo"] for e in out["repos"]], ["Widget", "Widget"])
+        self.assertEqual(len(out["issues"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

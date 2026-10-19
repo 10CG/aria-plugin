@@ -60,7 +60,8 @@ tier 结构 (确定性全分割, 边界含左不含右):
 与 TASK-001 fetch 层的输入契约 (语料快照字段集为基准):
   ``{repo, number, title, labels, created, updated, comments_count?}`` —
   repo/number 必填 (缺席抛 ValueError 指名下标); title/labels 缺席按 ""/[]
-  (缺席=无信号, 不是错误); created 收下但 Tier A 不使用 (staleness 锚定
+  (缺席=无信号, 不是错误); title 在场但非 str / labels 在场但非 list ⇒
+  ValueError (E-4, fail-closed); created 收下但 Tier A 不使用 (staleness 锚定
   updated = 最近活动时间); updated/comments_count 可选, 缺席不产对应信号,
   在场但形态非法 (非 str 日期 / 非整型计数) 抛 ValueError (fail-closed)。
 
@@ -448,7 +449,10 @@ def _parse_datetime(value: object, issue_index: int, field: str) -> datetime:
 
 def _resolve_now(now: datetime | date | None) -> datetime:
     if now is None:
-        return datetime.now()
+        # 模块 UTC 纪律兑现: 系统时钟取 UTC 再剥 tz — datetime.now() 的
+        # 本地钟在非 UTC 主机上会系统性偏移 staleness 档 (比较基线是
+        # naive UTC, 见 docstring 时钟 seam 段)。
+        return datetime.now(timezone.utc).replace(tzinfo=None)
     if isinstance(now, datetime):
         return _to_naive_utc(now)
     if isinstance(now, date):
@@ -489,7 +493,17 @@ def classify(
         number = issue.get("number")
         if repo is None or number is None:
             raise ValueError(f"issue[{idx}] missing required identity field(s): repo={repo!r} number={number!r}")
-        title = issue.get("title") or ""
+        raw_title = issue.get("title")
+        if raw_title is None:
+            title = ""  # 缺席 = 无信号, 不是错误 (输入契约)
+        elif isinstance(raw_title, str):
+            title = raw_title
+        else:
+            # E-4: 非 str title (int/dict/...) 显式 ValueError — 前缀匹配
+            # str.startswith 对非 str 会 AttributeError 炸穿, 静默跳过更糟。
+            raise ValueError(
+                f"issue[{idx}].title must be a string or absent, got {type(raw_title).__name__}"
+            )
         labels = issue.get("labels") or []
 
         signals: list[dict] = []

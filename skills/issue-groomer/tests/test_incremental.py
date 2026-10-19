@@ -860,6 +860,21 @@ class BuildStateTests(unittest.TestCase):
                             TAX_HASH_V1, bad_ctx, PROVENANCE,
                         )
 
+    def test_duplicate_classified_identity_raises(self):
+        # D-2: build_next_state 与 plan_tier_a 同判 — classified 重复身份
+        # ⇒ ValueError, 拒绝静默覆盖 (否则 state 静默丢一个条目的历史)。
+        tmp, state_path, engine = _tmp_engine(now=lambda: NOW_ROUND1)
+        with tmp:
+            issues = [_issue()]
+            faces = _faces(issues)
+            classified_duplicated = _classified(issues, NOW_ROUND1) * 2  # 同身份两行
+            plan = {"reused": [], "new": ["Aria#233"], "closed": [], "reclassify": ["Aria#233"]}
+            with self.assertRaisesRegex(ValueError, "duplicate classified identity"):
+                engine.build_next_state(
+                    {}, plan, faces, classified_duplicated, TAX_HASH_V1,
+                    CTX_FP, PROVENANCE,
+                )
+
 
 # ------------------------------------------------------------------- 原子写
 

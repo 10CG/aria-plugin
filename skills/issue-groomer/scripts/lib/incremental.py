@@ -18,10 +18,16 @@
 state 文件契约 (v1, additive-only)::
 
     {"schema_version": 1,
-     "last_run": {"context_fingerprint": <TASK-004 上下文面四分量全量 dict>,
-                  "context_key": <fingerprint.context_key(上者) — 便捷单键,
+     "last_run": {"context_fingerprint": <TASK-004 上下文面全量 dict (四分量 +
+                                  additive ``degraded`` 告知面, A-3)>,
+                  "context_key": <fingerprint.context_key(四分量) — 便捷单键,
                                   Tier B 上下文门的比对基元 (DEC 裁定-9)>,
-                  "provenance": <{"harness": str, "model_id": str|None} 全量>},
+                  "provenance": <{"harness": str, "model_id": str|None} 全量>,
+                  "scope_degraded": <list[str], 可选 (B-1 additive) — 作用域解析
+                                  降级项 (main / submodule:<path> / repo:<bare>),
+                                  调用方显式传入才写 (含空清单 = 已核验零降级)>,
+                  "degraded": <list[str], 可选 (A-3 additive) — 上下文指纹降级
+                                  分量名 (git_heads / handoff_pointer); 非空才写>},
      "issues": {"<repo>#<number>": {
          "issue_key":        <fingerprint.combined_issue_key — issue 面四元组指纹>,
          "tier_a":           {"category": str, "signals": [TASK-002 信号列表]},
@@ -576,6 +582,8 @@ class IncrementalEngine:
         provenance: Mapping[str, Any],
         *,
         assessments_ttl: Any = _UNSET,
+        scope_degraded: Any = _UNSET,
+        context_degraded: Any = _UNSET,
     ) -> dict[str, Any]:
         """构建下一轮 state (不落盘 — 落盘由 save_state 原子完成)。
 
@@ -590,8 +598,17 @@ class IncrementalEngine:
           Tier B 上下文门比对基元; 形状经其校验, 缺分量 fail-closed) +
           provenance 全量 (TASK-004 产物原样; provenance 形状经
           combined_provenance_key 校验)。
+        - classified 重复身份 ⇒ ValueError (与 plan_tier_a / fingerprint
+          同判: 后行静默覆盖前行 = state 丢失一个条目的历史, 拒绝)。
         - ``assessments_ttl``: 缺省 (_UNSET) 续传 prev 值; 显式传值 (含
           None=清除) 覆盖; 值非 None 时写入, None 不写键。
+        - ``scope_degraded`` (B-1 additive): 缺省 (_UNSET) 不写键 (旧调用
+          方零扰动); 显式传入即写 ``last_run.scope_degraded`` — 含空清单
+          (空清单 = 作用域解析已跑且零降级, 与「键缺席 = 未跑」可区分)。
+        - ``context_degraded`` (A-3 additive): 缺省 (_UNSET) 不写键; 传入
+          且**非空**才写 ``last_run.degraded`` (降级分量名清单 —
+          ``git_heads`` / ``handoff_pointer``; 全健康不落键, 健康是常态
+          不是事件)。
         """
         if not isinstance(prev_state, Mapping):
             raise ValueError(f"prev_state must be a mapping, got {type(prev_state).__name__}")
@@ -602,8 +619,11 @@ class IncrementalEngine:
         fingerprint.combined_provenance_key(provenance)  # 形状校验 (fail-closed)
         ctx_key = fingerprint.context_key(context_fingerprint)  # 形状校验 + 便捷单键
         rows: dict[str, Mapping[str, Any]] = {}
-        for rec in classified:
-            rows[_issue_key_of(rec, "classified row")] = rec
+        for idx, rec in enumerate(classified):
+            key = _issue_key_of(rec, f"classified[{idx}]")
+            if key in rows:
+                raise ValueError(f"duplicate classified identity {key!r} at classified[{idx}] — refusing silent overwrite")
+            rows[key] = rec
         if set(faces) != set(rows):
             missing = sorted(set(faces) - set(rows))
             extra = sorted(set(rows) - set(faces))
@@ -625,13 +645,18 @@ class IncrementalEngine:
                 "last_classified_at": stamp,
             }
         next_ttl = prev_state.get("assessments_ttl") if assessments_ttl is _UNSET else assessments_ttl
+        last_run: dict[str, Any] = {
+            "context_fingerprint": dict(context_fingerprint),
+            "context_key": ctx_key,
+            "provenance": dict(provenance),
+        }
+        if scope_degraded is not _UNSET:
+            last_run["scope_degraded"] = list(scope_degraded)  # B-1 additive
+        if context_degraded is not _UNSET and context_degraded:
+            last_run["degraded"] = list(context_degraded)      # A-3 additive
         state: dict[str, Any] = {
             "schema_version": STATE_SCHEMA_VERSION,
-            "last_run": {
-                "context_fingerprint": dict(context_fingerprint),
-                "context_key": ctx_key,
-                "provenance": dict(provenance),
-            },
+            "last_run": last_run,
             "issues": issues,
         }
         if next_ttl is not None:

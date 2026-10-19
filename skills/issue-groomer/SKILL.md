@@ -84,12 +84,14 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/issue-groomer/scripts/groom.py" \
 | `--state-path PATH` | `<root>/.aria/cache/groom-state.json` | state 路径覆盖 |
 | `--quiet` | off | 抑制 stderr 进度行 |
 
+> **已知取舍 (零评论对账 GET)**: issue 的 `comments` 计数字段为 0 时 fetch 层仍会发一次 comments 对账 GET — 不信任计数单侧, 对账以 comments 端点全量返回为准 (计数与端点行数不符 ⇒ fail-closed; 该端点实测忽略 limit/page 恒全量返回, 见 `references/forgejo-behavior-notes.md`)。多出的空 GET 是刻意付的成本, 非 bug。
+
 **退出码契约** (源: `scripts/groom.py` `main`):
 
 | 退出码 | 含义 | 适配层动作 |
 |--------|------|-----------|
 | `0` | 成功 (报告已过 schema 自校验, state 已写) | 进 Step 1 |
-| `1` | 运行错误 / 报告自校验失败 (fail-closed: 不写 state、不出厂非法报告) | Abort, 展示 stderr, 修复后重跑 |
+| `1` | 运行错误 / 报告自校验失败 (fail-closed: 不写 state、不出厂非法报告)。**任何仓 `repos[].error` 非空 ⇒ `exit 1` 且不写 state** (state 保持上轮, 重跑幂等 — 半份语料会把失败仓条目谎报成 closed) | Abort, 展示 stderr (失败仓逐一点名), 修复后重跑 |
 | `2` | 配置错误 (`--repos` 缺省回落失败等, 报错说明不猜) | Abort, 按 stderr 补 `--repos` 或 config 节 |
 
 ---
@@ -97,9 +99,10 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/issue-groomer/scripts/groom.py" \
 ## Step 1: 读 report, 圈定待评估集
 
 1. 读报告 (stdout 或 `--out` 文件): `issues[]` 为全量非选集; `summary.assessed` = assessment 非 null 条目数 (Tier B 覆盖率面)。
-2. **待 Tier B 评估 = `issues[].assessment == null` 的条目**, 两种成因, 区分法:
+2. **待 Tier B 评估 = `issues[].assessment == null` 的条目**, 三种成因, 区分法:
    - **无评估** — 键不在 `.aria/groom-assessments.json` 中 (首见 / 从未评估过)
    - **被复用门判 stale 剔除** — 键在 assessments 文件中存在但报告面为 null (门拒绝, 报告层以 null 呈现; 引擎不改写不删除)
+   - **报告面投影降级** — 键经复用门判 reusable (如 assessments 面 `model_id: null` 与本轮 `--model-id` 缺省 None 匹配), 但报告面 `provenance` 要求 harness/model_id **双双非空 str**, 投影不可满足 ⇒ 该条整体降级 null — 文件面条目原样保留, 下轮带具体 `--model-id` 跑即可恢复进报告 (源: `scripts/groom.py` `_project_assessment`; 与复用门是独立两层)
 3. stale 成因 = 封闭枚举 `STALE_REASONS` (9 值; 身份门 provenance-\* / 上下文门 context-\* / 新鲜度门 created-at-\* + ttl-expired, 多违规报第一个命中; **全集与判序以 `scripts/lib/incremental.py` 的 `STALE_REASONS` 常量与 `ASSESSMENTS_SCHEMA_DOC` 为准, 勿凭本文件复述** — 引用勿手抄)。
 4. **上下文门预期** (裁定-9 精确分层, Runtime Amendment #4): openspec 在制树 / git HEAD / handoff pointer / taxonomy 任一变 ⇒ **Tier B 全量 stale** (`context-changed`) ⇒ 全量重评是预期工作量模型, 不是 bug; Tier A 免重评 (分类输入 ⊆ issue_key ∪ judgement_inputs, 数学论证; 源: `scripts/lib/incremental.py` 模块 docstring)。
 5. `diff.baseline_run == true` ⇒ 首跑/状态缺失, diff 段 no-diff 语义 (new/closed/drift 恒空数组)。
@@ -116,7 +119,7 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/issue-groomer/scripts/groom.py" \
 | **优先级 vs 在制轨道** (`verdict_priorities`) | issue 隐含的优先级 / 方向是否与在制 spec / 分支冲突, 或已被在制轨覆盖 / 推迟? | `openspec/changes/*/proposal.md` + 活跃分支 + handoff 在制轨记录 |
 | **owner 决策面抽取** (`owner_decisions`) | 哪些事项需要人裁 (无法由 AI 依据现存材料定夺)? | 综合以上两面 + 项目约束 |
 
-**原则**: 拿不准 = 不猜。某面判不出就省略该面 — 契约只保证面存在且格式稳定, 不要求全覆盖 (`assessment: null` 本身是合法态; 源: `scripts/groom-report.schema.json` `IssueEntry.assessment`)。机械层 (Tier A) 结构上不产出这些判断 — `unknown` 分类不带语义猜测, 语义面全部出自本层。
+**原则**: 拿不准 = 不猜。某面判不出就省略该面 — 契约只保证面存在且格式稳定, 不要求全覆盖 (`assessment: null` 本身是合法态; 源: `scripts/groom-report.schema.json` `IssueEntry.assessment`)。机械层 (Tier A) 结构上不产出这些判断 — 语义面全部出自本层; Tier A 有两个保留值: `unknown` (无显式编码信号) 与 `conflict` (多个分类信号互斥不一致 — 信号集原样枚举, 绝不任选其一, 任选即隐性猜测)。渲染层遇 `conflict` 应列为「待人工归边」条目, 不当分类失败处理 (源: `scripts/lib/tier_a.py` `classify`; 值域文档: `scripts/groom-report.schema.json` `IssueEntry.category`)。
 
 ---
 
@@ -209,7 +212,7 @@ P2 引入 issue reply 模板时: **契约面 reply 模板定义**与 **issue-tri
 
 - Runner = **pytest**, 本机路径 `~/.local/bin/pytest` (pytest 9.0.2)。命令 (主仓根): `~/.local/bin/pytest aria/skills/issue-groomer/tests/ -q`。
 - 触碰本 skill 任何文件 (`scripts/` / `tests/` / `config/` / 本 SKILL.md) 后跑全目录; 跨 skill 消费方受影响的改动须在对应消费方 tests 一并跑。
-- `groom.py` 的出厂自校验直载 `tests/test_schema.py` 的 `mini_validate` (单点 SOT, 生产环境缺 pytest 时注入最小 stub — 校验器本体零分支降级; 源: `scripts/groom.py` `_mini_validate`), 故 schema 校验不依赖本机 pytest 安装。
+- `groom.py` 的出厂自校验与 `tests/test_schema.py` 断言面同源 import 生产层 `scripts/lib/schema_validate.py` 的 `mini_validate` (单点 SOT, stdlib-only, 不依赖 jsonschema/pytest — B.3 依赖方向修正: 校验实现住生产层, 生产代码不直载 tests/ 亦无 pytest stub 注入面; 源: `scripts/groom.py` `_mini_validate`), 故 schema 校验不依赖本机 pytest 安装。
 
 ---
 

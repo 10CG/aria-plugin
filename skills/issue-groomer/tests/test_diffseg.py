@@ -55,12 +55,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "scripts"))
 
 from lib import diffseg, fingerprint, incremental, tier_a  # noqa: E402
 
-# 复用 test_schema 的 mini-validate (stdlib 结构断言器; 双径导入:
-# pytest 包内相对 / 直跑绝对)。
-try:
-    from .test_schema import mini_validate
-except ImportError:  # pragma: no cover — direct-script execution fallback
-    from test_schema import mini_validate
+# 生产层 mini-validate (stdlib 结构断言器; SOT = lib/schema_validate.py,
+# B.3 依赖方向修正后不再经 test_schema 转引)。
+from lib.schema_validate import mini_validate  # noqa: E402
 
 _SCHEMA_PATH = (
     Path(__file__).parent.parent / "scripts" / "groom-report.schema.json"

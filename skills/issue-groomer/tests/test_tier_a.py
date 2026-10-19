@@ -24,8 +24,9 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 # Add scripts/ to path for direct module import (house convention).
@@ -481,6 +482,23 @@ class ClassifyCategoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "comments_count must be an int"):
             tier_a.classify([_base_issue(comments_count=True)], now=self.NOW)
 
+    def test_non_string_title_raises(self):
+        # E-4: title 在场但非 str (int/dict/...) ⇒ 显式 ValueError —
+        # str.startswith 对非 str 会 AttributeError 炸穿; 静默跳过更糟
+        # (丢主要存量分类信号面)。缺席仍按 "" (无信号, 不是错误)。
+        for bad in (123, ["[bug]"], {"prefix": "[bug]"}, True):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, "title must be a string or absent"):
+                    tier_a.classify([_base_issue(title=bad)], now=self.NOW)
+
+    def test_title_absent_treated_as_empty(self):
+        # 对照: title 键缺席 ⇒ 无前缀信号, 条目照常分类 (缺席=无信号)。
+        issue = _base_issue()
+        del issue["title"]
+        (result,) = tier_a.classify([issue], now=self.NOW)
+        self.assertEqual(result["category"], "unknown")
+        self.assertFalse(any(s["kind"] == "title-prefix" for s in result["signals"]))
+
 
 class ClassifyClockTests(unittest.TestCase):
     """时钟 seam: now 注入跨档判定 + 边界含左不含右 + 时区/异常形态。"""
@@ -535,6 +553,28 @@ class ClassifyClockTests(unittest.TestCase):
         (result,) = tier_a.classify([CORPUS_BUG_PREFIX])
         tiers = {s["value"] for s in result["signals"] if s["kind"] == "staleness"}
         self.assertIn(tiers.pop(), tier_a.STALENESS_TIERS)
+
+    def test_now_none_takes_utc_not_local_clock(self):
+        # 模块 UTC 纪律 (B.3): now=None 的系统时钟必须取 UTC (naive),
+        # 不是本地钟 — 比较基线是 naive UTC, 本地钟在非 UTC 主机上会
+        # 系统性偏移 staleness 档。强制非 UTC 本地时区 (TZ+tzset) 下本地
+        # 钟与 UTC 差数小时; 若实现退回 datetime.now() (本地), 差值断言必红。
+        # (本机若本来就是 UTC 主机, 不加 TZ 强制则本测试退化为恒绿 —
+        # tzset 注入保证它在任何主机上都有牙齿。)
+        old_tz = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "America/New_York"  # UTC-5/UTC-4, 与 UTC 差 ≥4h
+            time.tzset()
+            got = tier_a._resolve_now(None)
+            self.assertIsNone(got.tzinfo)  # naive-UTC 比较基线
+            utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+            self.assertLess(abs((got - utc_now).total_seconds()), 300)  # 5min 容差
+        finally:
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+            time.tzset()
 
     def test_now_invalid_type_raises(self):
         with self.assertRaisesRegex(ValueError, "now must be datetime/date/None"):

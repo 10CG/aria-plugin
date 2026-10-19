@@ -10,7 +10,11 @@ incremental / diffseg)。本文件的实现面只有三块:
      ``.gitmodules`` 枚举 + 各仓 ``origin`` remote 推导 ``owner/repo``,
      state-scanner collectors/issue_scan 同款语义); 显式 ``repos`` 键
      (list[str]) 亦受支持 (向前兼容)。读不到 ⇒ ConfigError (exit 2,
-     报错说明, 不猜)。
+     报错说明, 不猜)。**降级显式化 (B.3)**: 自动推导 (scan_submodules)
+     的逐仓推导失败 ⇒ stderr 警告 + ``scope_degraded`` 记录 (落 state
+     ``last_run.scope_degraded``, additive), 不静默缩作用域; 显式
+     ``--repos``/``repos`` 键中的仓映射不上本地 git 路径 ⇒ ConfigError
+     (用户意志 loud — 其 git HEAD 不入上下文指纹 = 上下文门 fail-OPEN)。
   2. **报告组装** (schema v1.1, ``scripts/groom-report.schema.json`` SOT):
      tier_a 信号面 → schema Signal 映射 (kind 连字符 → 枚举下划线);
      assessment 白名单投影 (assessments 文件面 → 报告面, 类型不符的面
@@ -31,17 +35,23 @@ incremental / diffseg)。本文件的实现面只有三块:
     temp+rename, 路径 = ``<root>/.aria/cache/groom-state.json`` 或
     ``--state-path``); 全程不触 ``.aria/groom-assessments.json`` — 经
     只读 reader (单次读盘缓存, gate 与投影共享同一快照, 中途变化不撕裂)。
-  - **自校验 (fail-closed)**: 产出 report 先过 schema (test_schema 的
-    mini_validate, stdlib-only, 不依赖 jsonschema; 直载 ``tests/
-    test_schema.py`` — 生产环境缺 pytest 时注入最小 stub, 校验实现仍
-    单点 SOT 不内联副本), 校验失败 ⇒ 不写 state 不出厂, exit 1。
+  - **自校验 (fail-closed)**: 产出 report 先过 schema (``lib/
+    schema_validate.mini_validate``, stdlib-only, 不依赖 jsonschema —
+    校验实现住生产层, 与 tests/test_schema.py 同源单点 SOT; B.3 修正:
+    不再直载 tests/ 或注入 pytest stub, 生产代码零测试环境耦合),
+    校验失败 ⇒ 不写 state 不出厂, exit 1。
 
-编排流程: fetch_all → resolve_taxonomy → classify (now 注入) →
-fingerprint_issues → context_fingerprint (git_roots = project_root +
-卫星仓真实路径, .gitmodules 目录名↔origin 裸仓名映射) → load_state →
+编排流程: fetch_all → **repo error 收口 (A-1: 任一仓 fetch 失败 ⇒
+RuntimeError exit 1, 不组装报告不写 state — state 保持上轮, 重跑幂等)** →
+resolve_taxonomy → classify (now 注入; 逐仓 try, 行级 ValueError ⇒ 该仓
+error + 同款收口, E-1) → fingerprint_issues → context_fingerprint
+(git_roots = project_root + 卫星仓真实路径, .gitmodules 目录名↔origin
+裸仓名映射; 降级分量经 ``degraded`` 告知, A-3) → load_state →
 plan_tier_a → gate_tier_b (读 assessments 若在; provenance 门 + 上下文门
 — 上下文门收 fingerprint.context_key(context), DEC 裁定-9) → build_diff_segment →
-组装 report → 自校验 → build_next_state + save_state → 输出。
+组装 report → 自校验 → **报告写盘 (--out 时, 先于 state — D-1: 报告面
+先落, state 后落; 报告写失败 ⇒ exit 1 且 state 未写)** →
+build_next_state + save_state → 输出 (stdout)。
 
 assessed_keys 面: 本层恒 None (机械层无 Tier B 重评信息; drift 候选 =
 new ∪ reclassify)。适配层 (TASK-010) 的注入面是后续 additive 演进, 不
@@ -50,24 +60,24 @@ new ∪ reclassify)。适配层 (TASK-010) 的注入面是后续 additive 演进
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import re
 import subprocess
 import sys
-import types
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 if __package__ in (None, ""):  # 直接脚本执行: scripts/ 自动入 path (双保险)
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import diffseg, fetch, fingerprint, incremental, tier_a  # noqa: E402
+from lib import diffseg, fetch, fingerprint, incremental, schema_validate, tier_a  # noqa: E402
 
 __all__ = [
     "ConfigError",
     "SchemaError",
+    "ScopeResolution",
     "parse_args",
     "resolve_repos",
     "resolve_git_roots",
@@ -149,15 +159,36 @@ def _git(args: list[str], cwd: Path) -> str | None:
     return (proc.stdout or "").strip() or None
 
 
+def _git_raw(args: list[str], cwd: Path) -> tuple[int, str, str]:
+    """``git -C cwd args`` → (rc, stdout, stderr 尾部行) — 需要区分「命令
+    失败」与「成功但空输出」的调用面专用 (B-1: .gitmodules 枚举);
+    git 缺席/超时 ⇒ (127, "", "<原因>") (结构上可视作失败, 不冒充成功)。"""
+    try:
+        proc = subprocess.run(  # noqa: S603 固定 git + 注入参数形态
+            ["git", *args],
+            cwd=str(cwd), capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", f"git timed out after {_GIT_TIMEOUT_S}s"
+    except OSError as exc:
+        return 127, "", f"git not executable: {exc}"
+    tail = " | ".join((proc.stderr or "").strip().splitlines()[-2:])
+    return proc.returncode, (proc.stdout or ""), tail
+
+
 def _extract_owner_repo(remote_url: str) -> str | None:
     """remote URL → ``owner/repo``; 剥协议 / user@ / host(:port) / .git /
-    query / fragment; 非「恰两段」形态 ⇒ None (不猜)。"""
+    query / fragment; 非「恰两段」形态 ⇒ None (不猜)。
+
+    host 段吸收可选 ``:port`` (B.3: ``scheme://host:port/o/r.git`` —
+    端口被当 host 路径段 ⇒ 三段形态 ⇒ None 的假阴性); scp 形态
+    ``host:path`` 不带端口, 端口组回退不匹配即退回 ``[:/]`` 剥 host。"""
     s = (remote_url or "").strip()
     if not s:
         return None
     s = re.sub(r"^[a-z][a-z0-9+.-]*://", "", s, flags=re.IGNORECASE)
     s = re.sub(r"^[^@/]+@", "", s)
-    s = re.sub(r"^[^:/]+[:/]", "", s)
+    s = re.sub(r"^[^:/]+(?::\d+)?[:/]", "", s)
     s = re.sub(r"\.git(?:[?#/].*)?$", "", s)
     s = re.sub(r"\.git$", "", s)
     s = s.rstrip("/")
@@ -170,14 +201,27 @@ def _origin_owner_repo(root: Path) -> str | None:
 
 
 def _submodule_paths(project_root: Path) -> list[str]:
-    """.gitmodules 的 submodule path 清单 (.gitmodules 缺席/解析失败 ⇒ [],
-    fail-soft — 作用域推导的降级由 resolve_repos 的 fail-closed 收口)。"""
-    out = _git(
+    """.gitmodules 的 submodule path 清单 (B-1 三态收口):
+
+    - ``.gitmodules`` 文件缺席 ⇒ [] (结构性缺席 = 合法空仓集, 非错误);
+    - git/config 失败 (rc 非文档化的 0/1 — 如文件损坏 rc=128, git 缺席)
+      ⇒ ConfigError (fail-closed: 枚举面损坏时静默空清单 = 静默缩作用域);
+    - rc=0/1 (1 = ``--get-regexp`` 文档化「无匹配」) ⇒ 解析 stdout
+      (空输出 = 无 submodule 条目, 合法空)。
+    """
+    root = Path(project_root)
+    if not (root / ".gitmodules").exists():
+        return []  # 结构性缺席 (非 git 仓 / 未用 submodule) — 合法空
+    rc, out, err_tail = _git_raw(
         ["config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..+\.path$"],
-        project_root,
+        root,
     )
-    if out is None:
-        return []
+    if rc not in (0, 1):  # 1 = --get-regexp 无匹配 (含空 .gitmodules), 文档化
+        raise ConfigError(
+            f"git config -f .gitmodules 枚举失败 (rc={rc}): {err_tail or 'no stderr'} "
+            "— 无法枚举 submodule 清单, 拒绝静默按空作用域继续 (补救: 修复 "
+            ".gitmodules / git 环境, 或 --repos 显式指定)"
+        )
     paths: list[str] = []
     for line in out.splitlines():
         m = _SUBMODULE_PATH_RE.match(line.strip())
@@ -188,14 +232,39 @@ def _submodule_paths(project_root: Path) -> list[str]:
 
 # ------------------------------------------------------------ 作用域解析
 
-def resolve_repos(explicit: list[str] | None, project_root: Path) -> list[str]:
+class ScopeResolution(NamedTuple):
+    """resolve_repos 产物: spec 清单 + 降级告知面 + 推导模式。
+
+    - ``specs``: 扫描 spec 清单 (裸名或 ``owner/name``, fetch.split_repo_spec
+      消费; 保序去重)。
+    - ``scope_degraded``: 作用域降级项 (B-1): ``"main"`` (主仓 origin 推导
+      失败) / ``"submodule:<path>"`` (子模块 origin 推导失败或目录未检出) /
+      ``"repo:<bare>"`` (resolve_git_roots 非严格模式下裸名映射不上本地
+      路径)。落 state ``last_run.scope_degraded`` (additive) — 降级必须
+      显式可见, 不静默缩作用域。
+    - ``derived``: True = scan_submodules 自动推导 (映射失败 ⇒ 降级告知);
+      False = 显式声明 (--repos / config repos 键 — 映射失败由
+      resolve_git_roots 以 ConfigError 收口, 用户意志 loud)。
+    """
+
+    specs: list[str]
+    scope_degraded: list[str]
+    derived: bool
+
+
+def resolve_repos(
+    explicit: list[str] | None, project_root: Path, *, log: Any = None
+) -> ScopeResolution:
     """扫描仓清单: ``--repos`` 优先; 否则回落 config (见模块 docstring 第 1 块)。
 
-    返回 spec 清单 (裸名或 ``owner/name``, fetch.split_repo_spec 消费);
-    任何回落失败 ⇒ ConfigError (exit 2, 消息说明补救路径)。
+    返回 ScopeResolution (specs + scope_degraded + derived); 任何回落失败
+    ⇒ ConfigError (exit 2, 消息说明补救路径)。自动推导分支的逐仓失败 ⇒
+    ``log`` 警告 + scope_degraded (B-1), 全员失败才 ConfigError。
     """
+    if log is None:
+        log = _noop
     if explicit:
-        return list(dict.fromkeys(explicit))  # 保序去重 (fetch 层亦去重, 双保险)
+        return ScopeResolution(list(dict.fromkeys(explicit)), [], False)
     root = Path(project_root)
     cfg_path = root / ".aria" / "config.json"
     if not cfg_path.is_file():
@@ -227,19 +296,37 @@ def resolve_repos(explicit: list[str] | None, project_root: Path) -> list[str]:
                 "state_scanner.issue_scan.repos 须为非空字符串列表 "
                 f"(裸名或 owner/name), got {repos!r}"
             )
-        return list(dict.fromkeys(repos))
+        return ScopeResolution(list(dict.fromkeys(repos)), [], False)
     if scan.get("scan_submodules"):
-        # state-scanner 同款: 主仓 + 各 submodule 的 origin → owner/name
+        # state-scanner 同款: 主仓 + 各 submodule 的 origin → owner/name。
+        # B-1: 逐仓推导失败 ⇒ 警告 + scope_degraded, 不静默缩作用域;
+        # .gitmodules 枚举失败 (git/config 面) ⇒ _submodule_paths ConfigError。
         specs: list[str] = []
+        degraded: list[str] = []
         main = _origin_owner_repo(root)
         if main:
             specs.append(main)
+        else:
+            log("groom: 警告: 主仓 origin remote 无法推导 owner/repo — "
+                "主仓移出本轮扫描 (scope degraded)")
+            degraded.append("main")
         for sub in _submodule_paths(root):
-            owner_repo = _origin_owner_repo(root / sub)
+            sub_dir = root / sub
+            if not sub_dir.is_dir():
+                log(f"groom: 警告: submodule '{sub}' 已声明但目录未检出 "
+                    f"(未 init?) — 移出本轮扫描 (scope degraded)")
+                degraded.append(f"submodule:{sub}")
+                continue
+            owner_repo = _origin_owner_repo(sub_dir)
             if owner_repo:
                 specs.append(owner_repo)
+            else:
+                log(f"groom: 警告: submodule '{sub}' origin 推导失败 "
+                    "(git remote get-url origin 失败或 URL 形态非法) — "
+                    "移出本轮扫描 (scope degraded)")
+                degraded.append(f"submodule:{sub}")
         if specs:
-            return specs
+            return ScopeResolution(specs, degraded, True)
         raise ConfigError(
             "scan_submodules=true 但主仓/子模块的 origin remote 均无法推导 "
             "owner/repo (git remote get-url origin 失败或 URL 形态非法) — "
@@ -251,31 +338,72 @@ def resolve_repos(explicit: list[str] | None, project_root: Path) -> list[str]:
     )
 
 
-def resolve_git_roots(project_root: Path, repo_specs: list[str]) -> list[str]:
+def resolve_git_roots(
+    project_root: Path,
+    repo_specs: list[str],
+    *,
+    strict: bool = True,
+    log: Any = None,
+    scope_degraded: list[str] | None = None,
+) -> list[str]:
     """context_fingerprint 的 git_roots: project_root + 卫星仓**真实路径**
     (.gitmodules 目录 ↔ origin 裸仓名映射 — 卫星仓目录名可与裸仓名不同,
     如目录 ``aria`` ↔ 仓 ``aria-plugin``)。键 = 路径串原样 (fingerprint
-    契约: 稳定标识, 不归一)。映射不上的选中仓 (如 --repos 指定外仓) 只剩
-    主仓 root — git_heads 覆盖面如实变窄, 不虚增。"""
+    契约: 稳定标识, 不归一)。
+
+    B-2 收口 — 映射不上的选中仓 (如 ``--repos`` 指定外仓) 不再静默只剩
+    主仓 root (git_heads 覆盖面静默变窄 = 上下文门 fail-OPEN):
+
+    - ``strict=True`` (显式声明: --repos / config repos 键): 任一选中仓
+      的裸名映射不上主仓 origin 或任一 submodule origin ⇒ ConfigError
+      (exit 2 — 用户显式点名的仓, 其 git HEAD 必须入指纹, 映射不上是
+      loud 配置错误)。
+    - ``strict=False`` (scan_submodules 自动推导): 映射不上 ⇒ ``log``
+      警告 + 计入 ``scope_degraded`` (``repo:<bare>``), 继续跑 — 自动
+      推导面降级是告知面不是硬错误 (B-1 同判)。
+    """
     root = Path(project_root)
+    if log is None:
+        log = _noop
+    if scope_degraded is None:
+        scope_degraded = []
     roots = [str(root)]
-    wanted: set[str] = set()
+    wanted: list[str] = []
     for spec in repo_specs:
         try:
             _owner, bare = fetch.split_repo_spec(spec)
         except ValueError:
             continue  # 同 spec 由 fetch 层稍后 fail-closed, 此处不抢报错
-        wanted.add(bare)
+        if bare not in wanted:
+            wanted.append(bare)
+    covered: set[str] = set()
+    main = _origin_owner_repo(root)
+    if main is not None:
+        covered.add(main.split("/", 1)[1])
     for sub in _submodule_paths(root):
         sub_dir = root / sub
         if not sub_dir.is_dir():
             continue
         owner_repo = _origin_owner_repo(sub_dir)
         if owner_repo is None:
-            continue
+            continue  # origin 推导失败: 自动模式下已由 resolve_repos 降级告知
         bare = owner_repo.split("/", 1)[1]
         if bare in wanted:
             roots.append(str(sub_dir))
+            covered.add(bare)
+    uncovered = [b for b in wanted if b not in covered]
+    if uncovered:
+        names = ", ".join(sorted(uncovered))
+        if strict:
+            raise ConfigError(
+                f"显式指定的仓映射不到本项目的 git 路径 (主仓 origin / "
+                f".gitmodules): {names} — 这些仓的 git HEAD 无法纳入上下文"
+                "指纹 (上下文门将 fail-OPEN)。补救: 确认仓已作为 submodule "
+                "检出且 origin remote 可推导, 或修正 --repos 清单"
+            )
+        log(f"groom: 警告: 仓 {names} 无法映射到本地路径 — 其 git HEAD 不在"
+            " 上下文指纹内 (scope degraded)")
+        scope_degraded.extend(f"repo:{b}" for b in sorted(uncovered))
     return roots
 
 
@@ -490,35 +618,13 @@ def _assemble_report(
 
 # ------------------------------------------------------------- 自校验
 
-_MINI_VALIDATE_CACHE: dict[str, Any] = {}
-
-
 def _mini_validate() -> Any:
-    """取 test_schema 的 mini_validate (单点 SOT, 不内联副本)。
+    """出厂自校验入口 — 取 ``lib.schema_validate.mini_validate``。
 
-    importlib 文件直载 ``tests/test_schema.py`` (不 sys.path 注入, 双 lib
-    包顺序风险同判); 模块顶部 ``import pytest`` 在无 pytest 的生产环境
-    ImportError ⇒ 注入最小 stub (fixture/mark.skipif 只需 decorator 形态,
-    模块级即够) 再重载。校验器本体逻辑零分支降级。"""
-    if "fn" in _MINI_VALIDATE_CACHE:
-        return _MINI_VALIDATE_CACHE["fn"]
-    path = Path(__file__).resolve().parents[1] / "tests" / "test_schema.py"
-    spec = importlib.util.spec_from_file_location("_groom_inline_test_schema", path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(mod)
-    except ImportError:
-        if "pytest" not in sys.modules:
-            stub = types.ModuleType("pytest")
-            stub.fixture = lambda *a, **k: (lambda f: f)  # type: ignore[attr-defined]
-            stub.mark = types.SimpleNamespace(  # type: ignore[attr-defined]
-                skipif=lambda *a, **k: (lambda f: f)
-            )
-            sys.modules["pytest"] = stub
-        spec.loader.exec_module(mod)
-    _MINI_VALIDATE_CACHE["fn"] = mod.mini_validate
-    return mod.mini_validate
+    依赖方向 (B.3 修正): 校验实现住生产层 ``scripts/lib/schema_validate.py``
+    (stdlib-only), 测试断言面 (``tests/test_schema.py``) 与本自校验同源
+    import 单点 SOT — 生产代码不直载 tests/ 亦不依赖 pytest 环境。"""
+    return schema_validate.mini_validate
 
 
 def _self_check(report: dict[str, Any]) -> None:
@@ -536,40 +642,92 @@ def _self_check(report: dict[str, Any]) -> None:
 
 # ------------------------------------------------------------------ 编排
 
+def _require_no_repo_errors(fetched: dict[str, Any], stage: str) -> None:
+    """A-1 收口: 任一仓 ``repos[].error`` 非空 ⇒ RuntimeError (main 归一为
+    exit 1), 消息逐仓点名 — 不组装报告、不写 state (state 保持上轮,
+    重跑幂等)。半份语料 + closed 谎报 (失败仓条目全被视作已关闭) 结构上
+    不可出厂。"""
+    failed = [e for e in fetched.get("repos") or [] if e.get("error")]
+    if failed:
+        detail = "; ".join(f"{e['repo']}: {e['error']}" for e in failed)
+        raise RuntimeError(
+            f"{stage}: {len(failed)} repo(s) failed — 拒绝组装报告/写 state "
+            f"(state 保持上轮, 重跑幂等): {detail}"
+        )
+
+
+def _report_payload(report: dict[str, Any]) -> str:
+    """report → 出厂 JSON 文本 (唯一序列化点: --out 文件与 stdout 同形)。"""
+    return json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+
+
 def run_pipeline(
     args: argparse.Namespace,
     *,
     runner: Any = None,
     request_interval: float = fetch.DEFAULT_REQUEST_INTERVAL,
     log: Any = None,
+    report_out: str | Path | None = None,
 ) -> dict[str, Any]:
     """全编排 (可进程内调用, 测试注入 fake runner / request_interval=0)。
 
     返回组装后的 report dict (自校验已过, state 已写)。CLI 壳 (main) 只做
-    参数解析 / 退出码 / 输出面。"""
+    参数解析 / 退出码 / 输出面。
+
+    - A-1: fetch 后任一仓 error ⇒ RuntimeError (exit 1), 不写 state。
+    - E-1: classify 逐仓 try, 行级 ValueError ⇒ 该仓 error + 同款收口。
+    - D-1: ``report_out`` (``--out`` 落点) 的报告写盘发生在 save_state
+      **之前** — 报告写失败 ⇒ OSError 上抛 (exit 1) 且 state 未写。
+      ``report_out=None`` 时回落 ``args.out`` (进程内直调单参数面)。
+    """
     if log is None:
         log = _noop
+    if report_out is None:
+        report_out = getattr(args, "out", None)  # 进程内直调回落 CLI 参数面
     project_root = Path(args.project_root)
     now_dt = _parse_now(args.now) if args.now else datetime.now(timezone.utc)
 
-    repos_specs = resolve_repos(args.repos, project_root)
+    scope = resolve_repos(args.repos, project_root, log=log)
+    repos_specs = scope.specs
     active_runner = runner if runner is not None else fetch.ForgejoCliRunner(
         bin_path=args.runner_bin
     )
     fetched = fetch.fetch_all(
         repos_specs, runner=active_runner, request_interval=request_interval
     )
+    _require_no_repo_errors(fetched, "fetch")  # A-1: 半份语料不出厂
     issues = fetched["issues"]
     log(f"groom: repos={len(fetched['repos'])} issues={len(issues)}")
 
     taxonomy = tier_a.resolve_taxonomy(project_root)
-    classified = tier_a.classify(issues, taxonomy, now=now_dt)
+    # E-1: classify 逐仓 try — 行级 ValueError (输入形态非法) ⇒ 该仓 error
+    # (其余仓不连坐), 随后同款 A-1 收口。逐仓调用与整批调用输出同序同值
+    # (信号计算逐条独立; issues 本身按仓分块)。
+    classified: list[dict[str, Any]] = []
+    for entry in fetched["repos"]:
+        repo_issues = [i for i in issues if i["repo"] == entry["repo"]]
+        try:
+            classified.extend(
+                tier_a.classify(repo_issues, taxonomy, now=now_dt)
+            )
+        except ValueError as exc:
+            entry["error"] = f"tier_a classify failed: {exc}"
+    _require_no_repo_errors(fetched, "classify")
     faces = fingerprint.fingerprint_issues(issues)
+    git_roots = resolve_git_roots(
+        project_root, repos_specs, strict=not scope.derived,
+        log=log, scope_degraded=scope.scope_degraded,  # B-2 接线
+    )
     context = fingerprint.context_fingerprint(
         project_root,
-        git_roots=resolve_git_roots(project_root, repos_specs),
+        git_roots=git_roots,
         taxonomy=taxonomy,  # 共享解析结果, 免二次读盘
     )
+    ctx_degraded = list(context.get("degraded") or [])  # A-3 告知面
+    if ctx_degraded:
+        log(f"groom: 上下文指纹降级分量: {', '.join(ctx_degraded)} "
+            "(git_heads=None / handoff_pointer=None — 下轮比较必判变, "
+            "fail-closed 方向; 降级已记入 state last_run.degraded)")
     provenance = fingerprint.provenance_face(args.harness, args.model_id)
 
     state_path = (
@@ -638,12 +796,21 @@ def run_pipeline(
     _self_check(report)  # 先校验后写盘 (fail-closed)
     log("groom: schema self-check ok (v1.1)")
 
+    # D-1: --out 报告写盘先于 save_state (报告面先落, state 后落 — 报告
+    # 写失败 ⇒ OSError 上抛 exit 1, state 未写; 反序会把「报告没出厂」的
+    # 轮次静默记成已完成增量轮)。
+    if report_out is not None:
+        Path(report_out).write_text(_report_payload(report), encoding="utf-8")
+
     ttl_kwargs: dict[str, Any] = {}
     if args.assessments_ttl is not None:
         ttl_kwargs["assessments_ttl"] = args.assessments_ttl  # 显式值 (含清除语义由 build_next_state 定义)
     next_state = engine.build_next_state(
         state, plan, faces, classified, taxonomy_hash,
-        context, provenance, **ttl_kwargs,
+        context, provenance,
+        scope_degraded=scope.scope_degraded,  # B-1: 降级落 state (additive)
+        context_degraded=ctx_degraded,        # A-3: 指纹降级落 state (additive)
+        **ttl_kwargs,
     )
     engine.save_state(next_state)  # 原子写; 结构上不触 assessments 文件
     log(f"groom: state saved -> {state_path}")
@@ -691,6 +858,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p.error(f"--top-n 须 >= 0, got {args.top_n}")
     if args.assessments_ttl is not None and args.assessments_ttl < 0:
         p.error(f"--assessments-ttl 须 >= 0 (天), got {args.assessments_ttl}")
+    # B.3 预校验 (exit 2): --repos spec 形态与 --now ISO 可解析性属「用户
+    # 输入面」错误, 在 argparse 层拦 (p.error → usage + exit 2), 不进
+    # pipeline 也不冒充运行错误 (exit 1)。同判据随后仍由 lib 层复验
+    # (fetch.split_repo_spec / _parse_now), 此处只是把失败提前到零 IO。
+    for spec in args.repos or []:
+        try:
+            fetch.split_repo_spec(spec)
+        except ValueError as exc:
+            p.error(f"--repos {spec!r}: {exc}")
+    if args.now is not None:
+        try:
+            _parse_now(args.now)
+        except ValueError as exc:
+            p.error(f"--now {args.now!r}: 无法解析为 ISO 8601 ({exc})")
     return args
 
 
@@ -702,7 +883,9 @@ def main(argv: list[str] | None = None) -> int:
             print(msg, file=sys.stderr)
 
     try:
-        report = run_pipeline(args, log=_log)
+        # D-1: --out 的报告写盘活在 run_pipeline 内 (先于 save_state);
+        # main 只保留 stdout 面。
+        report = run_pipeline(args, log=_log, report_out=args.out)
     except ConfigError as exc:
         print(f"groom: config error: {exc}", file=sys.stderr)
         return 2
@@ -712,15 +895,18 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"groom: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
-    try:
-        if args.out:
-            Path(args.out).write_text(payload, encoding="utf-8")
-        else:
-            sys.stdout.write(payload)
-    except OSError as exc:
-        print(f"groom: 报告输出失败: {exc}", file=sys.stderr)
+    except Exception:
+        # 兜底 (E-4): 未分类运行错误统一 exit 1 (不裸 traceback 炸穿壳),
+        # 完整 traceback 进 stderr 供诊断 — exit 码契约 0/1/2 全路径成立。
+        print("groom: unexpected error (traceback follows):", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return 1
+    if not args.out:
+        try:
+            sys.stdout.write(_report_payload(report))
+        except OSError as exc:
+            print(f"groom: 报告输出失败: {exc}", file=sys.stderr)
+            return 1
     return 0
 
 

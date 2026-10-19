@@ -15,6 +15,12 @@ Covers the TASK-017 verification bullets:
   6. repos 作用域解析: --repos / config repos 键 / scan_submodules+
      .gitmodules 推导 (state-scanner 同款) / 三者皆无 ⇒ ConfigError
      (TestReposResolution)。
+  7. B.3 修复轮 (fetch/作用域/CLI 族): A-1 整仓 fetch 失败 ⇒ exit 1 不写
+     state (TestFetchFailureAborts) / E-1 classify 行级错误归因到仓
+     (TestClassifyRowErrorAborts) / D-1 报告写盘先于 state
+     (TestReportOutOrdering) / exit-2 argparse 预校验 (TestArgPrevalidation)
+     / port URL (TestExtractOwnerRepoPort) / B-1·B-2 作用域降级三态
+     (TestScopeDegradation) / A-3 降级告知落 state (state 形态测试)。
 
 全 mock (fake runner 零网络); CLI smoke 经 --runner-bin 注入 fake wrapper
 脚本 + GROOM_FAKE_CORPUS env (真 ForgejoCliRunner subprocess 通道)。
@@ -39,13 +45,10 @@ sys.path.insert(0, SCRIPTS)
 
 import groom  # noqa: E402
 from lib import fetch  # noqa: E402
+from lib.schema_validate import mini_validate  # noqa: E402  # 生产层 SOT (B.3)
 
 GROOM_PY = os.path.join(SCRIPTS, "groom.py")
 SCHEMA_PATH = os.path.join(SCRIPTS, "groom-report.schema.json")
-
-# test_schema 的 mini_validate (与 groom 自校验同一 SOT; 测试独立复核双保险)。
-sys.path.insert(0, _HERE)
-from test_schema import mini_validate  # noqa: E402
 
 NOW_T0 = "2026-10-19T12:00:00Z"
 NOW_T1 = "2026-10-19T13:00:00Z"
@@ -144,13 +147,38 @@ def make_args(tmp_path, extra=()):
     return groom.parse_args(argv)
 
 
-def run(tmp_path, corpus, extra=(), now=None):
+def _init_git_project(tmp_path):
+    """git 项目 fixture (B-2 strict 模式的前提): 主仓 origin → 10CG/Aria +
+    .gitmodules 声明 submodule aria-plugin (目录同路径, origin → 10CG/
+    aria-plugin)。幂等 (已 init 则跳过)。无 commit — rev-parse HEAD 失败
+    ⇒ git_heads=None ⇒ 上下文降级面 (A-3) 如实可见, 不影响判变。"""
+    if (tmp_path / ".git").exists():
+        return
+    def git(*args, cwd=None):
+        subprocess.run(["git", "-C", str(cwd or tmp_path), *args],
+                       check=True, capture_output=True)
+    git("init", "-q")
+    git("remote", "add", "origin", "git@forgejo.10cg.pub:10CG/Aria.git")
+    git("config", "-f", ".gitmodules", "submodule.aria-plugin.path", "aria-plugin")
+    git("config", "-f", ".gitmodules",
+        "submodule.aria-plugin.url",
+        "https://forgejo.10cg.pub/10CG/aria-plugin.git")
+    sub = tmp_path / "aria-plugin"
+    sub.mkdir(exist_ok=True)
+    git("init", "-q", cwd=sub)
+    git("remote", "add", "origin",
+        "https://forgejo.10cg.pub/10CG/aria-plugin.git", cwd=sub)
+
+
+def run(tmp_path, corpus, extra=(), now=None, runner=None):
     """进程内跑全编排 (fake runner 注入 + request_interval=0), 返回 report。
 
-    ``now`` 非空时以 ``--now <now>`` 前置覆盖 (argparse 后值胜)。"""
+    ``now`` 非空时以 ``--now <now>`` 前置覆盖 (argparse 后值胜);
+    ``runner`` 缺省 FakeRunner(corpus) — 失败注入测试传自定义 runner。"""
+    _init_git_project(tmp_path)  # --repos 显式 ⇒ strict 映射须可解析 (B-2)
     argv_extra = ["--now", now, *extra] if now is not None else list(extra)
     args = make_args(tmp_path, argv_extra)
-    return groom.run_pipeline(args, runner=FakeRunner(corpus),
+    return groom.run_pipeline(args, runner=runner or FakeRunner(corpus),
                               request_interval=0)
 
 
@@ -307,8 +335,14 @@ class TestIncrementalRerun:
         ctx = state["last_run"]["context_fingerprint"]
         assert set(ctx) == {
             "openspec_changes_hash", "git_heads", "handoff_pointer",
-            "taxonomy_hash",
+            "taxonomy_hash", "degraded",
         }
+        # A-3 E2E: fixture 仓无 commit (git_heads=None) 且无 handoff 文件
+        # ⇒ 降级分量如实点名 (零告知 = 假绿); B-1: 显式 --repos 映射全成
+        # ⇒ scope_degraded 空清单 (已核验零降级)。
+        assert ctx["degraded"] == ["git_heads", "handoff_pointer"]
+        assert state["last_run"]["degraded"] == ["git_heads", "handoff_pointer"]
+        assert state["last_run"]["scope_degraded"] == []
         # DEC 裁定-9 记录面: last_run 便捷单键 = 全量面的 canonical 指纹
         ck = state["last_run"]["context_key"]
         assert isinstance(ck, str) and len(ck) == 64
@@ -434,7 +468,10 @@ class TestReposResolution:
             "state_scanner": {"issue_scan": {"enabled": True,
                                              "repos": ["Foo", "acme/Bar"]}},
         }), encoding="utf-8")
-        assert groom.resolve_repos(None, tmp_path) == ["Foo", "acme/Bar"]
+        res = groom.resolve_repos(None, tmp_path)
+        assert res.specs == ["Foo", "acme/Bar"]
+        assert res.scope_degraded == []  # 显式声明面: 无自动推导 ⇒ 无降级
+        assert res.derived is False      # strict (resolve_git_roots 严格映射)
 
     def test_scan_submodules_derivation(self, tmp_path):
         # 真实 config 形态: 无 repos 键, scan_submodules=true ⇒ 主仓+子模块
@@ -464,10 +501,14 @@ class TestReposResolution:
             "state_scanner": {"issue_scan": {"scan_submodules": True}},
         }), encoding="utf-8")
 
-        specs = groom.resolve_repos(None, tmp_path)
-        assert specs == ["10CG/Aria", "10CG/aria-plugin"]
+        res = groom.resolve_repos(None, tmp_path)
+        assert res.specs == ["10CG/Aria", "10CG/aria-plugin"]
+        assert res.scope_degraded == []  # 推导全成 ⇒ 零降级
+        assert res.derived is True
         # 卫星仓真实路径映射 (submodule 目录 ↔ origin 裸仓名)
-        roots = groom.resolve_git_roots(tmp_path, specs)
+        roots = groom.resolve_git_roots(
+            tmp_path, res.specs, strict=not res.derived
+        )
         assert roots[0] == str(tmp_path)
         assert roots[1:] == [str(sub)]
 
@@ -487,6 +528,10 @@ page = 1
 for kv in qs.split("&"):
     if kv.startswith("page="):
         page = int(kv[5:])
+fail = os.environ.get("GROOM_FAIL_REPO")  # A-1 失败注入: 指定仓 issue-list 恒 rc=1
+if fail and page == 1 and path == "/repos/10CG/" + fail + "/issues":
+    sys.stderr.write("simulated wrapper failure for " + fail + "\n")
+    sys.exit(1)
 if page >= 2:
     print("[]")
     sys.exit(0)
@@ -520,7 +565,8 @@ def _corpus_file(tmp_path, corpus):
     return path
 
 
-def _run_cli(tmp_path, corpus, extra=()):
+def _run_cli(tmp_path, corpus, extra=(), env_extra=None):
+    _init_git_project(tmp_path)  # --repos 显式 ⇒ strict 映射须可解析 (B-2)
     fake_bin = _fake_wrapper(tmp_path)
     corpus_path = _corpus_file(tmp_path, corpus)
     argv = [
@@ -533,7 +579,7 @@ def _run_cli(tmp_path, corpus, extra=()):
         "--quiet",
         *extra,
     ]
-    env = dict(os.environ, GROOM_FAKE_CORPUS=str(corpus_path))
+    env = dict(os.environ, GROOM_FAKE_CORPUS=str(corpus_path), **(env_extra or {}))
     return subprocess.run(argv, capture_output=True, text=True, env=env,
                           cwd=str(tmp_path), timeout=120)
 
@@ -592,3 +638,333 @@ class TestCliSmoke:
         assert proc.stdout == ""  # stdout 不再打 JSON
         report = json.loads(out.read_text(encoding="utf-8"))
         assert report["summary"]["total_issues"] == 3
+
+    def test_cli_unexpected_exception_exit1_with_traceback(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """E-4 兜底: 未分类异常 (非 ValueError/OSError/RuntimeError 家族)
+        ⇒ 统一 exit 1, 完整 traceback 进 stderr — 退出码契约 0/1/2 全路径
+        成立 (反事实: 无兜底时 KeyError 裸炸穿壳, 退出码 1 以 traceback
+        形态交给解释器, 适配层无法按码分流)。"""
+        def boom(args, **kw):
+            raise KeyError("unexpected pipeline failure")
+
+        monkeypatch.setattr(groom, "run_pipeline", boom)
+        rc = groom.main([
+            "--repos", "Aria",
+            "--project-root", str(tmp_path),
+            "--quiet",
+        ])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "unexpected error" in err
+        assert "Traceback" in err and "KeyError" in err
+
+
+# ── 6. B.3 修复轮 (A-1/A-3/B-1/B-2/D-1/E-1/exit-2/port-URL) ────────────────
+
+
+class RepoFailRunner:
+    """corpus 正常路由 + 指定仓 issue-list 恒 FetchError (A-1 失败注入)。"""
+
+    def __init__(self, corpus, fail_repo):
+        self.inner = FakeRunner(corpus)
+        self.fail_repo = fail_repo
+
+    def call(self, method, endpoint, payload=None):
+        if (
+            method == "GET"
+            and endpoint.startswith(f"/repos/10CG/{self.fail_repo}/issues?")
+        ):
+            raise fetch.FetchError(
+                f"wrapper rc=1: simulated failure for {self.fail_repo}",
+                endpoint=endpoint,
+            )
+        return self.inner.call(method, endpoint, payload)
+
+
+class TestFetchFailureAborts:
+    """A-1 CRITICAL: 任一仓 fetch 失败 ⇒ RuntimeError (exit 1) + 不写 state
+    (state 保持上轮, 重跑幂等) — 半份语料 + closed 谎报结构上不可出厂。
+
+    反事实: 若失败仓仍组装报告, 其条目对 diff 面呈现为 closed、对 state
+    面被驱逐 — 下一轮全部谎报 new; 断言 closed == [] / state issues 键集
+    不变必红。
+    """
+
+    def test_fetch_failure_raises_naming_repo_no_state(self, tmp_path):
+        _init_git_project(tmp_path)
+        args = make_args(tmp_path)
+        with pytest.raises(RuntimeError) as ctx:
+            groom.run_pipeline(
+                args, runner=RepoFailRunner(make_corpus(), "aria-plugin"),
+                request_interval=0,
+            )
+        msg = str(ctx.value)
+        assert "fetch" in msg
+        assert "aria-plugin" in msg            # stderr 明示哪仓失败
+        assert not state_path_of(tmp_path).exists()  # 不写 state
+
+    def test_failure_keeps_prior_state_no_phantom_closed(self, tmp_path):
+        run(tmp_path, make_corpus())  # r1: 3 issue 入 state
+        state_file = state_path_of(tmp_path)
+        before = state_file.read_text(encoding="utf-8")
+        _init_git_project(tmp_path)
+        with pytest.raises(RuntimeError):
+            groom.run_pipeline(
+                make_args(tmp_path, ["--now", NOW_T1]),
+                runner=RepoFailRunner(make_corpus(), "aria-plugin"),
+                request_interval=0,
+            )
+        # state 逐字节保持上轮 (不驱逐失败仓条目)
+        assert state_file.read_text(encoding="utf-8") == before
+        # 修复后重跑 (幂等): aria-plugin 从未离开 ⇒ closed 空, 全量在册
+        report = run(tmp_path, make_corpus(), now=NOW_T1)
+        assert report["diff"]["closed"] == []
+        assert report["summary"]["total_issues"] == 3
+        assert report["diff"]["drift"] == []   # 失败轮不产生伪增量
+
+    def test_cli_fetch_failure_exit1_stderr_names_repo(self, tmp_path):
+        proc = _run_cli(
+            tmp_path, make_corpus(),
+            env_extra={"GROOM_FAIL_REPO": "aria-plugin"},
+        )
+        assert proc.returncode == 1
+        assert "aria-plugin" in proc.stderr
+        assert not state_path_of(tmp_path).exists()
+        assert proc.stdout == ""                # 不出厂半份报告
+
+
+class TestClassifyRowErrorAborts:
+    """E-1: tier_a.classify 行级 ValueError ⇒ 该仓 error (不连坐好仓) +
+    A-1 同款收口 (exit 1, 不写 state)。"""
+
+    def test_bad_updated_classify_error_names_repo(self, tmp_path):
+        corpus = make_corpus()
+        # normalize 后 "not-a-date" (10 字符) 原样存活 ⇒ classify _parse_datetime 炸
+        corpus["repos"]["10CG/aria-plugin"][0]["updated_at"] = "not-a-date"
+        _init_git_project(tmp_path)
+        with pytest.raises(RuntimeError) as ctx:
+            groom.run_pipeline(
+                make_args(tmp_path), runner=FakeRunner(corpus), request_interval=0
+            )
+        msg = str(ctx.value)
+        assert "classify" in msg
+        assert "aria-plugin" in msg            # 归因到仓, 不连坐 Aria
+        assert "Aria" not in msg.replace("aria-plugin", "")
+        assert not state_path_of(tmp_path).exists()
+
+
+class TestReportOutOrdering:
+    """D-1: --out 报告写盘先于 save_state — 报告面先落, state 后落。"""
+
+    def test_report_write_failure_keeps_state_unwritten(self, tmp_path):
+        _init_git_project(tmp_path)
+        blocker = tmp_path / "blocker"
+        blocker.write_text("i am a file", encoding="utf-8")
+        out = blocker / "report.json"  # 父路径是普通文件 ⇒ NotADirectoryError
+        with pytest.raises(OSError):
+            groom.run_pipeline(
+                make_args(tmp_path, ["--out", str(out)]),
+                runner=FakeRunner(make_corpus()), request_interval=0,
+            )
+        assert not state_path_of(tmp_path).exists()  # state 未写
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root 无视目录只读位")
+    def test_state_save_failure_report_already_written(self, tmp_path):
+        # state 写失败 (cache 目录只读) ⇒ 报告已落盘 — 次序证明。
+        _init_git_project(tmp_path)
+        cache = tmp_path / ".aria" / "cache"
+        cache.mkdir(parents=True)
+        out = tmp_path / "report.json"
+        os.chmod(cache, 0o500)
+        try:
+            with pytest.raises(OSError):
+                groom.run_pipeline(
+                    make_args(tmp_path, ["--out", str(out)]),
+                    runner=FakeRunner(make_corpus()), request_interval=0,
+                )
+            assert out.is_file()  # 报告先于 state 落盘
+            report = json.loads(out.read_text(encoding="utf-8"))
+            assert report["summary"]["total_issues"] == 3
+            assert not (cache / "groom-state.json").exists()
+        finally:
+            os.chmod(cache, 0o700)
+
+
+class TestArgPrevalidation:
+    """exit 2 预校验: --repos spec 形态 / --now ISO 可解析性在 argparse 层拦
+    (p.error → usage + exit 2), 不进 pipeline 不冒充运行错误。"""
+
+    @pytest.mark.parametrize("bad_spec", ["a/b/c", "", "/x", "x/"])
+    def test_bad_repo_spec_exits_2(self, bad_spec):
+        with pytest.raises(SystemExit) as ctx:
+            groom.parse_args(["--repos", bad_spec, "--quiet"])
+        assert ctx.value.code == 2
+
+    def test_bad_now_exits_2(self):
+        with pytest.raises(SystemExit) as ctx:
+            groom.parse_args(["--repos", "Aria", "--now", "not-a-date"])
+        assert ctx.value.code == 2
+
+    def test_good_now_still_passes(self):
+        args = groom.parse_args(["--repos", "Aria", "--now", "2026-10-19T12:00:00Z"])
+        assert args.now == "2026-10-19T12:00:00Z"
+
+    def test_cli_bad_spec_exit_2(self, tmp_path):
+        proc = subprocess.run(
+            [sys.executable, GROOM_PY,
+             "--repos", "a/b/c", "--project-root", str(tmp_path), "--quiet"],
+            capture_output=True, text=True, cwd=str(tmp_path), timeout=60,
+        )
+        assert proc.returncode == 2
+        assert "usage" in proc.stderr and "--repos" in proc.stderr
+
+    def test_cli_bad_now_exit_2(self, tmp_path):
+        proc = subprocess.run(
+            [sys.executable, GROOM_PY,
+             "--repos", "Aria", "--now", "yesterday",
+             "--project-root", str(tmp_path), "--quiet"],
+            capture_output=True, text=True, cwd=str(tmp_path), timeout=60,
+        )
+        assert proc.returncode == 2
+        assert "--now" in proc.stderr
+
+
+class TestExtractOwnerRepoPort:
+    """port URL: ``scheme://host:port/o/r.git`` — 端口被当 host 路径段 ⇒
+    假阴性的回归钉 + 无端口三形态不回归。"""
+
+    @pytest.mark.parametrize("url,expected", [
+        ("https://forgejo.10cg.pub:3000/10CG/aria.git", "10CG/aria"),
+        ("http://forgejo.internal:8080/10CG/aria-plugin.git", "10CG/aria-plugin"),
+        ("ssh://git@forgejo.10cg.pub:2222/10CG/Aria.git", "10CG/Aria"),
+        ("https://forgejo.10cg.pub:3000/10CG/aria.git?foo=1", "10CG/aria"),
+        # 无端口回归面
+        ("git@forgejo.10cg.pub:10CG/Aria.git", "10CG/Aria"),
+        ("https://forgejo.10cg.pub/10CG/aria-plugin.git", "10CG/aria-plugin"),
+        ("ssh://git@forgejo.10cg.pub/10CG/Aether.git", "10CG/Aether"),
+        # 非数字端口 / 多段 ⇒ None (不猜)
+        ("https://host:port/10CG/x/aria.git", None),
+        ("", None),
+    ])
+    def test_extract(self, url, expected):
+        assert groom._extract_owner_repo(url) == expected
+
+
+class TestScopeDegradation:
+    """B-1/B-2: 作用域解析三态 — 结构性缺席 (合法空) / git 失败 (ConfigError) /
+    逐仓推导失败 (警告 + scope_degraded); strict 映射失败 ConfigError。"""
+
+    @staticmethod
+    def _write_scan_config(tmp_path):
+        cfg = tmp_path / ".aria" / "config.json"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps({
+            "state_scanner": {"issue_scan": {"scan_submodules": True}},
+        }), encoding="utf-8")
+
+    def test_gitmodules_structural_absence_is_legal_empty(self, tmp_path):
+        # 无 .gitmodules ⇒ 合法空仓集 (非 git 仓 / 未用 submodule), 不炸。
+        assert groom._submodule_paths(tmp_path) == []
+
+    def test_gitmodules_enumeration_failure_config_error(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / ".gitmodules").write_text("submodule.a.path aria\n",
+                                              encoding="utf-8")
+        monkeypatch.setattr(
+            groom, "_git_raw", lambda args, cwd: (128, "", "fatal: bad config")
+        )
+        with pytest.raises(groom.ConfigError) as ctx:
+            groom._submodule_paths(tmp_path)
+        assert "git config -f .gitmodules" in str(ctx.value)
+
+    def test_scan_submodule_origin_failure_degrades(self, tmp_path, monkeypatch):
+        _init_git_project(tmp_path)
+        self._write_scan_config(tmp_path)
+        real = groom._origin_owner_repo
+
+        def flaky(root):
+            if Path(root) == tmp_path / "aria-plugin":
+                return None  # submodule origin 推导失败
+            return real(root)
+
+        monkeypatch.setattr(groom, "_origin_owner_repo", flaky)
+        warns: list[str] = []
+        res = groom.resolve_repos(None, tmp_path, log=warns.append)
+        assert res.specs == ["10CG/Aria"]           # 失败仓移出扫描
+        assert res.scope_degraded == ["submodule:aria-plugin"]  # 但被点名
+        assert res.derived is True
+        assert any("aria-plugin" in w for w in warns)  # stderr 警告
+
+    def test_scan_main_origin_failure_degrades(self, tmp_path, monkeypatch):
+        _init_git_project(tmp_path)
+        self._write_scan_config(tmp_path)
+        real = groom._origin_owner_repo
+        monkeypatch.setattr(
+            groom, "_origin_owner_repo",
+            lambda root: None if Path(root) == tmp_path else real(root),
+        )
+        res = groom.resolve_repos(None, tmp_path, log=lambda _m: None)
+        assert res.specs == ["10CG/aria-plugin"]
+        assert res.scope_degraded == ["main"]
+
+    def test_scan_all_fail_still_config_error(self, tmp_path, monkeypatch):
+        _init_git_project(tmp_path)
+        self._write_scan_config(tmp_path)
+        monkeypatch.setattr(groom, "_origin_owner_repo", lambda root: None)
+        with pytest.raises(groom.ConfigError):
+            groom.resolve_repos(None, tmp_path, log=lambda _m: None)
+
+    def test_strict_unmapped_repo_config_error(self, tmp_path):
+        # B-2: 显式 --repos 指名的仓映射不上本地路径 ⇒ exit 2 (用户意志 loud)。
+        _init_git_project(tmp_path)
+        with pytest.raises(groom.ConfigError) as ctx:
+            groom.resolve_git_roots(tmp_path, ["Aria", "Kairos"], strict=True)
+        assert "Kairos" in str(ctx.value)
+
+    def test_strict_all_mapped_ok(self, tmp_path):
+        _init_git_project(tmp_path)
+        roots = groom.resolve_git_roots(tmp_path, ["Aria", "aria-plugin"],
+                                        strict=True)
+        assert roots == [str(tmp_path), str(tmp_path / "aria-plugin")]
+
+    def test_non_strict_unmapped_degrades_not_raises(self, tmp_path):
+        _init_git_project(tmp_path)
+        warns: list[str] = []
+        degraded: list[str] = []
+        roots = groom.resolve_git_roots(
+            tmp_path, ["Aria", "Kairos"], strict=False,
+            log=warns.append, scope_degraded=degraded,
+        )
+        assert "repo:Kairos" in degraded
+        assert any("Kairos" in w for w in warns)
+        assert roots == [str(tmp_path)]  # Kairos 无路径, 不虚增
+
+    def test_scope_degraded_recorded_in_state_e2e(self, tmp_path, monkeypatch):
+        """E2E: scan_submodules 推导 + submodule origin 失败 ⇒ 报告照出
+        (主仓数据完整), state last_run.scope_degraded 点名降级仓。"""
+        _init_git_project(tmp_path)
+        self._write_scan_config(tmp_path)
+        real = groom._origin_owner_repo
+        monkeypatch.setattr(
+            groom, "_origin_owner_repo",
+            lambda root: None if Path(root) == tmp_path / "aria-plugin"
+            else real(root),
+        )
+        args = groom.parse_args([
+            "--project-root", str(tmp_path),      # 无 --repos ⇒ config 回落
+            "--harness", "test-harness",
+            "--model-id", "test-model",
+            "--now", NOW_T0,
+            "--quiet",
+        ])
+        report = groom.run_pipeline(
+            args, runner=FakeRunner(make_corpus()), request_interval=0
+        )
+        # specs 只剩 10CG/Aria ⇒ 只扫主仓 2 条 (aria-plugin 不在扫描面)
+        assert [r["repo"] for r in report["repos"]] == ["Aria"]
+        assert report["summary"]["total_issues"] == 2
+        state = json.loads(state_path_of(tmp_path).read_text(encoding="utf-8"))
+        assert state["last_run"]["scope_degraded"] == ["submodule:aria-plugin"]

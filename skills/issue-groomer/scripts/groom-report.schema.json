@@ -106,8 +106,8 @@
         "category": {
           "type": "string",
           "minLength": 1,
-          "description": "Tier A 分类键 (裁定-7)。值域 = labels.yaml taxonomy 分类键: 内置保守默认层仅 bug/feature/security/tracker (裁定-1), 项目级 .aria/labels.yaml 可扩展, 故不设封闭 enum。保留值 'unknown' = 无显式编码信号, 不做语义猜测 (负面 fixture 钉为 SC-3 必测)。",
-          "examples": ["bug", "feature", "security", "tracker", "unknown"]
+          "description": "Tier A 分类键 (裁定-7)。值域 = labels.yaml taxonomy 分类键: 内置保守默认层仅 bug/feature/security/tracker (裁定-1), 项目级 .aria/labels.yaml 可扩展, 故不设封闭 enum。保留值 'unknown' = 无显式编码信号, 不做语义猜测 (负面 fixture 钉为 SC-3 必测); 保留值 'conflict' = 多个分类信号互斥不一致 — 信号集原样枚举, 绝不任选其一 (任选即隐性猜测), 渲染层应作「待人工归边」处理而非分类失败。",
+          "examples": ["bug", "feature", "security", "tracker", "unknown", "conflict"]
         },
         "signals": {
           "type": "array",

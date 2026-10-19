@@ -36,6 +36,11 @@ fetch_error 纪律); 「unknown 与上轮 unknown 比较是否判变」是下游
 
 ② **上下文面** (``context_fingerprint``, 仓库级非 per-issue) →
    ``{"openspec_changes_hash", "git_heads", "handoff_pointer", "taxonomy_hash"}``
+   外加 ``"degraded"`` (A-3 additive): 降级分量名清单 — ``git_heads`` 内
+   任一仓 head 为 None ⇒ 含 ``"git_heads"``; handoff pointer 降级 None ⇒
+   含 ``"handoff_pointer"``; 全健康 ⇒ ``[]``。**不计入 ``context_key``**
+   (键面 = 固定四分量; degraded 是诚实告知面, 非判变面 — None-head 本身
+   已通过 git_heads 分量参与判变)。
    - openspec_changes_hash: ``openspec/changes/`` **全树内容级** hash (含
      proposal/tasks/design/specs delta — 在制 spec 任何实质修订必须触发
      重评): 递归收集 (相对路径, 文件字节) 对, **排序后**以长度前缀编码喂
@@ -355,7 +360,11 @@ def context_fingerprint(
     git_head_fn: Any = None,
     taxonomy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """上下文面四分量 (仓库级; 见模块 docstring ②)。
+    """上下文面四分量 + ``degraded`` 告知面 (仓库级; 见模块 docstring ②)。
+
+    返回 dict 含第五键 ``degraded`` (A-3 additive): 降级分量名清单
+    (``git_heads`` / ``handoff_pointer``); 空清单 = 全健康。不计入
+    ``context_key`` (键面固定四分量 — 降级告知不是判变信号)。
 
     - ``git_roots``: 参与指纹的仓清单 (主仓+卫星仓); None ⇒ ``[project_root]``;
       单个 str/Path 自动包成清单; 键 = 传入串原样。
@@ -377,13 +386,20 @@ def context_fingerprint(
     else:
         roots = list(git_roots)
     git_heads = {str(gr): git_head_fn(gr) for gr in roots}
+    handoff = handoff_pointer(root)
     if taxonomy is None:
         taxonomy = tier_a.resolve_taxonomy(root)
+    degraded: list[str] = []
+    if any(v is None for v in git_heads.values()):
+        degraded.append("git_heads")  # 任一仓 head 取不到 ⇒ 该分量整体降级告知 (A-3)
+    if handoff is None:
+        degraded.append("handoff_pointer")
     return {
         "openspec_changes_hash": openspec_changes_hash(root),
         "git_heads": git_heads,
-        "handoff_pointer": handoff_pointer(root),
+        "handoff_pointer": handoff,
         "taxonomy_hash": tier_a.taxonomy_hash(taxonomy),  # 单点 SOT, 不自算
+        "degraded": degraded,  # additive 告知面; 不入 context_key (固定四分量)
     }
 
 

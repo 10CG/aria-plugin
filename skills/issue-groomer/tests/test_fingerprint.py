@@ -541,13 +541,16 @@ class ContextTaxonomyTests(_TempProjectMixin):
 
 
 class ContextFaceTests(_TempProjectMixin):
-    """上下文面整体: 恰四键 + 跨调用确定性 + 全链判变。"""
+    """上下文面整体: 四判变分量 + degraded 告知面 + 跨调用确定性 + 全链判变。"""
 
-    def test_face_has_exactly_four_keys(self):
+    def test_face_has_exactly_five_keys_degraded_empty_when_healthy(self):
+        # A-3 additive: 判变面仍固定四分量, degraded 是第五告知键 (健康 = [])。
         face = self.context()
         self.assertEqual(
             set(face),
-            {"openspec_changes_hash", "git_heads", "handoff_pointer", "taxonomy_hash"})
+            {"openspec_changes_hash", "git_heads", "handoff_pointer",
+             "taxonomy_hash", "degraded"})
+        self.assertEqual(face["degraded"], [])  # mixin 面: git sha + handoff 均健康
 
     def test_deterministic_across_calls(self):
         self.assertEqual(self.context(), self.context())
@@ -574,6 +577,49 @@ class ContextFaceTests(_TempProjectMixin):
         mutated_tax = {"version": 1, "categories": {"bug": "kind/other"},
                        "title_prefixes": {}, "label_signals": {}}
         self.assertNotEqual(before, self.context(taxonomy=mutated_tax))
+
+
+class ContextDegradedTests(_TempProjectMixin):
+    """A-3: 降级分量显式告知 — degraded 清单点名, 绝不静默塌缩成健康态。
+
+    反事实: 若 git_heads=None / handoff=None 不出现在 degraded (零告知),
+    本组断言必红 — 上层 (groom stderr + state last_run.degraded) 依赖该面
+    才能把降级如实带给人与状态档。
+    """
+
+    def test_git_head_none_degrades_git_heads(self):
+        self.git_fn = lambda root: None  # 全部仓 rev-parse 失败
+        face = self.context()
+        self.assertEqual(face["degraded"], ["git_heads"])
+
+    def test_handoff_missing_degrades_handoff_pointer(self):
+        (self.root / "docs" / "handoff" / "latest.md").unlink()
+        face = self.context()
+        self.assertEqual(face["degraded"], ["handoff_pointer"])
+
+    def test_both_degraded_stable_order(self):
+        self.git_fn = lambda root: None
+        (self.root / "docs" / "handoff" / "latest.md").unlink()
+        self.assertEqual(self.context()["degraded"], ["git_heads", "handoff_pointer"])
+
+    def test_partial_root_none_still_degrades(self):
+        # 多仓中任一仓 head 取不到 (mixin git_fn 只映射主仓) ⇒ git_heads
+        # 分量整体降级告知 (宁报勿瞒)。
+        face = fingerprint.context_fingerprint(
+            self.root, [self.root, self.root / "sub"],
+            git_head_fn=self.git_fn, taxonomy=tier_a.resolve_taxonomy(self.root),
+        )
+        self.assertEqual(face["degraded"], ["git_heads"])
+
+    def test_degraded_not_in_context_key(self):
+        # degraded 是告知面不是判变面: 同四分量 + 不同 degraded ⇒ context_key
+        # 相等 (若 degraded 混入键面, 「降级恢复」会被误判为上下文变化)。
+        healthy = self.context()
+        degraded = dict(healthy)
+        degraded["degraded"] = ["git_heads"]
+        self.assertEqual(
+            fingerprint.context_key(healthy), fingerprint.context_key(degraded)
+        )
 
 
 class ContextKeyTests(_TempProjectMixin):

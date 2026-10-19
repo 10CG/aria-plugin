@@ -15,6 +15,11 @@
   - jsonschema (try-import): 本机装了 python3-jsonschema 时用标准验证器复核同一批
     正/负样例 (证明 schema 可被标准验证器直接加载校验), 未装则跳过该路径。
 
+依赖方向 (B.3 修复轮): mini_validate 的 SOT 在**生产层**
+``scripts/lib/schema_validate.py`` — 本文件反向 import 它 (groom.py 出厂
+自校验与测试断言同源单点; 生产代码不再直载 tests/ 或依赖 pytest 环境),
+``ValidatorProvenanceTests`` 钉死该方向。
+
 References:
   openspec/changes/issue-groomer-p1-mvp (proposal §3, SC-8, 裁定-8);
   DEC-20261018-001 (裁定-3 分层采集 / 裁定-7 Tier A 唯四信号源 / 裁定-8 标签契约)。
@@ -24,7 +29,9 @@ from __future__ import annotations
 
 import copy
 import json
-import re
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +41,13 @@ _SCHEMA_PATH = (
     Path(__file__).parent.parent / "scripts" / "groom-report.schema.json"
 )
 
+# 生产层校验器 (SOT): scripts/ 入 path 后以 lib.schema_validate 导入
+# (house convention, 与 test_groom_cli 同款)。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "scripts"))
+
+from lib.schema_validate import mini_validate  # noqa: E402
+
 try:  # 双路径第二径: 标准验证器 (可选)
     import jsonschema
     from jsonschema.validators import Draft202012Validator
@@ -41,117 +55,6 @@ try:  # 双路径第二径: 标准验证器 (可选)
     HAS_JSONSCHEMA = True
 except ImportError:  # pragma: no cover - environment-dependent
     HAS_JSONSCHEMA = False
-
-
-# ── mini structural validator (stdlib-only, draft 2020-12 subset) ─────────────
-
-
-def _resolve_pointer(root: dict[str, Any], ref: str) -> Any:
-    """Resolve an internal JSON pointer like '#/$defs/IssueEntry'."""
-    if not ref.startswith("#/"):
-        raise AssertionError(f"mini_validate: only internal $ref supported, got {ref!r}")
-    node: Any = root
-    for raw in ref[2:].split("/"):
-        part = raw.replace("~1", "/").replace("~0", "~")
-        node = node[part]
-    return node
-
-
-def _type_matches(value: Any, expected: str) -> bool:
-    """draft 2020-12 type semantics; bool is NOT an integer (Python quirk)."""
-    if expected == "object":
-        return isinstance(value, dict)
-    if expected == "array":
-        return isinstance(value, list)
-    if expected == "string":
-        return isinstance(value, str)
-    if expected == "boolean":
-        return isinstance(value, bool)
-    if expected == "null":
-        return value is None
-    if expected == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    raise AssertionError(f"mini_validate: unknown type keyword {expected!r}")
-
-
-def mini_validate(
-    instance: Any,
-    schema: dict[str, Any],
-    root: dict[str, Any] | None = None,
-    path: str = "$",
-    errors: list[str] | None = None,
-) -> list[str]:
-    """Validate `instance` against a draft 2020-12 subset schema.
-
-    Supported keywords: $ref (internal), type (string or list), required,
-    properties, additionalProperties (bool or schema), items, enum, const,
-    pattern (re.search semantics, per spec), minLength, minimum, minItems,
-    maxItems. `format` is annotation-only in 2020-12 and intentionally not
-    checked. Returns a list of human-readable error strings (empty = valid).
-    """
-    if errors is None:
-        errors = []
-        root = schema if root is None else root
-    assert root is not None
-
-    if "$ref" in schema:
-        return mini_validate(
-            instance, _resolve_pointer(root, schema["$ref"]), root, path, errors
-        )
-
-    if "type" in schema:
-        expected = schema["type"]
-        candidates = expected if isinstance(expected, list) else [expected]
-        if not any(_type_matches(instance, t) for t in candidates):
-            errors.append(
-                f"{path}: expected type {expected!r}, got {type(instance).__name__}"
-            )
-            return errors  # type mismatch invalidates keyword application below
-
-    if "const" in schema and instance != schema["const"]:
-        errors.append(f"{path}: {instance!r} != const {schema['const']!r}")
-    if "enum" in schema and instance not in schema["enum"]:
-        errors.append(f"{path}: {instance!r} not in enum {schema['enum']!r}")
-
-    if isinstance(instance, str):
-        if "pattern" in schema and re.search(schema["pattern"], instance) is None:
-            errors.append(f"{path}: {instance!r} fails pattern {schema['pattern']!r}")
-        if "minLength" in schema and len(instance) < schema["minLength"]:
-            errors.append(f"{path}: length {len(instance)} < minLength {schema['minLength']}")
-
-    if isinstance(instance, int) and not isinstance(instance, bool):
-        if "minimum" in schema and instance < schema["minimum"]:
-            errors.append(f"{path}: {instance} < minimum {schema['minimum']}")
-
-    if isinstance(instance, list):
-        if "minItems" in schema and len(instance) < schema["minItems"]:
-            errors.append(f"{path}: {len(instance)} items < minItems {schema['minItems']}")
-        if "maxItems" in schema and len(instance) > schema["maxItems"]:
-            errors.append(f"{path}: {len(instance)} items > maxItems {schema['maxItems']}")
-        if "items" in schema:
-            for i, item in enumerate(instance):
-                mini_validate(item, schema["items"], root, f"{path}[{i}]", errors)
-
-    if isinstance(instance, dict):
-        for key in schema.get("required", []):
-            if key not in instance:
-                errors.append(f"{path}: missing required property {key!r}")
-        properties = schema.get("properties", {})
-        additional = schema.get("additionalProperties", True)
-        for key, value in instance.items():
-            child = f"{path}.{key}"
-            if key in properties:
-                mini_validate(value, properties[key], root, child, errors)
-            elif additional is False:
-                errors.append(
-                    f"{child}: additional property {key!r} not allowed (closed keyset)"
-                )
-            elif isinstance(additional, dict):
-                mini_validate(value, additional, root, child, errors)
-
-    return errors
 
 
 def _assert_invalid(instance: Any, schema: dict[str, Any], needle: str) -> None:
@@ -419,6 +322,69 @@ class TestSchemaSelf:
         assert set(diff["required"]) == {"new", "closed", "drift", "baseline_run"}
         assert diff["properties"]["drift"]["maxItems"] == 100
         assert diff["properties"]["baseline_run"]["type"] == "boolean"
+
+    def test_category_retained_values_documented(self, schema: dict[str, Any]) -> None:
+        """(a) 两个 Tier A 保留值必须文档化: 'unknown' (无显式编码信号, 不猜)
+        与 'conflict' (分类信号互斥不一致, 原样枚举绝不任选 — 任选即隐性猜测;
+        B-3/B-3-followup)。渲染层据此把 conflict 当「待人工归边」而非分类失败。"""
+        category = schema["$defs"]["IssueEntry"]["properties"]["category"]
+        desc = category["description"]
+        assert "unknown" in desc and "conflict" in desc
+        assert "任选" in desc  # 不任选其一的纪律语句必须在场
+        assert "conflict" in category["examples"]
+
+
+# ── (a+) 校验器依赖方向 (B.3 修复: 生产层 SOT, 无 pytest 毒井) ─────────────────
+
+
+class TestValidatorProvenance:
+    """mini_validate 单点 SOT = 生产层 ``scripts/lib/schema_validate.py``。
+
+    反事实: 若校验器退回 tests/ 直载 + pytest stub 注入形态, 源码断言
+    (groom.py 含 'pytest' 字面量 / 实现不 lib.schema_validate) 与子进程
+    硬阻断 pytest 的端到端断言必红。"""
+
+    def test_groom_self_check_uses_production_validator(self) -> None:
+        import groom  # scripts/ 已在 sys.path (本文件头部)
+
+        from lib import schema_validate
+
+        assert groom._mini_validate() is schema_validate.mini_validate
+
+    def test_groom_source_has_no_pytest_coupling(self) -> None:
+        """stub 注入逻辑删除后, groom.py 源码不得再含任何结构性 pytest
+        耦合面 (import / sys.modules 注入 / ModuleType stub / importlib
+        直载 tests) — 依赖方向修正的结构面证据 (docstring 里说明 B.3
+        裁量的 'pytest' 字样不属耦合, 不在断言面)。"""
+        import groom
+
+        source = Path(groom.__file__).read_text(encoding="utf-8")
+        for marker in ("import pytest", "sys.modules", "ModuleType", "importlib"):
+            assert marker not in source, f"groom.py must not contain {marker!r}"
+
+    def test_validator_importable_and_usable_without_pytest(self) -> None:
+        """端到端: 子进程硬阻断 pytest (模拟无 pytest 生产环境), groom 的
+        出厂自校验入口仍可取用并给出正确判定 (毒井移除的运行面证明)。"""
+        scripts_dir = str(Path(__file__).resolve().parents[1] / "scripts")
+        probe = (
+            "import sys\n"
+            "sys.modules['pytest'] = None  # block pytest (simulated production)\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import groom\n"
+            "fn = groom._mini_validate()\n"
+            "schema = {'type': 'object', 'required': ['a'],\n"
+            "          'properties': {'a': {'type': 'integer'}},\n"
+            "          'additionalProperties': False}\n"
+            "assert fn({'a': 1}, schema) == []\n"
+            "assert fn({'a': 'x'}, schema)\n"
+            "print('ok')\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", probe, scripts_dir],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "ok"
 
 
 # ── (b) 合法样例通过校验 ───────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ state-scanner/scripts/collectors/issue_scan.py — NOT the single-page
 limit=50 bug this spec exists partly to fix, aria-plugin #208):
   - issue-list AND comments endpoints are walked with FULL pagination;
   - a page is terminal only when EMPTY (a short page may be server clamping);
+  - an empty page is a JSON "[]" — rc=0 with empty stdout (no content) is a
+    structural violation and a hard error, never treated as an empty page;
   - page 1 omits "&page=" (byte-identical to the pre-pagination URL);
   - rows are deduplicated by number/id across pages (window shift);
   - an entire page of already-seen rows or exceeding the page ceiling is a
@@ -152,7 +154,13 @@ def _paged_get(
     for page in range(1, PAGE_CEILING + 2):  # +1: one probe page past the ceiling
         batch = forgejo.call("GET", build_endpoint(page))
         if batch is None:
-            batch = []
+            # rc=0 + empty stdout is NOT an empty page (that would be "[]"):
+            # treating no-content as a terminal empty page would silently fold
+            # "the endpoint went mute" into "the repo has no rows" (A-2).
+            raise RegenError(
+                f"paged endpoint page={page}: rc=0 with empty body — an empty "
+                "page must be a JSON '[]', not no-content"
+            )
         if not isinstance(batch, list):
             raise RegenError(f"paged endpoint page={page}: expected a list, got {type(batch).__name__}")
         if not batch:
@@ -199,6 +207,21 @@ def _is_pull_request(raw: dict[str, Any]) -> bool:
 
 # ── snapshot builders (output = canonical corpus structure) ─────────────────
 
+def _comments_count(raw: dict[str, Any], repo: str, number: int) -> int:
+    """Issue detail 的 ``comments`` 计数字段 — 必须在场且为非负 int (E-5)。
+
+    缺席 / 非 int / bool / 负值 ⇒ RegenError, 绝不冒充 0: 该计数是
+    comments 端点全量走的对账基线 (expected_count), 一个被伪造的 0 会把
+    「端点哑了 / 字段形态漂了」静默折成「零评论语料」。"""
+    value = raw.get("comments")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RegenError(
+            f"sample {repo}#{number}: issue detail 'comments' count field absent "
+            f"or not a non-negative int (got {value!r}) — refusing to fake 0"
+        )
+    return value
+
+
 def _issue_row(repo: str, raw: dict[str, Any], with_comments_count: bool) -> dict[str, Any]:
     row: dict[str, Any] = {
         "repo": repo,
@@ -241,9 +264,10 @@ def build_sample(forgejo: Forgejo, targets: list[tuple[str, int]], date: str) ->
         raw = forgejo.call("GET", f"/repos/{ORG}/{repo}/issues/{number}")
         if not isinstance(raw, dict) or "number" not in raw:
             raise RegenError(f"sample {repo}#{number}: issue detail fetch failed or malformed")
+        count_field = _comments_count(raw, repo, number)  # E-5: 对账基线不得冒充 0
         comments = _paged_get(
             forgejo, _comments_endpoint(repo, number), "id",
-            expected_count=int(raw.get("comments") or 0),  # this endpoint ignores paging — see notes
+            expected_count=count_field,  # this endpoint ignores paging — see notes
         )
         body = str(raw.get("body") or "")
         items.append({
@@ -251,7 +275,7 @@ def build_sample(forgejo: Forgejo, targets: list[tuple[str, int]], date: str) ->
             "number": number,
             "body_len": len(body),
             "body_head": body[:BODY_HEAD_LEN],
-            "comments_count_field": int(raw.get("comments") or 0),
+            "comments_count_field": count_field,
             "comments_endpoint_shape": [
                 {
                     "id": c.get("id"),
@@ -274,13 +298,54 @@ def _date_str(value: str | None) -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _write_json(path: Path, payload: Any) -> None:
-    # Canonical formatting: indent=1, ensure_ascii=False (matches the 2026-10-18 trio).
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=1)  # no trailing newline: byte-parity with the canonical trio
-    tmp.replace(path)  # atomic swap: never leave a half-written corpus file
+def _unlink_quiet(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _write_trio(
+    outputs: list[tuple[Path, Any]],
+    *,
+    rename_fn: Callable[[Path, Path], None] | None = None,
+) -> None:
+    """三文件事务化落盘 (D-3): 全部先写 ``.tmp`` (每个写完才算 staged),
+    再统一 rename — 混代免疫。
+
+    崩溃窗口语义: staging 期任一步失败 ⇒ 清掉全部 tmp, 三个目标路径保持
+    旧内容 (整代旧 — 消除「逐文件写完即换」形态下第 1 个已换新、第 2 个
+    写一半的写入期混代); rename 期每文件原子换已 staged 字节 (单文件结构
+    上无半写字节), rename 中途失败 ⇒ 清残留 tmp 后上抛 (已换的停留新代 —
+    rename 序列本身非跨文件原子, 混代窗口收窄到 rename 之间)。
+
+    Canonical formatting: indent=1, ensure_ascii=False, no trailing newline
+    (byte-parity with the 2026-10-18 trio)。``rename_fn`` 注入面仅供测试
+    模拟崩溃, 生产缺省 Path.replace。"""
+    rename = rename_fn if rename_fn is not None else (lambda src, dst: src.replace(dst))
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for path, payload in outputs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            try:
+                with tmp.open("w", encoding="utf-8") as fh:
+                    json.dump(payload, fh, ensure_ascii=False, indent=1)
+            except BaseException:
+                _unlink_quiet(tmp)  # 写一半的当前 tmp 立即清 (不入 staged)
+                raise
+            staged.append((tmp, path))
+    except BaseException:
+        for tmp, _ in staged:
+            _unlink_quiet(tmp)
+        raise
+    try:
+        for tmp, path in staged:
+            rename(tmp, path)
+    except BaseException:
+        for tmp, _ in staged:
+            _unlink_quiet(tmp)  # 未换的 tmp 清掉; 已 rename 的 tmp 已不存在
+        raise
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -321,9 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     out_full = args.out_dir / f"issues-open-full-18repos-{date}.json"
     out_curated = args.out_dir / f"issues-open-{date}.json"
     out_sample = args.out_dir / f"issues-sample-body-comments-{date}.json"
-    _write_json(out_full, full)
-    _write_json(out_curated, curated)
-    _write_json(out_sample, sample)
+    _write_trio([(out_full, full), (out_curated, curated), (out_sample, sample)])
 
     print(
         f"regen_corpus: wrote 3 files to {args.out_dir} (date={date}):\n"

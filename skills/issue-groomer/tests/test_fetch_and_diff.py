@@ -40,6 +40,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -55,7 +56,7 @@ sys.path.insert(0, _HERE)
 
 import groom  # noqa: E402
 from lib import diffseg, fetch, fingerprint, incremental, tier_a  # noqa: E402
-from test_schema import mini_validate  # noqa: E402
+from lib.schema_validate import mini_validate  # noqa: E402  # 生产层 SOT (B.3)
 
 SCHEMA_PATH = os.path.join(SCRIPTS, "groom-report.schema.json")
 
@@ -970,10 +971,21 @@ label_signals:
 
 
 def groom_run(tmp_path: Path, corpus: dict[str, Any]) -> dict[str, Any]:
-    """进程内跑全编排 (fake runner + request_interval=0 + 时钟注入)。"""
+    """进程内跑全编排 (fake runner + request_interval=0 + 时钟注入)。
+
+    B-2 前提: --repos 显式 ⇒ strict 路径映射 — 主仓 origin 推导为
+    10CG/Aria (git init + remote), 否则 resolve_git_roots 按设计 ConfigError。
+    """
     (tmp_path / ".aria").mkdir(exist_ok=True)
     (tmp_path / ".aria" / "labels.yaml").write_text(PROJECT_LABELS_YAML,
                                                     encoding="utf-8")
+    if not (tmp_path / ".git").exists():
+        subprocess.run(["git", "-C", str(tmp_path), "init", "-q"],
+                       check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "remote", "add", "origin",
+             "git@forgejo.10cg.pub:10CG/Aria.git"],
+            check=True, capture_output=True)
     args = groom.parse_args([
         "--repos", "Aria",
         "--project-root", str(tmp_path),
