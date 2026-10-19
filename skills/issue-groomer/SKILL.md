@@ -5,6 +5,7 @@ description: |
   (title 前缀 / label / staleness / 活跃度) → 增量三面指纹 + diff →
   Tier B 语义评估 (疑似已修可关单 / 优先级 vs 在制轨道 / owner 决策面抽取)
   → MD 渲染。产出 groom-report.json (schema v1.1) 与 .aria/groom-assessments.json。
+  只读梳理: 产出止于报告与建议清单, 不写回 tracker (建单/关单/打标/挪列均不做)。
 
   使用场景："梳理 issue 积压"、"issue 分类排序"、"backlog grooming"、
   "找下一个该处理的 issue"、"定期梳理 backlog"
