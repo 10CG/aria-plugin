@@ -1,0 +1,52 @@
+# issue-groomer Tier A 内置保守默认层 (Phase 0 裁定-1: 项目级 .aria/labels.yaml
+# 存在时被**整体覆盖** — 覆盖非合并; 本文件仅在项目级缺省时生效)。
+#
+# 受限语法 (tier_a.py `_parse_simple_yaml` 同步文档化):
+#   - 仅两层: 顶层 `key: value` 标量, 或顶层 `key:` 开块后一层缩进的
+#     `subkey: value` / `- item` (一个块内 mapping/列表二选一); 更深嵌套不支持。
+#   - 含 `[` 的键 (title 前缀) 必须加引号: `"[bug]": bug`。
+#   - 缩进只用空格且块内宽度恒定; tab 报错; 任何层级重复键报错。
+#   - 标量: 裸串 / 引号串 / 纯整数 (version); 注释支持整行 `#` 与值尾 ` #`。
+#
+# 保守性边界 (默认层只收「通用分类词」):
+#   - 分类键仅 4 个通用键 (bug/feature/security/tracker), canonical label = 键名
+#     本身 (项目级可改名, 如 `bug: kind/bug`)。
+#   - 前缀表每条锚定 2026-10-18 语料实测 (scratchpad/issues-open-full-18repos-
+#     2026-10-18.json, 378 条): [缺陷]x35 / [bug]x6 / [Feature]x2 / [enhancement]x3
+#     / [security]x3 / [安全]x6 / [tracker]x3 / [Archive Tracker]x13(+Aria 系 x4);
+#     大小写变体 ([Bug]/[feature]/[Security]/[Tracker]) 为成对防御, 未单独实测。
+#   - 刻意排除: [P0]-[P4] 是优先级标记非分类信号; [reliability]/[governance]/
+#     [refactor]/[讨论]/[清理] 及全部项目专名前缀 ([state-scanner]/[AB套件]/
+#     [api-proxy]...) 属项目层, 由项目级 .aria/labels.yaml 自行声明。
+#   - label_signals: 四个裸 canonical 名 (round-trip: 建议打的标回读时仍是分类
+#     信号) + 语料实测 type/* 家族 (type/bug x7 / type/feature x1); type/security
+#     /type/tracker 为家族对称补全, 未实测。area/* 与 priority/* 不是分类信号,
+#     默认层不收。
+version: 1
+categories:
+  bug: bug
+  feature: feature
+  security: security
+  tracker: tracker
+title_prefixes:
+  "[bug]": bug
+  "[Bug]": bug
+  "[缺陷]": bug
+  "[feature]": feature
+  "[Feature]": feature
+  "[enhancement]": feature
+  "[security]": security
+  "[Security]": security
+  "[安全]": security
+  "[tracker]": tracker
+  "[Tracker]": tracker
+  "[Archive Tracker]": tracker
+label_signals:
+  bug: bug
+  type/bug: bug
+  feature: feature
+  type/feature: feature
+  security: security
+  type/security: security
+  tracker: tracker
+  type/tracker: tracker
