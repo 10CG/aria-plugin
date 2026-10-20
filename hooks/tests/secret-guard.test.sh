@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 822 cases (816 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 831 cases (825 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -3151,6 +3151,64 @@ wpa_use_none
 
 rm -rf "$wpa_tmp"
 # ── secret-net-l3-and-bypass-paths: L1 block end ──
+
+# ══════════════════ SC-T (secret-guard-time-budget-failclosed, TASK-002): time-budget fail-closed (C) ══════════════════
+# The guard keeps its own time upper bound N so it BLOCKs (fail-closed) before Claude Code's 5s hook timeout would kill it and fail-OPEN (#216). These cases drive
+# SECRET_GUARD_TIME_BUDGET_S=0 so the FIRST expensive checkpoint fires regardless of wall-clock -> deterministic, not timing-flaky. BASELINE-FAILING: v1.75.0 ignores the
+# env var (it has no time budget), so SC-T1 / SC-T1b / SC-T2a all exit 0 (no time block) on the baseline and 2 here. SC-T2b / SC-T3a / SC-T3b / SC-T3c are core-unaffected /
+# escape-hatch INVARIANTS (green on both baseline and this impl by design -- SC-T3 "core unaffected"). Rule #7: no credential literals; the /opt/.env path is a file name, not a value.
+tb_bash_case() {   # <name> <want exit> <budget> <cmd> : one Bash hook run with SECRET_GUARD_TIME_BUDGET_S set only for that run (no leakage)
+  local name="$1" want="$2" budget="$3" cmd="$4" input got exit_code
+  input="$(jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
+  got="$(echo "$input" | SECRET_GUARD_TIME_BUDGET_S="$budget" "$HOOK" 2>/dev/null; echo "exit=$?")"
+  exit_code="${got##*exit=}"
+  if [[ "$exit_code" == "$want" ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failures+=("FAIL [$name]: want exit=$want, got exit=$exit_code (budget=$budget)"); fi
+}
+
+# SC-T1 (baseline-failing): a variable-bearing command reaches the W10 second pass; at budget=0 the per-segment checkpoint fires -> exit 2. Baseline: benign after expansion -> exit 0.
+tb_bash_case "SC-T1 bf: budget=0, var-bearing cmd reaches W10 per-segment pass -> time BLOCK (baseline exits 0)" 2 0 'D=/etc; cat $D/hostname'
+# SC-T1b (baseline-failing): chained variables reach the O(vars^2) i×j loop in _sg_vx_collect; at budget=0 that checkpoint fires (status 3 -> BLOCK). Baseline: chains to a benign path -> exit 0.
+tb_bash_case "SC-T1b bf: budget=0, chained vars reach the ixj loop -> time BLOCK (baseline exits 0)" 2 0 'A=/etc; B=$A/hostname; cat $B'
+
+# SC-T2a (baseline-failing): the time-fail-closed BLOCK text carries the "split" guidance + the time-budget phrasing, rc=2. Baseline exits 0 with no such text.
+sct_in="$(jq -n --arg c 'D=/etc; cat $D/hostname' '{tool_name:"Bash",tool_input:{command:$c}}')"
+sct_err="$(echo "$sct_in" | SECRET_GUARD_TIME_BUDGET_S=0 "$HOOK" 2>&1 >/dev/null; echo "RC=$?")"
+sct_rc="${sct_err##*RC=}"
+if [[ "$sct_rc" == 2 ]] && echo "$sct_err" | grep -qF 'time budget' && echo "$sct_err" | grep -qF 'Split it into smaller commands'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failures+=("FAIL [SC-T2a: time-budget BLOCK text]: want rc=2 + 'time budget' + 'Split it into smaller commands'; got rc=$sct_rc")
+fi
+# SC-T2b (escape-hatch invariant): the SAME command with a trailing # guard:ack is allowed even at budget=0 (the ack short-circuits before any timer work).
+tb_bash_case "SC-T2b: SAME cmd + # guard:ack at budget=0 -> allowed (escape hatch intact)" 0 0 'D=/etc; cat $D/hostname  # guard:ack: time-budget escape-hatch regression check'
+
+# SC-T3a (core unaffected): a direct secret-file read still exits 2 via the built-in block even at budget=0 (the #154 core runs first, is never gated by the timer).
+tb_bash_case "SC-T3a: direct secret read at budget=0 still exits 2 (built-in block, not the time path)" 2 0 'cat /opt/.env'
+# SC-T3b (core unaffected): that block carries the BUILT-IN text ("reads a secret-bearing source"), NOT the time text -- it blocked via the core, not the time path.
+sct_in="$(jq -n --arg c 'cat /opt/.env' '{tool_name:"Bash",tool_input:{command:$c}}')"
+sct_err="$(echo "$sct_in" | SECRET_GUARD_TIME_BUDGET_S=0 "$HOOK" 2>&1 >/dev/null; echo "RC=$?")"
+sct_rc="${sct_err##*RC=}"
+if [[ "$sct_rc" == 2 ]] && echo "$sct_err" | grep -qF 'reads a secret-bearing source' && ! echo "$sct_err" | grep -qF 'time budget'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failures+=("FAIL [SC-T3b: core unaffected (built-in block, not time path)]: want rc=2 + built-in text + NO time text; got rc=$sct_rc")
+fi
+# SC-T3c (core unaffected): a benign no-variable command still exits 0 at budget=0 -- it never reaches a checkpoint (the $-and-= entry gate returns before any timer work).
+tb_bash_case "SC-T3c: benign no-variable cmd at budget=0 exits 0 (never reaches a checkpoint)" 0 0 'ls -la /tmp'
+# SC-T4 (structural guard — fix: _SG_MODE==none clock freshness): _sg_per_segment_eval must reset _SG_T0 (the per-command time-budget clock) BEFORE its W9 _sg_ext_pass checkpoint. The _SG_MODE==none
+# branch skips _sg_vx_pass/_sg_vx_collect (the other reset) yet still runs the ext checkpoint; without a reset here it reads a stale _SG_T0 (benign in a fresh process, spurious in this sourced suite).
+pse_body="$(awk '/^_sg_per_segment_eval\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$HOOK")"
+pse_reset="$(printf '%s\n' "$pse_body" | grep -n '_SG_T0=\$SECONDS' | head -1 | cut -d: -f1)"
+pse_ext="$(printf '%s\n' "$pse_body" | grep -n '_sg_ext_pass' | head -1 | cut -d: -f1)"
+if [[ -n "$pse_reset" && -n "$pse_ext" ]] && (( pse_reset < pse_ext )); then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); failures+=("FAIL [SC-T4: _sg_per_segment_eval resets _SG_T0 before the W9 ext checkpoint]: reset=$pse_reset ext=$pse_ext")
+fi
+# SC-T5 (adversarial — budget cap): a huge SECRET_GUARD_TIME_BUDGET_S must be capped below CC's 5s hook timeout, else the time fail-closed could be disabled by setting the budget huge (reverting to CC's 5s fail-open, #216).
+sct5="$(SECRET_GUARD_TIME_BUDGET_S=99 HK="$HOOK" bash -c 'source "$HK" 2>/dev/null; _sg_time_budget; printf "%s" "$_SG_TIME_BUDGET"' 2>/dev/null)"
+if [[ "$sct5" == 4 ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failures+=("FAIL [SC-T5: budget cap <5s]: SECRET_GUARD_TIME_BUDGET_S=99 resolved to '$sct5', want 4"); fi
+# ══════════════════ SC-T end ══════════════════
 
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
 # 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,

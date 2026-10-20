@@ -594,6 +594,28 @@ _SG_RP=""
 _SGV_VMAX=4096
 _SGV_SMAX=8192
 _SGV_TMAX=65536
+# ── Time-budget fail-closed (secret-guard-time-budget-failclosed C; resolves 10CG/aria-plugin#216) ──
+# Claude Code kills a PreToolUse hook at 5 s and then FAIL-OPENS (lets the command through, UNSCANNED). The expensive second pass (W10 variable expansion) and the W9 extension
+# look can, on a slow platform (Windows MINGW64 measured ~2.6x Linux, #219), run past 5 s on a command that is still within the SIZE budget (_SGV_*). So the guard keeps its OWN
+# time upper bound N (< CC's 5 s): once an expensive leg has spent N seconds it STOPS at the next boundary and BLOCKs (fail-closed), rather than letting CC's 5 s timeout fail-open.
+# SECONDS (a bash builtin, 3.2-compatible, 1 s granularity -- NOT EPOCHREALTIME, which is bash 5+) is read at each leg boundary via _sg_over_budget. N defaults to 3 (owner ruling
+# 2026-10-16: ~2 s of headroom under 5 s for hook teardown + the 1 s granularity error); SECRET_GUARD_TIME_BUDGET_S overrides it (a missing / empty / non-integer value falls back
+# to 3 and never errors; a low value such as 0 forces the first checkpoint for deterministic tests). The clock _SG_T0 is reset at the START of _sg_vx_collect -- the single choke
+# point every expensive leg passes through first -- so the budget measures THIS command's judgement (not wall time since the process started) and stays fresh when the test suite
+# sources the hook and calls the functions directly. INVARIANT: the built-in direct judgement (_sg_core_eval, the #154 core) runs BEFORE any of this, is NEVER gated by the timer,
+# and stays fast; the `# guard:ack` escape and the _SGV_* size budget are unchanged; fail-closed means an overrun BLOCKs (exit 2), never allows.
+_SG_T0=$SECONDS
+_SG_TIME_BUDGET=3
+_sg_time_budget() {   # resolve SECRET_GUARD_TIME_BUDGET_S -> _SG_TIME_BUDGET (fork-free; default 3 on missing / empty / non-integer; 10# so a leading zero is not read as octal)
+  case "${SECRET_GUARD_TIME_BUDGET_S:-}" in
+    ''|*[!0-9]*) _SG_TIME_BUDGET=3 ;;
+    *) _SG_TIME_BUDGET=$(( 10#${SECRET_GUARD_TIME_BUDGET_S} )) ;;
+  esac
+  (( _SG_TIME_BUDGET > 4 )) && _SG_TIME_BUDGET=4   # cap below Claude Code's 5s hook timeout: a huge budget must NOT be able to disable the time fail-closed (that would revert to CC's 5s fail-open, #216)
+}
+_sg_over_budget() {   # return 0 (true) once this judgement has spent >= the budget since _SG_T0 (budget resolved once at each reset site, not per checkpoint)
+  (( SECONDS - _SG_T0 >= _SG_TIME_BUDGET ))
+}
 # _sg_vx_replace S PAT REP [MAX] : literal replace-all of PAT in S, at most 8 replacements -> _SG_RP; with MAX (characters) it stops with status 1 as soon as the result would be
 # longer than MAX (_SG_RP is then S unchanged)
 _sg_vx_replace() {
@@ -608,6 +630,7 @@ _sg_vx_replace() {
 # _sg_vx_collect S : fills _SGV_N / _SGV_V from S. Status 0 = collected, 2 = a value is longer than _SGV_VMAX (as collected, or after one level of chaining): it stops at that
 # value at once -- the value is neither stored nor looked at again and nothing behind it is collected -- and the caller blocks the command.
 _sg_vx_collect() {
+  _SG_T0=$SECONDS; _sg_time_budget   # reset the time-budget clock + resolve the budget once here: the single choke point every expensive leg (this collect's i×j chaining, _sg_vx_pass, the W9 extension look) passes first
   local rest="$1" m name val i j n=0 dup pre
   local _q="'" _d='"' _b='`'
   _SGV_N=(); _SGV_V=()
@@ -641,6 +664,7 @@ _sg_vx_collect() {
     for (( j = 0; j < ${#_SGV_N[@]}; j++ )); do
       (( i == j )) && continue
       [[ -z "${_SGV_V[j]}" ]] && continue
+      _sg_over_budget && return 3   # time-budget fail-closed: the O(vars^2) chaining is over budget -> status 3, caller BLOCKs (distinct from status 2 = value over _SGV_VMAX)
       if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
       if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
     done
@@ -681,12 +705,20 @@ _sg_vx_pass() {
   local cmd="$1" mode="$2" seg rc ar cr spent=0
   _sg_vx_collect "$cmd"
   cr=$?
+  if [[ $cr -eq 3 ]]; then   # time-budget fail-closed: the chaining in _sg_vx_collect ran out of time
+    _sg_emit_blocked "time" "$cmd" "$mode" timeout
+    return 2
+  fi
   if [[ $cr -eq 2 ]]; then
     _sg_emit_blocked "a variable value is longer than $_SGV_VMAX characters" "$cmd" "$mode" oversize
     return 2
   fi
   (( ${#_SGV_N[@]} )) || return 0
   if [[ "$mode" == whole ]]; then
+    if _sg_over_budget; then   # time-budget fail-closed before the O(copy^2) whole-command judgement
+      _sg_emit_blocked "time" "$cmd" whole timeout
+      return 2
+    fi
     _sg_vx_apply "$cmd"
     ar=$?
     if [[ $ar -eq 2 ]]; then
@@ -697,6 +729,10 @@ _sg_vx_pass() {
     return 0
   fi
   for seg in "${_SG_SEGS[@]}"; do
+    if _sg_over_budget; then   # time-budget fail-closed before each per-segment _sg_vx_apply / _sg_judge_one (the O(copy^2) hot leg)
+      _sg_emit_blocked "time" "$cmd" segment timeout
+      return 2
+    fi
     _sg_vx_apply "$seg"
     ar=$?
     [[ $ar -eq 1 ]] && continue
@@ -774,6 +810,7 @@ _sg_ext_pass() {
   local sub
   sub="$(_sg_ext_subst "$1")"
   [[ -n "$sub" ]] || return 0
+  _sg_over_budget && { printf 'TIME'; return 0; }   # time-budget fail-closed: an extension is in effect and matched, but the whole-string look is over budget -> sentinel TIME
   _sg_core_eval "$sub" >/dev/null 2>&1
   [[ $? -eq 2 ]] && printf 'BLOCK'
   return 0
@@ -791,6 +828,26 @@ _sg_ext_path_pass() {   # Read/Edit face: entry (lower-cased) as a literal subst
 # the first 200 characters of the command (the command is by definition a large one).
 _sg_emit_blocked() {
   local pat="$1" seg="$2" mode="$3" kind="${4:-}"
+  if [[ "$kind" == timeout ]]; then
+    _sg_time_budget
+    cat >&2 <<EOF
+[secret-guard] BLOCKED: command too complex to scan within the time budget (${_SG_TIME_BUDGET}s).
+
+Nothing was matched. The secret scan did not finish within the guard's own time
+budget, and a command that cannot be checked in time is blocked (fail-closed), not
+allowed -- otherwise Claude Code's 5s hook timeout would kill the guard and let the
+command through UNSCANNED (fail-open, 10CG/aria-plugin#216).
+
+Split it into smaller commands and run them one at a time:
+  - keep every variable value, and every command after expansion, short;
+  - do not repeat one long \$VAR many times in a single command;
+  - write long files with the Write / Edit tool instead of a heredoc.
+命令过于复杂, 无法在时限内扫描其中是否含密钥, 请拆成更小的命令
+
+Command was (first 200 characters): $(_sg_redact_echo "${command:0:200}")
+EOF
+    return 0
+  fi
   if [[ "$kind" == oversize ]]; then
     cat >&2 <<EOF
 [secret-guard] BLOCKED: command too large to scan for secrets. Limit hit: $pat
@@ -1482,17 +1539,26 @@ _sg_per_segment_eval() {
   _sg_core_eval "$cmd"
   rc=$?
   [[ $rc -ne 0 ]] && return "$rc"
+  _SG_T0=$SECONDS; _sg_time_budget   # per-command time-budget reset: the _SG_MODE==none path skips _sg_vx_pass/_sg_vx_collect below but still runs the W9 ext checkpoint, so without this it would read a stale _SG_T0 (fresh process: ~process-start, benign; sourced suite: suite-start, spuriously fires)
   if [[ "$_SG_MODE" != none ]]; then
     _sg_vx_pass "$cmd" "$_SG_MODE"
     rc=$?
     [[ $rc -ne 0 ]] && return "$rc"
   fi
   _x="$( _sg_ext_pass "$cmd" 2>/dev/null )"
+  if [[ "$_x" == TIME ]]; then   # time-budget fail-closed: the W9 extension look ran out of time
+    _sg_emit_blocked "time" "$cmd" segment timeout
+    return 2
+  fi
   if [[ "$_x" != BLOCK ]] && (( ${#_SGV_N[@]} )); then
     _sg_vx_apply "$cmd"
     ar=$?
     if [[ $ar -eq 0 ]]; then
       _x="$( _sg_ext_pass "$_SG_SUB" 2>/dev/null )"
+      if [[ "$_x" == TIME ]]; then   # time-budget fail-closed: the extension's look at the substituted whole command ran out of time
+        _sg_emit_blocked "time" "$cmd" segment timeout
+        return 2
+      fi
     elif [[ $ar -eq 2 && -n "$( _sg_ext_entries 2>/dev/null )" ]]; then
       _sg_emit_blocked "the command is longer than $_SGV_SMAX characters after variable expansion, too large for the project extension (.aria/secret-guard.paths) to check" "$cmd" segment oversize
       return 2
