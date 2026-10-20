@@ -8,7 +8,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 830 cases (824 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 831 cases (825 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -3205,6 +3205,9 @@ if [[ -n "$pse_reset" && -n "$pse_ext" ]] && (( pse_reset < pse_ext )); then
 else
   fail=$((fail + 1)); failures+=("FAIL [SC-T4: _sg_per_segment_eval resets _SG_T0 before the W9 ext checkpoint]: reset=$pse_reset ext=$pse_ext")
 fi
+# SC-T5 (adversarial — budget cap): a huge SECRET_GUARD_TIME_BUDGET_S must be capped below CC's 5s hook timeout, else the time fail-closed could be disabled by setting the budget huge (reverting to CC's 5s fail-open, #216).
+sct5="$(SECRET_GUARD_TIME_BUDGET_S=99 HK="$HOOK" bash -c 'source "$HK" 2>/dev/null; _sg_time_budget; printf "%s" "$_SG_TIME_BUDGET"' 2>/dev/null)"
+if [[ "$sct5" == 4 ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failures+=("FAIL [SC-T5: budget cap <5s]: SECRET_GUARD_TIME_BUDGET_S=99 resolved to '$sct5', want 4"); fi
 # ══════════════════ SC-T end ══════════════════
 
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──

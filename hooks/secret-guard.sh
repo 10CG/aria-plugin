@@ -611,6 +611,7 @@ _sg_time_budget() {   # resolve SECRET_GUARD_TIME_BUDGET_S -> _SG_TIME_BUDGET (f
     ''|*[!0-9]*) _SG_TIME_BUDGET=3 ;;
     *) _SG_TIME_BUDGET=$(( 10#${SECRET_GUARD_TIME_BUDGET_S} )) ;;
   esac
+  (( _SG_TIME_BUDGET > 4 )) && _SG_TIME_BUDGET=4   # cap below Claude Code's 5s hook timeout: a huge budget must NOT be able to disable the time fail-closed (that would revert to CC's 5s fail-open, #216)
 }
 _sg_over_budget() {   # return 0 (true) once this judgement has spent >= the budget since _SG_T0 (budget resolved once at each reset site, not per checkpoint)
   (( SECONDS - _SG_T0 >= _SG_TIME_BUDGET ))
