@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **版本**: 1.76.0 | **发布日期**: 2026-10-15
+> **版本**: 1.77.0 | **发布日期**: 2026-10-21
 >
-> Claude Code 的 AI-DDD 方法论完整插件 — 34 个面向用户 Skills + 7 个内部 + 11 个 Agents + 5 个 Hooks（含默认 secret-guard）
+> Claude Code 的 AI-DDD 方法论完整插件 — 36 个面向用户 Skills + 7 个内部 + 11 个 Agents + 5 个 Hooks（含默认 secret-guard）
 
 ## 前置条件
 
@@ -41,7 +41,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills（34 个面向用户 + 7 个内部 = 41 个）
+### Skills（36 个面向用户 + 7 个内部 = 43 个）
 
 > 内部 skills（7 个，`user-invocable: false`）：agent-router、agent-team-audit、arch-common、audit-engine、config-loader、git-remote-helper（v1.15.0 +1）、aria-token-telemetry（v1.33.0 +1）。
 
@@ -55,6 +55,7 @@ export ARIA_HOOKS_DISABLED=true
 - spec-drafter — 创建 OpenSpec proposal.md
 - task-planner — 将 OpenSpec 分解为可执行任务
 - progress-updater — 更新项目进度状态
+- session-closer — 会话维度收尾仪式（把未完成线程固化为 handoff；与 Phase D 周期收尾正交）
 
 **协作思考**
 - brainstorm — AI 辅助的决策讨论和需求澄清（problem/requirements/technical 模式）
@@ -83,6 +84,8 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-sync — Story ↔ UPM 状态同步
 - forgejo-sync — Story ↔ Issue 同步
 - openspec-archive — 归档已完成的 OpenSpec 变更到 openspec/archive/ 并做落点校验
+- issue-triage — 对收到的 issue 进行系统化核对（版本 / 代码路径 / in-flight 分支 / 复现情况），在推荐解决方案前先验证
+- issue-groomer — 卫星仓 open issue 组合面批量梳理：全分页 fetch → Tier A 机械粗分 → 增量三面指纹 + diff → Tier B 语义评估 → MD 报告
 
 **基础设施**
 - config-loader *（内部，非用户调用）* — 配置加载
