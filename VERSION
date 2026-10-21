@@ -1,7 +1,8 @@
 # Aria Plugin 版本信息
 
-> **版本**: 1.77.0
+1.77.0
 > **发布日期**: 2026-10-21  # minor: v1.77.0 issue-groomer-p1-mvp — 新增 issue-groomer skill: 卫星仓 open issue 组合面批量梳理 (10CG/Aria#238; 五层: forgejo 双端点 fetch (comments 计数对账 fail-closed) / Tier A 机械粗分 / 三面指纹+增量复用 / Tier B 语义评估 SKILL 适配层 / groom.py CLI 11 flag; 产出 groom-report.json schema v1.1 + .aria/groom-assessments.json; issue-groomer 套件 525 测 + 57 subtest 全绿; Skills 42→43 (35→36 user-facing))
+> **发布日期**: 2026-10-20  # patch: v1.76.1 secret-guard-time-budget-failclosed (C) — hook 自设时间预算 fail-closed, 抢在 CC 5s 超时 fail-open 之前 (10CG/aria-plugin#216 收口; Windows 放大 10CG/aria-plugin#219; B 成本收敛 + built-in 首遍缺口另 10CG/aria-plugin#228)
 > **发布日期(旧)**: 2026-10-15  # minor: v1.76.0 pre-merge-completeness-gate — audit-engine pre_merge 前置 checkpoint 完整性门 (10CG/Aria#199; 新脚本 completeness_gate.py + 新 stdout 契约, 行为变更见 CHANGELOG 迁移十三条)
 > **发布日期(旧)**: 2026-10-15  # minor: v1.75.0 secret-net-l3-and-bypass-paths — L3 读取失明/键形缺口 + L1 服务端配置/变量间接/进程表旁路补洞 (10CG/aria-plugin#154 / 10CG/aria-plugin#203 / 10CG/Aria#221; 新检测能力+新输入面+新拦截族, 向下兼容)
 > **发布日期(旧)**: 2026-09-30  # patch: v1.74.1 state-scanner issue_scan 翻页取全并显式标注截断 (10CG/aria-plugin#182) — Forgejo 翻页至空页 (limit 改为每页条数, 首页 URL 不变), GitHub 一次取上限+1 作探针; 新增 truncated / truncated_reason (顶层 + 逐 repo), issue_status.schema_version 1.1→1.2 (旧缓存冷启动); 修前 scanner 报 48 而 API 全量 130 (10CG/aria-plugin#182 实测), 被藏的恒是最老的 open issue。

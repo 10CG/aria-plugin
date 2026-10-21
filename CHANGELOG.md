@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `plugin.json` description 计数 42 → 43 Skills (35 → 36 user-facing); `marketplace.json` 双 version 字段、`VERSION`、README 名册同步。README 名册顺带补齐两个既有缺行: `issue-triage` 与 `session-closer` (后者 v1.50.0 引入后从未入册; 机械核对 36 user vs 名册 33 user 行)。
 
 Rule #6: 新 Skill = 触发面全开。SC-6① 场景 1 AB: with_skill **26/26 全绿** (description v2 后真跑形态复验, 双轮稳定) / without 21/26 (delta +5 为保守下界, 污染面如实申报), 门判 PASS — 结果 `aria-plugin-benchmarks/ab-results/2026-10-19-issue-groomer-rule6/`; SC-6② 场景 4b 地板守卫三轮实跑 (description v2 @ `25be385`): should-trigger **10/10 + 地板 30/30** (10CG/SilkNode#1270 Portkey 修复兑现) / should-not 误触 9/10, 根因升级 = **单技能沙箱结构性无法评估兄弟路由边界** (SOT 处置(1) 修正 description 已走且实证无效, 处置(2) 不推荐) ⇒ 升级 owner; 负控臂 valid; trigger 套件 owner 审阅裁决 a 入库 (首个入库 trigger 套件, #213 T4 解冻先例) — 结果 `aria-plugin-benchmarks/ab-results/2026-10-19-issue-groomer-trigger/`; SC-6④ 第一行 substitute 成文证据 = 本套件 525 结构化测试; 判据表第三行落地 = `aria-plugin-benchmarks/ab-suite/issue-groomer/tier-b-fixtures/` 7 用例定向 fixture (10CG/Aria#240 勘正后范围)。rule6_note 五字段见各任务 `rule6_note` (SOT §4.1)。
+## [1.76.1] - 2026-10-20 — secret-guard 时间预算 fail-closed (`10CG/aria-plugin#216` 收口; PATCH: fail-open → fail-closed, 向下兼容)
+
+### Security — PreToolUse secret-guard (时间预算 fail-closed)
+
+- **问题**: hook 的变量展开第二遍 (W10) 与扩展检查 (W9) 在慢平台 (Windows MINGW64 实测 ~2.6× Linux, `#219`) 上, 对尺寸合规但重的命令仍可能越 Claude Code 的 5s hook 超时 → CC 杀 hook 并 **fail-open** (命令未扫描即放行, `#216`)。
+- **修复 (C)**: hook 自设时间上界 `SECRET_GUARD_TIME_BUDGET_S` (默认 3s, 封顶 ≤4s < CC 的 5s; `SECONDS` 检查点, bash 3.2 兼容) 在 W10 第二遍 / i×j 链式 / W9 扩展腿; 逾预算即 **BLOCK + 提示拆小 (fail-closed)**, 永不 fail-open。内建直接判定 (`#154` 核心) 先于计时且不受影响; `# guard:ack` 逃生口不变; `_SGV_*` 尺寸预算不变。
+- **行为变更**: 极重的含变量命令在慢平台上可能被 fail-closed (拆小或 `# guard:ack`); 典型命令 (~0.47s) 远在预算内、不受影响。
+- **已知限制 (归 `#228`)**: C 覆盖 W10/W9; 巨大无变量 raw 命令的 built-in 首遍 O(copy²) 慢路径无时间检查点 (先于本族的旧慢路径), 仍可能在慢平台 fail-open; W10/W9 成本收敛 (B) 与此缺口归 follow-up `#228`。
+- 测试: `secret-guard.test.sh` 825 (无 zsh); SC-T1/T1b/T2a baseline-failing + SC-T2b/T3a-c 核心不受影响 + SC-T4 时钟新鲜度 + SC-T5 预算封顶; W14 时档 20/20; bash 3.2.57 + 5.2。
+
+Refs 10CG/aria-plugin#216, 10CG/aria-plugin#219, 10CG/aria-plugin#228
 
 ## [1.76.0] - 2026-10-15 — pre-merge-completeness-gate: pre_merge 前置 checkpoint 完整性门 (`10CG/Aria#199`; MINOR: 新脚本 + 新输入面 + 新 stdout 契约, 行为变更见迁移十三条)
 
