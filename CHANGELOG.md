@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.77.0] - 2026-10-21 — issue-groomer-p1-mvp: 新增 issue-groomer skill (`10CG/Aria#238`; MINOR: 新增 Skill = MINOR+, 版本管理约定)
+
+### Added — 新 user-facing skill `issue-groomer` (卫星仓 open issue 组合面批量梳理; Skills 42 → 43, user-facing 35 → 36)
+
+五层结构 (spec `issue-groomer-p1-mvp`, DEC-20261018-001 裁定-1~13):
+
+- **fetch 层** (`scripts/lib/fetch.py`): Forgejo 双端点 — issue-list 真分页 (空页终止 = 严格更安全, 短页非终态钉死); comments 端点实测忽略 `limit`/`page` 恒全量返回 (三组实验 + 主 loop 独立复验, Runtime Amendment #1 修正 spec §1 分页前提), 改为**计数对账 fail-closed** (声明数 ≠ 返回数即报错); `rc=0` 空 stdout ⇒ FetchError 非空页 (B.3 A-2); 每仓隔离 + 限速; 三态 `[]` / `None` 结构可区分。
+- **Tier A 规则引擎** (`scripts/lib/tier_a.py`): title 前缀 / label / staleness / 活跃度机械粗分; 项目级 `.aria/labels.yaml` 存在时默认层**被整体覆盖非合并** (裁定①, fail-closed 不静默回落); 逐信号 confidence 枚举, unknown 不猜, conflict 互斥裁决; 时钟 seam 含左不含右档位; SC-9 七项具名自检; 受限 stdlib yaml parser; `taxonomy_hash` 单点 SOT。
+- **groom-report schema v1.1** (`scripts/groom_report.schema.json`, JSON Schema draft 2020-12): 标签契约封闭键集 + 禁 remove + idempotent const (裁定-8); provenance 双层 (harness 顶层 / model_id 在 assessment); additive-only; v1.0 → v1.1 演进只加 `drift_truncated` / `drift_total` 可选字段。
+- **增量状态与复用引擎** (`scripts/lib/incremental.py`): 三面指纹 (issue 面: labels 顺序不敏感 / comments 三态 error 面权威 / 显式排除五键封闭; 上下文面: changes 全树内容级 hash + archive 结构性排除 + handoff=latest.md 指针行非 mtime; provenance 拼接串); Tier A 复用门 (issue_key + 判据输入快照); Tier B provenance 门 (`context_key` 四分量 canonical, Amendment #4) + 7+2 封闭枚举 stale reason + orphaned; **结构性保证**: 引擎无 assessment 写面, 重写 state 后 assessments 字节不变为结构不可达而非纪律 (裁定④); 原子写 temp + fsync + rename; assessments 落点 `.aria/groom-assessments.json` (AI 产物非 cache)。
+- **diff 段引擎** (`scripts/lib/diff_engine.py`): 键级面 + 富化基元 seam 切分; drift 候选池 = reclassify ∪ new ∪ assessed 点名 (复用非重评不进); `top_n` 字典序截断语义钉死 (0/None/负/bool 拒); baseline 短路 + 参数校验前置。
+- **十一态分类矩阵** (`scripts/lib/classify.py`): 22+1 态 (分量级变体 ③×4 / ⑨×2 / ⑩×5; 关闭重开走 new 不复活; 排除字段负向镜像; 并发 LWW + assessments 字节不变); 19/19 mutation 精确命中。
+- **CLI `groom.py`** (11 flag, 与 SKILL.md 零漂移机械核验): 编排五层零复刻; repos 回落链 (config 显式 → issue_scan repos 键 → scan_submodules → `.gitmodules` 推导); assessment 白名单投影 (类型不符面省略不造语义); schema 自校验单点 SOT; 退出码 0/1/2。
+- **Tier B 语义评估 SKILL 适配层** (`skills/issue-groomer/SKILL.md`): 三类语义判断流程 (疑似已修可关单 / 优先级 vs 在制轨道 / owner 决策面抽取); **拿不准 = null 不猜**; 落盘前必读 `state.last_run.context_key` 置顶警示; 键结构按 `ASSESSMENTS_SCHEMA_DOC` 机读锚点引用勿手抄; MD 渲染四段骨架。
+
+产出: `groom-report.json` (schema v1.1) 与 `.aria/groom-assessments.json`。no-op 实测: duplicate label add 彻底 no-op (连 `updated_at` 不动, fresh add 会 bump ⇒ 差集保留 = 写放大最小化)。
+
+测试: issue-groomer 套件 **525 测 + 57 subtest 全绿** (B.3 对抗 review 处置轮后, 双席 19 条 1C/3H/4M/11L 全落, 净 +66 测; 15/15 + 19/19 + 22+1 mutation 反假绿验证)。B.3 关键处置: 仓 error ⇒ exit 1 不写 state (重跑幂等); `scan_submodules` 三态; `resolve_git_roots` strict (上下文门不再 fail-OPEN); `mini_validate` 迁生产层 `lib/schema_validate.py`。
+
+### Changed
+
+- `issue-groomer` description 触发面两轮收窄 (场景 4b 驱动, `8b1e920` / `25be385`): 补只读边界句 (不写回 tracker, owner 审阅裁决 a) + v2 前置「批量 / 组合面 / 全量」限定、负面边界前移 (单条核对 → `issue-triage` / 写操作只读 / 快照 → `state-scanner` / changelog / spec 归档不适用); 4b should-not 误触根因经三轮实证升级为「单技能沙箱结构性无法评估兄弟路由边界」, 升级 owner。
+- `plugin.json` description 计数 42 → 43 Skills (35 → 36 user-facing); `marketplace.json` 双 version 字段、`VERSION`、README 名册同步。README 名册顺带补齐两个既有缺行: `issue-triage` 与 `session-closer` (后者 v1.50.0 引入后从未入册; 机械核对 36 user vs 名册 33 user 行)。
+
+Rule #6: 新 Skill = 触发面全开。SC-6① 场景 1 AB: with_skill **26/26 全绿** (description v2 后真跑形态复验, 双轮稳定) / without 21/26 (delta +5 为保守下界, 污染面如实申报), 门判 PASS — 结果 `aria-plugin-benchmarks/ab-results/2026-10-19-issue-groomer-rule6/`; SC-6② 场景 4b 地板守卫三轮实跑 (description v2 @ `25be385`): should-trigger **10/10 + 地板 30/30** (10CG/SilkNode#1270 Portkey 修复兑现) / should-not 误触 9/10, 根因升级 = **单技能沙箱结构性无法评估兄弟路由边界** (SOT 处置(1) 修正 description 已走且实证无效, 处置(2) 不推荐) ⇒ 升级 owner; 负控臂 valid; trigger 套件 owner 审阅裁决 a 入库 (首个入库 trigger 套件, #213 T4 解冻先例) — 结果 `aria-plugin-benchmarks/ab-results/2026-10-19-issue-groomer-trigger/`; SC-6④ 第一行 substitute 成文证据 = 本套件 525 结构化测试; 判据表第三行落地 = `aria-plugin-benchmarks/ab-suite/issue-groomer/tier-b-fixtures/` 7 用例定向 fixture (10CG/Aria#240 勘正后范围)。rule6_note 五字段见各任务 `rule6_note` (SOT §4.1)。
+
 ## [1.76.0] - 2026-10-15 — pre-merge-completeness-gate: pre_merge 前置 checkpoint 完整性门 (`10CG/Aria#199`; MINOR: 新脚本 + 新输入面 + 新 stdout 契约, 行为变更见迁移十三条)
 
 ### Added — audit-engine `completeness_gate.py` (pre_merge 专属前置完整性门)

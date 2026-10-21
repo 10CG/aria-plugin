@@ -2,9 +2,9 @@
 
 # Aria Plugin
 
-> **Version**: 1.76.0 | **Released**: 2026-10-15
+> **Version**: 1.77.0 | **Released**: 2026-10-21
 >
-> AI-DDD methodology plugin for Claude Code — 35 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
+> AI-DDD methodology plugin for Claude Code — 36 user-facing Skills + 7 internal + 11 Agents + 5 Hooks (incl. default secret-guard)
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ export ARIA_HOOKS_DISABLED=true
 /plugin disable aria@10CG-aria-plugin
 ```
 
-### Skills (35 user-facing + 7 internal = 42 total)
+### Skills (36 user-facing + 7 internal = 43 total)
 
 > Internal skills (7, `user-invocable: false`): agent-router, agent-team-audit, arch-common, audit-engine, config-loader, git-remote-helper (v1.15.0 +1), aria-token-telemetry (v1.33.0 +1).
 
@@ -55,6 +55,7 @@ export ARIA_HOOKS_DISABLED=true
 - spec-drafter — Create OpenSpec proposal.md
 - task-planner — Break down OpenSpec into executable tasks
 - progress-updater — Update project progress state
+- session-closer — Session-level closeout ritual (handoff for unfinished threads; orthogonal to Phase D cycle closure)
 
 **Collaborative Thinking**
 - brainstorm — AI-assisted decision discussion and requirement clarification (problem/requirements/technical modes)
@@ -83,6 +84,8 @@ export ARIA_HOOKS_DISABLED=true
 - requirements-sync — Story ↔ UPM state sync
 - forgejo-sync — Story ↔ Issue sync
 - openspec-archive — Archive completed OpenSpec changes to openspec/archive/ with post-move location checks
+- issue-triage — Systematic issue verification (version / code path / in-flight branch / repro) before proposing fixes
+- issue-groomer — Satellite-repo open-issue batch grooming: full-pagination fetch → Tier A mechanical triage → incremental 3-plane fingerprint + diff → Tier B semantic assessment → MD report
 
 **Infrastructure**
 - config-loader *(internal, non-user-invocable)* — Configuration loading
