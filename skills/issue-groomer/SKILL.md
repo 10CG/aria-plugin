@@ -1,11 +1,18 @@
 ---
 name: issue-groomer
 description: |
-  项目内卫星仓 open issue 的组合面批量梳理: 全分页 fetch → Tier A 机械粗分
-  (title 前缀 / label / staleness / 活跃度) → 增量三面指纹 + diff →
-  Tier B 语义评估 (疑似已修可关单 / 优先级 vs 在制轨道 / owner 决策面抽取)
-  → MD 渲染。产出 groom-report.json (schema v1.1) 与 .aria/groom-assessments.json。
-  只读梳理: 产出止于报告与建议清单, 不写回 tracker (建单/关单/打标/挪列均不做)。
+  项目内全部卫星仓 open issue 的批量梳理与优先级排序 (组合面: 一次跑全量条目,
+  产出整体报告): 全分页 fetch → Tier A 机械粗分 (title 前缀 / label / staleness /
+  活跃度) → 增量三面指纹 + diff → Tier B 语义评估 (疑似已修可关单 / 优先级 vs
+  在制轨道 / owner 决策面抽取) → MD 渲染。产出 groom-report.json (schema v1.1)
+  与 .aria/groom-assessments.json。只读梳理: 产出止于报告与建议清单, 不写回
+  tracker (建单/关单/打标/挪列均不做)。
+
+  使用场景："梳理 issue 积压"、"issue 分类排序"、"backlog grooming"、
+  "找下一个该处理的 issue"、"定期梳理 backlog"
+  不适用: 单条 issue 的核对/状态查询/triage (→ /issue-triage); 在 Forgejo 上
+  建单/关单/打标/挪项目板等写操作 (本技能只读); 项目状态快照与工作流推荐
+  (→ /state-scanner); 已关闭 issue 的 changelog 汇总; spec 归档
 
   使用场景："梳理 issue 积压"、"issue 分类排序"、"backlog grooming"、
   "找下一个该处理的 issue"、"定期梳理 backlog"
