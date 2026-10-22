@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.77.1] - 2026-10-22 — branch-risk-build-gate-alignment + layer-l-sweep-safety 双轨 (双 PATCH 合发; `10CG/Aria#231` + `10CG/Aria#233`/`10CG/aria-plugin#167`)
+
+### Fixed — branch-manager 风险误判 + branch-finisher 构建门 (`10CG/Aria#231`)
+
+- **branch-manager**: 裸 `api`/裸 `核心` 出高风险 flat 表 — 关键词命中改为「变更语义」代理: 描述须**同时**出现 api 类词 (api/接口/endpoint) 与变更类词 (变更/change/breaking/重构/重写/迁移/删除/移除/deprecat) 才判 high (#231 原例「修 API key 列表分页」→ medium/Branch; 「API 接口变更」仍 high/Worktree)。双源统一: SKILL.md 与 internal/MODE_DECISION_LOGIC.md 表逐字一致 (旧伪码表多 rewrite/重构/架构/破坏性/核心 且与 SKILL.md 漂移 — 一并校齐)。
+- **新增 config 键** `branch_manager.high_risk_keywords` / `low_risk_keywords` (default null=内置表; 提供即**整体覆盖**非合并, 覆盖 high 表后共现规则随之失效; config.template.json 同步) — SilkNode 类「禁容器内 worktree」项目可 `[]` 关掉关键词误判面。
+- **branch-finisher**: 构建验证从无条件**阻塞**改为跟随 `phase_b_developer.framework_build_check` 三态 (enabled=false 默认 → **跳过**非阻塞注明归属 CI; true+advisory → 失败警告; true+blocking → 失败阻塞) — 与 Aria #95 开关本意对齐; internal/TEST_PRE_VALIDATION.md 双源同步 (旧稿构建写死 BLOCKING)。
+- 测试: `skills/branch-manager/tests/test_risk_keyword_consistency.py` 7 SC (双源一致性 + #231 反事实钉「裸 api/核心不得回 flat 表」; 改前基线 6/7 红) + `config-template-key-currency` 机械兜底。
+- Rule #6: 场景 1 AB `ab-results/2026-10-22-branch-risk-build-gate/` **PASS** (8 evals × 2 臂 16/16; 判别 4 精确翻转 / 回归 4 零退化); description 未动 (4b not_required); rule6_note 见 spec。
+
+### Fixed — Layer L sweep 误伤防护: 分层 + 出处 + 信号 + 恢复 (`10CG/Aria#233`, `10CG/aria-plugin#167`)
+
+- **sweep 分层**: `--sweep-stale` (例行收尾) 按归属分层 — 本容器 claim 24h (`SWEEP_TTL`) / **其他容器 7d (`SWEEP_TTL_CROSS` 新常量)**; `--sweep-stale-all` (新 flag, 运维动作) = 旧全域单层 24h 语义。#233 复现场景 (邻容器 30h 活跃 claim 被例行收尾扫掉) 在分层下不再发生; 死容器 claim 仍 7d 内被清。
+- **sweep 出处** (闭 #167): 改写 abandoned 时写入 `swept_by`/`swept_at` (ClaimRecord additive; heartbeat_at 保留 last-alive 不变); operator 模式出处为 `operator`。
+- **`claim_swept` 信号**: `heartbeat_by_track` / `release_claim_by_track` 匹配不到 active 时二次查找带出处的 abandoned → 返回 `claim_swept` + 出处 (不再伪装 benign `claim_not_found`; legacy 无出处 abandoned 降级 not_found 不造未知 sweeper); phase1_gate heartbeat 输出新增 `swept_by`/`swept_at` 键; phase-d-closer D.2b 文案三分 (claim_not_found=benign / **claim_swept=非 benign ⚠️ 请 owner 复议** / 其他=硬错)。
+- **恢复路径**: `release_gate --raw-track-id <X> --restore` — 本容器被扫 claim → active (heartbeat=now, 出处清空); **结构性防伪**: lookup 按 (container, track) 限定, 他容器恢复结构性不可达, 无越权 flag。
+- **acquire 复用路径刷心跳** (代码注释自认 follow-up 落地): phase1_gate self-resume 刷新 heartbeat_at (真仓 E2E 验证), 缩小心跳冻结窗; state-scanner SKILL.md 增「长会话 ≤12h 主动刷心跳」义务。
+- 测试: `skills/state-scanner/tests/test_sweep_safety.py` 17 SC 全绿 (分层边界 24h/25h/30h/8d / 出处往返 / claim_swept 三态 / restore 归属限定; 基线反事实: stash 后全塌) + 全套件回归 exit 0。
+- Rule #6: 场景 1 AB `ab-results/2026-10-22-layer-l-sweep-safety/` **PASS** (3 evals × 2 臂; claim_swept 解读=非benign / 邻居 30h=untouched vs swept / 长会话=周期刷 vs 仅入口); 代码面 substitute = 17 SC; rule6_note 见 spec。
+
 ## [1.77.0] - 2026-10-21 — issue-groomer-p1-mvp: 新增 issue-groomer skill (`10CG/Aria#238`; MINOR: 新增 Skill = MINOR+, 版本管理约定)
 
 ### Added — 新 user-facing skill `issue-groomer` (卫星仓 open issue 组合面批量梳理; Skills 42 → 43, user-facing 35 → 36)
