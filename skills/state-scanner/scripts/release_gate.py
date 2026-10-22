@@ -39,9 +39,9 @@ logger = logging.getLogger(__name__)
 
 # --- import bootstrap: 同 phase1_gate (scripts/ 直跑 vs 包内 import 双上下文) ---
 try:
-    from ..lib.claim_lifecycle import release_claim_by_track, AcquireResult, label_migration_inventory
+    from ..lib.claim_lifecycle import release_claim_by_track, restore_swept_claim, AcquireResult, label_migration_inventory
     from ..lib.coordination_ref import fetch_coordination_ref, read_claims
-    from ..lib.identity import get_container_label
+    from ..lib.identity import get_container_label, get_identity
     from ..lib.failure_handlers import resilient_push, no_push_requested_by_env
     from ..lib.gc import archive_done_claims, sweep_stale_active
     from ..lib.track_id import derive_track_id
@@ -53,9 +53,9 @@ except ImportError:
     while _SKILL_ROOT in _sys.path:
         _sys.path.remove(_SKILL_ROOT)
     _sys.path.insert(0, _SKILL_ROOT)
-    from lib.claim_lifecycle import release_claim_by_track, AcquireResult, label_migration_inventory  # type: ignore[import]
+    from lib.claim_lifecycle import release_claim_by_track, restore_swept_claim, AcquireResult, label_migration_inventory  # type: ignore[import]
     from lib.coordination_ref import fetch_coordination_ref, read_claims  # type: ignore[import]
-    from lib.identity import get_container_label  # type: ignore[import]
+    from lib.identity import get_container_label, get_identity  # type: ignore[import]
     from lib.failure_handlers import resilient_push, no_push_requested_by_env  # type: ignore[import]
     from lib.gc import archive_done_claims, sweep_stale_active  # type: ignore[import]
     from lib.track_id import derive_track_id  # type: ignore[import]
@@ -87,13 +87,15 @@ def run_release(
     *,
     status: str = "done",
     sweep_stale: bool = False,
+    sweep_all: bool = False,
+    restore: bool = False,
     gc: bool = False,
     repo_path: Optional[Path] = None,
     remote: str = "origin",
     now: Optional[datetime] = None,
     no_push: bool = False,
 ) -> dict:
-    """Library entry — fetch → release → optional sweep/gc → push.
+    """Library entry — fetch → (restore|release) → optional sweep/gc → push.
 
     每步 fail-soft: 单步失败记录进结果, 继续后续步骤 (advisory; reconcile 是
     最终仲裁, 本地成功 + push 失败也只是 "下次 fetch 时收敛")。
@@ -102,6 +104,14 @@ def run_release(
     写照常, Step 5 push 整个跳过 —— 结果 ``push_skipped=True`` +
     ``push_success=False`` (与 push 失败 / 未写任何东西可区分)。
 
+    Tiered sweep (Aria #233, owner 2026-10-22 主案): routine ``sweep_stale``
+    runs with the acting container's identity — own claims sweep at 24h,
+    OTHER containers' only after SWEEP_TTL_CROSS (7d).  ``sweep_all`` (CLI
+    ``--sweep-stale-all``) is the operator action: single-tier 24h for every
+    claim regardless of owner (old pre-tier semantics), for when the operator
+    knows the whole ref is dead.  ``restore`` (CLI ``--restore``) flips this
+    container's swept claim back to active (recovery half of Aria #233).
+
     Returns the JSON-safe result dict (see keys below).
     """
     repo: Path = repo_path if repo_path is not None else Path.cwd()
@@ -109,7 +119,8 @@ def run_release(
 
     result: dict = {
         "released": None,          # None=未请求; dict 见下
-        "sweep": None,             # None=未请求; {"swept_count", "swept", "errors"}
+        "restore": None,           # None=未请求; --restore 的结果 dict
+        "sweep": None,             # None=未请求; {"swept_count", "swept", "errors", "mode"}
         "gc": None,                # None=未请求; {"archived_count", "errors"}
         "fetch_success": None,
         "push_success": None,
@@ -152,19 +163,66 @@ def run_release(
             "status": status if rel.success else None,
             "benign": (not rel.success) and rel.error in _BENIGN_RELEASE_ERRORS,
         }
+        if rel.error == "claim_swept" and rel.record is not None:
+            # Aria #233: swept ≠ not-found — carry the provenance so the
+            # closeout report can say "被 <swept_by> 于 <swept_at> 扫掉".
+            # Deliberately NOT hard_error: the session is closing anyway;
+            # restore is for still-live tracks, not for this one.
+            released["swept_by"] = rel.record.swept_by
+            released["swept_at"] = rel.record.swept_at
+            logger.warning(
+                "release_gate: claim for track=%s was swept (by=%s at=%s) — "
+                "non-benign observation, recorded for the closeout report",
+                released["track_id"],
+                rel.record.swept_by,
+                rel.record.swept_at,
+            )
         result["released"] = released
         if rel.success:
             wrote_anything = True
         elif rel.error not in _BENIGN_RELEASE_ERRORS:
             result["hard_error"] = rel.error
 
-    # Step 3: stale-active sweep (可选)
-    if sweep_stale:
-        sw = sweep_stale_active(repo, now=ts)
+    # Step 2b: restore a swept claim (Aria #233 recovery path; 仅当显式请求)
+    if restore:
+        if not raw_track_id:
+            result["hard_error"] = result["hard_error"] or "restore_requires_track"
+        else:
+            res: AcquireResult = restore_swept_claim(
+                raw_track_id, repo_path=repo, now=ts
+            )
+            result["restore"] = {
+                "success": res.success,
+                "error": res.error,
+                "track_id": derive_track_id(raw_track_id),
+                "swept_by": res.record.swept_by if res.record else None,
+                "swept_at": res.record.swept_at if res.record else None,
+            }
+            if res.success:
+                wrote_anything = True
+            elif res.error not in _BENIGN_RELEASE_ERRORS:
+                result["hard_error"] = res.error
+
+    # Step 3: stale-active sweep (可选; 分层 — Aria #233)
+    if sweep_stale or sweep_all:
+        try:
+            own_container: Optional[str] = get_identity().container_id
+        except Exception as exc:  # fail-soft: identity 失败 → 保守回退全域单层
+            logger.warning(
+                "release_gate: identity unavailable for tiered sweep (%s) — "
+                "falling back to operator-mode single-tier sweep", exc,
+            )
+            own_container = None
+        if sweep_all:
+            own_container = None  # operator mode: 单层 TTL, 不分归属
+        sw = sweep_stale_active(
+            repo, now=ts, container_id=own_container
+        )
         result["sweep"] = {
             "swept_count": sw.swept_count,
             "swept": sw.swept,
             "errors": sw.errors,
+            "mode": "operator-all" if own_container is None else "tiered",
         }
         if sw.swept_count > 0:
             wrote_anything = True
@@ -256,7 +314,27 @@ def _main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--sweep-stale",
         action="store_true",
-        help="顺带扫描: active 且 heartbeat 超 STALE_TTL → abandoned (跨 container)",
+        help=(
+            "顺带扫描: active 且 heartbeat 超阈 → abandoned。分层 (Aria #233): "
+            "本容器 claim 阈值 24h (SWEEP_TTL), 其他容器 7d (SWEEP_TTL_CROSS) — "
+            "例行收尾不再误伤心跳冻结的活跃邻居"
+        ),
+    )
+    parser.add_argument(
+        "--sweep-stale-all",
+        action="store_true",
+        help=(
+            "运维动作: 全域单层 24h 扫描 (不分归属, 旧 --sweep-stale 语义) — "
+            "仅在确知整个 ref 死寂时使用 (Aria #233)"
+        ),
+    )
+    parser.add_argument(
+        "--restore",
+        action="store_true",
+        help=(
+            "恢复本容器被 sweep 扫成 abandoned 的 claim → active (heartbeat=now, "
+            "清 swept_by/swept_at; 仅原 container 可恢复自己的 track, Aria #233)"
+        ),
     )
     parser.add_argument(
         "--gc",
@@ -277,8 +355,17 @@ def _main(argv: Optional[list[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.raw_track_id and not args.sweep_stale and not args.gc:
-        parser.error("至少需要 --raw-track-id / --sweep-stale / --gc 之一")
+    if (
+        not args.raw_track_id
+        and not args.sweep_stale
+        and not args.sweep_stale_all
+        and not args.gc
+    ):
+        parser.error("至少需要 --raw-track-id / --sweep-stale / --sweep-stale-all / --gc 之一")
+    if args.sweep_stale and args.sweep_stale_all:
+        parser.error("--sweep-stale 与 --sweep-stale-all 互斥 (例行分层 vs 运维全域)")
+    if args.restore and not args.raw_track_id:
+        parser.error("--restore 需要 --raw-track-id (恢复以 container+track 定位)")
 
     repo = Path(args.repo_path) if args.repo_path else Path.cwd()
     # 同 phase1_gate._main: 推送抑制只在 CLI 边界解析一次, 显式 kwarg 下传
@@ -295,6 +382,8 @@ def _main(argv: Optional[list[str]] = None) -> int:
             args.raw_track_id,
             status=args.status,
             sweep_stale=args.sweep_stale,
+            sweep_all=args.sweep_stale_all,
+            restore=args.restore,
             gc=args.gc,
             repo_path=repo,
             remote=args.remote,
@@ -304,6 +393,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
         logger.warning("release_gate: unexpected error: %s", type(exc).__name__)
         result = {
             "released": None,
+            "restore": None,
             "sweep": None,
             "gc": None,
             "fetch_success": None,

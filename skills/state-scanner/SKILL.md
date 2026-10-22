@@ -180,7 +180,9 @@ CLI 输出 `{outcome, proceed, track_id, error, own_claim, competing_winner, sur
 ### Layer L A.1 heartbeat 集成
 
 **触发条件**: 本会话**持 active claim** 且 `coordination.enabled == true` 的**每次 `/state-scanner` 入口**都调用一次, 不依赖 `collision.kind`; `enabled == false` ⇒ **零触发**。
-**为什么要有**: A.1 认领写下的 claim 若无人刷新, `SWEEP_TTL` (24h) 一到就被扫成 `abandoned` —— 一条还在干活的轨道会从所有碰撞面上消失。
+**为什么要有**: A.1 认领写下的 claim 若无人刷新, 心跳超阈就会被例行收尾的 `--sweep-stale` 扫成 `abandoned` —— 一条还在干活的轨道会从所有碰撞面上消失。**阈值分层 (Aria #233)**: 本容器 24h (`SWEEP_TTL`) / 其他容器 7d (`SWEEP_TTL_CROSS`) —— 别人的例行收尾对你的轨更保守; 但**自己的心跳仍会冻结在最后一次 gate/入口调用**。
+
+**长会话义务 (Aria #233)**: 带上下文压缩的会话可跨数天, 心跳只在 `/state-scanner` 入口与 phase1_gate 调用时刷新 —— 跨自然日/长 B·C 阶段的会话应**周期性 (≤12h 间隔) 主动调**下面的 heartbeat 命令, 防自己的 claim 被任何容器 (含自己的例行收尾) 扫掉。
 **命令行**:
 
 ```bash
@@ -189,6 +191,15 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/phase1_gate.py
 ```
 
 **fail-soft**: 心跳失败只记遥测 (独立 `heartbeat` 分区, 不进 production), 绝不阻断扫描或后续阶段; 拿不到 carry-id 时**照样调用**、不传 `--raw-track-id`, 记一条 `skipped_no_track` —— 静默等于「心跳从没跑过」, 二者必须可分辨。
+
+**`claim_swept` 信号与恢复 (Aria #233)**: heartbeat/release 返回 `error=claim_swept` (+ `swept_by`/`swept_at`) ≠ `claim_not_found` —— 前者 = 本轨 claim 曾被 `<swept_by>` 容器于 `<swept_at>` 扫成 abandoned (**非 benign**, 零证据不当正证据的反面: 有出处必须呈现)。若本轨仍在干活 → 先恢复再继续:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/release_gate.py" \
+  --raw-track-id "<carry-id>" --restore --repo-path "<repo root>"
+```
+
+restore 仅恢复**本容器自己的** track (结构性防伪: 无越权面); 恢复后 claim 回 `active`、heartbeat=now、swept 出处清空。AI 不得用 restore 抢占他人轨。
 **三级回落表 / 遥测分区边界 / fail-CLOSED 新鲜度谓词 / degraded 处置**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md) 的「Layer L A.1 heartbeat 集成」设计段。
 
 **完整设计意图 (phase1_gate 9-step 序列 / acquire_claim+heartbeat+release 调用关系 / advisory outcome 映射 / track_board+latest_md_writer 输出)**: 见 [references/layer-l-integration.md](./references/layer-l-integration.md)。

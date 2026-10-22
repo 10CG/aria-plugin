@@ -115,6 +115,16 @@ class ClaimRecord:
         "same issue, two names" collision that pure track_id string matching
         cannot see. Additive: absent in pre-B1 claims; never affects reconcile
         winner determination.
+    swept_by : Optional[str]
+        Provenance for a sweep rewrite (layer-l-sweep-safety, Aria #233 /
+        aria-plugin #167): container-id of the sweeper. Present only on
+        records whose status was rewritten to "abandoned" by
+        gc.sweep_stale_active. Absent on pre-sweep-provenance claims and on
+        any record restored via release_gate --restore.
+    swept_at : Optional[str]
+        UTC ISO 8601 timestamp of the sweep rewrite. Same presence rules as
+        swept_by. heartbeat_at remains the last-alive timestamp (unchanged
+        invariant) — swept_at documents when the GC action fired.
     """
 
     schema_version: str
@@ -128,6 +138,8 @@ class ClaimRecord:
     heartbeat_at: str
     superseded_from: Optional[str] = None
     linked_issue: Optional[str] = None
+    swept_by: Optional[str] = None
+    swept_at: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +309,26 @@ def parse_claim(raw: dict) -> Optional[ClaimRecord]:
         )
         return None
 
+    # --- Step 5b: validate optional sweep provenance (layer-l-sweep-safety,
+    # Aria #233 / aria-plugin #167, additive). Absent on all pre-provenance
+    # claims and on restored records; malformed values reject the record the
+    # same way as other field violations (no silent drop of provenance). ---
+    swept_by: Optional[str] = raw.get("swept_by")
+    if swept_by is not None and not isinstance(swept_by, str):
+        _soft_error(
+            "claim_schema_invalid",
+            f"field 'swept_by' must be str, got {type(swept_by).__name__}",
+        )
+        return None
+    swept_at: Optional[str] = raw.get("swept_at")
+    if swept_at is not None:
+        if not isinstance(swept_at, str) or not _validate_iso8601(swept_at, "swept_at"):
+            _soft_error(
+                "claim_schema_invalid",
+                f"field 'swept_at' must be an ISO 8601 string, got {swept_at!r}",
+            )
+            return None
+
     return ClaimRecord(
         schema_version=schema_version,
         track_id=raw["track_id"],
@@ -309,6 +341,8 @@ def parse_claim(raw: dict) -> Optional[ClaimRecord]:
         heartbeat_at=raw["heartbeat_at"],
         superseded_from=superseded_from,
         linked_issue=linked_issue,
+        swept_by=swept_by,
+        swept_at=swept_at,
     )
 
 
@@ -345,4 +379,8 @@ def serialize_claim(record: ClaimRecord) -> dict:
         out["superseded_from"] = record.superseded_from
     if record.linked_issue is not None:
         out["linked_issue"] = record.linked_issue
+    if record.swept_by is not None:
+        out["swept_by"] = record.swept_by
+    if record.swept_at is not None:
+        out["swept_at"] = record.swept_at
     return out
