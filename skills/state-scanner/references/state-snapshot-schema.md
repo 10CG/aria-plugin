@@ -958,9 +958,9 @@ hardening Spec `state-scanner-collector-regex-hardening`, 2026-04-25):
 exists: bool                    # true if docs/handoff/*.md has any file
 latest_path: str | null         # relative path to latest .md (pointer-first, mtime fallback)
 latest_filename: str | null     # basename of latest_path
-last_modified_iso: str | null   # UTC ISO 8601 (timezone-aware) of mtime
-age_hours: float | null         # (time.time() - mtime) / 3600, rounded 2dp
-latest_source: str | null       # "pointer" | "mtime" | null (H5 fix transparency)
+last_modified_iso: str | null   # UTC ISO 8601 (tz-aware) of the selected doc's arbitration key (frontmatter updated-at when parseable, else mtime — Aria#218)
+age_hours: float | null         # (time.time() - arbitration key epoch) / 3600, rounded 2dp (Aria#218: content time when available)
+latest_source: str | null       # "pointer" | "frontmatter" | "mtime" | null (H5 + Aria#218: which resolution path was taken)
 latest_frontmatter_missing: bool  # additive (#137, v1.43.0+); True = resolved latest doc 缺 §2.3.1 frontmatter (legacy → 看板 owner=unknown); exists=False / stat-failed (latest_path=None) 时恒 False (不适用); 消费侧 .get("latest_frontmatter_missing", False)
 misplaced_files: list[str]      # relative paths under .aria/handoff/*.md
 canonical_dir: str              # always "docs/handoff/" (literal constant)
@@ -975,12 +975,16 @@ not flagged in `misplaced_files`. A directory containing **only**
 `latest.md` yields `exists=false`. (Without this exclusion, the pointer —
 re-touched on every handoff write — would always win the mtime sort.)
 
-**Latest detection (H5 fix, 2026-05-16)**: among the non-pointer
-candidates, `latest_path` prefers the `docs/handoff/latest.md` pointer
-*target* (the human-maintained semantic "Latest"). Raw mtime-max is only a
-**fallback** — used when the pointer is absent / unparseable / targets a
-missing file. `latest_source` exposes which path was taken
-(`"pointer"` | `"mtime"` | `null`).
+**Latest detection (H5 fix, 2026-05-16; arbitration key added by Aria#218)**:
+among the non-pointer candidates, `latest_path` prefers the
+`docs/handoff/latest.md` pointer *target* (the human-maintained semantic
+"Latest"). When the pointer is absent / unparseable / targets a missing file,
+the fallback arbitrates per file on the frontmatter `updated-at` epoch when
+parseable, else mtime (mtime is NOT content time — checkout / rebase /
+worktree-create rewrite it; same key semantics as `handoff_worktrees`
+`cmp_key_source`). `latest_source` exposes which path was taken
+(`"pointer"` | `"frontmatter"` | `"mtime"` | `null`); `last_modified_iso` /
+`age_hours` derive from the selected doc's arbitration key.
 
 **Why**: a predecessor handoff edited post-hoc (closeout finalize / rebase /
 typo fix) gets the newest mtime and would otherwise shadow the real latest
@@ -1013,8 +1017,8 @@ the same scale. `datetime.now()` is local-time by default and would skew
 - `stat()` fails on a candidate file → `soft_error("handoff_stat_failed")`
   emitted to `errors[]`, `latest_path=null`, `latest_source=null`
 - `latest.md` pointer targets a file absent from canonical dir →
-  `soft_error("handoff_pointer_target_missing")` + mtime fallback
-  (`latest_source="mtime"`)
+  `soft_error("handoff_pointer_target_missing")` + arbitration-key fallback
+  (`latest_source="frontmatter"` or `"mtime"`)
 
 ## `handoff_worktrees` (Phase 1.15b, #139 cross-worktree discovery)
 
