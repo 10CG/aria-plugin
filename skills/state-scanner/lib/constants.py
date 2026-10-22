@@ -57,6 +57,19 @@ STALE_TTL: int = 1800  # seconds
 # "frozen heartbeat" premise behind 24h fully go away.
 SWEEP_TTL: int = 86400  # seconds (24h)
 
+# Cross-container sweep tier (layer-l-sweep-safety, Aria #233, owner 2026-10-22
+# 主案).  Routine closeout (`release_gate --sweep-stale`) runs with the acting
+# container's identity: its OWN claims still use SWEEP_TTL (24h — self-harm is
+# self-healing), but claims belonging to OTHER containers only sweep after
+# SWEEP_TTL_CROSS.  Rationale: a heartbeat freezes at the last /state-scanner
+# entry, and sessions with context compaction legitimately span days — so a
+# 24h cross-container threshold rewrites claims that are still alive, and the
+# victim gets no signal (benign claim_not_found).  7d errs toward protecting
+# live neighbours; genuinely dead containers' claims are still cleared weekly,
+# and an operator who KNOWS the whole ref is dead can use --sweep-stale-all
+# (both tiers 24h, old semantics).
+SWEEP_TTL_CROSS: int = 604800  # seconds (7d)
+
 # ---------------------------------------------------------------------------
 # Clock skew
 # ---------------------------------------------------------------------------

@@ -185,6 +185,13 @@ phase_b_developer.framework_build_check.mode:
   valid_values: [advisory, blocking]
   default: "advisory"             # advisory=警告不阻塞 / blocking=失败阻塞进 Phase C
 
+branch_manager.high_risk_keywords:
+  type: string[] | null
+  default: null                   # null=内置高风险表; 提供即整体覆盖 (非合并), 覆盖后 API 共现规则随之失效 (Aria #231)
+branch_manager.low_risk_keywords:
+  type: string[] | null
+  default: null                   # null=内置低风险表; 提供即整体覆盖 (非合并)
+
 benchmarks.require_before_merge:
   type: boolean
   default: true

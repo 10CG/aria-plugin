@@ -96,26 +96,42 @@ def decide_mode(context: dict) -> str:
 
 def detect_risk_level(files: list[str], description: str) -> str:
     """
-    根据文件列表和描述自动检测风险等级
+    根据文件列表和描述自动检测风险等级 (10CG/Aria#231)
+
+    关键词命中是「变更语义」的代理, 不是「提到某词」即高风险:
+    评分表高档语义 = 「重构, API 变更」— 裸 api 不再单独触发 high,
+    须与变更类词共现。内置表可被 .aria/config.json 的
+    branch_manager.high/low_risk_keywords 整体覆盖 (覆盖即替换非合并)。
 
     Returns:
         "low" | "medium" | "high"
     """
-    # 高风险关键词
+    # 高风险 flat 表 (与 SKILL.md 风险等级自动检测节逐字一致 — 双源同步)
     high_risk_keywords = [
-        "refactor", "rewrite", "architecture", "api", "breaking",
-        "重构", "架构", "破坏性", "核心"
+        "refactor", "rewrite", "architecture", "breaking",
+        "重构", "架构", "破坏性"
     ]
 
-    # 低风险关键词
+    # API 共现规则词表 (仅作用于内置表; 项目覆盖 high 表后自管全部判定)
+    api_terms = ["api", "接口", "endpoint"]
+    change_terms = [
+        "变更", "change", "breaking", "重构", "重写",
+        "迁移", "删除", "移除", "deprecat"
+    ]
+
+    # 低风险关键词 (与 SKILL.md 逐字一致)
     low_risk_keywords = [
         "typo", "format", "lint", "config", "doc", "comment",
         "拼写", "格式", "配置", "文档", "注释"
     ]
 
     desc_lower = description.lower()
+    has_api = any(t in desc_lower for t in api_terms)
+    has_change = any(t in desc_lower for t in change_terms)
 
     if any(kw in desc_lower for kw in high_risk_keywords):
+        return "high"
+    elif has_api and has_change:  # API 共现 → 真正的「API 变更」语义
         return "high"
     elif any(kw in desc_lower for kw in low_risk_keywords):
         return "low"

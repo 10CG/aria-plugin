@@ -568,18 +568,32 @@ def _run_gate_impl(
     if _self_resume(verdict, resolved_identity):
         logger.info(
             "phase1_gate.run_gate: self-resume detected for track=%s "
-            "container=%s session=%s — reusing existing claim (heartbeat NOT "
-            "refreshed here; no production heartbeat loop exists yet)",
+            "container=%s session=%s — reusing existing claim, refreshing "
+            "heartbeat (layer-l-sweep-safety, Aria #233)",
             track_id,
             resolved_identity.container_id,
             resolved_identity.session_id,
         )
-        # Re-use the existing claim record as-is.  NOTE (Part C review C1-c):
-        # heartbeat_at is NOT refreshed on this path — there is no production
-        # heartbeat loop anywhere, which is exactly why sweep_stale_active uses
-        # the long SWEEP_TTL (24h) instead of STALE_TTL (30min).  Wiring a real
-        # heartbeat refresh (here + phase transitions) is a tracked follow-up.
-        own_claim: Optional[ClaimRecord] = verdict.winner
+        # Re-use the existing claim record, but REFRESH heartbeat_at before
+        # pushing.  Previously this path skipped the refresh ("no production
+        # heartbeat loop exists yet" — tracked follow-up, now landed): with
+        # heartbeat frozen at acquire, a multi-day session's claim would age
+        # past SWEEP_TTL and be swept by any container's routine closeout
+        # (gc.sweep_stale_active) with the victim getting only a benign
+        # claim_not_found (Aria #233 root cause 1).  Refreshing here narrows
+        # the frozen-heartbeat window to "since last gate invocation".
+        refresh = heartbeat_by_track(raw_track_id, repo_path=repo, now=ts)
+        own_claim: Optional[ClaimRecord] = (
+            refresh.record if refresh.success else verdict.winner
+        )
+        if not refresh.success and refresh.error != "claim_not_found":
+            # claim_swept (or a write failure) on what reconcile just called
+            # a self-resume winner is unexpected — record it for the operator.
+            logger.warning(
+                "phase1_gate.run_gate: self-resume heartbeat refresh failed "
+                "(error=%s); proceeding with reconcile winner as-is",
+                refresh.error,
+            )
         # Skip acquire — claim already exists locally.
         if no_push:
             # Second push call site — gated like step 9 (fix the class, not
@@ -1152,6 +1166,8 @@ def _heartbeat_only(
     t0 = _time.monotonic()
     track_id: Optional[str] = None
     error: Optional[str] = None
+    swept_by: Optional[str] = None
+    swept_at: Optional[str] = None
 
     if not raw_track_id:
         outcome, reason = "skipped_no_track", "no carry-id supplied"
@@ -1162,6 +1178,13 @@ def _heartbeat_only(
             outcome, reason = "refreshed", None
         else:
             outcome, reason, error = "error", result.error, result.error
+            if result.error == "claim_swept" and result.record is not None:
+                # Aria #233: swept ≠ not-found. Surface the provenance so the
+                # orchestration layer can tell the session its claim was
+                # rewritten by <swept_by> at <swept_at> (restore path:
+                # release_gate --restore).
+                swept_by = result.record.swept_by
+                swept_at = result.record.swept_at
 
     # Push reuses the acquire/release failure matrix (resilient_push: non-FF
     # fetch-replay retry — precisely the "someone else just pushed a claim"
@@ -1198,6 +1221,8 @@ def _heartbeat_only(
         "raw_input_id": raw_track_id,
         "reason": reason,
         "error": error,
+        "swept_by": swept_by,
+        "swept_at": swept_at,
         "push_success": push_success,
         "push_skipped": push_skipped,
         "push_skipped_reason": push_skipped_reason if push_skipped else None,

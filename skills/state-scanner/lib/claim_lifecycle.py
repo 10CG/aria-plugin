@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 from .claim_schema import ClaimRecord, SCHEMA_VERSION_CURRENT
-from .coordination_ref import write_claim, read_claims, WriteClaimResult
+from .coordination_ref import write_claim, read_claims, WriteClaimResult, ReadClaimsResult
 from .identity import Identity, get_identity
 from .track_id import derive_track_id
 
@@ -79,6 +79,31 @@ def _utc_now() -> datetime:
 def _iso(dt: datetime) -> str:
     """Format a datetime as a UTC ISO 8601 string at seconds precision."""
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _latest_swept_record(
+    read_result: "ReadClaimsResult", container_id: str, track_id: str
+) -> Optional[ClaimRecord]:
+    """Latest swept (abandoned-with-provenance) claim for container+track.
+
+    Layer-l-sweep-safety (Aria #233): heartbeat/release no-match paths call
+    this to separate ``claim_swept`` (a GC rewrite — non-benign, carries
+    swept_by/swept_at) from ``claim_not_found`` (never claimed / already
+    released — benign). Records abandoned WITHOUT provenance (pre-#167 legacy
+    sweeps) do not match: the signal degrades to claim_not_found rather than
+    fabricating an unknown sweeper.
+    """
+    candidates = [
+        rec
+        for rec in read_result.claims
+        if rec.container == container_id
+        and rec.track_id == track_id
+        and rec.status == "abandoned"
+        and rec.swept_at is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda r: r.swept_at or "")
 
 
 def _resolve_identity(identity: Optional[Identity], repo_path: Optional[Path]) -> Optional[Identity]:
@@ -428,6 +453,13 @@ def release_claim_by_track(
         and rec.status == "active"
     ]
     if not matches:
+        # Secondary lookup (layer-l-sweep-safety, Aria #233): distinguish
+        # "never claimed / already released" (benign) from "was swept by
+        # another container's routine closeout" — the latter is NOT benign
+        # and carries provenance (swept_by / swept_at) on the record.
+        swept = _latest_swept_record(read_result, resolved.container_id, norm)
+        if swept is not None:
+            return AcquireResult(success=False, record=swept, error="claim_swept")
         return AcquireResult(success=False, record=None, error="claim_not_found")
 
     # deterministic order: earliest claimed_at first (lexical ISO-8601 sort is
@@ -470,6 +502,66 @@ def release_claim_by_track(
         resolved.container_id,
     )
     return AcquireResult(success=True, record=first_released, error=None)
+
+
+def restore_swept_claim(
+    raw_track_id: str,
+    identity: Optional[Identity] = None,
+    repo_path: Optional[Path] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> AcquireResult:
+    """Restore THIS container's swept (abandoned-with-provenance) claim.
+
+    Layer-l-sweep-safety (Aria #233), the recovery half of the sweep story:
+    a session whose claim was rewritten to ``abandoned`` by another
+    container's routine ``--sweep-stale`` gets a ``claim_swept`` signal from
+    heartbeat/release; if the track is still live, this function flips the
+    record back to ``active`` with a fresh heartbeat and CLEARS the sweep
+    provenance (a restored claim is no longer "swept" — provenance describes
+    the rewrite, not the history).
+
+    Authorization is structural, not flag-gated: lookup is scoped to the
+    CALLING container's own (container, track) pair — restoring someone
+    else's claim is not reachable through this function at all (no --force
+    escape hatch; cross-container interference would be spoofed occupancy).
+
+    Returns ``claim_not_found`` when this container has no swept record for
+    the track (never claimed / genuinely released / abandoned without
+    provenance — the pre-#167 legacy case cannot be distinguished from a
+    deliberate release, so it stays terminal).
+    """
+    resolved = _resolve_identity(identity, repo_path)
+    if resolved is None:
+        return AcquireResult(success=False, record=None, error="identity_error")
+    norm = derive_track_id(raw_track_id)
+    read_result = read_claims(repo_path)
+    if not read_result.ref_exists:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    swept = _latest_swept_record(read_result, resolved.container_id, norm)
+    if swept is None:
+        return AcquireResult(success=False, record=None, error="claim_not_found")
+
+    restored = dataclasses.replace(
+        swept,
+        status="active",
+        heartbeat_at=_iso(now if now is not None else _utc_now()),
+        swept_by=None,
+        swept_at=None,
+    )
+    write_result: WriteClaimResult = write_claim(restored, repo_path)
+    if not write_result.success:
+        return AcquireResult(success=False, record=restored, error=write_result.error)
+    logger.info(
+        "claim_lifecycle.restore_swept_claim: restored container=%s track=%s "
+        "(had been swept by=%s at=%s)",
+        resolved.container_id,
+        norm,
+        swept.swept_by,
+        swept.swept_at,
+    )
+    return AcquireResult(success=True, record=restored, error=None)
 
 
 def heartbeat_by_track(
@@ -549,6 +641,20 @@ def heartbeat_by_track(
             resolved.container_id,
             norm,
         )
+        # Secondary lookup (layer-l-sweep-safety, Aria #233): see release-side
+        # twin — swept is a distinct, non-benign outcome with provenance.
+        swept = _latest_swept_record(read_result, resolved.container_id, norm)
+        if swept is not None:
+            logger.warning(
+                "claim_lifecycle.heartbeat_by_track: claim for container=%s "
+                "track=%s was swept (by=%s at=%s) — restore via "
+                "release_gate --restore if this track is still live",
+                resolved.container_id,
+                norm,
+                swept.swept_by,
+                swept.swept_at,
+            )
+            return AcquireResult(success=False, record=swept, error="claim_swept")
         return AcquireResult(success=False, record=None, error="claim_not_found")
 
     ts_str = _iso(now if now is not None else _utc_now())

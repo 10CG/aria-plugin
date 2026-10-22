@@ -50,7 +50,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from .constants import ARCHIVE_RETENTION_DAYS, SWEEP_TTL
+from .constants import ARCHIVE_RETENTION_DAYS, SWEEP_TTL, SWEEP_TTL_CROSS
 from .coordination_ref import read_claims, apply_tree_edits
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,15 @@ def _iso_to_dt(iso_str: str) -> Optional[datetime]:
         return dt
     except (ValueError, AttributeError):
         return None
+
+
+def _iso(dt: datetime) -> str:
+    """Format a datetime as a UTC ISO 8601 string at seconds precision.
+
+    Same canonical format as claim_lifecycle._iso (claimed_at / heartbeat_at
+    round-trip without precision loss).
+    """
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _compute_tombstone(yaml_content: str) -> str:
@@ -341,6 +350,8 @@ def sweep_stale_active(
     stale_ttl_seconds: int = SWEEP_TTL,
     now: Optional[datetime] = None,
     dry_run: bool = False,
+    container_id: Optional[str] = None,
+    cross_ttl_seconds: int = SWEEP_TTL_CROSS,
 ) -> SweepResult:
     """Rewrite stale active claims (heartbeat older than TTL) to 'abandoned'.
 
@@ -349,7 +360,7 @@ def sweep_stale_active(
     forever, and reconcile keeps re-deriving "stale_takeover_eligible" on
     every read instead of the state converging.  This sweep makes the terminal
     state durable: any ``active`` claim whose ``heartbeat_at`` is older than
-    ``stale_ttl_seconds`` is rewritten in place with ``status='abandoned'``
+    its tier's TTL is rewritten in place with ``status='abandoned'``
     (heartbeat_at untouched — it documents when the claim was last alive).
 
     TTL choice (pre-merge review C1): the default is **SWEEP_TTL (24h), NOT
@@ -360,8 +371,23 @@ def sweep_stale_active(
 
     Cross-container by design: sweep is a GC action, not a session action, so
     it MAY rewrite other containers' claim files.  This intentionally relaxes
-    the file-per-writer invariant; only claims silent for > 24h are touched.
-    All rewrites are batched into ONE commit via ``apply_tree_edits``.
+    the file-per-writer invariant.
+
+    **Tiered thresholds** (layer-l-sweep-safety, Aria #233, owner 2026-10-22):
+    when ``container_id`` is provided (routine closeout via release_gate), the
+    acting container's OWN claims use ``stale_ttl_seconds`` while OTHER
+    containers' claims use ``cross_ttl_seconds`` (default SWEEP_TTL_CROSS=7d)
+    — an over-frozen heartbeat on a live neighbour must not be silently
+    rewritten by someone else's routine closeout.  ``container_id=None``
+    (operator mode, ``--sweep-stale-all``) applies ``stale_ttl_seconds`` to
+    every claim regardless of owner (old pre-tier semantics), for when the
+    operator knows the whole ref is dead.
+
+    **Provenance** (aria-plugin #167): every rewrite stamps ``swept_by`` (the
+    acting container-id, or the literal ``"operator"`` when container_id is
+    None) and ``swept_at`` (the effective now), so a victim can distinguish
+    "swept by X at T" from "never claimed" — surfaced as the ``claim_swept``
+    signal by claim_lifecycle (heartbeat/release secondary lookup).
 
     Parameters mirror ``archive_done_claims`` (injectable now / dry_run).
     """
@@ -386,7 +412,15 @@ def sweep_stale_active(
             continue
         if hb_dt.tzinfo is None:
             hb_dt = hb_dt.replace(tzinfo=timezone.utc)
-        if (effective_now - hb_dt).total_seconds() <= stale_ttl_seconds:
+        # Tiered TTL (Aria #233): own-container claims sweep at the acting
+        # container's own threshold; other containers' claims only after the
+        # conservative cross tier. container_id=None (operator mode) keeps the
+        # single-tier semantics for every claim.
+        if container_id is None or record.container == container_id:
+            tier_ttl = stale_ttl_seconds
+        else:
+            tier_ttl = cross_ttl_seconds
+        if (effective_now - hb_dt).total_seconds() <= tier_ttl:
             continue
 
         try:
@@ -405,6 +439,11 @@ def sweep_stale_active(
                 heartbeat_at=record.heartbeat_at,  # last-alive timestamp preserved
                 superseded_from=record.superseded_from,
                 linked_issue=record.linked_issue,
+                # Sweep provenance (aria-plugin #167): who rewrote this and
+                # when — read back by claim_lifecycle's claim_swept signal
+                # and cleared by release_gate --restore.
+                swept_by=container_id if container_id is not None else "operator",
+                swept_at=_iso(effective_now),
             )
             serialized = _yaml.safe_dump(
                 serialize_claim(abandoned), default_flow_style=False, allow_unicode=True

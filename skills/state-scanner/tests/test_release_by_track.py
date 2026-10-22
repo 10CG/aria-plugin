@@ -494,6 +494,8 @@ class TestReleaseGateCli(unittest.TestCase):
         self.assertIsNone(out["push_success"])  # nothing written → no push
 
     def test_sweep_and_gc_flags(self):
+        """Aria #233 分层语义后的例行收尾: 跨容器 2d claim 受 7d 层保护不动;
+        运维 --sweep-stale-all 保持旧全域单层语义扫掉。"""
         repo = _fresh_repo()
         now = datetime.now(timezone.utc)
         acquire_claim(
@@ -502,9 +504,16 @@ class TestReleaseGateCli(unittest.TestCase):
         )
         rc, out = self._run(repo, "--sweep-stale", "--gc")
         self.assertEqual(rc, 0)
-        self.assertEqual(out["sweep"]["swept_count"], 1)
+        # tiered: CLI 运行容器 ≠ cBOT ⇒ cross 层 (7d) ⇒ 2d 不扫
+        self.assertEqual(out["sweep"]["swept_count"], 0)
+        self.assertEqual(out["sweep"]["mode"], "tiered")
         self.assertEqual(out["gc"]["archived_count"], 0)
         self.assertIsNone(out["released"])
+        # operator 模式: 全域单层 24h ⇒ 扫掉 (旧语义保留在显式 flag)
+        rc2, out2 = self._run(repo, "--sweep-stale-all")
+        self.assertEqual(rc2, 0)
+        self.assertEqual(out2["sweep"]["swept_count"], 1)
+        self.assertEqual(out2["sweep"]["mode"], "operator-all")
 
     def test_no_action_args_usage_error(self):
         repo = _fresh_repo()

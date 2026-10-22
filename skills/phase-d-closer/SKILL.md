@@ -53,8 +53,11 @@ python3 "${CLAUDE_PLUGIN_ROOT:-aria}/skills/state-scanner/scripts/release_gate.p
 ```
 
 - carry-id = **A.1 认领时派生的那一串** —— 与 Phase B-entry 传给 phase1_gate 的是同一原始串 (归一在 CLI 内部, 两端一致); 重新拼一串会 release 不到自己那条。
-- `--sweep-stale` 顺带把全 ref 内 heartbeat 超 STALE_TTL 的 active claim 标 abandoned; `--gc` 顺带归档超 retention 的 done claim —— 收尾是 GC 的自然挂载点, 无需独立调度。
-- **advisory 契约**: exit 1 (硬错) 只记录 warning 到收尾报告, **不阻断** D.3/D.4。`released.error == "claim_not_found"` 是 benign (早已释放/未认领), exit 0。
+- `--sweep-stale` 顺带扫全 ref 内 heartbeat 超阈的 active claim → abandoned。**分层阈值 (Aria #233)**: 本容器 claim 24h / **其他容器 7d** (`SWEEP_TTL_CROSS`) —— 例行收尾不再误伤心跳冻结的活跃邻居; `--gc` 顺带归档超 retention 的 done claim —— 收尾是 GC 的自然挂载点, 无需独立调度。运维确知整 ref 死寂时可用 `--sweep-stale-all` (全域单层 24h, 旧语义)。
+- **advisory 契约**: exit 1 (硬错) 只记录 warning 到收尾报告, **不阻断** D.3/D.4。`released.error` 三分 (Aria #233):
+  - `claim_not_found` → benign (早已释放/未认领), exit 0;
+  - **`claim_swept`** → **非 benign** —— 本轨 claim 曾被 `<swept_by>` 容器于 `<swept_at>` 扫成 abandoned (`released.swept_by/swept_at` 带出处)。收尾报告记 ⚠️ 并请 owner 复议; 若该轨仍要继续 (非本 session 收尾场景), 恢复路径 = `release_gate --raw-track-id <X> --restore` (仅原 container 可恢复自己的 track);
+  - 其他 error → 硬错处理 (warning + 复议)。
 - **除 exit code 外还须看 `push_success`** (review I2): `released.success=true` 但 `push_success=false` = 释放只在本地生效, 远端/其他终端仍看到 active claim — 报告里注明 "本地已释放, 待下次 fetch/reconcile 收敛", 不要报成"已释放"完事。
 - 本 session 未认领 (未走 phase1_gate) 时仍建议跑 `--sweep-stale --gc` (不带 --raw-track-id), 保持 ref 卫生。
 
