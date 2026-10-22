@@ -69,7 +69,7 @@ allowed-tools: Bash, Read, Grep, Task
 │  2. 测试前置验证                                             │
 │     ├─ 运行测试套件                                          │
 │     ├─ 检查测试覆盖率                                        │
-│     └─ 验证构建成功                                          │
+│     └─ 构建验证 (跟随 framework_build_check 三态)             │
 │                                                             │
 │  2.5 Skill 变更 AB 验证 (v1.7.0 新增)                        │
 │     ├─ 检测分支 diff 中是否包含 SKILL.md 变更                 │
@@ -112,9 +112,17 @@ allowed-tools: Bash, Read, Grep, Task
 | **集成测试** | 集成测试通过 (如有) | 阻塞 |
 | **类型检查** | TypeScript/mypy 等类型检查 | 阻塞 |
 | **Lint 检查** | ESLint/Pylint 等代码检查 | 警告 |
-| **构建验证** | 项目可以成功构建 | 阻塞 |
+| **构建验证** | 跟随 `phase_b_developer.framework_build_check` (见下; 10CG/Aria#231) | 三态 (config 决定) |
 | **覆盖率检查** | 测试覆盖率达标 (可选) | 警告 |
 | **Skill AB 验证** | SKILL.md 逻辑变更需要 AB 测试结果 ([详见](./references/ab-benchmark-gate.md)) | 可配置 (warn/block) |
+
+**构建验证三态** — 本项**不设无条件阻塞**; 行为由 config-loader 的 `phase_b_developer.framework_build_check` 决定 (Aria #95 开关; 构建归属 CI 的项目本机不跑构建):
+
+| `phase_b_developer.framework_build_check` | 行为 |
+|---|---|
+| `enabled: false` (默认) | **跳过** — 非阻塞; 输出 `build: skipped (framework_build_check disabled)` 并注明构建归属 (CI / 未配置) |
+| `enabled: true, mode: advisory` | 执行 `command`; 失败 → 警告 (可继续) |
+| `enabled: true, mode: blocking` | 执行 `command`; 失败 → 阻塞 |
 
 ### 验证流程
 
@@ -132,7 +140,11 @@ allowed-tools: Bash, Read, Grep, Task
      - 收集测试结果
      - 记录失败的测试
 
-  3. 验证结果:
+  3. 构建验证 (读 framework_build_check 三态):
+     - enabled=false → 跳过, 记 build: skipped (注明归属 CI/未配置)
+     - enabled=true → 执行 command; mode=advisory 失败记警告, mode=blocking 失败记阻塞
+
+  4. 验证结果:
      - 全部通过 → 继续
      - 有失败 → 阻塞，显示失败详情
      - 有警告 → 显示警告，询问是否继续
@@ -148,8 +160,16 @@ allowed-tools: Bash, Read, Grep, Task
     failed: 0
     skipped: 0
   coverage: 85%
-  build: success
+  build: success          # enabled=true 且构建通过
   lint: pass
+
+构建未启用 (默认):
+  tests:
+    total: 42
+    passed: 42
+    failed: 0
+    skipped: 0
+  build: skipped (framework_build_check disabled — 构建归属: CI/未配置)
 
 失败输出:
   tests:
@@ -160,7 +180,7 @@ allowed-tools: Bash, Read, Grep, Task
   failed_tests:
     - test_auth.py::test_login_invalid_password
     - test_auth.py::test_register_duplicate_email
-  build: success
+  build: failed           # enabled=true 且构建失败 (advisory=警告 / blocking=阻塞)
   lint: 3 warnings
 ```
 
@@ -210,7 +230,7 @@ allowed-tools: Bash, Read, Grep, Task
 │                                                             │
 │  测试验证: ✅ 通过 (42/42)                                   │
 │  覆盖率: 85%                                                │
-│  构建: ✅ 成功                                               │
+│  构建: ⏭️ 跳过 (framework_build_check 未启用)                │
 │                                                             │
 │  变更摘要:                                                   │
 │    - 修改: 5 个文件 (+142, -28)                             │

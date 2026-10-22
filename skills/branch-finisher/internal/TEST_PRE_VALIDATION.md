@@ -174,10 +174,33 @@ class TestPreValidator:
             result = self._run_type_check(config["type_check_cmd"])
             report.add_result(result)
 
-        # 3. 构建验证 (阻塞)
-        if run_build and config.get("build_cmd"):
-            result = self._run_build(config["build_cmd"])
+        # 3. 构建验证 (三态 — 跟随 phase_b_developer.framework_build_check, 10CG/Aria#231)
+        #    SKILL.md「构建验证三态」是运行时契约, 本伪码与之同步 (双源):
+        #    enabled=false (默认) → 跳过, 记 SKIP/非阻塞, 注明构建归属 (CI/未配置)
+        #    enabled=true + mode=advisory → 执行; 失败记 WARNING (可继续)
+        #    enabled=true + mode=blocking → 执行; 失败记 BLOCKING
+        #    command 取 config 的 framework_build_check.command (null=no-op);
+        #    不再无条件使用按项目类型硬编码的 build_cmd (旧默认仅作 config
+        #    缺省时的 fallback 提示, 不再默默执行)。
+        build_cfg = config_loader.get("phase_b_developer.framework_build_check", {})
+        if build_cfg.get("enabled", False) and build_cfg.get("command"):
+            result = self._run_build(build_cfg["command"])
+            if result.level == ValidationLevel.BLOCKING:
+                # blocking 档失败才保留 BLOCKING; advisory 档失败降 WARNING
+                if build_cfg.get("mode", "advisory") == "advisory":
+                    result = ValidationResult(
+                        name=result.name, status=result.status,
+                        level=ValidationLevel.WARNING,
+                        message=result.message + " (advisory: 不阻塞)",
+                    )
             report.add_result(result)
+        else:
+            report.add_result(ValidationResult(
+                name="构建验证",
+                status=ValidationStatus.SKIPPED,
+                level=ValidationLevel.WARNING,  # 非阻塞
+                message="framework_build_check disabled — 构建归属: CI/未配置",
+            ))
 
         # 4. Lint 检查 (警告)
         if run_lint and config.get("lint_cmd"):

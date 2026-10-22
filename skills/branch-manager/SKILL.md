@@ -125,15 +125,47 @@ branch-manager --mode worktree --task-id TASK-001
 
 ### 风险等级自动检测
 
-系统根据描述关键词自动检测风险等级：
+系统根据描述关键词自动检测风险等级。**关键词命中是「变更语义」的代理, 不是「提到某词」即高风险** — 评分表 (`risk_level` 高档) 的语义是「重构, API 变更」, 检测规则必须兑现这个语义 (10CG/Aria#231):
 
-| 关键词 | 风险等级 |
-|--------|---------|
-| typo, format, lint, config, doc | `low` |
-| refactor, architecture, api, breaking | `high` |
-| 其他 | `medium` |
+**判定顺序** (依次短路):
 
-**详细决策逻辑**: 见 [internal/MODE_DECISION_LOGIC.md](./internal/MODE_DECISION_LOGIC.md)
+1. **高风险 flat 表** — 描述含以下任一关键词 → `high`:
+
+   | 关键词 |
+   |--------|
+   | refactor, rewrite, architecture, breaking, 重构, 架构, 破坏性 |
+
+2. **API 共现规则** — 描述**同时**出现 api 类词与变更类词 → `high`; 仅出现 api 类词 → 落到第 3 步 (medium 档候选):
+
+   | 类 | 词表 |
+   |----|------|
+   | api 类词 | api, 接口, endpoint |
+   | 变更类词 | 变更, change, breaking, 重构, 重写, 迁移, 删除, 移除, deprecat |
+
+   例: 「修 API key 列表分页」→ 含 api 类词、无变更类词 → **不判 high**; 「API 接口变更」「变更了 API」「breaking api」→ high。
+
+3. **低风险 flat 表** — 描述含以下任一关键词 → `low`:
+
+   | 关键词 |
+   |--------|
+   | typo, format, lint, config, doc, comment, 拼写, 格式, 配置, 文档, 注释 |
+
+4. **其他** → `medium`。
+
+**配置覆盖**: 项目可在 `.aria/config.json` 用 `branch_manager.high_risk_keywords` / `branch_manager.low_risk_keywords` **整体覆盖**内置表 (提供即覆盖, 非合并; `null`/缺省 = 用内置表)。覆盖后 flat 子串语义由项目自负精度, 共现规则仅作用于内置表。见 [配置 (config-loader)](#配置-config-loader)。
+
+**详细决策逻辑**: 见 [internal/MODE_DECISION_LOGIC.md](./internal/MODE_DECISION_LOGIC.md) (与本节表逐字一致 — 双源, 一处改动须同步另一处)
+
+---
+
+## 配置 (config-loader)
+
+执行前读取 `.aria/config.json`，缺失则使用默认值。参见 [config-loader](../config-loader/SKILL.md)。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `branch_manager.high_risk_keywords` | `null` | 覆盖内置高风险 flat 表 (`string[]`; null=内置表; 提供即整体替换, 共现规则随之失效) |
+| `branch_manager.low_risk_keywords` | `null` | 覆盖内置低风险 flat 表 (`string[]`; null=内置表) |
 
 ---
 
