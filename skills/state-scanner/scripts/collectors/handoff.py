@@ -349,15 +349,41 @@ class _LatestResolution:
     signals: list = field(default_factory=list)
 
 
+def _parse_updated_at_epoch(value):
+    """Parse an ISO-8601 ``updated-at`` to epoch seconds; None on failure.
+
+    Compatible with both ``Z`` and ``+HH:MM`` offset forms WITHOUT relying on
+    Python 3.11's ``fromisoformat`` ``Z`` support (the plugin sandbox has no
+    Python-version floor — R2 N-4/I-3). Naive timestamps are assumed UTC.
+    (Relocated from handoff_worktrees.py by Aria#218 — the base-layer resolver
+    needs the same arbitration key; worktrees now imports it from here.)
+    """
+    if not value:
+        return None
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    try:
+        return dt.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _resolve_latest(
     canonical: Path, canonical_files: list[Path]
 ) -> _LatestResolution:
-    """Resolve the latest handoff doc via H5 pointer→mtime, purely.
+    """Resolve the latest handoff doc: pointer → per-file arbitration key.
 
     Given a NON-empty list of candidate ``.md`` files (caller guarantees
     non-empty — empty dir is handled before this point), return the resolved
     latest doc (``latest.md`` pointer target if it names a present file, else
-    newest by mtime) plus mtime-derived iso/age, and any soft-error signals
+    max by per-file arbitration key) plus key-derived iso/age, and any soft-error signals
     encountered along the way (stat failure, stale pointer).
 
     The caller decides whether/how to emit ``signals``: ``collect_handoff`` emits
@@ -365,8 +391,13 @@ def _resolve_latest(
     message with its worktree path (R2 N-3). This is also the mechanism that keeps
     ``collect_handoff`` behaviour byte-for-byte identical post-refactor.
 
-    Does NOT read frontmatter (#137 enforcement is current-tree-only) and does
-    NOT scan directories (the caller passes ``canonical_files``).
+    Arbitration key (Aria#218 — mtime is not content time: checkout / rebase /
+    worktree-create rewrite it): frontmatter ``updated-at`` epoch when
+    parseable, else mtime — the same key ``handoff_worktrees`` arbitrates on
+    (``cmp_key_source``). ``latest_source`` ∈ "pointer" | "frontmatter" |
+    "mtime". The result's ``mtime`` field stays the REAL mtime of the selected
+    doc (handoff_worktrees consumes it for legacy rows). Does NOT scan
+    directories (the caller passes ``canonical_files``).
     """
     signals: list = []
     # Cache stat() results once (B-M1 fix — migrated with the helper to preserve
@@ -377,12 +408,34 @@ def _resolve_latest(
         signals.append(("handoff_stat_failed", str(e)))
         return _LatestResolution(None, None, None, None, None, True, signals)
 
+    # Arbitration key per file (Aria#218): frontmatter updated-at epoch when
+    # parseable, else mtime. Same semantics as handoff_worktrees cmp_key_source
+    # (legacy doc → mtime key; malformed updated-at → honest mtime key).
+    keys = {}
+    key_sources = {}
+    for p in canonical_files:
+        ua = None
+        try:
+            fm = parse_handoff_frontmatter(
+                p.read_text(encoding="utf-8", errors="replace")
+            )
+            ua = (fm or {}).get("updated-at")
+        except OSError:
+            ua = None
+        epoch = _parse_updated_at_epoch(ua) if ua else None
+        if epoch is not None:
+            keys[p] = epoch
+            key_sources[p] = "frontmatter"
+        else:
+            keys[p] = mtimes[p]
+            key_sources[p] = "mtime"
+
     # H5 fix: prefer the latest.md pointer target (human-maintained semantic
-    # "Latest") over raw mtime. mtime-max only wins when the pointer is
-    # absent / unparseable / targets a missing file.
-    mtime_latest = max(canonical_files, key=lambda p: mtimes[p])
-    latest = mtime_latest
-    latest_source = "mtime"
+    # "Latest") over any file-derived key. key-max only wins when the pointer
+    # is absent / unparseable / targets a missing file.
+    key_latest = max(canonical_files, key=lambda p: keys[p])
+    latest = key_latest
+    latest_source = key_sources[key_latest]
 
     pointer_target = _parse_latest_pointer(canonical)
     if pointer_target and pointer_target != POINTER_FILENAME:
@@ -398,18 +451,21 @@ def _resolve_latest(
                 (
                     "handoff_pointer_target_missing",
                     f"latest.md points to '{pointer_target}' but it is absent "
-                    f"in {CANONICAL_DIR}; fell back to mtime latest "
-                    f"'{mtime_latest.name}'",
+                    f"in {CANONICAL_DIR}; fell back to key latest "
+                    f"'{key_latest.name}'",
                 )
             )
 
-    mtime = mtimes[latest]
-    age_hours = round((time.time() - mtime) / 3600, 2)
-    last_mod_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(
+    # iso/age derive from the selected doc's arbitration key (Aria#218: a
+    # checkout-rewritten mtime must not read as fresh; when the doc carries
+    # updated-at, that content time is the honest "how old is this" answer).
+    sel_epoch = keys[latest]
+    age_hours = round((time.time() - sel_epoch) / 3600, 2)
+    last_mod_iso = datetime.fromtimestamp(sel_epoch, tz=timezone.utc).isoformat(
         timespec="seconds"
     )
     return _LatestResolution(
-        latest, latest_source, last_mod_iso, age_hours, mtime, False, signals
+        latest, latest_source, last_mod_iso, age_hours, mtimes[latest], False, signals
     )
 
 

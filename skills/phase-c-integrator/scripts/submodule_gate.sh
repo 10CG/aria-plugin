@@ -180,9 +180,19 @@ SUPERFETCH_TIMEOUT="${ARIA_SUBMODULE_GATE_SUPERFETCH_TIMEOUT:-60}"
 # Per-submodule fetch bound (block/merge-flow path only — see WARN skip in Step 3).
 SUBFETCH_TIMEOUT="${ARIA_SUBMODULE_GATE_SUBFETCH_TIMEOUT:-30}"
 
+# ─── Step 0: baseline ref resolution (Aria#223 — never hardcode origin/master) ─
+
+# Repos whose default branch is not `master` (e.g. `main`) have no origin/master
+# ref. Hardcoding it made ls-tree return empty → the "first introduced" branch
+# silently PASSed ANY pointer regression, even in mode=block (Aria#223).
+BASE_REF="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+BASE_REF="${BASE_REF:-origin/master}"   # historic default when remote HEAD is unset
+BASE_REF_OK=1
+git rev-parse --verify -q "$BASE_REF^{commit}" >/dev/null 2>&1 || BASE_REF_OK=0
+
 # ─── Step 1: fail-loud fetch with bounded retries ──────────────────────
 
-BEFORE_REMOTE=$(git rev-parse origin/master 2>/dev/null || echo "FIRST_RUN")
+BEFORE_REMOTE=$(git rev-parse "$BASE_REF" 2>/dev/null || echo "FIRST_RUN")
 
 FETCH_OK=0
 for delay in "${FETCH_RETRIES[@]}"; do
@@ -203,13 +213,13 @@ fi
 
 # ─── Step 2: refspec assertion ─────────────────────────────────────────
 
-AFTER_REMOTE=$(git rev-parse origin/master 2>/dev/null || echo "FIRST_RUN")
+AFTER_REMOTE=$(git rev-parse "$BASE_REF" 2>/dev/null || echo "FIRST_RUN")
 
 if [[ "$BEFORE_REMOTE" != "FIRST_RUN" && "$BEFORE_REMOTE" != "$AFTER_REMOTE" ]]; then
-    # origin/master moved; verify ancestry (legitimate forward advance vs history rewrite)
+    # $BASE_REF moved; verify ancestry (legitimate forward advance vs history rewrite)
     if ! git merge-base --is-ancestor "$BEFORE_REMOTE" "$AFTER_REMOTE" 2>/dev/null; then
         log_telemetry "$BLOCKS_FILE" "ORIGIN_REWRITE" "(all)" "$BEFORE_REMOTE" "$AFTER_REMOTE" "non_ancestor_advance"
-        echo "BLOCK: origin/master rewritten during fetch (non-ancestor advance: $BEFORE_REMOTE -> $AFTER_REMOTE)" >&2
+        echo "BLOCK: $BASE_REF rewritten during fetch (non-ancestor advance: $BEFORE_REMOTE -> $AFTER_REMOTE)" >&2
         echo "       Operator confirm required: someone force-pushed to master." >&2
         exit 3
     fi
@@ -246,11 +256,26 @@ while IFS= read -r SUB; do
     fi
 
     FEATURE_PTR=$(git ls-tree HEAD "$SUB" 2>/dev/null | awk '{print $3}')
-    MASTER_PTR=$(git ls-tree origin/master "$SUB" 2>/dev/null | awk '{print $3}')
+    MASTER_PTR=$(git ls-tree "$BASE_REF" "$SUB" 2>/dev/null | awk '{print $3}')
 
-    # nil-SHA: first-time submodule (master had no gitlink at this path)
+    # nil-SHA: first-time submodule (baseline branch had no gitlink at this path)
     if [[ -z "$MASTER_PTR" ]]; then
-        echo "INFO: $SUB first introduced this PR (no prior master gitlink); gate PASS"
+        if [[ "$BASE_REF_OK" != 1 ]]; then
+            # Baseline ref itself unresolvable — an empty ls-tree here is
+            # indistinguishable from "no prior gitlink", NOT evidence of
+            # first-introduction (Aria#223). Fail loud instead of silent PASS.
+            if [[ "$MODE" == "warn" ]]; then
+                echo "WOULD-BLOCK: submodule=$SUB baseline ref '$BASE_REF' unresolvable (default branch ≠ master and origin/HEAD unset?); cannot verify pointer [BASELINE_REF_UNRESOLVED]" >&2
+                log_telemetry "$WARNS_FILE" "BASELINE_REF_UNRESOLVED" "$SUB" "(none)" "$FEATURE_PTR" "baseline_ref_missing"
+            else
+                echo "BLOCK: $SUB baseline ref '$BASE_REF' unresolvable (default branch ≠ master and origin/HEAD unset?) — pointer check NOT performed, not treated as first-introduced [BASELINE_REF_UNRESOLVED]" >&2
+                echo "       Remediation: git remote set-head origin -a (publish origin/HEAD), then retry" >&2
+                log_telemetry "$BLOCKS_FILE" "BASELINE_REF_UNRESOLVED" "$SUB" "(none)" "$FEATURE_PTR" "baseline_ref_missing"
+                exit_code=4
+            fi
+            continue
+        fi
+        echo "INFO: $SUB first introduced this PR (no prior gitlink on $BASE_REF); gate PASS"
         continue
     fi
 

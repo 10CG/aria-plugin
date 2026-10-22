@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_submodule_gate.sh — 10-scenario replay test for submodule_gate.sh
+# test_submodule_gate.sh — 13-scenario replay test for submodule_gate.sh
 #
 # Spec: openspec/changes/aria-submodule-pointer-regression-gate/proposal.md §Acceptance criteria
 # Tasks: §T-replay (T-replay-1 through T-replay-10)
@@ -652,16 +652,79 @@ scenario_12() {
     fi
 }
 
+
+# ─── Scenario 13: default branch ≠ master (Aria#223) ──────────────────
+
+scenario_13() {
+    echo "─── T-replay-13: main-default repo, no origin/master (Aria#223 fail-loud) ───"
+    new_fixture
+    local bare="$FIXTURE_ROOT/bare-sub"
+    local parent="$FIXTURE_ROOT/parent"
+    local shas sha2 sha3
+    shas=$(create_bare_submodule_repo "$bare" 3)
+    sha2=$(echo "$shas" | sed -n '2p')
+    sha3=$(echo "$shas" | tail -1)
+
+    # Parent with DEFAULT BRANCH = main (issue repro shape: no origin/master at all)
+    git init -q -b main "$parent"
+    pushd "$parent" >/dev/null
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git config commit.gpgsign false
+    git config protocol.file.allow always
+    echo "parent" > README.md
+    git add README.md
+    git commit -q -m "parent init"
+    git -c protocol.file.allow=always submodule add -q "$bare" submod
+    git -C submod -c protocol.file.allow=always checkout -q "$sha3"
+    git add submod
+    git commit -q -m "parent: submodule at $sha3 (main tip)"
+    local parent_bare="${parent}.bare"
+    git init -q --bare -b main "$parent_bare"   # bare HEAD -> main, so `remote set-head -a` resolves
+    git remote add origin "$parent_bare"
+    git push -q origin main
+    popd >/dev/null
+
+    # Regressive gitlink on feature branch: main@sha3 -> feature@sha2 (ancestor)
+    create_feature_branch "$parent" "submod" "$sha2"
+
+    # Part A (fail-loud): unresolved baseline must NOT masquerade as "first introduced"
+    local result rc
+    result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=block)
+    rc=$(echo "$result" | head -1)
+    if assert_exit_code "$rc" "4" "T-replay-13A block on unresolved baseline"; then
+        assert_contains "$result" "BASELINE_REF_UNRESOLVED" "T-replay-13A" && \
+        report_pass "main-default repo: unresolved baseline BLOCKs (exit 4) instead of silent PASS"
+    fi
+
+    # Part B (warn mode): advisory, exit 0 but loud
+    result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=warn)
+    rc=$(echo "$result" | head -1)
+    if assert_exit_code "$rc" "0" "T-replay-13B warn passthrough"; then
+        assert_contains "$result" "BASELINE_REF_UNRESOLVED" "T-replay-13B" && \
+        report_pass "warn mode: unresolved baseline WARNs but exits 0"
+    fi
+
+    # Part C (positive control): remote HEAD set -> BASE_REF=origin/main -> real verdict
+    git -C "$parent" remote set-head origin -a >/dev/null 2>&1
+    result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=block)
+    rc=$(echo "$result" | head -1)
+    if assert_exit_code "$rc" "1" "T-replay-13C regression via resolved baseline"; then
+        assert_contains "$result" "REGRESSION" "T-replay-13C" && \
+        report_pass "remote HEAD -> origin/main baseline: regression verdict restored (exit 1)"
+    fi
+}
+
 # ─── Main ──────────────────────────────────────────────────────────────
 
 if [[ $# -gt 0 ]]; then
     SCENARIOS=("$@")
 else
-    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12)
+    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12 13)
 fi
 
 echo "════════════════════════════════════════════════════════════"
-echo "  submodule_gate.sh — 10-scenario replay test"
+echo "  submodule_gate.sh — 13-scenario replay test"
 echo "  Spec: aria-submodule-pointer-regression-gate"
 echo "  Scenarios to run: ${SCENARIOS[*]}"
 echo "════════════════════════════════════════════════════════════"
@@ -681,6 +744,7 @@ for n in "${SCENARIOS[@]}"; do
         10) scenario_10 ;;
         11) scenario_11 ;;
         12) scenario_12 ;;
+        13) scenario_13 ;;
         *) echo "  ! SKIP: unknown scenario $n"; SKIPPED=$((SKIPPED+1)) ;;
     esac
     echo

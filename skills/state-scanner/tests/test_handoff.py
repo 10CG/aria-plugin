@@ -230,6 +230,93 @@ class TestLatestPointerPriority(unittest.TestCase):
             self.assertEqual(r.data["latest_source"], "mtime")
 
 
+
+class TestFrontmatterArbitration(unittest.TestCase):
+    """Aria#218: mtime is not content time (checkout/rebase/worktree-create all
+    rewrite it). The fallback chain after the pointer is per-file arbitration
+    key: frontmatter `updated-at` epoch when parseable, else mtime — the same
+    key `handoff_worktrees` already uses (cmp_key_source)."""
+
+    FM = (
+        "---\n"
+        "track-id: {tid}\n"
+        "owner-container: simonfish/bfe8285d\n"
+        "phase: D.3\n"
+        "status: done\n"
+        "updated-at: {ua}\n"
+        "---\n\n# doc\n"
+    )
+
+    def test_frontmatter_wins_over_newer_mtime(self):
+        # Doc A: OLD content (updated-at yesterday) but NEWEST mtime (checkout
+        # just touched it — the #218 trap). Doc B: NEW content, older mtime.
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "2026-10-21-old-content.md").write_text(
+                self.FM.format(tid="t-old", ua="2026-10-21T10:00:00Z"), encoding="utf-8")
+            (handoff / "2026-10-22-new-content.md").write_text(
+                self.FM.format(tid="t-new", ua="2026-10-22T16:00:00Z"), encoding="utf-8")
+            _touch(handoff / "2026-10-21-old-content.md", mtime_offset=0)        # just checked out
+            _touch(handoff / "2026-10-22-new-content.md", mtime_offset=-86400)   # untouched since yesterday
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "2026-10-22-new-content.md")
+            self.assertEqual(r.data["latest_source"], "frontmatter")
+
+    def test_malformed_updated_at_degrades_to_mtime(self):
+        # Frontmatter present but updated-at unparseable → honest mtime key
+        # (cross-worktree R2 N-4/I-3 semantics).
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "malformed.md").write_text(
+                self.FM.format(tid="t-bad", ua="not-a-timestamp"), encoding="utf-8")
+            (handoff / "plain.md").write_text("# no frontmatter\n", encoding="utf-8")
+            _touch(handoff / "plain.md", mtime_offset=-3600)
+            _touch(handoff / "malformed.md", mtime_offset=0)
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "malformed.md")
+            self.assertEqual(r.data["latest_source"], "mtime")
+
+    def test_legacy_mix_mtime_key_participates(self):
+        # A legacy doc (no frontmatter) with a very fresh mtime outranks a
+        # frontmatter doc whose updated-at is older: without content time there
+        # is no honest alternative — same key semantics as handoff_worktrees.
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "with-fm.md").write_text(
+                self.FM.format(tid="t-fm", ua="2026-10-20T00:00:00Z"), encoding="utf-8")
+            (handoff / "legacy.md").write_text("# legacy\n", encoding="utf-8")
+            _touch(handoff / "legacy.md", mtime_offset=0)
+            _touch(handoff / "with-fm.md", mtime_offset=0)
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_filename"], "legacy.md")
+            self.assertEqual(r.data["latest_source"], "mtime")
+
+    def test_iso_age_reflect_arbitration_key(self):
+        # When selection used the frontmatter key, iso/age must derive from
+        # updated-at (content time), not the checkout-rewritten mtime.
+        with tmp_project() as root:
+            handoff = root / "docs" / "handoff"
+            handoff.mkdir(parents=True)
+            (handoff / "doc.md").write_text(
+                self.FM.format(tid="t-1", ua="2026-10-22T16:00:00Z"), encoding="utf-8")
+            _touch(handoff / "doc.md", mtime_offset=0)  # mtime = now
+
+            r = collect_handoff(root)
+
+            self.assertEqual(r.data["latest_source"], "frontmatter")
+            self.assertEqual(r.data["last_modified_iso"], "2026-10-22T16:00:00+00:00")
+            self.assertGreater(r.data["age_hours"], 0.0)  # not ~0.0 from mtime=now
+
+
 class TestLatestPointerExclusion(unittest.TestCase):
     """QA-M2 fix: `latest.md` is a pointer file, not a handoff doc.
 
@@ -424,11 +511,14 @@ class TestHandoffFrontmatterEnforcement(unittest.TestCase):
             self.assertEqual(len(self._warnings(r)), 1)
 
     def test_mtime_only_full_frontmatter_silent(self):
+        # Aria#218: no pointer + full frontmatter → arbitration key IS the
+        # frontmatter updated-at (source "frontmatter", was "mtime"); the
+        # #137 enforcement silence this test guards is unchanged.
         with tmp_project() as root:
             handoff = root / "docs" / "handoff"
             write_file(handoff / "2026-06-01-good.md", self._FM + "# doc\n")
             r = collect_handoff(root)
-            self.assertEqual(r.data["latest_source"], "mtime")
+            self.assertEqual(r.data["latest_source"], "frontmatter")
             self.assertFalse(r.data["latest_frontmatter_missing"])
             self.assertEqual(self._warnings(r), [])
 

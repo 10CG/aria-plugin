@@ -78,6 +78,7 @@ from ._common import (
     resolve_max_worktrees_scanned,
 )
 from .handoff import (
+    _parse_updated_at_epoch,
     _ScanError,
     _resolve_latest,
     _scan_md_files,
@@ -103,30 +104,6 @@ def _read_worktree_scan_enabled(project_root: Path) -> bool:
     if val is None:
         return True
     return bool(val)
-
-
-def _parse_updated_at_epoch(value: str) -> Optional[float]:
-    """Parse an ISO-8601 ``updated-at`` to epoch seconds; None on failure.
-
-    Compatible with both ``Z`` and ``+HH:MM`` offset forms WITHOUT relying on
-    Python 3.11's ``fromisoformat`` ``Z`` support (the plugin sandbox has no
-    Python-version floor — R2 N-4/I-3). Naive timestamps are assumed UTC.
-    """
-    if not value:
-        return None
-    s = value.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(s)
-    except (ValueError, TypeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    try:
-        return dt.timestamp()
-    except (OverflowError, OSError, ValueError):
-        return None
 
 
 def _list_worktrees(project_root: Path) -> tuple[Optional[list[dict]], Optional[str]]:

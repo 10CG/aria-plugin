@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.77.2] - 2026-10-22 — submodule-gate 基线 ref 解析 + handoff frontmatter 仲裁键 (双 PATCH 合发; `10CG/Aria#223` + `10CG/Aria#218`)
+
+### Fixed — phase-c-integrator submodule gate 基线写死 (`10CG/Aria#223`)
+
+- **submodule_gate.sh**: 基线 ref 不再写死 `origin/master` — Step 0 解析 `BASE_REF` (`origin/HEAD` symbolic-ref → 回落 `origin/master`); `BEFORE_REMOTE`/`AFTER_REMOTE`/`MASTER_PTR` 三处引用全部走 `BASE_REF`。基线 ref 不可解析 (默认分支 `main` 且 `origin/HEAD` 未发布) 时不再伪装 "first introduced" 静默 PASS — block 模式 **BLOCK** exit 4 (`BASELINE_REF_UNRESOLVED`, 提示 `git remote set-head origin -a`) / warn 模式 WOULD-BLOCK 透传。默认分支非 master 的项目 (ShenQuant 形态) 指针回退不再放行。
+- 测试: `test_submodule_gate.sh` 新增 scenario 13 (3 断言: fail-loud exit 4 / warn 透传 exit 0 / `remote set-head` 正控恢复 REGRESSION exit 1; fixture = `git init -b main` + bare `-b main`), 改前基线 3 断言全红; 全 13 scenario + tripwire audit 回归绿。
+
+### Fixed — state-scanner handoff 最新判定 mtime 欺骗 (`10CG/Aria#218`)
+
+- **`_resolve_latest` per-file 仲裁键**: 回落链 pointer → frontmatter `updated-at` epoch (可解析时) → mtime — 与 `handoff_worktrees` `cmp_key_source` 同语义 (legacy 文件 / 畸形 `updated-at` 诚实回落 mtime 键)。`git checkout`/`rebase`/新建 worktree 改写 mtime 不再把旧交接判成最新 (多 track 仓库 `latest.md` 无指针时的主路径); `latest_source` 新增值 `"frontmatter"`; `last_modified_iso`/`age_hours` 改由所选文档仲裁键派生 (内容时间, 非 checkout 时间); `_parse_updated_at_epoch` 自 handoff_worktrees 迁入基础层 `handoff.py` (worktrees 改 import, 消除复制)。
+- 测试: `test_handoff.py` 新增 `TestFrontmatterArbitration` 4 SC (frontmatter 胜新 mtime / 畸形回落 mtime / legacy 混合集 mtime 键参与 / iso-age 反映仲裁键), 改前基线 3 红; 1 个既有断言随行为变更更新 (无 pointer + 全 frontmatter → `latest_source="frontmatter"`); `test_handoff` + `test_handoff_worktrees` + state-scanner 全套件回归绿 (0 FAIL)。
+- 文档: `references/state-snapshot-schema.md` (handoff 字段语义 + H5 detection 段) / `references/phase-1-collectors.md` (1.15b helper 描述) 同步。
+
+---
 ## [1.77.1] - 2026-10-22 — branch-risk-build-gate-alignment + layer-l-sweep-safety 双轨 (双 PATCH 合发; `10CG/Aria#231` + `10CG/Aria#233`/`10CG/aria-plugin#167`)
 
 ### Fixed — branch-manager 风险误判 + branch-finisher 构建门 (`10CG/Aria#231`)
