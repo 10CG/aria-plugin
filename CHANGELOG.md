@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.77.3] - 2026-10-23 — v1.77.2 对抗 review 债务清偿 (3 Important / 6 Minor; `10CG/Aria#257`)
+
+### Fixed — #257 清单 (review 债务)
+
+- **I-1 (Rule #3)**: `phase-c-integrator/SKILL.md` §C.2.4.5 摘录同步至 gate 实际判定 (BASE_REF 解析 + nil-SHA fail-loud 前提 + Verdict 补 `error` 态 exit 2/3/4 + 降级表补 BASELINE_REF_UNRESOLVED 行) — 不再复活 #223 修掉的「写死 origin/master + 无条件放行」认知; 摘录显式声明「判定以脚本为准」。定向 fixture: `tests/test_skill_excerpt_consistency.py` 4 SC (摘录↔脚本双向一致; 反事实验证: 回退摘录 → 各 1 红)。**Rule #6**: SKILL.md 正文变更, 现有行为套件零覆盖 gate 判定维度 → 第三行 substitute (点名行为 + 定向 fixture + 套件缺口 **#258**)。
+- **I-2 (Rule #3)**: #218 `latest_source="frontmatter"` 枚举同步 7 处 (handoff.py 模块 docstring / `_LatestResolution` 注释 / data 行注释 / `mtime_epoch` 注释去「仲裁键」旧称 / handoff_worktrees.py docstring / state-snapshot-schema.md :1043 / **recommendation-stages.md AI phase-2 解读面**)。描述性 (schema/枚举); 行为由 TestFrontmatterArbitration 4 SC 锁定。
+- **M-4**: gate `BASE_REF_OK` fetch 后重算 — 本地缺 origin/master ref 的仓 (首次 fetch 才落地) + 真 first-introduced 不再被 Step-0 快照误 BLOCK。scenario 14 (改前红: 误 exit 3)。
+- **附带真 bug (scenario 14 逼出)**: `git rev-parse <ref>` 失败时 stdout 回显原串 + `|| echo FIRST_RUN` 拼成两行 → `BEFORE_REMOTE ≠ "FIRST_RUN"` → 首次 fetch 误判 rewrite exit 3 (既存边角, v1.77.2 前潜伏)。修: `-q --verify "$BASE_REF^{commit}"` 零回显。
+- **M-5**: warn 模式基线未解析计入 `affected_count` (verdict=ALLOWED 非 PASS) — 不再「stderr 响、执行记录全绿」。scenario 13B 加断言。
+- **M-10**: `test_iso_age_reflect_arbitration_key` updated-at 改 wall-clock 生成 (now-2h), 去硬编码时间戳的 CI clock-skew 假红。
+- 测试: test_submodule_gate.sh **14 scenario / 19 断言**全绿 (新 14 + 13B 增强); test_skill_excerpt_consistency 4 SC; test_handoff 31 OK。
+
+**Rule #6 (汇总)**: SKILL.md §C.2.4.5 = 第三行 (substitute: 4 SC 定向 fixture, 套件缺口 #258); references/注释/SC 测试 = 描述性 + 行为已锁; gate 脚本 = scenario replay 红→绿。无 description 变动。
+
+---
 ## [1.77.2] - 2026-10-22 — submodule-gate 基线 ref 解析 + handoff frontmatter 仲裁键 (双 PATCH 合发; `10CG/Aria#223` + `10CG/Aria#218`)
 
 ### Fixed — phase-c-integrator submodule gate 基线写死 (`10CG/Aria#223`)
@@ -22,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`_resolve_latest` per-file 仲裁键**: 回落链 pointer → frontmatter `updated-at` epoch (可解析时) → mtime — 与 `handoff_worktrees` `cmp_key_source` 同语义 (legacy 文件 / 畸形 `updated-at` 诚实回落 mtime 键)。`git checkout`/`rebase`/新建 worktree 改写 mtime 不再把旧交接判成最新 (多 track 仓库 `latest.md` 无指针时的主路径); `latest_source` 新增值 `"frontmatter"`; `last_modified_iso`/`age_hours` 改由所选文档仲裁键派生 (内容时间, 非 checkout 时间); `_parse_updated_at_epoch` 自 handoff_worktrees 迁入基础层 `handoff.py` (worktrees 改 import, 消除复制)。
 - 测试: `test_handoff.py` 新增 `TestFrontmatterArbitration` 4 SC (frontmatter 胜新 mtime / 畸形回落 mtime / legacy 混合集 mtime 键参与 / iso-age 反映仲裁键), 改前基线 3 红; 1 个既有断言随行为变更更新 (无 pointer + 全 frontmatter → `latest_source="frontmatter"`); `test_handoff` + `test_handoff_worktrees` + state-scanner 全套件回归绿 (0 FAIL)。
 - 文档: `references/state-snapshot-schema.md` (handoff 字段语义 + H5 detection 段) / `references/phase-1-collectors.md` (1.15b helper 描述) 同步。
+
+**Rule #6**: 零 SKILL.md 正文变更 (`decision_table_row: n/a`); substitute = 红→绿 SC (#223 scenario 13 三断言改前全红; #218 TestFrontmatterArbitration 改前 3 红 + 全套件回归 0 FAIL); #246 纯文档。判定记录: PR #256 body (Aria#257 M-8 补镜像)。
 
 ---
 ## [1.77.1] - 2026-10-22 — branch-risk-build-gate-alignment + layer-l-sweep-safety 双轨 (双 PATCH 合发; `10CG/Aria#231` + `10CG/Aria#233`/`10CG/aria-plugin#167`)
