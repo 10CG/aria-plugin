@@ -19,11 +19,11 @@ compatible).  The helper is consumed by ``collectors/handoff_multibranch.py``
 
 Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
 - exists: bool — whether canonical dir has any .md file
-- latest_path: str | None — relative path to newest .md by mtime
+- latest_path: str | None — relative path of the resolved latest .md
 - latest_filename: str | None — basename of latest_path
-- last_modified_iso: str | None — UTC ISO 8601 of latest mtime
-- age_hours: float | None — (time.time() - mtime) / 3600
-- latest_source: str | None — "pointer" (latest.md target) | "mtime" (fallback)
+- last_modified_iso: str | None — UTC ISO 8601 of the selected doc's arbitration key (Aria#218)
+- age_hours: float | None — (time.time() - arbitration key epoch) / 3600
+- latest_source: str | None — "pointer" (latest.md target) | "frontmatter" (updated-at key) | "mtime" (fallback)
   | None (no canonical files / stat failed). H5 fix: pointer is the
   human-maintained semantic "latest"; mtime only wins when pointer is
   absent/unparseable/stale.
@@ -340,10 +340,10 @@ class _LatestResolution:
     """
 
     latest: Optional[Path]            # resolved latest doc; None if stat failed
-    latest_source: Optional[str]      # "pointer" | "mtime" | None
+    latest_source: Optional[str]      # "pointer" | "frontmatter" | "mtime" | None
     last_modified_iso: Optional[str]
     age_hours: Optional[float]
-    mtime_epoch: Optional[float]      # raw st_mtime of latest (#139 arbitration key)
+    mtime_epoch: Optional[float]      # raw st_mtime of latest (legacy-row input for handoff_worktrees; NOT the #218 arbitration key)
     stat_failed: bool
     # (soft_error_kind, message) pairs for the caller to emit as it sees fit.
     signals: list = field(default_factory=list)
@@ -557,7 +557,7 @@ def collect_handoff(project_root: Path) -> CollectorResult:
         "latest_filename": latest.name,
         "last_modified_iso": resolution.last_modified_iso,
         "age_hours": resolution.age_hours,
-        "latest_source": resolution.latest_source,  # "pointer" | "mtime" (H5)
+        "latest_source": resolution.latest_source,  # "pointer" | "frontmatter" | "mtime" (H5 + #218)
         # additive (#137, v1.43.0+): True when resolved latest doc lacks
         # §2.3.1 frontmatter (legacy → board shows owner=unknown)
         "latest_frontmatter_missing": latest_frontmatter_missing,
