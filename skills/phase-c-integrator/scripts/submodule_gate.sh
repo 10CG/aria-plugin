@@ -192,7 +192,7 @@ git rev-parse --verify -q "$BASE_REF^{commit}" >/dev/null 2>&1 || BASE_REF_OK=0
 
 # ─── Step 1: fail-loud fetch with bounded retries ──────────────────────
 
-BEFORE_REMOTE=$(git rev-parse "$BASE_REF" 2>/dev/null || echo "FIRST_RUN")
+BEFORE_REMOTE=$(git rev-parse -q --verify "$BASE_REF^{commit}" 2>/dev/null || echo "FIRST_RUN")
 
 FETCH_OK=0
 for delay in "${FETCH_RETRIES[@]}"; do
@@ -211,9 +211,16 @@ if [[ "$FETCH_OK" != 1 ]]; then
     exit 2
 fi
 
+# Aria#257 M-4: re-resolve BASE_REF_OK POST-fetch — the Step-0 snapshot must not
+# leak into the Step-3 verdict. Shape: repo without origin/HEAD whose origin/master
+# only lands locally via this fetch + a genuinely-first-introduced submodule would
+# otherwise be mis-BLOCKed (fail-closed, but wrong: the baseline IS resolvable now).
+BASE_REF_OK=1
+git rev-parse --verify -q "$BASE_REF^{commit}" >/dev/null 2>&1 || BASE_REF_OK=0
+
 # ─── Step 2: refspec assertion ─────────────────────────────────────────
 
-AFTER_REMOTE=$(git rev-parse "$BASE_REF" 2>/dev/null || echo "FIRST_RUN")
+AFTER_REMOTE=$(git rev-parse -q --verify "$BASE_REF^{commit}" 2>/dev/null || echo "FIRST_RUN")
 
 if [[ "$BEFORE_REMOTE" != "FIRST_RUN" && "$BEFORE_REMOTE" != "$AFTER_REMOTE" ]]; then
     # $BASE_REF moved; verify ancestry (legitimate forward advance vs history rewrite)
@@ -267,6 +274,9 @@ while IFS= read -r SUB; do
             if [[ "$MODE" == "warn" ]]; then
                 echo "WOULD-BLOCK: submodule=$SUB baseline ref '$BASE_REF' unresolvable (default branch ≠ master and origin/HEAD unset?); cannot verify pointer [BASELINE_REF_UNRESOLVED]" >&2
                 log_telemetry "$WARNS_FILE" "BASELINE_REF_UNRESOLVED" "$SUB" "(none)" "$FEATURE_PTR" "baseline_ref_missing"
+                # Aria#257 M-5: an unresolved baseline is NOT an "all-clear" run —
+                # count it as affected so summary/telemetry say ALLOWED, not PASS.
+                affected_count=$((affected_count + 1))
             else
                 echo "BLOCK: $SUB baseline ref '$BASE_REF' unresolvable (default branch ≠ master and origin/HEAD unset?) — pointer check NOT performed, not treated as first-introduced [BASELINE_REF_UNRESOLVED]" >&2
                 echo "       Remediation: git remote set-head origin -a (publish origin/HEAD), then retry" >&2
