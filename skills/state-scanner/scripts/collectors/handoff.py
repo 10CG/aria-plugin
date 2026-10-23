@@ -25,7 +25,8 @@ Field shape (additive top-level `handoff` key in snapshot, schema 1.0):
 - age_hours: float | None — (time.time() - arbitration key epoch) / 3600
 - latest_source: str | None — "pointer" (latest.md target) | "frontmatter" (updated-at key) | "mtime" (fallback)
   | None (no canonical files / stat failed). H5 fix: pointer is the
-  human-maintained semantic "latest"; mtime only wins when pointer is
+  human-maintained semantic "latest"; the per-file arbitration key (frontmatter
+  `updated-at`, mtime fallback — Aria#218) only wins when pointer is
   absent/unparseable/stale.
 - latest_frontmatter_missing: bool — additive (#137, v1.43.0+); True when the
   resolved latest doc lacks §2.3.1 frontmatter (legacy → board owner=unknown);

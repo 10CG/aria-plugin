@@ -52,18 +52,40 @@ class TestSkillExcerptConsistency(unittest.TestCase):
         )
 
     def test_excerpt_has_no_hardcoded_baseline_judgment(self):
+        # Aria#257 I-3 (review): line-family closure, not exact-string
+        # enumeration — a renamed/partially-reverted line (e.g. the v1.77.2
+        # original shape) must not slip past. Every gate judgment line in the
+        # excerpt must reference "$BASE_REF"; a hardcoded origin/master
+        # fallback TO it is legal only in the BASE_REF resolution line itself.
         excerpt = _c245_excerpt()
-        # The #223 bug shape: a bare ls-tree/rev-parse on origin/master used as
-        # the JUDGMENT line (the historical excerpt line). BASE_REF fallback TO
-        # origin/master is legal; hardcoding it in the gate lines is not.
-        for bad in (
-            'MASTER_PTR=$(git ls-tree origin/master "$SUB"',
-            'BEFORE_REMOTE=$(git rev-parse origin/master',
-            'AFTER_REMOTE=$(git rev-parse origin/master)',
-        ):
-            self.assertNotIn(
-                bad, excerpt, f"摘录复活 #223 写死基线形态: {bad}"
+        import re
+        judgment_lines = [
+            ln for ln in excerpt.splitlines()
+            if re.match(r"^(BEFORE_REMOTE|AFTER_REMOTE|MASTER_PTR)=", ln.strip())
+        ]
+        self.assertTrue(
+            judgment_lines, "摘录未找到基线判定行族 (BEFORE/AFTER_REMOTE, MASTER_PTR)"
+        )
+        for ln in judgment_lines:
+            self.assertIn(
+                "$BASE_REF", ln,
+                f"基线判定行走裸 ref 未 BASE_REF 化 (#223 形态逃逸): {ln}",
             )
+
+    def test_excerpt_exit_codes_match_env_vs_verdict_classes(self):
+        # Aria#257 I-1 (review): fetch-failure and rewrite are ENV-class exits
+        # (2/3) with env remediation; exit 1 is reserved for verdict-class
+        # (REGRESSION/DIVERGENT). The excerpt must not teach the old exit-1
+        # shape on env failures.
+        excerpt = _c245_excerpt()
+        self.assertIn("exit 2", excerpt, "fetch 失败应 exit 2 (环境类)")
+        self.assertIn("exit 3", excerpt, "基线 rewrite 应 exit 3 (环境类)")
+        for ln in excerpt.splitlines():
+            if "rewritten" in ln and "BLOCK" in ln:
+                self.assertIn(
+                    "$BASE_REF", ln,
+                    f"rewrite 消息残留写死 origin/master: {ln}",
+                )
 
     def test_excerpt_defers_to_script(self):
         excerpt = _c245_excerpt()

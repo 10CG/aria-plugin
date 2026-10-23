@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.77.4] - 2026-10-23 — v1.77.3 对抗 review 二轮收口 (M-6 实修 + 摘录 exit 码 + SC 形态族; `10CG/Aria#257`)
+
+### Fixed — v1.77.3 review 债务 (0 Critical / 3 Important / 4 Minor 全清)
+
+- **M-6 实修 (原记录不修, review I-2 升级为修)**: gate exit 严重度排序 — REGRESSION/DIVERGENT (exit 1) 不被同 run 后续环境类事件 (FETCH_INCOMPLETE / BASELINE_REF_UNRESOLVED, exit 4) 降格; 三处 `exit_code=4` 加 `!= 1` 守卫, verdict 分派行无条件置 1。scenario 15 (双子模块: 回归 + 伪造 gitlink FETCH_INCOMPLETE; 改前 exit 4 / 修后 exit 1; 全量反事实验证红)。修正 v1.77.3「3I/6M 清偿」宣称与 M-6 无处置的失真 (#257 评论同步声明)。
+- **I-1 残点**: SKILL.md §C.2.4.5 摘录 exit 码对齐实际 (fetch 失败 `exit 1`→`exit 2`; rewrite→`exit 3`; Output schema enum 补 `"error"` + 机读面注) + rewrite 消息去 origin/master 字面 (→`$BASE_REF`) — CRLF 行尾保持 (v1.77.3 行尾钉正教训)。
+- **I-3 (SC 形态族逃逸)**: `test_skill_excerpt_consistency` SC-2 由精确串枚举改**行族收口** (摘录内 `^(BEFORE_REMOTE|AFTER_REMOTE|MASTER_PTR)=` 每行须含 `"$BASE_REF"`) + 新增 exit 码分类 SC (env 类 2/3 vs verdict 类 1) — reviewer 实证的 v1.77.2 原文形态回退由「全绿逃逸」转为红 (反事实复验); #179 C-1 同型补齐。
+- **Minor**: gate 脚本头注 exit 表同步 (3=$BASE_REF rewritten; 4=FETCH_INCOMPLETE|BASELINE_REF_UNRESOLVED 共用) / handoff.py 模块 docstring 残句 (mtime only wins → 仲裁键) / state-snapshot-schema.md change-history 补 #218 行。
+
+**Rule #6**: 同 v1.77.3 判定延续 — SKILL.md §C.2.4.5 = 第三行 substitute (5 SC, 行族收口后强度经反事实实证); gate 脚本 = 15 scenario replay 红→绿 (新 scenario 15); 无 description 变动。
+
+---
 ## [1.77.3] - 2026-10-23 — v1.77.2 对抗 review 债务清偿 (3 Important / 6 Minor; `10CG/Aria#257`)
 
 ### Fixed — #257 清单 (review 债务)

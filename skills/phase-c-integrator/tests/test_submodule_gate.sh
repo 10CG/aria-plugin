@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_submodule_gate.sh — 14-scenario replay test for submodule_gate.sh
+# test_submodule_gate.sh — 15-scenario replay test for submodule_gate.sh
 #
 # Spec: openspec/changes/aria-submodule-pointer-regression-gate/proposal.md §Acceptance criteria
 # Tasks: §T-replay (T-replay-1 through T-replay-10)
@@ -765,16 +765,63 @@ scenario_14() {
     fi
 }
 
+
+# ─── Scenario 15: exit-code severity (Aria#257 M-6) ────────────────────
+
+scenario_15() {
+    echo "─── T-replay-15: REGRESSION not downgraded by later FETCH_INCOMPLETE ───"
+    new_fixture
+    local bare="$FIXTURE_ROOT/bare-sub"
+    local parent="$FIXTURE_ROOT/parent"
+    local shas sha2 sha3
+    shas=$(create_bare_submodule_repo "$bare" 3)
+    sha2=$(echo "$shas" | sed -n '2p')
+    sha3=$(echo "$shas" | tail -1)
+
+    # Parent master: TWO submodules, both at sha3
+    create_parent_repo_with_submodule "$parent" "$bare" "$sha3" "submod"
+    pushd "$parent" >/dev/null
+    git -c protocol.file.allow=always submodule add -q "$bare" submod_bad 2>/dev/null
+    git -C submod_bad -c protocol.file.allow=always checkout -q "$sha3"
+    git add submod_bad
+    git commit -q -m "parent: submod_bad at $sha3"
+    git push -q origin master
+    popd >/dev/null
+
+    # Feature: submod REGRESSES to sha2 (ancestor); submod_bad gitlink forged to a
+    # SHA absent from the submodule DB (FETCH_INCOMPLETE). Enumeration order is
+    # .gitmodules order: submod (regression) THEN submod_bad (incomplete fetch).
+    create_feature_branch "$parent" "submod" "$sha2"
+    pushd "$parent" >/dev/null
+    fake=$(printf 'deadbeef%.0s' 1 2 3 4 5)
+    git update-index --cacheinfo "160000,$fake,submod_bad"
+    git commit -q -m "feature: forge submod_bad gitlink to $fake"
+    popd >/dev/null
+
+    local result rc
+    result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=block)
+    rc=$(echo "$result" | head -1)
+
+    # M-6: verdict-class (1) outranks error-class (4) — a consumer keying on
+    # exit 1 to find regressions must not miss it because an unrelated submodule
+    # had an incomplete fetch in the same run.
+    if assert_exit_code "$rc" "1" "T-replay-15 regression outranks incomplete"; then
+        assert_contains "$result" "REGRESSION" "T-replay-15" && \
+        assert_contains "$result" "not found in submodule DB" "T-replay-15" && \
+        report_pass "REGRESSION verdict survives same-run FETCH_INCOMPLETE (exit 1, not downgraded to 4)"
+    fi
+}
+
 # ─── Main ──────────────────────────────────────────────────────────────
 
 if [[ $# -gt 0 ]]; then
     SCENARIOS=("$@")
 else
-    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12 13 14)
+    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
 fi
 
 echo "════════════════════════════════════════════════════════════"
-echo "  submodule_gate.sh — 14-scenario replay test"
+echo "  submodule_gate.sh — 15-scenario replay test"
 echo "  Spec: aria-submodule-pointer-regression-gate"
 echo "  Scenarios to run: ${SCENARIOS[*]}"
 echo "════════════════════════════════════════════════════════════"
@@ -796,6 +843,7 @@ for n in "${SCENARIOS[@]}"; do
         12) scenario_12 ;;
         13) scenario_13 ;;
         14) scenario_14 ;;
+        15) scenario_15 ;;
         *) echo "  ! SKIP: unknown scenario $n"; SKIPPED=$((SKIPPED+1)) ;;
     esac
     echo
