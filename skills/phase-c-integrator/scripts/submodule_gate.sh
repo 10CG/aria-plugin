@@ -21,8 +21,8 @@
 #   0  = gate PASS (forward bump / no-change / first-time / override) OR warn-mode WOULD-BLOCK logged
 #   1  = block-mode BLOCK (regression or divergence, no override)
 #   2  = fetch failure (all 3 retries exhausted; terminal)
-#   3  = origin/master history rewritten (non-ancestor advance); operator confirm required
-#   4  = git ls-tree / merge-base error (submodule fetch incomplete)
+#   3  = $BASE_REF history rewritten (non-ancestor advance); operator confirm required
+#   4  = submodule fetch incomplete (FETCH_INCOMPLETE) OR baseline ref unresolvable (BASELINE_REF_UNRESOLVED, Aria#223) — env-class, shared code
 #   64 = usage error
 #   65 = environment error (git missing, not a repo)
 
@@ -281,7 +281,7 @@ while IFS= read -r SUB; do
                 echo "BLOCK: $SUB baseline ref '$BASE_REF' unresolvable (default branch ≠ master and origin/HEAD unset?) — pointer check NOT performed, not treated as first-introduced [BASELINE_REF_UNRESOLVED]" >&2
                 echo "       Remediation: git remote set-head origin -a (publish origin/HEAD), then retry" >&2
                 log_telemetry "$BLOCKS_FILE" "BASELINE_REF_UNRESOLVED" "$SUB" "(none)" "$FEATURE_PTR" "baseline_ref_missing"
-                exit_code=4
+                [[ "$exit_code" != 1 ]] && exit_code=4
             fi
             continue
         fi
@@ -313,13 +313,13 @@ while IFS= read -r SUB; do
         if ! git -C "$SUB" cat-file -e "$FEATURE_PTR" 2>/dev/null; then
             echo "BLOCK: $SUB feature SHA $FEATURE_PTR not found in submodule DB after fetch (incomplete fetch?)" >&2
             log_telemetry "$BLOCKS_FILE" "FETCH_INCOMPLETE" "$SUB" "$MASTER_PTR" "$FEATURE_PTR" "feature_sha_missing"
-            exit_code=4
+            [[ "$exit_code" != 1 ]] && exit_code=4
             continue
         fi
         if ! git -C "$SUB" cat-file -e "$MASTER_PTR" 2>/dev/null; then
             echo "BLOCK: $SUB master SHA $MASTER_PTR not found in submodule DB after fetch" >&2
             log_telemetry "$BLOCKS_FILE" "FETCH_INCOMPLETE" "$SUB" "$MASTER_PTR" "$FEATURE_PTR" "master_sha_missing"
-            exit_code=4
+            [[ "$exit_code" != 1 ]] && exit_code=4
             continue
         fi
         VERDICT="DIVERGENT"
@@ -344,7 +344,7 @@ while IFS= read -r SUB; do
         echo "       Override 1: add commit trailer 'Submodule-Rollback: $SUB $MASTER_PTR->$FEATURE_PTR reason=<reason>' to merge commit message" >&2
         echo "       Override 2: add PR label 'submodule-rollback-approved' (maintainer only)" >&2
         log_telemetry "$BLOCKS_FILE" "$VERDICT" "$SUB" "$MASTER_PTR" "$FEATURE_PTR" "block"
-        [[ "$exit_code" == 0 ]] && exit_code=1
+        exit_code=1   # M-6 (#257): verdict-class outranks error-class (4) in the same run
     fi
 done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
 

@@ -450,15 +450,15 @@ done
 [[ "${FETCH_OK:-0}" != 1 ]] && {
     log_telemetry "FETCH_FAILURE" "$BEFORE_REMOTE" "(unknown)" "fetch_exhausted_retries"
     echo "BLOCK: git fetch origin failed after 3 attempts" >&2
-    exit 1
+    exit 2
 }
 
 # Step 2: refspec assertion (skip on FIRST_RUN)
 AFTER_REMOTE=$(git rev-parse -q --verify "$BASE_REF^{commit}" 2>/dev/null || echo "FIRST_RUN")
 if [[ "$BEFORE_REMOTE" != "FIRST_RUN" && "$BEFORE_REMOTE" != "$AFTER_REMOTE" ]]; then
     if ! git merge-base --is-ancestor "$BEFORE_REMOTE" "$AFTER_REMOTE" 2>/dev/null; then
-        echo "BLOCK: origin/master rewritten (non-ancestor advance) — operator confirm required" >&2
-        exit 1
+        echo "BLOCK: $BASE_REF rewritten (non-ancestor advance) — operator confirm required" >&2
+        exit 3
     fi
 fi
 
@@ -557,7 +557,7 @@ exit $exit_code
 **Output schema** (JSON):
 ```json
 {
-  "verdict": "pass" | "warn" | "block" | "bypass",
+  "verdict": "pass" | "warn" | "block" | "bypass" | "error",   # error = 环境类 (exit 2/3/4, 见 Verdict 段; 机读面以 executions.jsonl 为准)
   "affected_submodules": [
     {
       "path": "aria",
