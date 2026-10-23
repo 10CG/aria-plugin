@@ -1040,7 +1040,7 @@ global_latest_elsewhere: dict | null  # non-null ONLY when the global latest liv
 - `updated_at`: str — frontmatter `updated-at` (mtime ISO for legacy / malformed)
 - `status`: str — frontmatter `status` (`active`/`done`/`abandoned`), or `"legacy"` (no frontmatter)
 - `track_id`: str — frontmatter `track-id`, or filename for legacy docs
-- `cmp_key_source`: str — arbitration key source: `"frontmatter"` (used updated-at) | `"mtime"` (degraded). Named to avoid colliding with `handoff.latest_source`'s "mtime". The tree-internal resolution source (pointer|mtime) is deliberately NOT recorded (R2 N-7).
+- `cmp_key_source`: str — arbitration key source: `"frontmatter"` (used updated-at) | `"mtime"` (degraded). Named to avoid colliding with `handoff.latest_source`'s "mtime". The tree-internal resolution source (pointer|frontmatter|mtime, see `handoff.latest_source` Aria#218) is deliberately NOT recorded (R2 N-7).
 
 **`global_latest_elsewhere`** `{path, branch, doc, status, age_hours}` — `status` carried verbatim (Phase 2 gates on `status == "active"`; the field stays arbitration-honest). `age_hours` basis = the arbitration key.
 

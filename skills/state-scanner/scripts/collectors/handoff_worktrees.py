@@ -38,8 +38,9 @@ additive, no ``snapshot_schema_version`` bump):
   A legacy doc (no §2.3.1 frontmatter) aligns with ``handoff_multibranch.py``
   track-dict conventions: ``status='legacy'``, ``track_id`` filename-derived,
   ``updated_at`` = mtime ISO, ``cmp_key_source='mtime'``. The tree-internal
-  resolution source (pointer|mtime, i.e. ``latest_source``) is deliberately NOT
-  recorded — Phase 2 does not depend on it (additive later if needed; R2 N-7).
+  resolution source (pointer|frontmatter|mtime, i.e. ``latest_source`` — its
+  per-file key is the SAME cmp key as ``cmp_key_source`` since Aria#218) is
+  deliberately NOT recorded — Phase 2 does not depend on it (additive later if needed; R2 N-7).
 - ``global_latest_elsewhere``: None | {path, branch, doc, status, age_hours} —
   non-null ONLY when the cross-tree-arbitrated global latest lives in a tree
   OTHER than the current one. ``status`` is carried verbatim (Phase 2 gates on

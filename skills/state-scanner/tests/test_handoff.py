@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from _helpers import tmp_project, write_file
@@ -303,18 +304,23 @@ class TestFrontmatterArbitration(unittest.TestCase):
     def test_iso_age_reflect_arbitration_key(self):
         # When selection used the frontmatter key, iso/age must derive from
         # updated-at (content time), not the checkout-rewritten mtime.
+        # Aria#257 M-10: updated-at is generated from wall clock (now - 2h), not
+        # hardcoded — a hardcoded future timestamp flips the assertion on a
+        # skewed CI clock.
+        ua = (datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2))
+        ua_str = ua.strftime("%Y-%m-%dT%H:%M:%SZ")
         with tmp_project() as root:
             handoff = root / "docs" / "handoff"
             handoff.mkdir(parents=True)
             (handoff / "doc.md").write_text(
-                self.FM.format(tid="t-1", ua="2026-10-22T16:00:00Z"), encoding="utf-8")
+                self.FM.format(tid="t-1", ua=ua_str), encoding="utf-8")
             _touch(handoff / "doc.md", mtime_offset=0)  # mtime = now
 
             r = collect_handoff(root)
 
             self.assertEqual(r.data["latest_source"], "frontmatter")
-            self.assertEqual(r.data["last_modified_iso"], "2026-10-22T16:00:00+00:00")
-            self.assertGreater(r.data["age_hours"], 0.0)  # not ~0.0 from mtime=now
+            self.assertEqual(r.data["last_modified_iso"], ua.isoformat())
+            self.assertGreater(r.data["age_hours"], 1.9)  # ~2h content age, not ~0.0 from mtime=now
 
 
 class TestLatestPointerExclusion(unittest.TestCase):

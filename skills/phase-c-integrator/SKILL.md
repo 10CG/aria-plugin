@@ -434,9 +434,14 @@ Stub backend (e.g. `GitHubActionsBackend` in v1.31.0) `probe()` returns True 但
 **执行流程** (Bash gate, 见 `scripts/submodule_gate.sh`):
 
 ```bash
+# ⚠ 以下为简化示意 (判定语义以 scripts/submodule_gate.sh 为准, Aria#257 I-1)
+# Step 0 (Aria#223): baseline ref 解析 — 不写死 origin/master
+BASE_REF=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/master)
+git rev-parse --verify -q "$BASE_REF^{commit}" >/dev/null 2>&1 || BASE_REF_OK=0   # fetch 后重算 (Aria#257 M-4)
+
 # Step 1: fail-loud fetch with bounded retries (1s/2s/4s × 3 attempts)
 # Drop fragile `grep success patterns` — use exit code only (AD-FOLLOWUP-1)
-BEFORE_REMOTE=$(git rev-parse origin/master 2>/dev/null || echo "FIRST_RUN")
+BEFORE_REMOTE=$(git rev-parse -q --verify "$BASE_REF^{commit}" 2>/dev/null || echo "FIRST_RUN")
 
 for delay in 1 2 4; do
     if git fetch origin 2>&1; then FETCH_OK=1; break; fi
@@ -449,7 +454,7 @@ done
 }
 
 # Step 2: refspec assertion (skip on FIRST_RUN)
-AFTER_REMOTE=$(git rev-parse origin/master)
+AFTER_REMOTE=$(git rev-parse -q --verify "$BASE_REF^{commit}" 2>/dev/null || echo "FIRST_RUN")
 if [[ "$BEFORE_REMOTE" != "FIRST_RUN" && "$BEFORE_REMOTE" != "$AFTER_REMOTE" ]]; then
     if ! git merge-base --is-ancestor "$BEFORE_REMOTE" "$AFTER_REMOTE" 2>/dev/null; then
         echo "BLOCK: origin/master rewritten (non-ancestor advance) — operator confirm required" >&2
@@ -464,11 +469,19 @@ while IFS= read -r SUB; do
     git -C "$SUB" fetch origin 2>&1 >/dev/null || true
 
     FEATURE_PTR=$(git ls-tree HEAD "$SUB" | awk '{print $3}')
-    MASTER_PTR=$(git ls-tree origin/master "$SUB" | awk '{print $3}')
+    MASTER_PTR=$(git ls-tree "$BASE_REF" "$SUB" | awk '{print $3}')
 
-    # nil-SHA: first-time submodule (master had no gitlink)
+    # nil-SHA: first-time submodule — 但仅当基线 ref 本身可解析 (Aria#223)
+    # 基线不可解析 (默认分支 ≠ master 且 origin/HEAD 未发布) 时空 ls-tree 不是
+    # first-introduced 的证据 → fail-loud: block=BLOCK exit 4
+    # (BASELINE_REF_UNRESOLVED, 修法 `git remote set-head origin -a`);
+    # warn=WOULD-BLOCK 且计入 affected (verdict=ALLOWED 非 PASS, Aria#257 M-5)
     [[ -z "$MASTER_PTR" ]] && {
-        echo "INFO: $SUB first introduced this PR (no prior master gitlink); gate PASS"
+        if [[ "$BASE_REF_OK" != 1 ]]; then
+            echo "BLOCK: $SUB baseline ref '$BASE_REF' unresolvable [BASELINE_REF_UNRESOLVED]" >&2
+            exit_code=4; continue
+        fi
+        echo "INFO: $SUB first introduced this PR (no prior gitlink on $BASE_REF); gate PASS"
         continue
     }
     # No-change
@@ -534,11 +547,12 @@ exit $exit_code
    {"timestamp":"...","pr_id":N,"submodule":"...","master_sha":"...","feature_sha":"...","verdict":"REGRESSION","reason":"...","override_type":"trailer"|"label"}
    ```
 
-**Verdict 三态** (output):
+**Verdict** (output):
 - `pass` — all submodules: forward / no-change / first-time
 - `warn` (legacy opt-out) — WOULD-BLOCK logged, merge proceeds
 - `block` (v1.49.0+ default) — merge refused, exit 1
 - `bypass` — override applied, audit logged, merge proceeds
+- `error` (环境类, exit 2/3/4) — fetch 耗尽 (2) / 基线 ref rewrite (3) / 基线 ref 不可解析 BASELINE_REF_UNRESOLVED 与 fetch 不完整 FETCH_INCOMPLETE 共用 (4, Aria#223/#257)
 
 **Output schema** (JSON):
 ```json
@@ -569,12 +583,13 @@ exit $exit_code
 | `fetch_retries` | `[1, 2, 4]` | 指数退避秒数 |
 | `metrics_dir` | `"metrics/"` (relative to aria-plugin root, NOT main repo) | 4 JSONL append-only 文件位置 |
 | `forgejo_api_timeout_s` | `5` | PR label fetch timeout |
-| `nil_sha_action` | `"pass_with_info"` | first-time submodule (master 无 gitlink) → PASS + INFO log |
+| `nil_sha_action` | `"pass_with_info"` | first-time submodule (基线分支无 gitlink) → PASS + INFO log; **前提 = 基线 ref 可解析** (Aria#223), 不可解析时见 BASELINE_REF_UNRESOLVED |
 
 **降级行为**:
 - `mode: off` → 完全跳过 §C.2.4.5 (与 v1.27.x 行为 100% 一致, 用于紧急 bypass 全 cycle)
 - `git fetch origin` 3-attempt failure → terminal block (per `wait_recoverable` pattern, owner remediation: 检查 auth/network/URL drift)
-- `git ls-tree` empty output (nil-SHA case) → PASS + INFO (first-time submodule case)
+- `git ls-tree` empty output (nil-SHA case) → PASS + INFO (first-time submodule case; **前提 = `$BASE_REF` 可解析**, 见上)
+- 基线 ref `$BASE_REF` 不可解析 (默认分支 ≠ master 且 `origin/HEAD` 未发布) → **不再按 nil-SHA 放行**: block=BLOCK exit 4 / warn=WOULD-BLOCK + verdict ALLOWED (`BASELINE_REF_UNRESOLVED`; 修法 `git remote set-head origin -a`, Aria#223/#257 M-5)
 - `git merge-base --is-ancestor` exit 128 (SHA not in submodule DB after fetch) → BLOCK + "submodule fetch incomplete, retry" hint
 
 **Performance budget**:

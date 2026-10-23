@@ -1,7 +1,9 @@
 # Aria Plugin 版本信息
 
-1.77.2
-> **发布日期**: 2026-10-22  # patch: v1.77.2 submodule-gate-baseline-ref + handoff-frontmatter-arbitration (10CG/Aria#223: gate 基线 origin/HEAD 解析 fail-loud + scenario 13; #218: _resolve_latest per-file 仲裁键 frontmatter updated-at 优先 + latest_source 新值 frontmatter + 4 SC; 全套件回归绿)
+1.77.3
+> **发布日期**: 2026-10-23  # patch: v1.77.3 review-debt-cleanup (10CG/Aria#257: I-1 SKILL §C.2.4.5 摘录同步 + 4 SC 定向 fixture 套件缺口 #258; I-2 handoff 枚举面 7 处; M-4 BASE_REF_OK fetch 后重算 + M-5 warn verdict ALLOWED + 附带 rev-parse 回显 rewrite 误判修复 scenario 14; M-8/M-10)
+#
+# 上一版: v1.77.2 submodule-gate-baseline-ref + handoff-frontmatter-arbitration (#223/#218)
 #
 # 上一版: v1.77.1 branch-risk-build-gate-alignment + layer-l-sweep-safety 双轨 — A: branch-manager 裸 api/核心 出表改 API 共现判定 + high/low_risk_keywords 项目覆盖 (10CG/Aria#231; branch-finisher 构建验证三态跟 framework_build_check; 双 internal 文档同步; 7 SC 结构化测试) / B: Layer L sweep 分层 (own 24h/cross 7d SWEEP_TTL_CROSS) + swept_by/swept_at 出处 (aria-plugin#167) + claim_swept 信号 (非 benign) + --restore 恢复 + acquire 复用刷心跳 (Aria#233; 17 SC + 全套件回归绿; AB 双轨 PASS)
 > **发布日期(旧)**: 2026-10-21  # minor: v1.77.0 issue-groomer-p1-mvp — 新增 issue-groomer skill: 卫星仓 open issue 组合面批量梳理 (10CG/Aria#238; 五层: forgejo 双端点 fetch (comments 计数对账 fail-closed) / Tier A 机械粗分 / 三面指纹+增量复用 / Tier B 语义评估 SKILL 适配层 / groom.py CLI 11 flag; 产出 groom-report.json schema v1.1 + .aria/groom-assessments.json; issue-groomer 套件 525 测 + 57 subtest 全绿; Skills 42→43 (35→36 user-facing))

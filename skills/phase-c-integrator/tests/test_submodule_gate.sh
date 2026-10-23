@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_submodule_gate.sh — 13-scenario replay test for submodule_gate.sh
+# test_submodule_gate.sh — 14-scenario replay test for submodule_gate.sh
 #
 # Spec: openspec/changes/aria-submodule-pointer-regression-gate/proposal.md §Acceptance criteria
 # Tasks: §T-replay (T-replay-1 through T-replay-10)
@@ -697,12 +697,14 @@ scenario_13() {
         report_pass "main-default repo: unresolved baseline BLOCKs (exit 4) instead of silent PASS"
     fi
 
-    # Part B (warn mode): advisory, exit 0 but loud
+    # Part B (warn mode): advisory, exit 0 but loud — and M-5: the run must NOT
+    # be recorded/reported as an all-clear ("all unchanged/first-time") run.
     result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=warn)
     rc=$(echo "$result" | head -1)
     if assert_exit_code "$rc" "0" "T-replay-13B warn passthrough"; then
         assert_contains "$result" "BASELINE_REF_UNRESOLVED" "T-replay-13B" && \
-        report_pass "warn mode: unresolved baseline WARNs but exits 0"
+        assert_contains "$result" "flagged but allowed" "T-replay-13B M-5" && \
+        report_pass "warn mode: unresolved baseline WARNs, exits 0, verdict=ALLOWED not PASS"
     fi
 
     # Part C (positive control): remote HEAD set -> BASE_REF=origin/main -> real verdict
@@ -715,16 +717,64 @@ scenario_13() {
     fi
 }
 
+
+# ─── Scenario 14: baseline lands only via fetch (Aria#257 M-4) ────────
+
+scenario_14() {
+    echo "─── T-replay-14: origin/master absent locally pre-fetch + true first-introduced ───"
+    new_fixture
+    local bare="$FIXTURE_ROOT/bare-sub"
+    local parent="$FIXTURE_ROOT/parent"
+    local shas sha3
+    shas=$(create_bare_submodule_repo "$bare" 3)
+    sha3=$(echo "$shas" | tail -1)
+
+    # Parent: master = init ONLY (no submodule yet); feature introduces it.
+    git init -q -b master "$parent"
+    pushd "$parent" >/dev/null
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git config commit.gpgsign false
+    git config protocol.file.allow always
+    echo "parent" > README.md
+    git add README.md
+    git commit -q -m "parent init"
+    local parent_bare="${parent}.bare"
+    git init -q --bare "$parent_bare"
+    git remote add origin "$parent_bare"
+    git push -q origin master
+    git checkout -q -b feature
+    git -c protocol.file.allow=always submodule add -q "$bare" submod
+    git -C submod -c protocol.file.allow=always checkout -q "$sha3"
+    git add submod
+    git commit -q -m "feature: introduce submod"
+    # Simulate a checkout/clone where the remote-tracking ref is absent locally
+    # (the baseline would only land via the gate's own Step-1 fetch).
+    git update-ref -d refs/remotes/origin/master
+    popd >/dev/null
+
+    local result rc
+    result=$(run_gate "$parent" env ARIA_SUBMODULE_GATE_MODE=block)
+    rc=$(echo "$result" | head -1)
+
+    # Post-fetch BASE_REF_OK re-resolve must classify this as a TRUE
+    # first-introduction (baseline IS resolvable after fetch) → PASS, not BLOCK.
+    if assert_exit_code "$rc" "0" "T-replay-14 first-introduced via fetched baseline"; then
+        assert_contains "$result" "first introduced" "T-replay-14" && \
+        report_pass "baseline-resolved-post-fetch: true first-introduction PASSes (no stale-snapshot mis-BLOCK)"
+    fi
+}
+
 # ─── Main ──────────────────────────────────────────────────────────────
 
 if [[ $# -gt 0 ]]; then
     SCENARIOS=("$@")
 else
-    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12 13)
+    SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12 13 14)
 fi
 
 echo "════════════════════════════════════════════════════════════"
-echo "  submodule_gate.sh — 13-scenario replay test"
+echo "  submodule_gate.sh — 14-scenario replay test"
 echo "  Spec: aria-submodule-pointer-regression-gate"
 echo "  Scenarios to run: ${SCENARIOS[*]}"
 echo "════════════════════════════════════════════════════════════"
@@ -745,6 +795,7 @@ for n in "${SCENARIOS[@]}"; do
         11) scenario_11 ;;
         12) scenario_12 ;;
         13) scenario_13 ;;
+        14) scenario_14 ;;
         *) echo "  ! SKIP: unknown scenario $n"; SKIPPED=$((SKIPPED+1)) ;;
     esac
     echo
