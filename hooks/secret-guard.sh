@@ -663,7 +663,6 @@ _sg_vx_collect() {
   for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
     for (( j = 0; j < ${#_SGV_N[@]}; j++ )); do
       (( i == j )) && continue
-      [[ -z "${_SGV_V[j]}" ]] && continue
       _sg_over_budget && return 3   # time-budget fail-closed: the O(vars^2) chaining is over budget -> status 3, caller BLOCKs (distinct from status 2 = value over _SGV_VMAX)
       if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
       if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
