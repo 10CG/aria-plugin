@@ -13,12 +13,12 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 967 cases (961 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 972 cases (966 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
 #
-# 136 of those cases are the W10 fail-closed narrowing (10CG/aria-plugin#217) acceptance cases ported from
+# 141 of those cases are the W10 fail-closed narrowing (10CG/aria-plugin#217) acceptance cases ported from
 # v31 (sg_w10_cases, defined after the helpers and run once, before every older case; ids V<k>-... and the harness checks V0-H1 / V0-H2): the direct calls in
 # lib/secret-guard-w10-direct.sh, the end-to-end and static ones in this file. They run the hook with SC_BASH
 # (default: bash on PATH); every older case runs it as before. lib/sg-shim/delay-first, linked as jq and sed
@@ -184,7 +184,8 @@ V9-C1-assignments-rerun V9-C1b-assignments-baseline V9-C2-references-rerun-c12 V
 V9-C2b-references-baseline-cb12 V9-C3-for-statements-rerun V9-C3b-for-statements-baseline V9-C4-value-limit-in-rerun
 V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-read-big-judge V7-N5-read-big-judge-short-lines
 V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
-V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only"
+V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
+V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block"
 SGW_EXP_E2E="V7-E1-benign-big-allowed V6-E2-deadline-fallback-bytes V3-E3-anchor-at-hook-start V3-E4-cap-3-at-budget-4 V3-E5-budget-2 V2-E6-flag-from-environment-ignored
 V2-E7-no-time-left V2-E8-ostype-from-environment-ignored V2-E9-extension-project V9-E10-count-axis-read-blocked V9-E11-tmax-in-rerun V9-E12-vmax-unchanged
 V7-E13-multiline-copy-normal-text V7-E14-long-line-from-expansion V7-E15-credit-as-normal V1-E16-p1-small-benign V1-E16-p1-small-read V1-E16-p1-small-read-filter

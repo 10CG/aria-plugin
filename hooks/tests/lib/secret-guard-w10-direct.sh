@@ -67,7 +67,8 @@ V9-C1-assignments-rerun V9-C1b-assignments-baseline V9-C2-references-rerun-c12 V
 V9-C2b-references-baseline-cb12 V9-C3-for-statements-rerun V9-C3b-for-statements-baseline V9-C4-value-limit-in-rerun
 V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-read-big-judge V7-N5-read-big-judge-short-lines
 V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
-V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only"   # the cases of MODE relax; SKIP [platform] in MODE norelax
+V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
+V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block"   # the cases of MODE relax; SKIP [platform] in MODE norelax
 OSR=$(cat /proc/sys/kernel/osrelease 2>/dev/null); WSLM=''; [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && WSLM=wsl
 
 # ---------------- P2: the gate (both modes) ----------------
@@ -434,7 +435,8 @@ EOF
   # ---------------- P10 / P7: rows only keeps the W12 neutralisation; _sg_vx_big_judge routes by the copy's longest line; ruling C ----------------
   N_IDS="V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-read-big-judge V7-N5-read-big-judge-short-lines V10-N6-filtered-long-line-rows-only
     V7-N7-big-judge-filtered-long-line V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal
-    V7-N12-lmax-edge-rows-only V7-N13-unmeasured-length-rows-only"
+    V7-N12-lmax-edge-rows-only V7-N13-unmeasured-length-rows-only
+    V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block"
   if [[ $BELOW == yes ]]; then
     z=$(printf '%*s' 9000 '' | tr ' ' z)
     env1="python3 -c 'import os; print(os.environ.get(\"HOME\"))' $z"; rd="cat $cfg $z"; rdl="cat $cfg"$'\n'"$(for i in $(seq 1 40); do printf 'echo %0250d\n' 0; done)"
@@ -479,6 +481,48 @@ EOF
              _sg_vx_big_judge "cat $cfg | wc -c" whole >/dev/null 2>"$X/n13"; echo "$? $(kindf "$X/n13")" )
         [[ $r == "2 longline" ]]; chk $? V7-N13-unmeasured-length-rows-only "a filtered read whose line length cannot be measured: status/text [$r] (want [2 longline])" "$(tags3 "$r" "2 longline")"
       else miss V7-N13-unmeasured-length-rows-only; fi
+    fi
+    # ---- V14: cases added by TASK-003 for the independent mutants no case caught for its own reason (Q-7 Q-15 Q-22 Q-29 Q-31); no load dependence ----
+    if sel V14-N1-nocredit-never-runs-credit; then   # Q-15: a matching row on a line over _SGV_LMAX blocks before the O(n^2) credit is ever computed
+      if need _sg_compute_credit; then
+        r=$( _sg_compute_credit() { : > "$X/n14a.mark"; return 0; }; command="$rd"; _sg_judge_one "$rd" whole nocredit >/dev/null 2>"$X/n14a"; echo "$? $(kindf "$X/n14a") $([[ -e "$X/n14a.mark" ]] && echo credit-run || echo credit-skipped)" )
+        [[ $r == "2 longline credit-skipped" ]]; chk $? V14-N1-nocredit-never-runs-credit "nocredit on a matching line over ${_SGV_LMAX:-8192}: status/text/credit [$r] (want [2 longline credit-skipped]); the credit must not be computed before the longline block" "[judged]"
+      else miss V14-N1-nocredit-never-runs-credit; fi
+    fi
+    if sel V14-N2-longline-pattern-is-a-rule; then   # Q-22: the longline text names the matched RULE, not the (long) copy
+      command="$rd"; _sg_judge_one "$rd" whole nocredit >/dev/null 2>"$X/n14b"; n14p=$(sed -n 's/^.*Matched pattern: //p' "$X/n14b" | head -n 1); n14n=$(wc -c < "$X/n14b"); n14m=no
+      for n14r in "${risky_patterns[@]}"; do [[ "$n14p" == "$n14r" ]] && { n14m=yes; break; }; done
+      [[ $n14m == yes && $n14n -lt 3000 ]]; chk $? V14-N2-longline-pattern-is-a-rule "the longline text: the matched pattern is one of the rules: $n14m; text $n14n bytes (want yes, under 3000: the copy must not stand in for the pattern)" "[text]"
+    fi
+    if sel V14-G1-triggers-return-4-with-the-baseline-reason; then   # Q-7 (and the copy-paste of the two reason strings): both trigger points hand over with status 4 and keep their own baseline reason
+      if need _sg_vx_pass; then
+        g1c="v=$x4; : \$v \$v \$v"; g1S=${_SGV_SMAX:-8192}
+        g1w=$( _sg_relax_ok() { return 0; }; command=$g1c; _sg_vx_pass "$g1c" whole >/dev/null 2>&1; echo "$?|$_SG_OV_PAT|$_SG_OV_MODE" )
+        g1s=$( _sg_relax_ok() { return 0; }; command=$g1c; _SG_SEGS=("v=$x4" ": \$v \$v \$v"); _sg_vx_pass "$g1c" segment >/dev/null 2>&1; echo "$?|$_SG_OV_PAT|$_SG_OV_MODE" )
+        g1wa="4|the command is longer than $g1S characters after variable expansion|whole"; g1sa="4|a command segment is longer than $g1S characters after variable expansion|segment"
+        t=''; [[ ${g1w%%|*} == 4 && ${g1s%%|*} == 4 ]] || t+='[status] '; [[ "$g1w" == "$g1wa" && "$g1s" == "$g1sa" ]] || t+='[text]'
+        [[ -z "$t" ]]; chk $? V14-G1-triggers-return-4-with-the-baseline-reason "gate stubbed open, baseline pass, a copy over $g1S: whole [${g1w:0:140}] (want [$g1wa]); segment [${g1s:0:140}] (want [$g1sa])" "$t"
+      else miss V14-G1-triggers-return-4-with-the-baseline-reason; fi
+    fi
+    if sel V14-G2-growth-limit-follows-gmax; then   # Q-31: the growth limit of the rerun is _SGV_GMAX over the input, not _SGV_SMAX (both are 8192 today: perturb them apart)
+      if need _sg_vx_collect _sg_vx_apply; then
+        g2c="v=$(printf '%*s' 300 '' | tr ' ' w); : \$v"
+        g2a=$( _SG_RELAXED=1; _SGV_GMAX=100; _sg_vx_collect "$g2c" >/dev/null 2>&1; _sg_vx_apply "$g2c" >/dev/null 2>&1; echo $? )
+        g2b=$( _SG_RELAXED=1; _SGV_GMAX=400; _SGV_SMAX=100; _sg_vx_collect "$g2c" >/dev/null 2>&1; _sg_vx_apply "$g2c" >/dev/null 2>&1; echo $? )
+        [[ "$g2a $g2b" == "2 0" ]]; chk $? V14-G2-growth-limit-follows-gmax "relaxed _sg_vx_apply, growth 298: _SGV_GMAX 100 -> status $g2a (want 2); _SGV_GMAX 400 with _SGV_SMAX 100 -> status $g2b (want 0); the limit is the growth over the input" "[status]"
+      else miss V14-G2-growth-limit-follows-gmax; fi
+    fi
+    if sel V14-F1-status-4-falls-back-to-the-baseline-block; then   # Q-29: _sg_per_segment_eval turns status 4 of a failed rerun into the baseline block (status 2 and its reason), whatever the host load
+      awk '/^_sg_per_segment_eval\(\) \{/,/^\}$/' "$H" > "$X/pse.sh"
+      if [[ ! -s "$X/pse.sh" ]]; then out SETUP V14-F1-status-4-falls-back-to-the-baseline-block "_sg_per_segment_eval not found by anchor"
+      elif ! need _sg_emit_blocked _sg_time_budget; then miss V14-F1-status-4-falls-back-to-the-baseline-block
+      else
+        f1p="the command is longer than ${_SGV_SMAX:-8192} characters after variable expansion"
+        f1r=$( source "$X/pse.sh"; _sg_core_eval() { _SG_MODE=whole; return 0; }; _sg_vx_pass() { _SG_OV_PAT="$f1p"; _SG_OV_MODE=whole; return 4; }; _sg_relax_run() { return 4; }; command="$rd"; _sg_per_segment_eval "$rd" >/dev/null 2>"$X/f1"; echo $? )
+        f1l=$(head -n 1 "$X/f1"); f1w="[secret-guard] BLOCKED: command too large to scan for secrets. Limit hit: $f1p"
+        t=''; [[ $f1r == 2 ]] || t+='[status] '; [[ "$f1l" == "$f1w" ]] || t+='[text]'
+        [[ -z "$t" ]]; chk $? V14-F1-status-4-falls-back-to-the-baseline-block "_sg_per_segment_eval with a rerun that falls back (status 4): status $f1r (want 2), first line [${f1l:0:140}] (want [$f1w])" "$t"
+      fi
     fi
   else nobelow $N_IDS; fi
 else
