@@ -1,0 +1,36 @@
+#!/bin/sh
+# Test shim for sc-cases.sh (installed as shim/jq and shim/sed): puts a fixed, machine-independent delay at a known point of the hook, then execs the real
+# tool (SC_REAL_<name>) on every call.
+#   jq:  the FIRST call of one run (an atomic mkdir under $SC_SHIM_STATE decides it) sleeps SC_DELAY_jq seconds. jq's first call is the stdin parse, in the
+#        hook's own process, after the hard-deadline anchor and before the trigger point.
+#   sed: only a call made INSIDE the relaxed rerun's job may stall, and only the first such call (SC_DELAY_sed seconds). The job leads its own process group
+#        (set -m), and its group leader is a forked subshell of the hook: the leader runs the same command line as its parent (the hook's command
+#        substitution). A call whose group leader is anything else -- the parent's fallback text, the baseline, a job that is no group leader -- never stalls
+#        and never uses up the first call, so the stall can only hold the job, never the text written after the deadline (post_planning R2 PP2-B).
+#        Records for the case: $SC_SHIM_STATE/sed.stall (a stall began inside the job; holds the job's group id) and sed.uncut (the stall ran to its end:
+#        nothing killed the job's group by then -- a deadline that does not cut the job).
+n=${0##*/}
+case $n in
+  jq)  d=${SC_DELAY_jq:-};  r=${SC_REAL_jq:-} ;;
+  sed) d=${SC_DELAY_sed:-}; r=${SC_REAL_sed:-} ;;
+  *) echo "delay-first: unknown name $n" >&2; exit 127 ;;
+esac
+[ -n "$r" ] || { echo "delay-first: SC_REAL_$n not set" >&2; exit 127; }
+injob() {   # status 0 when this process belongs to the job's process group (sets pg); /proc/PID/stat after "(comm) ": state ppid pgrp ...
+  st=$(cat "/proc/$$/stat" 2>/dev/null) || return 1
+  st=${st##*) }; set -- $st; pg=$3
+  [ -n "$pg" ] && [ "$pg" != "$$" ] || return 1
+  st=$(cat "/proc/$pg/stat" 2>/dev/null) || return 1
+  st=${st##*) }; set -- $st; lp=$2
+  [ -n "$lp" ] || return 1
+  c1=$(tr '\0' '\n' < "/proc/$pg/cmdline" 2>/dev/null); c2=$(tr '\0' '\n' < "/proc/$lp/cmdline" 2>/dev/null)   # (/proc files have size 0: read them)
+  [ -n "$c1" ] && [ "$c1" = "$c2" ]
+}
+if [ -n "$d" ] && [ -n "${SC_SHIM_STATE:-}" ]; then
+  if [ "$n" = jq ]; then
+    if mkdir "$SC_SHIM_STATE/jq.first" 2>/dev/null; then sleep "$d"; fi
+  elif injob && mkdir "$SC_SHIM_STATE/sed.first" 2>/dev/null; then
+    echo "$pg" > "$SC_SHIM_STATE/sed.stall"; sleep "$d" && : > "$SC_SHIM_STATE/sed.uncut"
+  fi
+fi
+exec "$r" "$@"

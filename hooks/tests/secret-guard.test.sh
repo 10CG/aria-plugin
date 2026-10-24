@@ -8,10 +8,23 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 831 cases (825 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 967 cases (961 without zsh) across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
+#
+# 136 of those cases are the W10 fail-closed narrowing (10CG/aria-plugin#217) acceptance cases ported from
+# v31 (sg_w10_cases, after the helpers; ids V<k>-... and the harness checks V0-H1 / V0-H2): the direct calls in
+# lib/secret-guard-w10-direct.sh, the end-to-end and static ones in this file. They run the hook with SC_BASH
+# (default: bash on PATH); every older case runs it as before. lib/sg-shim/delay-first, linked as jq and sed
+# (relative symlinks), puts fixed delays at known points of the hook for the deadline cases; the end-to-end
+# cases also need timeout (coreutils). Two switches: SG_W10_ONLY=<regex> runs only the ported cases whose id
+# matches (no other case and no SC-13; the summary says it is a filtered round); SG_W10_LOG=<file> writes one
+# line per ported case, "PASS|FAIL|SKIP <id> <detail>" with v31's reason tags. A ported case that cannot be
+# judged here is SKIP with its reason: [platform] (the relaxation is not expected on SC_BASH, or a tool is
+# missing), [load] / [void] (the timing batch, INV-7: one-minute load under 2 at the start and at the end),
+# [inconclusive], [root]. Every ported id is reported exactly once on every platform, so SKIP counts in the
+# Coverage total and in SC-13, is listed on its own in the summary, and never fails the run.
 
 set -u
 
@@ -116,6 +129,315 @@ split_case() {
     failures+=("FAIL [$name]: want ${want} segment(s), got ${got} for: $cmd")
   fi
 }
+
+# ══════════════ W10 fail-closed narrowing (10CG/aria-plugin#217): the acceptance cases ported from v31 ══════════════
+# sg_w10_cases runs them: the direct calls through lib/secret-guard-w10-direct.sh (from v31/sc-direct.sh, run by SC_BASH), the end-to-end and static
+# cases below (from v31/sc-cases.sh). Ids, assertions, wanted values and reason tags are v31's, except: "the baseline's bytes" is the same hook run with
+# WSL_DISTRO_NAME=Ubuntu in its environment (the gate's closing switch), so the suite needs no git history -- and V2-E17 (that WSL mark) therefore asserts
+# the gate-closed outcome itself (status 2, the size text); V11-S4 is a fixed count (exactly one loop over risky_patterns, the baseline's count); V12-C1
+# stays in v31 (v31/commentsync.py); MISSING / SETUP of the direct calls are FAIL here (tags [missing] / [setup]). The cases of the relaxation are
+# SKIP [platform] where it is not expected, so every id is reported exactly once on every platform and under any load. Timing (INV-7): upper bounds and
+# "the rerun / the job must finish before its deadline" are judged only when the one-minute load at the start is below 2 (else SKIP [load]); a load at
+# or over 2 at the end turns the judged timing results into SKIP [void] (run again). A byte comparison in which an arm hit the 12 s timeout, or the
+# hook's own whole-second budget fired in one arm only, counts as timing; a deadline case whose wall reached the sed shim's stall without the stall
+# running to its end is SKIP [inconclusive]. sg_w10_cases runs just before SC-13 (which counts its SKIP), or alone when SG_W10_ONLY is set (below).
+SG_W10_DIR="$(cd "$(dirname "$0")" && pwd)/lib"
+skip=0; skip_platform=0; skip_load=0; skip_void=0; skip_inconclusive=0; skip_root=0; skip_other=0
+sg_w10_batch=''
+SGW_ST=(); SGW_ID=(); SGW_DET=(); SGW_TM=(); SGW_HWRAP=()
+SGW_W=''; SGW_BASH=''; SGW_HOOK=''; SGW_JQ=''; SGW_SED=''; SGW_SHIM=''; SGW_SEL='.'; SGW_RELAX=no; SGW_TGATE=no
+SGW_H_RC=''; SGW_H_ERR=''; SGW_H_ST=''; SGW_H_WALL=''; SGW_B_RC=''; SGW_B_ERR=''; SGW_B_ST=''; SGW_B_WALL=''
+# the ids every platform reports (V0-H2); the second group is the relaxation's (SKIP [platform] where it is not expected)
+SGW_EXP_DIRECT="V2-G1-gate
+V2-G2-platform:x86_64-pc-linux-gnu:5.0 V2-G2-platform:x86_64-pc-linux-gnu:5.1 V2-G2-platform:x86_64-pc-linux-gnu:5.2 V2-G2-platform:x86_64-pc-linux-gnu:5.3
+V2-G2-platform:aarch64-unknown-linux-gnu:5.2 V2-G2-platform:x86_64-pc-linux-gnu:5.4 V2-G2-platform:x86_64-pc-linux-gnu:6.0 V2-G2-platform:x86_64-pc-linux-gnu:4.4
+V2-G2-platform:x86_64-unknown-linux-gnu:3.2 V2-G2-platform:x86_64-apple-darwin23.0.0:5.2 V2-G2-platform:x86_64-pc-msys:5.2 V2-G2-platform:x86_64-pc-cygwin:5.2
+V2-G2-platform:x86_64-alpine-linux-musl:5.2 V2-G2-platform:aarch64-unknown-linux-android:5.2 V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-wsl1
+V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-wsl2 V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-wsl2-2020 V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-WSL-tag
+V2-G2-platform:x86_64-pc-linux-gnu:5.2:wsl-mark V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-empty V2-G2-platform:x86_64-pc-linux-gnu:5.2:three-args
+V2-G3-gate-calls-platform V2-G3b-gate-uses-build-facts V2-G4-project-without-extension-file V2-G4-extension-file-with-entry V2-G4-empty-extension-file
+V2-G4-extension-path-is-a-directory V2-G5-nested V2-G6-no-time-left V2-G7-no-anchor V2-G8-budget-0 V2-G11-flag-not-from-environment
+V2-G12-segment-trigger-asks-gate V2-G13-whole-trigger-asks-gate V2-G14-cwd-extension-file-with-entry V2-G15-cwd-project-without-extension-file
+V2-G16-environment-root-before-cwd V2-G17-wsl-distro-name-closes-gate V2-G18-wsl-interop-closes-gate
+V11-S5-longline-head-verbatim V11-S6-longline-chinese-line-verbatim V11-S7-longline-text-verbatim
+V3-G9-clock-backwards V3-G10-cap-3 V3-G12-time-left-zero-padded
+V4-S1-allow V4-S2-block-with-text V4-S3-block-without-text V3-S4-slow-judgement V5-S5-pipe-holder V4-S6-spoofed-tail-0 V4-S7-time-checkpoint V4-S8-internal-error
+V5-S9-child-left-behind V5-S13-detached-child V5-S13b-nothing-outlives-the-run V4-S11-bare-zero V5-S10-timer-fork-fails V5-S10b-no-judgement-without-timer
+V5-S10c-dead-timer-no-judgement V5-S10d-no-judgement-with-dead-timer V5-S14-failing-sleep-kills-at-once V5-S15-job-refuses-outside-group-leader
+V4-S19-block-text-bytes V5-S12-no-leftovers V4-S16-rerun-collect-checkpoint V4-S17-rerun-whole-checkpoint V4-S18-rerun-segment-checkpoint
+V6-S20-segment-fallback-text V6-S21-whole-fallback-text
+V8-D1-late-references-plain V8-D1-late-references-braced V8-D2-growth-8192-plain V8-D3-growth-8193-plain V8-D2-growth-8192-braced V8-D3-growth-8193-braced
+V8-D4-growth-text-whole V8-D5-growth-text-segment
+V9-C1-assignments-rerun V9-C1b-assignments-baseline V9-C2-references-rerun-c12 V9-C2b-references-baseline-c12 V9-C2-references-rerun-cb12
+V9-C2b-references-baseline-cb12 V9-C3-for-statements-rerun V9-C3b-for-statements-baseline V9-C4-value-limit-in-rerun
+V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-read-big-judge V7-N5-read-big-judge-short-lines
+V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
+V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only"
+SGW_EXP_E2E="V7-E1-benign-big-allowed V6-E2-deadline-fallback-bytes V3-E3-anchor-at-hook-start V3-E4-cap-3-at-budget-4 V3-E5-budget-2 V2-E6-flag-from-environment-ignored
+V2-E7-no-time-left V2-E8-ostype-from-environment-ignored V2-E9-extension-project V9-E10-count-axis-read-blocked V9-E11-tmax-in-rerun V9-E12-vmax-unchanged
+V7-E13-multiline-copy-normal-text V7-E14-long-line-from-expansion V7-E15-credit-as-normal V1-E16-p1-small-benign V1-E16-p1-small-read V1-E16-p1-small-read-filter
+V1-E16-p1-var-read V1-E16-p1-var-mid V1-E16-p1-var-mid-read V2-E17-wsl-mark-keeps-baseline V2-E18-extension-via-stdin-cwd V5-E19-deadline-with-term-ignored"
+SGW_EXP_STATIC="V11-S1-above-gate:_sg_vx_big_judge V11-S1-above-gate:_sg_relax_left V11-S1-above-gate:_sg_relax_ok V11-S1-above-gate:_sg_relax_platform
+V11-S1-above-gate:_sg_relax_noext V11-S1-above-gate:_sg_relax_job V11-S1-above-gate:_sg_relax_run V11-S3-longline-instructions-verbatim V11-S4-one-rule-loop"
+SG_W10_SHAPES="benign-big count-axis count-axis-ctl ext-read longline-expansion multiline-credit p1-small-benign p1-small-read p1-small-read-filter p1-var-mid p1-var-mid-read p1-var-read stall-read tmax-rerun vmax"
+
+sg_w10_rep() {   # VAR WORD N : VAR = WORD repeated N times (by doubling; a trailing newline survives, unlike in a command substitution)
+  local _w=$2 _n=$3 _r=''
+  while (( _n > 0 )); do (( _n & 1 )) && _r+=$_w; _w+=$_w; _n=$(( _n >> 1 )); done
+  printf -v "$1" '%s' "$_r"
+}
+sg_w10_shape() {   # SHAPE OUTFILE : the command texts of v31/shapes.py, byte for byte, in bash (shapes.py is not run). No credential values anywhere; the
+                   # credential-shaped paths are assembled at run time (the hook only judges the text, nothing is ever read)
+  local s=$1 dot=. cred appini ext=/srv/billing/conf/prod.toml x4000 x2000 x1000 v4097 y196 a24000 f4200 f300 r8 n60 l140 c4 e40 t8 t
+  cred="~/${dot}aw""s/cred""entials"; appini="/etc/forg""ejo/app${dot}ini"
+  sg_w10_rep x4000 x 4000; sg_w10_rep x2000 x 2000; sg_w10_rep x1000 x 1000; sg_w10_rep v4097 v 4097; sg_w10_rep y196 y 196; sg_w10_rep a24000 A 24000
+  sg_w10_rep f4200 ' y' 2100; sg_w10_rep f300 ' y' 150; sg_w10_rep r8 ' $F' 8; sg_w10_rep n60 0 60; sg_w10_rep l140 "echo $n60"$'\n' 140
+  sg_w10_rep c4 ': $x'$'\n' 4; sg_w10_rep e40 'echo line'$'\n' 40; sg_w10_rep t8 '; : $x $x $y' 8
+  case $s in
+    benign-big)           t="(true); x=$x4000; : \$x \$x$f4200" ;;
+    stall-read)           t="(true); C=$cred; x=$x4000; : \$x \$x$f4200; cat \$C" ;;
+    count-axis)           t="F=$appini; { echo$r8; cat \$F; }"$'\n'"$l140" ;;
+    count-axis-ctl)       t="F=$appini; { cat \$F; echo$r8; }"$'\n'"$l140" ;;
+    longline-expansion)   t="(true)"$'\n'"p=$x4000"$'\n'"f=$appini"$'\n'": \$p\$p$f300"$'\n'"cat \$f" ;;
+    multiline-credit)     t="(true)"$'\n'"x=$x2000"$'\n'"$c4${e40}F=$appini; cat \$F | wc -c" ;;
+    vmax)                 t="v=$v4097; echo \$v" ;;
+    tmax-rerun)           t="x=$x4000; y=$y196$t8" ;;
+    ext-read)             t="(x=1; : \$x"$'\n'"$a24000"$'\n'"cat $ext)" ;;
+    p1-small-benign)      t="ls -la /tmp && echo done" ;;
+    p1-small-read)        t="cat $appini" ;;
+    p1-small-read-filter) t="cat $appini | wc -c" ;;
+    p1-var-read)          t="F=$appini; cat \$F" ;;
+    p1-var-mid)           t="x=$x1000; : \$x \$x \$x; echo ok" ;;
+    p1-var-mid-read)      t="x=$x1000; F=$appini; : \$x \$x \$x; cat \$F" ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$t" > "$2"
+}
+sg_w10_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 < b+0)}'; }
+sg_w10_ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
+sg_w10_le() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 <= b+0)}'; }
+sg_w10_sel() { [[ "$1" =~ $SGW_SEL ]]; }
+sg_w10_res() { SGW_ST+=("$1"); SGW_ID+=("$2"); SGW_DET+=("$3"); SGW_TM+=("${4:-0}"); }   # results wait for the load at the end (INV-7)
+sg_w10_timed() {   # ID HARD SOFT DETAIL : hard bad -> FAIL under any load; otherwise PASS / FAIL by the soft part, or SKIP [load] when the batch is not judged
+  if [[ $2 != ok ]]; then sg_w10_res FAIL "$1" "$4"
+  elif [[ $SGW_TGATE != yes ]]; then sg_w10_res SKIP "$1" "[load] $4"
+  elif [[ $3 == ok ]]; then sg_w10_res PASS "$1" "$4" 1
+  else sg_w10_res FAIL "$1" "$4" 1; fi
+}
+sg_w10_kind() { if grep -q 'has a line longer than' "$1"; then echo longline; elif grep -q 'grows by more than' "$1"; then echo growth
+  elif grep -q 'segments together are longer than' "$1"; then echo tmax; elif grep -q 'variable value is longer than' "$1"; then echo vmax
+  elif grep -q 'too large to scan' "$1"; then echo oversize; elif grep -q 'within the time budget' "$1"; then echo time
+  elif grep -q 'value-REDACTING filter' "$1"; then echo finding; elif [[ -s "$1" ]]; then echo other; else echo none; fi; }
+sg_w10_run() {   # ARM SHAPE [VAR=VALUE ...] : the hook under SC_BASH on the shape -> SGW_<ARM>_RC, _WALL, _ERR (file), _ST (the shim's state dir).
+                 # ARM B is the gate-closed arm: its callers pass WSL_DISTRO_NAME=Ubuntu. The five variables are cleared first; HOME is private (INV-5)
+  local p=$1 s=$2 st e t0 t1 rc; shift 2
+  local -a wrap=(); [[ $p == H ]] && wrap=("${SGW_HWRAP[@]}")
+  st=$(mktemp -d "$SGW_W/st.XXXXXX"); e=$(mktemp "$SGW_W/err.XXXXXX")
+  t0=$EPOCHREALTIME
+  env -u CLAUDE_PROJECT_DIR -u _SG_RELAXED -u SECRET_GUARD_TIME_BUDGET_S -u WSL_DISTRO_NAME -u WSL_INTEROP HOME="$SGW_W/home" SC_SHIM_STATE="$st" \
+    SC_REAL_jq="$SGW_JQ" SC_REAL_sed="$SGW_SED" "$@" timeout 12 "${wrap[@]}" "$SGW_BASH" "$SGW_HOOK" < "$SGW_W/in/$s.json" >/dev/null 2>"$e"; rc=$?
+  t1=$EPOCHREALTIME
+  printf -v "SGW_${p}_RC" '%s' "$rc"; printf -v "SGW_${p}_ERR" '%s' "$e"; printf -v "SGW_${p}_ST" '%s' "$st"
+  printf -v "SGW_${p}_WALL" '%s' "$(awk -v a="${t0/,/.}" -v b="${t1/,/.}" 'BEGIN{printf "%.2f", b-a}')"
+}
+sg_w10_same() { [[ $SGW_H_RC == "$SGW_B_RC" ]] && cmp -s "$SGW_H_ERR" "$SGW_B_ERR"; }
+sg_w10_desc() { printf 'hook rc=%s %s %ss | gate-closed rc=%s %s %ss | stderr %s' "$SGW_H_RC" "$(sg_w10_kind "$SGW_H_ERR")" "$SGW_H_WALL" "$SGW_B_RC" \
+  "$(sg_w10_kind "$SGW_B_ERR")" "$SGW_B_WALL" "$(sg_w10_same && echo IDENTICAL || echo DIFFERENT)"; }
+sg_w10_slow() {   # a tag when an arm shows the host was too slow for a byte comparison: the 12 s timeout (rc 124), or the hook's own whole-second time
+                  # budget firing in one arm only (its time text). Such a result is judged only in a judged timing batch (INV-7)
+  local ht=no bt=no
+  if [[ $SGW_H_RC == 124 || $SGW_B_RC == 124 ]]; then printf '[timeout12]'; return 0; fi
+  [[ "$(sg_w10_kind "$SGW_H_ERR")" == time ]] && ht=yes; [[ "$(sg_w10_kind "$SGW_B_ERR")" == time ]] && bt=yes
+  [[ $ht == "$bt" ]] || printf '[time-text]'
+  return 0
+}
+sg_w10_identity() {   # ID SHAPE [VAR=VALUE ...] : the hook must equal the gate-closed hook, byte for byte (timing only when the host was too slow)
+  local id=$1 s=$2 w; shift 2; sg_w10_sel "$id" || return 0
+  sg_w10_run B "$s" WSL_DISTRO_NAME=Ubuntu "$@"; sg_w10_run H "$s" "$@"; w=$(sg_w10_slow)
+  if [[ -n "$w" ]]; then sg_w10_timed "$id" ok bad "$(sg_w10_desc) $w"
+  elif sg_w10_same; then sg_w10_res PASS "$id" "$(sg_w10_desc)"; else sg_w10_res FAIL "$id" "$(sg_w10_desc) [bytes]"; fi
+}
+sg_w10_deadline() {   # ID SHAPE MIN MAX [VAR=VALUE ...] : (relaxation expected) the job is cut by the deadline: the gate-closed bytes, wall in [MIN, MAX]
+  local id=$1 s=$2 lo=$3 hi=$4 a sd='' st w hard=ok soft=ok t=''; shift 4; sg_w10_sel "$id" || return 0
+  if [[ $SGW_RELAX != yes ]]; then sg_w10_identity "$id" "$s" "$@"; return 0; fi   # the variables reach the hook on every bash
+  for a in "$@"; do [[ $a == SC_DELAY_sed=* ]] && sd=${a#*=}; done
+  sg_w10_run B "$s" WSL_DISTRO_NAME=Ubuntu; sg_w10_run H "$s" "PATH=$SGW_SHIM:$PATH" "$@"
+  st=none; [[ -f "$SGW_H_ST/sed.stall" ]] && st=job; [[ -f "$SGW_H_ST/sed.uncut" ]] && st=uncut
+  if [[ $st == uncut ]]; then sg_w10_res FAIL "$id" "$(sg_w10_desc) sed-stall=$st (want IDENTICAL, wall window $lo..$hi) [uncut]"; return 0; fi
+  w=$(sg_w10_slow); if [[ -n "$w" ]]; then sg_w10_timed "$id" ok bad "$(sg_w10_desc) sed-stall=$st (want IDENTICAL, wall window $lo..$hi) $w"; return 0; fi
+  if [[ -n "$sd" ]] && sg_w10_ge "$SGW_H_WALL" "$sd"; then
+    sg_w10_res SKIP "$id" "[inconclusive] $(sg_w10_desc) sed-stall=$st: the wall reached the ${sd} s stall, which did not run to its end inside the job"; return 0
+  fi
+  sg_w10_same || { hard=bad; t+=' [bytes]'; }
+  sg_w10_ge "$SGW_H_WALL" "$lo" || { hard=bad; t+=' [wall<lo]'; }
+  sg_w10_le "$SGW_H_WALL" "$hi" || { soft=bad; t+=' [wall>hi]'; }
+  sg_w10_timed "$id" $hard $soft "$(sg_w10_desc) sed-stall=$st (want IDENTICAL, wall window $lo..$hi)$t"
+}
+sg_w10_outcome() {   # ID SHAPE WANT_RC WANT_KINDS(|-separated) [VAR=VALUE ...] : (relaxation expected) the rerun finishes before the deadline with this rc / text
+  local id=$1 s=$2 wr=$3 wk=$4 k hard=ok soft=ok t=''; shift 4; sg_w10_sel "$id" || return 0
+  if [[ $SGW_RELAX != yes ]]; then sg_w10_identity "$id" "$s" "$@"; return 0; fi
+  sg_w10_run B "$s" WSL_DISTRO_NAME=Ubuntu "$@"; sg_w10_run H "$s" "$@"; k=$(sg_w10_kind "$SGW_H_ERR")
+  if [[ $SGW_H_RC == "$wr" && "|$wk|" == *"|$k|"* ]]; then sg_w10_le "$SGW_H_WALL" 4.5 || { soft=bad; t=' [wall>hi]'; }
+  elif [[ -n "$(sg_w10_slow)" ]]; then soft=bad; t=" $(sg_w10_slow)"
+  elif sg_w10_same; then soft=bad; t=' [fallback]'   # the gate-closed bytes: the rerun did not finish before the deadline (a slow host) or never ran
+  else hard=bad; [[ $SGW_H_RC == "$wr" ]] || t+=' [rc]'; [[ "|$wk|" == *"|$k|"* ]] || t+=' [kind]'; fi
+  sg_w10_timed "$id" $hard $soft "$(sg_w10_desc) (want rc=$wr text=$wk within 4.5 s)$t"
+}
+sg_w10_e17() {   # V2-E17: a WSL mark in the environment closes the gate. The gate-closed arm is itself made that way, so instead of a byte comparison the
+                 # case asserts the gate-closed outcome: status 2 and the size text (benign-big is a copy over 8192 that only the relaxation allows)
+  local id=V2-E17-wsl-mark-keeps-baseline k d; sg_w10_sel "$id" || return 0
+  sg_w10_run H benign-big WSL_DISTRO_NAME=Ubuntu; k=$(sg_w10_kind "$SGW_H_ERR")
+  d="hook with WSL_DISTRO_NAME=Ubuntu: rc=$SGW_H_RC $k ${SGW_H_WALL}s (want rc=2 text=oversize: the gate stays closed, the baseline's size block)"
+  if [[ $SGW_H_RC == 124 ]]; then sg_w10_timed "$id" ok bad "$d [timeout12]"
+  elif [[ $k == time ]]; then sg_w10_timed "$id" ok bad "$d [time-text]"
+  elif [[ $SGW_H_RC == 2 && $k == oversize ]]; then sg_w10_res PASS "$id" "$d"
+  else sg_w10_res FAIL "$id" "$d$([[ $SGW_H_RC == 2 ]] || printf ' [rc]')$([[ $k == oversize ]] || printf ' [kind]')"; fi
+}
+sg_w10_blk() { awk -v k="$2" '$0 ~ "kind\" == " k " \\]\\]; then" {f=1} f && /^Split it into smaller commands/ {p=1} p {print} p && /请拆成更小的命令/ {exit}' "$1"; }
+sg_w10_static() {   # V11-S1 (the new functions above the sourcing gate, INV-4), V11-S3 (the longline instruction lines), V11-S4 (one rule loop)
+  local g l f id o ll lz b
+  g=$(grep -n '^if \[\[ "${BASH_SOURCE\[0\]}" != "$0" \]\]; then' "$SGW_HOOK" | head -1 | cut -d: -f1)
+  for f in _sg_vx_big_judge _sg_relax_left _sg_relax_ok _sg_relax_platform _sg_relax_noext _sg_relax_job _sg_relax_run; do
+    id="V11-S1-above-gate:$f"; sg_w10_sel "$id" || continue
+    l=$(grep -n "^$f() {" "$SGW_HOOK" | head -1 | cut -d: -f1)
+    if [[ -z "$l" ]]; then sg_w10_res FAIL "$id" "[missing] $f is not defined in the hook (sourcing gate at line ${g:-missing})"
+    elif [[ -n "$g" ]] && (( l < g )); then sg_w10_res PASS "$id" "line $l < sourcing gate $g"
+    else sg_w10_res FAIL "$id" "line $l, gate ${g:-missing} [value]"; fi
+  done
+  if sg_w10_sel V11-S3-longline-instructions-verbatim; then
+    o=$(sg_w10_blk "$SGW_HOOK" oversize | sed '$d'); ll=$(sg_w10_blk "$SGW_HOOK" longline | sed '$d'); lz=$(sg_w10_blk "$SGW_HOOK" longline | tail -1)
+    if [[ -n "$o" && "$o" == "$ll" && "$lz" == *请拆成更小的命令 ]]; then
+      sg_w10_res PASS V11-S3-longline-instructions-verbatim "the longline instruction lines equal the oversize ones ($(printf '%s\n' "$ll" | wc -l | tr -d ' ') lines)"
+    else sg_w10_res FAIL V11-S3-longline-instructions-verbatim "oversize [$(printf '%s' "$o" | head -c 60 | tr '\n' '/')] longline [$(printf '%s' "$ll" | head -c 60 | tr '\n' '/')] [text]"; fi
+  fi
+  if sg_w10_sel V11-S4-one-rule-loop; then   # a fixed count in the suite (no baseline file): exactly one loop over risky_patterns, as in the baseline
+    b=$(grep -c 'risky_patterns\[@\]' "$SGW_HOOK")
+    if [[ $b == 1 ]]; then sg_w10_res PASS V11-S4-one-rule-loop "loops over risky_patterns: $b (want exactly 1, the baseline's count)"
+    else sg_w10_res FAIL V11-S4-one-rule-loop "loops over risky_patterns: $b (want exactly 1, the baseline's count) [count]"; fi
+  fi
+}
+sg_w10_skips() { printf 'platform %d, load %d, void %d, inconclusive %d, root %d, other %d' "$skip_platform" "$skip_load" "$skip_void" "$skip_inconclusive" "$skip_root" "$skip_other"; }
+sg_w10_cases() {
+  local s i id st det line rest h sf drc last mode setup='' MACH='' MAJ='' MIN='' OSR WSLF LOAD0 L0 LOAD1 L1 VOID=no tb want got dup missing extra nw ng
+  SGW_SEL=${SG_W10_ONLY:-.}; SGW_ST=(); SGW_ID=(); SGW_DET=(); SGW_TM=(); SGW_HWRAP=()
+  SGW_W=$(mktemp -d "$_TEST_HOME/w10.XXXXXX"); mkdir -p "$SGW_W/in" "$SGW_W/home" "$SGW_W/ext/.aria"
+  SGW_HOOK="$(cd "$(dirname "$HOOK")" && pwd)/$(basename "$HOOK")"; SGW_SHIM="$SG_W10_DIR/sg-shim"
+  SGW_BASH=$(readlink -f "${SC_BASH:-$(command -v bash)}" 2>/dev/null); SGW_JQ=$(command -v jq); SGW_SED=$(command -v sed)
+  [[ -n "$SGW_BASH" && -f "$SGW_BASH" && -x "$SGW_BASH" ]] && "$SGW_BASH" -c : </dev/null >/dev/null 2>&1 || setup+="SC_BASH does not run (${SC_BASH:-bash on PATH}); "
+  for s in $SG_W10_SHAPES; do
+    sg_w10_shape "$s" "$SGW_W/in/$s.txt" && "$SGW_JQ" -Rs '{tool_name:"Bash", tool_input:{command:.}}' < "$SGW_W/in/$s.txt" > "$SGW_W/in/$s.json" || setup+="input $s; "
+  done
+  printf '%s\n' "billing/conf/prod.toml" > "$SGW_W/ext/.aria/secret-guard.paths"
+  "$SGW_JQ" -Rs --arg cwd "$SGW_W/ext" '{tool_name:"Bash", cwd:$cwd, tool_input:{command:.}}' < "$SGW_W/in/ext-read.txt" > "$SGW_W/in/ext-read-cwd.json" || setup+="input ext-read-cwd; "
+  # the gate's rule (What 1 and its supplement), asked of the bash that runs the hook; the WSL variables are cleared for every run, so the kernel facts decide
+  [[ -z "$setup" ]] && read -r MACH MAJ MIN < <("$SGW_BASH" -c 'echo "${BASH_VERSINFO[5]} ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' 2>/dev/null)
+  OSR=$(cat /proc/sys/kernel/osrelease 2>/dev/null); WSLF=no; [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && WSLF=yes
+  SGW_RELAX=no
+  [[ "$MACH" == x86_64-*-linux-gnu* && -n "$OSR" && "$OSR" != *[Mm]icrosoft* && "$OSR" != *WSL* && $WSLF == no ]] && (( MAJ == 5 && MIN <= 3 )) && SGW_RELAX=yes
+  mode=norelax; [[ $SGW_RELAX == yes ]] && mode=relax
+  LOAD0=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null); L0=${LOAD0%% *}
+  SGW_TGATE=no; [[ -n "$L0" ]] && sg_w10_lt "$L0" 2 && SGW_TGATE=yes   # no load reading: the timing batch is not judged
+  if [[ -n "$setup" ]]; then
+    for i in $SGW_EXP_DIRECT $SGW_EXP_E2E $SGW_EXP_STATIC; do sg_w10_sel "$i" && sg_w10_res FAIL "$i" "[setup] ${setup% }"; done
+    sg_w10_res FAIL V0-H1-direct-complete "[setup] ${setup% } [harness]"
+  else
+    # ---- direct calls (lib/secret-guard-w10-direct.sh under SC_BASH): MISSING and SETUP are FAIL here; TIMED goes through the load rule ----
+    HOME="$SGW_W/home" SC_ONLY="$SGW_SEL" "$SGW_BASH" "$SG_W10_DIR/secret-guard-w10-direct.sh" "$SGW_HOOK" "$mode" </dev/null >"$SGW_W/direct.out" 2>"$SGW_W/direct.err"; drc=$?
+    while IFS= read -r line; do
+      st=${line%% *}; rest=${line#* }; id=${rest%% *}; det=${rest#"$id"}; det=${det# }
+      case $st in
+        PASS|FAIL|SKIP) sg_w10_sel "$id" && sg_w10_res "$st" "$id" "$det" ;;
+        MISSING) sg_w10_sel "$id" && sg_w10_res FAIL "$id" "$det" ;;
+        SETUP) sg_w10_sel "$id" && sg_w10_res FAIL "$id" "[setup] $det" ;;
+        TIMED) h=${det%% *}; det=${det#* }; sf=${det%% *}; det=${det#* }; sg_w10_sel "$id" && sg_w10_timed "$id" "$h" "$sf" "$det" ;;
+      esac
+    done < "$SGW_W/direct.out"
+    last=$(tail -n 1 "$SGW_W/direct.out")
+    if [[ "$last" == "END sc-direct" && $drc == 0 ]]; then sg_w10_res PASS V0-H1-direct-complete "lib/secret-guard-w10-direct.sh ($mode) ran to its sentinel and exited 0"
+    else sg_w10_res FAIL V0-H1-direct-complete "lib/secret-guard-w10-direct.sh ($mode): last line [$(printf '%s' "$last" | cut -c1-80)] (want END sc-direct), exit $drc (want 0); stderr: $(tail -n 3 "$SGW_W/direct.err" | tr '\n' ' ' | cut -c1-200) [harness]"; fi
+    # ---- end-to-end: the hook executed by SC_BASH on a JSON input, as Claude Code runs it ----
+    if ! command -v timeout >/dev/null 2>&1; then
+      for i in $SGW_EXP_E2E; do sg_w10_sel "$i" && sg_w10_res SKIP "$i" "[platform] timeout (coreutils) not found: every end-to-end run is bounded by it"; done
+    else
+      # P7 allow path; P3/P6 deadline and fallback bytes (the sed shim stalls the job's block text for 10 s, so only the deadline can end the job)
+      sg_w10_outcome   V7-E1-benign-big-allowed            benign-big 0 none
+      sg_w10_deadline  V6-E2-deadline-fallback-bytes       stall-read 2.85 3.6 SC_DELAY_sed=10
+      sg_w10_deadline  V3-E3-anchor-at-hook-start          stall-read 2.85 3.6 SC_DELAY_jq=1.5 SC_DELAY_sed=10
+      sg_w10_deadline  V3-E4-cap-3-at-budget-4             stall-read 2.85 3.6 SC_DELAY_sed=10 SECRET_GUARD_TIME_BUDGET_S=4
+      sg_w10_deadline  V3-E5-budget-2                      stall-read 1.85 2.6 SC_DELAY_sed=10 SECRET_GUARD_TIME_BUDGET_S=2
+      sg_w10_deadline  V2-E6-flag-from-environment-ignored stall-read 2.85 3.6 SC_DELAY_sed=10 _SG_RELAXED=1
+      sg_w10_deadline  V2-E7-no-time-left                  stall-read 3.2 4.3 SC_DELAY_jq=3.2
+      # P2: OSTYPE, MACHTYPE and HOSTTYPE come from the environment and decide nothing; an extension project keeps the baseline
+      sg_w10_outcome   V2-E8-ostype-from-environment-ignored benign-big 0 none OSTYPE=darwin21 MACHTYPE=x86_64-apple-darwin23.0.0 HOSTTYPE=aarch64
+      sg_w10_identity  V2-E9-extension-project             ext-read CLAUDE_PROJECT_DIR="$SGW_W/ext"
+      # P9: no count bound in the rerun; TMAX holds in the rerun; VMAX unchanged
+      sg_w10_outcome   V9-E10-count-axis-read-blocked      count-axis 2 "finding|longline"
+      sg_w10_outcome   V9-E11-tmax-in-rerun                tmax-rerun 2 tmax
+      sg_w10_identity  V9-E12-vmax-unchanged               vmax
+      # P7 routing: by the copy's longest line; multi-line copies get the normal judgement, credit included
+      sg_w10_outcome   V7-E13-multiline-copy-normal-text   count-axis-ctl 2 finding
+      sg_w10_outcome   V7-E14-long-line-from-expansion     longline-expansion 2 longline
+      sg_w10_outcome   V7-E15-credit-as-normal             multiline-credit 0 none
+      # P1 sampler: commands that never reach a trigger point
+      for s in p1-small-benign p1-small-read p1-small-read-filter p1-var-read p1-var-mid p1-var-mid-read; do sg_w10_identity "V1-E16-$s" "$s"; done
+      # P2: a WSL mark in the environment closes the gate (What 1 supplement); an extension project known only through the stdin cwd
+      sg_w10_e17
+      sg_w10_identity  V2-E18-extension-via-stdin-cwd      ext-read-cwd
+      # P3/P5: the deadline holds when the hook starts with SIGTERM ignored -- the timer and the group kill use KILL
+      SGW_HWRAP=("$SGW_BASH" -c 'trap "" TERM; exec "$0" "$@"')
+      sg_w10_deadline  V5-E19-deadline-with-term-ignored   stall-read 2.85 3.6 SC_DELAY_sed=10
+      SGW_HWRAP=()
+    fi
+    sg_w10_static
+  fi
+  # ---- V0-H2: every id of the one list (the same on every platform), reported once ----
+  want=" "; got=" "; dup=''
+  for i in $SGW_EXP_DIRECT $SGW_EXP_E2E $SGW_EXP_STATIC; do sg_w10_sel "$i" && want+="$i "; done
+  for i in "${!SGW_ID[@]}"; do id=${SGW_ID[i]}; [[ $id == V0-H* ]] && continue; [[ "$got" == *" $id "* ]] && dup+="$id "; got+="$id "; done
+  missing=''; for id in $want; do [[ "$got" == *" $id "* ]] || missing+="$id "; done
+  extra=''; for id in $got; do [[ "$want" == *" $id "* ]] || extra+="$id "; done
+  nw=$(wc -w <<< "$want" | tr -d ' '); ng=$(wc -w <<< "$got" | tr -d ' ')
+  if [[ -z "$missing$extra$dup" ]]; then sg_w10_res PASS V0-H2-case-list "all $nw expected case ids reported once (mode $mode; one list on every platform)"
+  else sg_w10_res FAIL V0-H2-case-list "expected $nw ids, reported $ng; missing: [${missing% }] unexpected: [${extra% }] reported twice: [${dup% }] [harness]"; fi
+  # ---- the load at the end decides whether the timing batch stands (INV-7); then the counts, and the log ----
+  LOAD1=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null); L1=${LOAD1%% *}
+  [[ $SGW_TGATE == yes ]] && { [[ -z "$L1" ]] || ! sg_w10_lt "$L1" 2; } && VOID=yes
+  if [[ $VOID == yes ]]; then
+    for i in "${!SGW_ST[@]}"; do [[ ${SGW_TM[i]} == 1 ]] && { SGW_DET[i]="[void] ${SGW_ST[i]} at load $L0 -> $L1: ${SGW_DET[i]}"; SGW_ST[i]=SKIP; }; done
+  fi
+  if [[ $SGW_TGATE != yes ]]; then tb='SKIP [load]'; elif [[ $VOID == yes ]]; then tb='void (SKIP [void]): run again'; else tb=judged; fi
+  sg_w10_batch="SC_BASH $SGW_BASH (${MACH:-?} ${MAJ:-?}.${MIN:-?}) -> relaxation expected: $SGW_RELAX | load start ${LOAD0:-unavailable} end ${LOAD1:-unavailable} | timing batch: $tb"
+  [[ -n "${SG_W10_LOG:-}" ]] && printf '# secret-guard.test.sh W10 ported cases | %s | hook %s | direct %s | shim %s | filter %s | %s\n' "$(date -u +%FT%TZ)" \
+    "$(sha256sum < "$SGW_HOOK" 2>/dev/null | cut -c1-12)" "$(sha256sum < "$SG_W10_DIR/secret-guard-w10-direct.sh" 2>/dev/null | cut -c1-12)" \
+    "$(sha256sum < "$SGW_SHIM/delay-first" 2>/dev/null | cut -c1-12)" "$SGW_SEL" "${sg_w10_batch%% | load start*}" > "$SG_W10_LOG"
+  for i in "${!SGW_ST[@]}"; do
+    st=${SGW_ST[i]}; id=${SGW_ID[i]}; det=${SGW_DET[i]}
+    [[ -n "${SG_W10_LOG:-}" ]] && printf '%s %s %s\n' "$st" "$id" "$det" >> "$SG_W10_LOG"
+    case $st in
+      PASS) pass=$((pass + 1)) ;;
+      FAIL) fail=$((fail + 1)); failures+=("FAIL [W10-port $id]: $det") ;;
+      *) skip=$((skip + 1))
+         case $det in '[platform]'*) skip_platform=$((skip_platform + 1)) ;; '[load]'*) skip_load=$((skip_load + 1)) ;; '[void]'*) skip_void=$((skip_void + 1)) ;;
+           '[inconclusive]'*) skip_inconclusive=$((skip_inconclusive + 1)) ;; '[root]'*) skip_root=$((skip_root + 1)) ;; *) skip_other=$((skip_other + 1)) ;; esac ;;
+    esac
+  done
+  [[ -n "${SG_W10_LOG:-}" ]] && printf '# load start %s end %s | timing batch: %s\n' "${LOAD0:-unavailable}" "${LOAD1:-unavailable}" "$tb" >> "$SG_W10_LOG"
+  return 0
+}
+# SG_W10_ONLY: a filtered round -- only the ported cases whose id matches; no other case and no SC-13
+if [[ -n "${SG_W10_ONLY:-}" ]]; then
+  sg_w10_cases
+  total=$((pass + fail + skip))
+  echo
+  echo "──────────────────────────────────────────────────"
+  echo "secret-guard.sh regression test -- FILTERED ROUND (SG_W10_ONLY=$SG_W10_ONLY): only the ported W10 cases whose id matches ran; no other case, no SC-13"
+  echo "PASS: $pass / $total"
+  echo "FAIL: $fail / $total"
+  echo "SKIP: $skip / $total ($(sg_w10_skips))"
+  echo "W10 ported cases: $sg_w10_batch"
+  if [[ $fail -gt 0 ]]; then echo; echo "Failures:"; printf '  %s\n' "${failures[@]}"; echo; exit 1; fi
+  exit 0
+fi
 
 # ── BLOCK cases (exit 2) — Nomad / Vault / cloud / managers ───────────────
 
@@ -3210,9 +3532,12 @@ sct5="$(SECRET_GUARD_TIME_BUDGET_S=99 HK="$HOOK" bash -c 'source "$HK" 2>/dev/nu
 if [[ "$sct5" == 4 ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failures+=("FAIL [SC-T5: budget cap <5s]: SECRET_GUARD_TIME_BUDGET_S=99 resolved to '$sct5', want 4"); fi
 # ══════════════════ SC-T end ══════════════════
 
+# the W10 cases ported from v31 (sg_w10_cases, after the helpers): last before SC-13, which counts their SKIP
+sg_w10_cases
+
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
 # 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,
-# 使 pass+fail+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
+# 使 pass+fail+skip+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
 # 顶部 "Coverage: N cases") 与本断言会一起提醒同步。secret-hygiene.md 三处 + 本 spec
 # SC-11 正文的一致由 TASK-020/026 回填时机械 grep 确认 (跨仓, 不在本 test 内断言)。
 # #145 sync 时修类: 总数随 zsh 在场与否变化 (§#154 e2e 条件组), 单一钉死值在
@@ -3220,7 +3545,7 @@ if [[ "$sct5" == 4 ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failure
 # 改为双值 "N cases (M without zsh)", 本断言接受二者之一 == 实跑总数。
 sc13_header_n="$(grep -oE 'Coverage: [0-9]+ cases' "$0" | grep -oE '[0-9]+' | head -1)"
 sc13_header_nozsh="$(grep -oE '\([0-9]+ without zsh\)' "$0" | grep -oE '[0-9]+' | head -1)"
-sc13_total_expected=$((pass + fail + 1))
+sc13_total_expected=$((pass + fail + skip + 1))
 if [[ "$sc13_header_n" == "$sc13_total_expected" || "${sc13_header_nozsh:-}" == "$sc13_total_expected" ]]; then
   pass=$((pass + 1))
 else
@@ -3229,12 +3554,14 @@ else
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
-total=$((pass + fail))
+total=$((pass + fail + skip))
 echo
 echo "──────────────────────────────────────────────────"
 echo "secret-guard.sh regression test"
 echo "PASS: $pass / $total"
 echo "FAIL: $fail / $total"
+echo "SKIP: $skip / $total ($(sg_w10_skips))"
+echo "W10 ported cases: $sg_w10_batch"
 if [[ $fail -gt 0 ]]; then
   echo
   echo "Failures:"
