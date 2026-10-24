@@ -5,7 +5,9 @@
 # judgement at a 1 s deadline; growth, count, checkpoint and rows-only cases) | norelax = any other bash (the gate must stay closed; every case of the
 # relaxation is reported once, as SKIP [platform], so both modes report the same ids). Changed from v31: the fallback-text cases (V6-S20, V6-S21) compare
 # with the block the same hook writes when the gate is closed by WSL_DISTRO_NAME, set in the shell that sources it (no baseline file, no git history);
-# a case whose tool is missing on the platform (ps) is SKIP [platform], not FAIL.
+# that gate-closed call must itself give the status and text kind 59e333c gives for the same copy and mode (fbref, measured on the five bash in 3c), else
+# FAIL [reference]: it runs the hook under test, so a slip in code or a constant both calls share would move both alike and the byte comparison would stay
+# green (the suite's [reference]; the time text there is TIMED). A case whose tool is missing on the platform (ps) is SKIP [platform], not FAIL.
 # The hook is sourced: it stops at its unit-test sourcing gate, so only the functions above that gate exist; risky_patterns, _sg_judge_one and
 # _sg_redact_echo (below it) are pulled out by anchor, as the suite's SC-8 harness does. One line per case:
 #   PASS|FAIL|MISSING|SETUP <id> <detail>   MISSING: a function the case calls is not defined in the hook under test (status 127 if it were called);
@@ -16,7 +18,7 @@
 #                                            (status, text, bytes, lower bounds); soft (ok|bad) = the upper bound, or "the job finished before its
 #                                            deadline". The suite turns it into PASS, FAIL or SKIP by the load rule of INV-7 (post_planning R2 PP2-A).
 # A failed check names itself in the detail with a tag: [status] [rc] [stderr] [bytes] [value] [kind] [text] [count] [judged] [leftover] [wall<lo]
-# [wall>hi] [fallback]. The last line is the sentinel "END sc-direct": a run that stops early (set -u, a crash) has none, and the suite reports that
+# [wall>hi] [fallback] [reference]. The last line is the sentinel "END sc-direct": a run that stops early (set -u, a crash) has none, and the suite reports that
 # (V0-H1). SC_ONLY (set by the suite from SG_W10_ONLY) skips the slow cases that are not selected; the suite filters the lines again.
 H=$1; MODE=$2
 unset CLAUDE_PROJECT_DIR SECRET_GUARD_TIME_BUDGET_S WSL_DISTRO_NAME WSL_INTEROP _SG_RELAXED   # the caller's environment decides no case (R2 PP2-m14; WSL marks)
@@ -329,10 +331,17 @@ if [[ $MODE == relax ]]; then
   ckp V4-S16-rerun-collect-checkpoint whole 'a=1; b=2; : $a $b'
   ckp V4-S17-rerun-whole-checkpoint whole 'a=1; : $a'
   ckp V4-S18-rerun-segment-checkpoint segment 'a=1; : $a' 'a=1' ': $a'
+  fbref() {   # id -> "<status> <kind>": what 59e333c's _sg_vx_pass gives at fbt's gate-closed call (the same copy and mode; it ignores the WSL mark), measured
+              # in 3c on the five bash: the same on each. An id without an entry fails.
+    case $1 in
+      V6-S20-segment-fallback-text|V6-S21-whole-fallback-text) echo '2 oversize' ;;
+      *) echo 'unrecorded -' ;;
+    esac
+  }
   fbt() {   # id mode cmd [segment...] : with the gate open a copy over _SGV_SMAX ends the baseline pass with 4 and keeps the baseline's reason; the fallback
             # text written from it equals the block the same hook writes for the same copy with the gate closed by WSL_DISTRO_NAME, byte for
             # byte (R2 PP2-I; v31 compares with the baseline hook's file)
-    local id=$1 m=$2 c=$3 r rb t=''; shift 3
+    local id=$1 m=$2 c=$3 r rb kb ref t=''; shift 3
     sel "$id" || return 0
     need _sg_vx_pass _sg_emit_blocked || { miss "$id"; return 0; }
     [[ $BELOW == yes ]] || { nobelow "$id"; return 0; }
@@ -348,9 +357,14 @@ awk '/^_sg_redact_echo\(\) \{/,/^\}$/' "$B" > "$OUT.re"; source "$OUT.re"
 command=$c; [[ $m == segment ]] && _SG_SEGS=("$@")
 _sg_vx_pass "$c" "$m" >/dev/null 2>"$OUT"; echo $?
 EOF
-    rb=$("$BASH" "$X/basefb.sh" "$H" "$X/fb-base" "$m" "$c" "$@")
+    rb=$("$BASH" "$X/basefb.sh" "$H" "$X/fb-base" "$m" "$c" "$@"); kb=$(kindf "$X/fb-base"); ref=$(fbref "$id")
+    if [[ "$rb $kb" != "$ref" ]]; then   # [reference]: first the gate-closed call against 59e333c's known outcome for this copy (the time text: timing)
+      if [[ $kb == time ]]; then timed "$id" ok bad "gate closed by WSL_DISTRO_NAME: status $rb $kb, reference (59e333c) $ref [time-text]"
+      else out FAIL "$id" "gate closed by WSL_DISTRO_NAME: status $rb $kb, reference (59e333c, the same copy and mode) $ref [reference]"; fi
+      return 0
+    fi
     [[ $r == "4 $m 0" ]] || t+='[status] '; cmp -s "$X/fb-hook" "$X/fb-base" || t+='[bytes]'
-    [[ -z "$t" ]]; chk $? "$id" "gate open, a $m copy over 8192: status/mode/text-bytes [$r] (want [4 $m 0]); fallback text $(wc -c < "$X/fb-hook") bytes vs the same hook's block with the gate closed by WSL_DISTRO_NAME (status $rb) $(wc -c < "$X/fb-base") bytes: $(cmp -s "$X/fb-hook" "$X/fb-base" && echo IDENTICAL || echo "DIFFERENT, first line [$(head -1 "$X/fb-hook" | cut -c1-120)]")" "$t"
+    [[ -z "$t" ]]; chk $? "$id" "gate open, a $m copy over 8192: status/mode/text-bytes [$r] (want [4 $m 0]); fallback text $(wc -c < "$X/fb-hook") bytes vs the same hook's block with the gate closed by WSL_DISTRO_NAME (status $rb $kb) $(wc -c < "$X/fb-base") bytes: $(cmp -s "$X/fb-hook" "$X/fb-base" && echo IDENTICAL || echo "DIFFERENT, first line [$(head -1 "$X/fb-hook" | cut -c1-120)]")" "$t"
   }
   fbt V6-S20-segment-fallback-text segment "$cseg" "x=$x4" ": \$x \$x$fill"
   fbt V6-S21-whole-fallback-text whole "$cwh"

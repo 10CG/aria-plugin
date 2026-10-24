@@ -1,6 +1,8 @@
 #!/bin/sh
-# Test shim for sc-cases.sh (installed as shim/jq and shim/sed): puts a fixed, machine-independent delay at a known point of the hook, then execs the real
-# tool (SC_REAL_<name>) on every call.
+# Test shim of the secret-guard suite (hooks/tests/lib/sg-shim/, linked as jq and sed by relative symlinks). secret-guard.test.sh sets SC_SHIM_STATE (a
+# fresh directory per run), SC_REAL_jq and SC_REAL_sed for every end-to-end run of the W10 ported cases (sg_w10_run); the deadline cases (sg_w10_deadline)
+# also put this directory first on the hook's PATH and pass SC_DELAY_jq / SC_DELAY_sed. It puts a fixed, machine-independent delay at a known point of the
+# hook, then execs the real tool (SC_REAL_<name>) on every call.
 #   jq:  the FIRST call of one run (an atomic mkdir under $SC_SHIM_STATE decides it) sleeps SC_DELAY_jq seconds. jq's first call is the stdin parse, in the
 #        hook's own process, after the hard-deadline anchor and before the trigger point.
 #   sed: only a call made INSIDE the relaxed rerun's job may stall, and only the first such call (SC_DELAY_sed seconds). The job leads its own process group
