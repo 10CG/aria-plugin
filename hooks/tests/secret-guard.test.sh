@@ -2924,8 +2924,8 @@ wpa_x_toolarge() {   # <command> <the limit line it must name: wpa_L_*>: refused
 # wpa_rx6=yes: the relaxation is expected and a group asserts the outcome the proposal gives (its comment names the What / P item); wpa_rx6=no: the group keeps its
 # baseline assertions word for word. Either way a group is one case, so the count does not depend on the platform (SC-13). The summary prints the branch and its inputs.
 # In the relaxed branch a trigger-point command (a copy over 8192) goes through wpa_x6, which also accepts the deadline fallback (the baseline branch's
-# assertion on the same output, with a wall only a fallback for time gives: >= 3.0 s, or over 2.0 s with a gate-closed run of the same input at least
-# 1.0 s quicker; see wpa_x6), and the summary counts those fallbacks.
+# assertion on the same output, with a wall only a fallback for time gives: >= 3.0 s, or over 2.0 s with one of up to three gate-closed runs of the
+# same input at least 1.0 s quicker; see wpa_x6), and the summary counts those fallbacks.
 wpa_rx6=no; wpa_rx6_mach=''; wpa_rx6_maj=''; wpa_rx6_min=''; wpa_rx6_ver=''; wpa_rx6_osr=$(cat /proc/sys/kernel/osrelease 2>/dev/null); wpa_rx6_wslf=no
 [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && wpa_rx6_wslf=yes
 read -r wpa_rx6_mach wpa_rx6_maj wpa_rx6_min wpa_rx6_ver < <(env bash -c 'echo "${BASH_VERSINFO[5]} ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]} $BASH_VERSION"' 2>/dev/null)
@@ -2951,7 +2951,7 @@ wpa_x_hit() {   # <command>: (relaxed branch) judged and blocked with the ordina
 # runs the hook ONCE (wpa_x6_hook; SECRET_GUARD_TIME_BUDGET_S cleared, so the deadline is _SG_P0 + 3 s). Its wall W is taken by EPOCHREALTIME and
 # compared in whole microseconds, never rounded first (shown cut to two decimals). Why the hook falls back: the baseline pass runs first and on a busy
 # host takes much of the 3 s (21ab: 2.37-2.58 s for the whole hook at load 1.2-1.6, 2.39-3.08 s gate-closed, b2/t002d-verify/probe.txt), and then the
-# hook gives the baseline's block (What 4; P3, P6). Worked out from the hook (sha256 af4658b6f935), a fallback for time has three ways and no other:
+# hook gives the baseline's block (What 4; P3, P6). Worked out from the hook, a fallback for time has three ways and no other:
 #   F1 the gate closes for lack of time: _sg_relax_left gives status 1 only once now >= _SG_P0 + 3 s;
 #   F2 the deadline kills the job: its timer (sleep "$_SG_LEFT") starts after _SG_LEFT is worked out, so the kill comes after _SG_P0 + 3 s;
 #   F3 the rerun's own time checkpoint: _sg_vx_collect resets _SG_T0=$SECONDS and _sg_over_budget sends the rerun back (status 3, then the baseline
@@ -2962,16 +2962,22 @@ wpa_x_hit() {   # <command>: (relaxed branch) judged and blocked with the ordina
 # (1) the relaxed branch's assertion holds on that output: passes. (2) Otherwise, when the baseline branch's assertion for that command (the else
 # branch's wpa_x_toolarge and its limit line) does not hold on the SAME output either: the check is off, its detail naming both assertions' misses and
 # W. (3) Otherwise (the output is the baseline's block): (a) W >= 3.0 s: a deadline fallback (F1, F2 or a late F3). (b) 2.0 s < W < 3.0 s: the same
-# input runs once more -- the same variables and directory, the budget variable cleared, plus WSL_DISTRO_NAME=Ubuntu, which closes the gate -- and its
-# wall is Tb'; Tb' <= W - 1.0 s is a deadline fallback (F3: the checkpoint sent the rerun back, W more than 2 s over the baseline pass); otherwise the
-# check is off with W and Tb' (the gate-closed run is as slow: the gate closed early, not the rerun's checkpoint). 1 s sits in the middle of F3's 2 s
-# gap and leaves 1 s on each side for load jitter. (c) W <= 2.0 s: the check is off with W (a fallback for time does not end this early).
+# input runs again up to three times, 1 s apart -- each run the same variables and directory, the budget variable cleared, plus WSL_DISTRO_NAME=Ubuntu,
+# which closes the gate -- and each run's wall is a reading Tb'. The first reading with 0 < Tb' <= W - 1.0 s is a deadline fallback (F3: the
+# checkpoint sent the rerun back, W more than 2 s over the baseline pass) and ends the runs; when none of the three is, the check is off with W and all
+# three readings (the gate-closed runs are as slow: the gate closed early, not the rerun's checkpoint). 1 s sits in the middle of F3's 2 s gap and
+# leaves 1 s on each side for load jitter. Why up to three runs (the 3c2 ruling): with one reading, a host that stalls that one run turns a lawful
+# fallback red, and a lawful (b) shows up only when the host held the rerun past 2 s -- the host is busy just then, so the gate-closed run that follows
+# is likely held up too (3c2: W 2.86 s with Tb' 1.74 s, for a command that takes about 0.66 s). A gate that closes early reads about W every time and
+# stays red; a false green still needs W itself drawn out by more than 1 s (the retries only make Tb' less exposed to stalls).
+# (c) W <= 2.0 s: the check is off with W (a fallback for time does not end this early).
 # This replaces the 3b rule's lower bound of 2.85 s, which was copied from the deadline cases instead of worked out from the hook and had a hole on
 # each side: from 2.0 to 2.85 s it turned a lawful F3 red, and from 2.85 to 3.0 s it could not tell F3 from a gate that closed early. Left as it is
 # (the 3c ruling): a command whose baseline pass alone runs past 3 s gives the same output as a lawful "no time to close the gate" and cannot be told
 # apart; each group has a command with a quick baseline pass, and the ported cases cover the rest. No load gate: the six groups run late in the suite,
 # where 3b's seven full rounds ended at load 2.21-4.13, so a gate would SKIP them nearly every round. A group still counts once; the summary line of the
-# six groups gives the fallbacks over the trigger-point commands judged, each with its group and W (and Tb' for (b)).
+# six groups gives the fallbacks over the trigger-point commands judged, each with its group and W (and for (b) the Tb' that met the bound, followed by
+# "(try k)" when that was the k-th run, k > 1).
 wpa_x6_n=0; wpa_x6_fb=0; wpa_x6_where=''
 wpa_x6_eval() {   # <output as wpa_err gives it> <longline | pass | growth | toolarge> <limit line> <command> -> "<checks off>" TAB "<their list>": the assertion
                   # helper itself, in a subshell where wpa_err / wpa_rc hand back that output, so both branches judge ONE run of the hook
@@ -3000,10 +3006,15 @@ wpa_x6() {   # <the relaxed assertion: longline | pass (exit 0) | growth (wpa_L_
     bad="relaxed ($how):${r#*$'\t'} | baseline branch:${b#*$'\t'} | wall ${ws}s"
   elif (( wus >= 3000000 )); then   # (3a) F1, F2 or a late F3
     fb="${ws}s"
-  elif (( wus > 2000000 )); then   # (3b) F3 or a gate closed early: the same input once more with the gate closed (a reading of 0 is no reading)
-    wpa_x6_hook "$input" WSL_DISTRO_NAME=Ubuntu
-    if (( wpa_x6_us > 0 && wpa_x6_us <= wus - 1000000 )); then fb="${ws}s/Tb ${wpa_x6_s}s"
-    else bad="baseline block at wall ${ws}s, gate-closed Tb' ${wpa_x6_s}s (want <= wall - 1.0 s): 关门那一遍同样慢：是准入门提前关，不是重跑的检查点"; fi
+  elif (( wus > 2000000 )); then   # (3b) F3 or a gate closed early: the same input with the gate closed, up to three runs 1 s apart (a reading of 0 is no reading)
+    local try tbs=''
+    for try in 1 2 3; do
+      (( try > 1 )) && sleep 1
+      wpa_x6_hook "$input" WSL_DISTRO_NAME=Ubuntu
+      tbs+="${tbs:+, }${wpa_x6_s}s"
+      if (( wpa_x6_us > 0 && wpa_x6_us <= wus - 1000000 )); then fb="${ws}s/Tb ${wpa_x6_s}s"; (( try > 1 )) && fb+=" (try $try)"; break; fi
+    done
+    [[ -n $fb ]] || bad="baseline block at wall ${ws}s, gate-closed Tb' ${tbs} (want <= wall - 1.0 s): 关门那一遍同样慢：是准入门提前关，不是重跑的检查点"
   else   # (3c) W <= 2.0 s
     bad="baseline block at wall ${ws}s (want > 2.0 s): 因时间的回落不会这么早结束"
   fi
