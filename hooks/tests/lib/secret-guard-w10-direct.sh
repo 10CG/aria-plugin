@@ -202,11 +202,19 @@ if need _sg_relax_nowslfs; then
       w1x V15-W1k-unsearchable-directory "$X/w1-nosearch-mounts" "$w1k" 1 "binfmt_misc mounted at DIR, DIR of mode 000 (cannot be searched; nothing in it)"; chmod 755 "$w1k"
     fi
   fi
-  if sel V15-W1l-unlistable-directory-with-wslinterop-late; then   # a DIR that can be searched but not listed (mode 0311): each name is still seen, where a glob sees none (review R2 m-1)
-    w1l="$X/w1-listless"; mkdir -p "$w1l"; : > "$w1l/WSLInterop-late"; printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1l" > "$X/w1-listless-mounts"; chmod 0311 "$w1l"
-    w1x V15-W1l-unlistable-directory-with-wslinterop-late "$X/w1-listless-mounts" "$w1l" 1 "binfmt_misc mounted at DIR, DIR of mode 0311 (searched, not listed) holding WSLInterop-late"; chmod 755 "$w1l"
+  if sel V15-W1l-unlistable-directory-with-wslinterop-late; then   # a DIR that can be searched but not listed (mode 0311): each name is still seen, where a glob sees none (review R2 m-1). uid 0 lists any directory, so there a look name by name cannot be told from a glob: not applicable there (review R3 m-4)
+    if [[ "$(id -ru)" == 0 ]]; then out SKIP V15-W1l-unlistable-directory-with-wslinterop-late "[platform] uid 0 lists any directory, one of mode 0311 too, so here the case cannot tell a look name by name from a glob"
+    else
+      w1l="$X/w1-listless"; mkdir -p "$w1l"; : > "$w1l/WSLInterop-late"; printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1l" > "$X/w1-listless-mounts"; chmod 0311 "$w1l"
+      w1x V15-W1l-unlistable-directory-with-wslinterop-late "$X/w1-listless-mounts" "$w1l" 1 "binfmt_misc mounted at DIR, DIR of mode 0311 (searched, not listed) holding WSLInterop-late"; chmod 755 "$w1l"
+    fi
   fi
-else miss V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late; fi
+  if sel V15-W1o-regular-file-as-directory; then   # a DIR that is not a directory -- an empty regular file of mode 0755 that the table lists as a binfmt_misc mount point: the
+    # entries cannot be seen, so they may exist (What 1 supplement 2 v3.5; review R3 m-3: -x alone is true for such a file, and the look then finds nothing). Any uid
+    w1o="$X/w1-xfile"; : > "$w1o"; chmod 0755 "$w1o"; printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1o" > "$X/w1-xfile-mounts"
+    w1x V15-W1o-regular-file-as-directory "$X/w1-xfile-mounts" "$w1o" 1 "binfmt_misc listed at DIR, DIR an empty regular file of mode 0755 (not a directory)"
+  fi
+else miss V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late V15-W1o-regular-file-as-directory; fi
 # What 1 supplement 2 (v3.4): the gate asks for the WSL mark of the file system after the platform and the time, so where either closes the gate the mount
 # table is never read. _sg_relax_nowslfs stubbed to count its calls, on a freshly sourced hook with no WSL mark in the environment; both modes
 if sel V15-W1m-mount-table-read-only-after-platform-and-time; then
@@ -655,6 +663,8 @@ EOF
   if sel V15-W1n-mount-table-read-in-one-pass; then   # What 1 supplement 2 (v3.4; review R2 M-1): awk reads the mount table in one pass. In a private mount namespace (unshare -rm) with 1000 tmpfs
     # mounts stacked on one directory, _sg_relax_nowslfs reads the real table and returns within 0.5 s (v3.3 read it line by line in bash, and procfs
     # regenerates the table at every seek back: 2.2 s there). Hard: the 1000 mounts made, status 0 (no WSL mark: MODE relax), stderr empty; soft (INV-7): the wall
+    # time, at most 0.5 s. SKIP [platform] where unshare -rm is not available, where no tmpfs can be mounted, and where the stacking stops after 1 to 999
+    # mounts (a low fs.mount-max, say; review R3): the table the case needs cannot be made there
     if ! need _sg_relax_nowslfs; then miss V15-W1n-mount-table-read-in-one-pass
     elif ! unshare -rm true >/dev/null 2>&1; then out SKIP V15-W1n-mount-table-read-in-one-pass "[platform] unshare -rm (a private user and mount namespace) is not available here"
     else
@@ -664,6 +674,7 @@ EOF
         'echo "$n $r $(grep -c "" /proc/self/mounts) ${t0/,/.} ${t1/,/.}"' > "$X/w1n.sh"
       read -r w1nn w1nr w1nl w1n0 w1n1 <<< "$(unshare -rm "$BASH" "$X/w1n.sh" "$H" "$X" 2>/dev/null)"
       if [[ "${w1nn:-0}" == 0 ]]; then out SKIP V15-W1n-mount-table-read-in-one-pass "[platform] tmpfs cannot be mounted in a private mount namespace here"
+      elif [[ $w1nn =~ ^[0-9]+$ ]] && (( w1nn < 1000 )); then out SKIP V15-W1n-mount-table-read-in-one-pass "[platform] the stacking stopped after $w1nn of 1000 tmpfs mounts (a low fs.mount-max, say), so the table the case needs cannot be made here"
       else
         w1nw=$(awk -v a="${w1n0:-0}" -v b="${w1n1:-0}" 'BEGIN{printf "%.3f", b-a}'); w1nh=ok; w1ns=ok
         [[ $w1nn == 1000 && $w1nr == 0 && ! -s "$X/w1n-e" ]] || w1nh=bad; le "$w1nw" 0.5 || w1ns=bad

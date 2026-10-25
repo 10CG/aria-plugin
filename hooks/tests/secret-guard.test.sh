@@ -13,7 +13,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 990 cases (984 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 991 cases (985 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -186,7 +186,7 @@ V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-r
 V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
 V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
 V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block
-V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late V15-W1m-mount-table-read-only-after-platform-and-time V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system V15-W1n-mount-table-read-in-one-pass"
+V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late V15-W1m-mount-table-read-only-after-platform-and-time V15-W1o-regular-file-as-directory V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system V15-W1n-mount-table-read-in-one-pass"
 SGW_EXP_E2E="V7-E1-benign-big-allowed V6-E2-deadline-fallback-bytes V3-E3-anchor-at-hook-start V3-E4-cap-3-at-budget-4 V3-E5-budget-2 V2-E6-flag-from-environment-ignored
 V2-E7-no-time-left V2-E8-ostype-from-environment-ignored V2-E9-extension-project V9-E10-count-axis-read-blocked V9-E11-tmax-in-rerun V9-E12-vmax-unchanged
 V7-E13-multiline-copy-normal-text V7-E14-long-line-from-expansion V7-E15-credit-as-normal V1-E16-p1-small-benign V1-E16-p1-small-read V1-E16-p1-small-read-filter
