@@ -13,7 +13,7 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 981 cases (975 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 990 cases (984 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
@@ -186,7 +186,7 @@ V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-r
 V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
 V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
 V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block
-V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system"
+V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late V15-W1m-mount-table-read-only-after-platform-and-time V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system V15-W1n-mount-table-read-in-one-pass"
 SGW_EXP_E2E="V7-E1-benign-big-allowed V6-E2-deadline-fallback-bytes V3-E3-anchor-at-hook-start V3-E4-cap-3-at-budget-4 V3-E5-budget-2 V2-E6-flag-from-environment-ignored
 V2-E7-no-time-left V2-E8-ostype-from-environment-ignored V2-E9-extension-project V9-E10-count-axis-read-blocked V9-E11-tmax-in-rerun V9-E12-vmax-unchanged
 V7-E13-multiline-copy-normal-text V7-E14-long-line-from-expansion V7-E15-credit-as-normal V1-E16-p1-small-benign V1-E16-p1-small-read V1-E16-p1-small-read-filter
@@ -232,13 +232,17 @@ sg_w10_ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
 sg_w10_le() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 <= b+0)}'; }
 sg_w10_sel() { [[ "$1" =~ $SGW_SEL ]]; }
 sg_w10_wslfs() {   # [MOUNTS [DIR]] -> status 0 where the gate must see a WSL mark in the file system (WSLF in sg_w10_cases, wpa_rx6_wslf): the rule of the hook's
-  # _sg_relax_nowslfs (What 1 supplement 2), written apart from it, never sourced or called (status 0 here is status 1 there) -- the mount table (default
-  # /proc/self/mounts) cannot be read, or a binfmt_misc file system is mounted at DIR (default /proc/sys/fs/binfmt_misc) and holds an entry named WSLInterop*.
-  # DIR is listed only when that mount is in the table, so the check never triggers an automount. The two arguments exist to check it against the hook's function
-  local t l d="${2:-/proc/sys/fs/binfmt_misc}"
-  t=$(cat -- "${1:-/proc/self/mounts}" 2>/dev/null) || return 0
-  awk -v d="$d" '$2 == d && $3 == "binfmt_misc" { m = 1 } END { exit !m }' <<< "$t" || return 1
-  l=$'\n'$(ls -A -- "$d" 2>/dev/null); [[ $l == *$'\n'WSLInterop* ]]
+  # _sg_relax_nowslfs (What 1 supplement 2, v3.4), written apart from it, never sourced or called (status 0 here is status 1 there) -- the mount table (default
+  # /proc/self/mounts) cannot be read or reads empty; or the topmost mount at DIR (default /proc/sys/fs/binfmt_misc; the table's last line for it) is a
+  # binfmt_misc file system and DIR cannot be searched (cd fails) or holds WSLInterop or WSLInterop-late (each name tested on its own: no glob, no listing).
+  # DIR is looked at only under a topmost binfmt_misc, so the check never triggers an automount. The two arguments exist to check it against the hook's function
+  local t y d="${2:-/proc/sys/fs/binfmt_misc}"
+  t=$(cat -- "${1:-/proc/self/mounts}" 2>/dev/null && echo .) || return 0
+  [[ "$t" != . ]] || return 0
+  y=$(printf '%s\n' "${t%.}" | awk -v d="$d" '$2 == d { print $3 }' | tail -n 1)
+  [[ "$y" == binfmt_misc ]] || return 1
+  ( cd -- "$d" ) >/dev/null 2>&1 || return 0
+  [ -e "$d/WSLInterop" ] || [ -e "$d/WSLInterop-late" ]
 }
 sg_w10_relax_rule() {   # MACH MAJ MIN OSRELEASE WSLINTEROP(yes|no) -> status 0 where the gate's platform rule (What 1 and its supplement) lets the relaxation in
   [[ "${1:-}" == x86_64-*-linux-gnu* && -n "${4:-}" && "${4:-}" != *[Mm]icrosoft* && "${4:-}" != *WSL* && "${5:-yes}" == no ]] && (( ${2:-0} == 5 && ${3:-0} <= 3 ))

@@ -69,15 +69,19 @@ V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-r
 V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
 V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
 V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block
-V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system"   # the cases of MODE relax; SKIP [platform] in MODE norelax
-wslmark() {   # [MOUNTS [DIR]] : status 0 where the gate must see a WSL mark in the file system -- the rule of the hook's _sg_relax_nowslfs (What 1 supplement 2),
-  # written apart from it, never sourced or called (status 0 here is status 1 there): the mount table (default /proc/self/mounts) cannot be read, or a
-  # binfmt_misc file system is mounted at DIR (default /proc/sys/fs/binfmt_misc) and holds an entry named WSLInterop*. DIR is listed only when that mount is
-  # in the table, so the check never triggers an automount. The two arguments exist to check it against the hook's function; WSLM below calls it with none
-  local t l d="${2:-/proc/sys/fs/binfmt_misc}"
-  t=$(cat -- "${1:-/proc/self/mounts}" 2>/dev/null) || return 0
-  awk -v d="$d" '$2 == d && $3 == "binfmt_misc" { m = 1 } END { exit !m }' <<< "$t" || return 1
-  l=$'\n'$(ls -A -- "$d" 2>/dev/null); [[ $l == *$'\n'WSLInterop* ]]
+V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system V15-W1n-mount-table-read-in-one-pass"   # the cases of MODE relax; SKIP [platform] in MODE norelax
+wslmark() {   # [MOUNTS [DIR]] : status 0 where the gate must see a WSL mark in the file system -- the rule of the hook's _sg_relax_nowslfs (What 1 supplement 2,
+  # v3.4), written apart from it, never sourced or called (status 0 here is status 1 there): the mount table (default /proc/self/mounts) cannot be read or
+  # reads empty; or the topmost mount at DIR (default /proc/sys/fs/binfmt_misc; the table's last line for it) is a binfmt_misc file system and DIR cannot
+  # be searched (cd fails) or holds WSLInterop or WSLInterop-late (each name tested on its own: no glob, no listing). DIR is looked at only under a topmost
+  # binfmt_misc, so the check never triggers an automount. The two arguments exist to check it against the hook's function; WSLM below calls it with none
+  local t y d="${2:-/proc/sys/fs/binfmt_misc}"
+  t=$(cat -- "${1:-/proc/self/mounts}" 2>/dev/null && echo .) || return 0
+  [[ "$t" != . ]] || return 0
+  y=$(printf '%s\n' "${t%.}" | awk -v d="$d" '$2 == d { print $3 }' | tail -n 1)
+  [[ "$y" == binfmt_misc ]] || return 1
+  ( cd -- "$d" ) >/dev/null 2>&1 || return 0
+  [ -e "$d/WSLInterop" ] || [ -e "$d/WSLInterop-late" ]
 }
 OSR=$(cat /proc/sys/kernel/osrelease 2>/dev/null); WSLM=''; wslmark && WSLM=wsl
 
@@ -166,23 +170,60 @@ if need _sg_relax_ok; then
   r=$( export WSL_DISTRO_NAME=Ubuntu; _SG_P0=${EPOCHREALTIME:-}; gate ); [[ $r == 1 ]]; chk $? V2-G17-wsl-distro-name-closes-gate "WSL_DISTRO_NAME set: status $r (want 1)" "[status]"
   r=$( export WSL_INTEROP=/run/WSL/8_interop; _SG_P0=${EPOCHREALTIME:-}; gate ); [[ $r == 1 ]]; chk $? V2-G18-wsl-interop-closes-gate "WSL_INTEROP set: status $r (want 1)" "[status]"
 else miss V2-G14-cwd-extension-file-with-entry V2-G15-cwd-project-without-extension-file V2-G16-environment-root-before-cwd V2-G17-wsl-distro-name-closes-gate V2-G18-wsl-interop-closes-gate; fi
-# What 1 supplement 2 (TASK-005 D-1, D-2): _sg_relax_nowslfs looks at the WSLInterop* entries only under a mounted binfmt_misc, so the look never
-# triggers an automount, and a mount table that cannot be read keeps the relaxation off. Fake mount tables and a directory under $X; both modes
+# What 1 supplement 2 (v3.4; TASK-005 D-1, D-2; review R2 M-1, m-1 and doubt 1): _sg_relax_nowslfs reads the mount table in one pass and takes the topmost
+# mount at DIR (the table's last line for it); the entries are looked at only when that is binfmt_misc, so the look never triggers an automount, and the
+# two names are tested one by one (no glob: noglob or failglob cannot change the look). A table that cannot be read or reads empty, or a DIR that cannot be
+# searched, keeps the relaxation off. Fake mount tables and directories under $X; both modes
 if need _sg_relax_nowslfs; then
-  w1d="$X/w1-binfmt"; mkdir -p "$w1d"
+  w1d="$X/w1-binfmt"; mkdir -p "$w1d" "$X/w1-tabledir"
   printf 'systemd-1 %s autofs rw,relatime,fd=29,pgrp=1,timeout=0,minproto=5,maxproto=5,direct 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1d" > "$X/w1-autofs"
   printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1d" > "$X/w1-mounted"
-  w1() {   # id mounts entry want what : _sg_relax_nowslfs MOUNTS DIR, DIR holding only ENTRY; status and stderr (the last line of each table does not match)
-    local r t=''; rm -f "$w1d"/*; : > "$w1d/$3"
-    r=$( _sg_relax_nowslfs "$2" "$w1d" 2>"$X/w1e"; echo $? )
+  printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nsystemd-1 %s autofs rw,relatime,fd=29,pgrp=1,timeout=0,minproto=5,maxproto=5,direct 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1d" "$w1d" > "$X/w1-stacked"; : > "$X/w1-empty"
+  w1x() {   # id mounts dir want what [setup] : _sg_relax_nowslfs MOUNTS DIR after SETUP (a shell option, set in the same subshell); status and stderr
+    local r t=''
+    r=$( [[ -z "${6:-}" ]] || eval "$6"; _sg_relax_nowslfs "$2" "$3" 2>"$X/w1e"; echo $? )
     [[ $r == "$4" ]] || t+='[status] '; [[ -s "$X/w1e" ]] && t+='[stderr]'
     [[ -z "$t" ]]; chk $? "$1" "$5: status $r (want $4), stderr $(wc -c < "$X/w1e") bytes (want 0)" "${t% }"
   }
+  w1() { rm -f "$w1d"/*; : > "$w1d/$3"; w1x "$1" "$2" "$w1d" "$4" "$5" "${6:-}"; }   # id mounts entry want what [setup] : DIR = $w1d holding only ENTRY (the last line of each table does not match)
   sel V15-W1a-autofs-mount-point-not-looked-at && w1 V15-W1a-autofs-mount-point-not-looked-at "$X/w1-autofs" WSLInterop 0 "an autofs mount point at DIR (nothing mounted) that holds WSLInterop"
   sel V15-W1b-binfmt-misc-with-wslinterop-late && w1 V15-W1b-binfmt-misc-with-wslinterop-late "$X/w1-mounted" WSLInterop-late 1 "binfmt_misc mounted at DIR, holding WSLInterop-late"
-  sel V15-W1c-binfmt-misc-without-entry && w1 V15-W1c-binfmt-misc-without-entry "$X/w1-mounted" status 0 "binfmt_misc mounted at DIR, no WSLInterop* entry"
+  sel V15-W1c-binfmt-misc-without-entry && w1 V15-W1c-binfmt-misc-without-entry "$X/w1-mounted" status 0 "binfmt_misc mounted at DIR, neither WSLInterop nor WSLInterop-late in it"
   sel V15-W1d-unreadable-mount-table && w1 V15-W1d-unreadable-mount-table "$X/w1-none/mounts" WSLInterop 1 "a mount table that cannot be read"
-else miss V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table; fi
+  sel V15-W1f-empty-mount-table && w1 V15-W1f-empty-mount-table "$X/w1-empty" status 1 "a mount table that reads empty (0 lines; no WSL entry in DIR)"
+  sel V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at && w1 V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at "$X/w1-stacked" WSLInterop 0 "binfmt_misc at DIR with autofs mounted on top of it (the topmost mount decides: not looked at), DIR holding WSLInterop"
+  sel V15-W1h-directory-as-mount-table && w1 V15-W1h-directory-as-mount-table "$X/w1-tabledir" status 1 "a directory given as the mount table (no WSL entry in DIR)"
+  sel V15-W1i-noglob-binfmt-misc-with-wslinterop-late && w1 V15-W1i-noglob-binfmt-misc-with-wslinterop-late "$X/w1-mounted" WSLInterop-late 1 "under set -f (noglob, which the environment can import): binfmt_misc mounted at DIR, holding WSLInterop-late" 'set -f'
+  sel V15-W1j-failglob-binfmt-misc-without-entry && w1 V15-W1j-failglob-binfmt-misc-without-entry "$X/w1-mounted" status 0 "under shopt -s failglob: binfmt_misc mounted at DIR, neither name in it" 'shopt -s failglob'
+  if sel V15-W1k-unsearchable-directory; then   # a DIR that cannot be searched: the entries cannot be seen, so they may exist (review R2 m-1). uid 0 searches any directory: not applicable there
+    if [[ "$(id -ru)" == 0 ]]; then out SKIP V15-W1k-unsearchable-directory "[platform] uid 0 searches a directory of mode 000, so a DIR that cannot be searched cannot be made here"
+    else
+      w1k="$X/w1-nosearch"; mkdir -p "$w1k"; printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1k" > "$X/w1-nosearch-mounts"; chmod 000 "$w1k"
+      w1x V15-W1k-unsearchable-directory "$X/w1-nosearch-mounts" "$w1k" 1 "binfmt_misc mounted at DIR, DIR of mode 000 (cannot be searched; nothing in it)"; chmod 755 "$w1k"
+    fi
+  fi
+  if sel V15-W1l-unlistable-directory-with-wslinterop-late; then   # a DIR that can be searched but not listed (mode 0311): each name is still seen, where a glob sees none (review R2 m-1)
+    w1l="$X/w1-listless"; mkdir -p "$w1l"; : > "$w1l/WSLInterop-late"; printf 'binfmt_misc %s binfmt_misc rw,nosuid,nodev,noexec,relatime 0 0\nproc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n' "$w1l" > "$X/w1-listless-mounts"; chmod 0311 "$w1l"
+    w1x V15-W1l-unlistable-directory-with-wslinterop-late "$X/w1-listless-mounts" "$w1l" 1 "binfmt_misc mounted at DIR, DIR of mode 0311 (searched, not listed) holding WSLInterop-late"; chmod 755 "$w1l"
+  fi
+else miss V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late; fi
+# What 1 supplement 2 (v3.4): the gate asks for the WSL mark of the file system after the platform and the time, so where either closes the gate the mount
+# table is never read. _sg_relax_nowslfs stubbed to count its calls, on a freshly sourced hook with no WSL mark in the environment; both modes
+if sel V15-W1m-mount-table-read-only-after-platform-and-time; then
+  if need _sg_relax_ok _sg_relax_platform _sg_relax_left _sg_relax_nowslfs _sg_relax_noext; then
+    w1m() {   # PLATFORM LEFT : the _sg_relax_nowslfs calls of one _sg_relax_ok, with _sg_relax_platform returning PLATFORM and _sg_relax_left returning LEFT
+      : > "$X/w1m"
+      ( source "$H" </dev/null >/dev/null 2>&1; set +e; unset _SG_RELAXED WSL_DISTRO_NAME WSL_INTEROP; w1mp=$1 w1ml=$2
+        _sg_relax_platform() { return "$w1mp"; }; _sg_relax_left() { return "$w1ml"; }
+        _sg_relax_nowslfs() { printf x >> "$X/w1m"; return 0; }; _sg_relax_noext() { echo none; }
+        _sg_relax_ok ) >/dev/null 2>&1
+      wc -c < "$X/w1m" | tr -d ' '
+    }
+    w1m1=$(w1m 1 0); w1m2=$(w1m 0 1); w1m3=$(w1m 0 0); t=''
+    [[ $w1m1 == 0 ]] || t+='[platform] '; [[ $w1m2 == 0 ]] || t+='[time] '; [[ $w1m3 == 1 ]] || t+='[control]'
+    [[ -z "$t" ]]; chk $? V15-W1m-mount-table-read-only-after-platform-and-time "_sg_relax_nowslfs calls in one _sg_relax_ok: the platform fails $w1m1 (want 0), no time left $w1m2 (want 0), both pass $w1m3 (want 1: the stub is reached)" "${t% }"
+  else miss V15-W1m-mount-table-read-only-after-platform-and-time; fi
+fi
 
 # ---------------- the longline text, verbatim (Rule #6 block B: proposal What 5; both modes) ----------------
 if ! need _sg_emit_blocked; then miss V11-S5-longline-head-verbatim V11-S6-longline-chinese-line-verbatim V11-S7-longline-text-verbatim
@@ -570,7 +611,9 @@ EOF
   fi
   if sel V15-T2-anchor-taken-once-at-hook-start; then   # the anchor _SG_P0 is taken once, at the hook start: (a) one assignment, on the line after set -uo pipefail;
     # (b) with the anchor 2.0 s back and budget 3 the judgement inside the job sees 0 < left <= 1.0 s: a fresh anchor in the gate, the run or the job
-    # (a bad implementation) gives about 3 s there, and a slow host only makes the value smaller (it reaches 0 only after 1.0 s from here to the judgement)
+    # (a bad implementation) gives about 3 s there, and a slow host only makes the value smaller. The value is fixed by the two _sg_relax_left calls, in the
+    # gate and in the run (the job gets the run's): more than 1.0 s from setting the anchor here to those calls closes the gate or makes the run fall back,
+    # and the judgement never runs (_SG_LEFT [], a false red)
     if need _sg_relax_ok _sg_relax_run _sg_relax_job _sg_vx_pass; then
       t2s=$(awk '/^[[:space:]]*#/{p=$0; next} /(^|[^A-Za-z0-9_])_SG_P0=/{n++; if (p ~ /^set -uo pipefail/) a++} {p=$0} END{printf "%d %d", n, a}' "$H")
       awk '/^_sg_per_segment_eval\(\) \{/,/^\}$/' "$H" > "$X/t2-pse.sh"
@@ -598,11 +641,35 @@ EOF
       [[ -z "$t" ]]; chk $? V15-T3-job-errors-silenced "a job killed the way the deadline kills it (kill -KILL on itself): _sg_relax_run status $r (want 4), stderr [$(head -c 80 "$X/t3e" | tr '\n' ' ')] (want empty)" "${t% }"
     else miss V15-T3-job-errors-silenced; fi
   fi
-  if sel V15-W1e-gate-closed-by-wsl-file-system; then   # What 1 supplement 2: the gate's second WSL line -- _sg_relax_nowslfs failing closes the gate on this relaxing bash
-    if need _sg_relax_ok _sg_relax_nowslfs; then
-      r=$( v15src; _sg_relax_nowslfs() { return 1; }; _SG_P0=${EPOCHREALTIME:-}; gate )
-      [[ $r == 1 ]]; chk $? V15-W1e-gate-closed-by-wsl-file-system "_sg_relax_nowslfs stubbed to fail (a WSLInterop* entry, or a mount table that cannot be read) on a bash whose gate opens: _sg_relax_ok status $r (want 1)" "[status]"
+  if sel V15-W1e-gate-closed-by-wsl-file-system; then   # What 1 supplement 2 (v3.4): the gate's last check before the extension -- _sg_relax_nowslfs failing closes the gate on this relaxing bash.
+    # Two sides, so that a gate closed by an earlier check cannot pass the case: every check before it passes here (a fresh anchor, budget 3, no WSL mark in
+    # the environment, this bash's platform; _sg_relax_noext stubbed to print none), so the stub returning 0 must open the gate and returning 1 must close it
+    if need _sg_relax_ok _sg_relax_nowslfs _sg_relax_noext; then
+      w1e() { ( v15src; unset _SG_RELAXED WSL_DISTRO_NAME WSL_INTEROP; export SECRET_GUARD_TIME_BUDGET_S=3; w1es=$1
+                _sg_relax_nowslfs() { return "$w1es"; }; _sg_relax_noext() { echo none; }; _SG_P0=${EPOCHREALTIME:-}; gate ); }
+      w1e0=$(w1e 0); w1e1=$(w1e 1); t=''
+      [[ $w1e0 == 0 ]] || t+='[open] '; [[ $w1e1 == 1 ]] || t+='[closed]'
+      [[ -z "$t" ]]; chk $? V15-W1e-gate-closed-by-wsl-file-system "every check before it passing: _sg_relax_nowslfs stubbed to return 0 -> _sg_relax_ok status $w1e0 (want 0), stubbed to return 1 (a WSLInterop entry, a DIR that cannot be searched, a mount table that cannot be read or reads empty) -> $w1e1 (want 1)" "${t% }"
     else miss V15-W1e-gate-closed-by-wsl-file-system; fi
+  fi
+  if sel V15-W1n-mount-table-read-in-one-pass; then   # What 1 supplement 2 (v3.4; review R2 M-1): awk reads the mount table in one pass. In a private mount namespace (unshare -rm) with 1000 tmpfs
+    # mounts stacked on one directory, _sg_relax_nowslfs reads the real table and returns within 0.5 s (v3.3 read it line by line in bash, and procfs
+    # regenerates the table at every seek back: 2.2 s there). Hard: the 1000 mounts made, status 0 (no WSL mark: MODE relax), stderr empty; soft (INV-7): the wall
+    if ! need _sg_relax_nowslfs; then miss V15-W1n-mount-table-read-in-one-pass
+    elif ! unshare -rm true >/dev/null 2>&1; then out SKIP V15-W1n-mount-table-read-in-one-pass "[platform] unshare -rm (a private user and mount namespace) is not available here"
+    else
+      printf '%s\n' 'source "$1" </dev/null >/dev/null 2>&1; set +e; m=$2/w1n-m; mkdir -p "$m"; n=0' \
+        'while (( n < 1000 )); do mount -t tmpfs w1n "$m" 2>/dev/null || break; n=$(( n + 1 )); done' \
+        't0=$EPOCHREALTIME; _sg_relax_nowslfs 2>"$2/w1n-e"; r=$?; t1=$EPOCHREALTIME' \
+        'echo "$n $r $(grep -c "" /proc/self/mounts) ${t0/,/.} ${t1/,/.}"' > "$X/w1n.sh"
+      read -r w1nn w1nr w1nl w1n0 w1n1 <<< "$(unshare -rm "$BASH" "$X/w1n.sh" "$H" "$X" 2>/dev/null)"
+      if [[ "${w1nn:-0}" == 0 ]]; then out SKIP V15-W1n-mount-table-read-in-one-pass "[platform] tmpfs cannot be mounted in a private mount namespace here"
+      else
+        w1nw=$(awk -v a="${w1n0:-0}" -v b="${w1n1:-0}" 'BEGIN{printf "%.3f", b-a}'); w1nh=ok; w1ns=ok
+        [[ $w1nn == 1000 && $w1nr == 0 && ! -s "$X/w1n-e" ]] || w1nh=bad; le "$w1nw" 0.5 || w1ns=bad
+        timed V15-W1n-mount-table-read-in-one-pass $w1nh $w1ns "1000 tmpfs mounts stacked in a private mount namespace ($w1nn made, the table $w1nl lines): _sg_relax_nowslfs on the real table returned $w1nr (want 0) in ${w1nw} s (want <= 0.5), stderr $(wc -c 2>/dev/null < "$X/w1n-e" || echo '?') bytes (want 0)"
+      fi
+    fi
   fi
 else
   # MODE norelax: the relaxation is not expected on this bash. Each of its cases is reported once, as SKIP [platform], so the list of ids is the same
