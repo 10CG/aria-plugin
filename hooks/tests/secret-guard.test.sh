@@ -13,12 +13,12 @@
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 972 cases (966 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 981 cases (975 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
 #
-# 141 of those cases are the W10 fail-closed narrowing (10CG/aria-plugin#217) acceptance cases ported from
+# 150 of those cases are the W10 fail-closed narrowing (10CG/aria-plugin#217) acceptance cases ported from
 # v31 (sg_w10_cases, defined after the helpers and run once, before every older case; ids V<k>-... and the harness checks V0-H1 / V0-H2): the direct calls in
 # lib/secret-guard-w10-direct.sh, the end-to-end and static ones in this file. They run the hook with SC_BASH
 # (default: bash on PATH); every older case runs it as before. lib/sg-shim/delay-first, linked as jq and sed
@@ -185,13 +185,14 @@ V9-C2b-references-baseline-cb12 V9-C3-for-statements-rerun V9-C3b-for-statements
 V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-read-big-judge V7-N5-read-big-judge-short-lines
 V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
 V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
-V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block"
+V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block
+V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system"
 SGW_EXP_E2E="V7-E1-benign-big-allowed V6-E2-deadline-fallback-bytes V3-E3-anchor-at-hook-start V3-E4-cap-3-at-budget-4 V3-E5-budget-2 V2-E6-flag-from-environment-ignored
 V2-E7-no-time-left V2-E8-ostype-from-environment-ignored V2-E9-extension-project V9-E10-count-axis-read-blocked V9-E11-tmax-in-rerun V9-E12-vmax-unchanged
 V7-E13-multiline-copy-normal-text V7-E14-long-line-from-expansion V7-E15-credit-as-normal V1-E16-p1-small-benign V1-E16-p1-small-read V1-E16-p1-small-read-filter
 V1-E16-p1-var-read V1-E16-p1-var-mid V1-E16-p1-var-mid-read V2-E17-wsl-mark-keeps-baseline V2-E18-extension-via-stdin-cwd V5-E19-deadline-with-term-ignored"
 SGW_EXP_STATIC="V11-S1-above-gate:_sg_vx_big_judge V11-S1-above-gate:_sg_relax_left V11-S1-above-gate:_sg_relax_ok V11-S1-above-gate:_sg_relax_platform
-V11-S1-above-gate:_sg_relax_noext V11-S1-above-gate:_sg_relax_job V11-S1-above-gate:_sg_relax_run V11-S3-longline-instructions-verbatim V11-S4-one-rule-loop"
+V11-S1-above-gate:_sg_relax_nowslfs V11-S1-above-gate:_sg_relax_noext V11-S1-above-gate:_sg_relax_job V11-S1-above-gate:_sg_relax_run V11-S3-longline-instructions-verbatim V11-S4-one-rule-loop"
 SG_W10_SHAPES="benign-big count-axis count-axis-ctl ext-read longline-expansion multiline-credit p1-small-benign p1-small-read p1-small-read-filter p1-var-mid p1-var-mid-read p1-var-read stall-read tmax-rerun vmax"
 
 sg_w10_rep() {   # VAR WORD N : VAR = WORD repeated N times (by doubling; a trailing newline survives, unlike in a command substitution)
@@ -230,6 +231,15 @@ sg_w10_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 < b+0)}'; }
 sg_w10_ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
 sg_w10_le() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 <= b+0)}'; }
 sg_w10_sel() { [[ "$1" =~ $SGW_SEL ]]; }
+sg_w10_wslfs() {   # [MOUNTS [DIR]] -> status 0 where the gate must see a WSL mark in the file system (WSLF in sg_w10_cases, wpa_rx6_wslf): the rule of the hook's
+  # _sg_relax_nowslfs (What 1 supplement 2), written apart from it, never sourced or called (status 0 here is status 1 there) -- the mount table (default
+  # /proc/self/mounts) cannot be read, or a binfmt_misc file system is mounted at DIR (default /proc/sys/fs/binfmt_misc) and holds an entry named WSLInterop*.
+  # DIR is listed only when that mount is in the table, so the check never triggers an automount. The two arguments exist to check it against the hook's function
+  local t l d="${2:-/proc/sys/fs/binfmt_misc}"
+  t=$(cat -- "${1:-/proc/self/mounts}" 2>/dev/null) || return 0
+  awk -v d="$d" '$2 == d && $3 == "binfmt_misc" { m = 1 } END { exit !m }' <<< "$t" || return 1
+  l=$'\n'$(ls -A -- "$d" 2>/dev/null); [[ $l == *$'\n'WSLInterop* ]]
+}
 sg_w10_relax_rule() {   # MACH MAJ MIN OSRELEASE WSLINTEROP(yes|no) -> status 0 where the gate's platform rule (What 1 and its supplement) lets the relaxation in
   [[ "${1:-}" == x86_64-*-linux-gnu* && -n "${4:-}" && "${4:-}" != *[Mm]icrosoft* && "${4:-}" != *WSL* && "${5:-yes}" == no ]] && (( ${2:-0} == 5 && ${3:-0} <= 3 ))
 }
@@ -337,7 +347,7 @@ sg_w10_blk() { awk -v k="$2" '$0 ~ "kind\" == " k " \\]\\]; then" {f=1} f && /^S
 sg_w10_static() {   # V11-S1 (the new functions above the sourcing gate, INV-4), V11-S3 (the longline instruction lines), V11-S4 (one rule loop)
   local g l f id o ll lz b
   g=$(grep -n '^if \[\[ "${BASH_SOURCE\[0\]}" != "$0" \]\]; then' "$SGW_HOOK" | head -1 | cut -d: -f1)
-  for f in _sg_vx_big_judge _sg_relax_left _sg_relax_ok _sg_relax_platform _sg_relax_noext _sg_relax_job _sg_relax_run; do
+  for f in _sg_vx_big_judge _sg_relax_left _sg_relax_ok _sg_relax_platform _sg_relax_nowslfs _sg_relax_noext _sg_relax_job _sg_relax_run; do
     id="V11-S1-above-gate:$f"; sg_w10_sel "$id" || continue
     l=$(grep -n "^$f() {" "$SGW_HOOK" | head -1 | cut -d: -f1)
     if [[ -z "$l" ]]; then sg_w10_res FAIL "$id" "[missing] $f is not defined in the hook (sourcing gate at line ${g:-missing})"
@@ -371,7 +381,7 @@ sg_w10_cases() {
   "$SGW_JQ" -Rs --arg cwd "$SGW_W/ext" '{tool_name:"Bash", cwd:$cwd, tool_input:{command:.}}' < "$SGW_W/in/ext-read.txt" > "$SGW_W/in/ext-read-cwd.json" || setup+="input ext-read-cwd; "
   # the gate's rule (What 1 and its supplement), asked of the bash that runs the hook; the WSL variables are cleared for every run, so the kernel facts decide
   [[ -z "$setup" ]] && read -r MACH MAJ MIN < <("$SGW_BASH" -c 'echo "${BASH_VERSINFO[5]} ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' 2>/dev/null)
-  OSR=$(cat /proc/sys/kernel/osrelease 2>/dev/null); WSLF=no; [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && WSLF=yes
+  OSR=$(cat /proc/sys/kernel/osrelease 2>/dev/null); WSLF=no; sg_w10_wslfs && WSLF=yes
   SGW_RELAX=no
   sg_w10_relax_rule "$MACH" "$MAJ" "$MIN" "$OSR" "$WSLF" && SGW_RELAX=yes
   mode=norelax; [[ $SGW_RELAX == yes ]] && mode=relax
@@ -2876,10 +2886,11 @@ wpa_use_none
 # Without them the judged copy is the segment plus references x value length, one level of chaining multiplies a value by 8 per level, and the pass overran the 5 s hook
 # timeout on a 5 KB command (a timeout lets the command through). Owner ruling 2026-10-14, narrowed by 10CG/aria-plugin#217 (owner rulings A and E, 2026-10-23): a value
 # over the value limit, or copies over the pass-wide limit, block the command on every platform -- exit 2 with the "command too large to scan for secrets ... split it"
-# text, not the finding text -- and are never passed (P9); a copy over the copy limit is blocked that way only where the relaxation is not in effect (What 1 and its
-# supplement: another platform or bash version, WSL, a project extension, or no time left; P2). Where it is in effect the pass is re-run under a hard deadline with the
-# relaxed rules (What 1): a copy that grows by more than _SGV_GMAX over its input is blocked with the growth text (P8, What 5), a copy over _SGV_SMAX whose longest line is
-# longer than _SGV_LMAX is matched against the rows only and a match blocks with the longline text (P7, What 5), and any other copy is judged as usual, so it may pass
+# text, not the finding text -- and are never passed (P9); a copy over the copy limit is blocked that way wherever the relaxation is not in effect (What 1 and its
+# supplement: another platform or bash version, WSL, a project extension, or no time left; P2), and also where it is whenever the rerun falls back (the deadline, a time
+# checkpoint, the self-check, any other failure: What 4). Where it is in effect the pass is re-run under a hard deadline with the relaxed rules (What 1): a copy that grows
+# by more than _SGV_GMAX over its input is blocked with the growth text (P8, What 5), a copy over _SGV_SMAX whose longest line is longer than _SGV_LMAX is matched against
+# the rows only and a match blocks with the longline text (P7, What 5), and any other copy is judged as usual, so it may pass
 # (R-a). The COUNT bounds of the baseline pass, 21y, still pass (P9). After the flip both sides of a limit exit 2 wherever a row matches (in the relaxed branch the outside
 # of the copy limit passes when none does, 21ab), so the exit code alone does not tell "judged" from "refused": the text does. wpa_x_finding = the call was judged and
 # blocked as a finding (the shared BLOCKED text, not the size text); wpa_x_toolarge = it was refused as too large (the size text, not the finding text). Every limit is
@@ -2928,7 +2939,7 @@ wpa_x_toolarge() {   # <command> <the limit line it must name: wpa_L_*>: refused
 # assertion on the same output, with a wall only a fallback for time gives: >= 3.0 s, or over 2.0 s with one of up to three gate-closed runs of the
 # same input at least 1.0 s quicker; see wpa_x6), and the summary counts those fallbacks.
 wpa_rx6=no; wpa_rx6_mach=''; wpa_rx6_maj=''; wpa_rx6_min=''; wpa_rx6_ver=''; wpa_rx6_osr=$(cat /proc/sys/kernel/osrelease 2>/dev/null); wpa_rx6_wslf=no
-[[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && wpa_rx6_wslf=yes
+sg_w10_wslfs && wpa_rx6_wslf=yes
 read -r wpa_rx6_mach wpa_rx6_maj wpa_rx6_min wpa_rx6_ver < <(env bash -c 'echo "${BASH_VERSINFO[5]} ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]} $BASH_VERSION"' 2>/dev/null)
 sg_w10_relax_rule "$wpa_rx6_mach" "$wpa_rx6_maj" "$wpa_rx6_min" "$wpa_rx6_osr" "$wpa_rx6_wslf" && [[ -z "${WSL_DISTRO_NAME:-}${WSL_INTEROP:-}" ]] && wpa_rx6=yes
 wpa_rx6_note="$([[ $wpa_rx6 == yes ]] && echo 'relaxed branch (new outcomes)' || echo 'baseline branch (assertions as before)') | bash on PATH $(command -v bash) ${wpa_rx6_ver:-?} (machtype ${wpa_rx6_mach:-?}) | osrelease ${wpa_rx6_osr:-unreadable} | WSLInterop $wpa_rx6_wslf | WSL_DISTRO_NAME '${WSL_DISTRO_NAME:-}' WSL_INTEROP '${WSL_INTEROP:-}'"
