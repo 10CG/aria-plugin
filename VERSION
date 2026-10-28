@@ -1,7 +1,9 @@
 # Aria Plugin 版本信息
 
-1.77.4
-> **发布日期**: 2026-10-23  # patch: v1.77.4 review-r2-closeout (10CG/Aria#257: M-6 实修 exit 严重度排序 + scenario 15; I-1 摘录 exit 码/enum 对齐; I-3 SC 行族收口 + 反事实; Minor×3; 15 scenario/20 断言全绿)
+1.77.5
+> **发布日期**: 2026-10-28  # patch: v1.77.5 secret-guard W10 尺寸误拦收窄 (10CG/aria-plugin#217: >8KB 大命令按增长量在硬截止内完整重判, 放宽条件 x86_64 GNU/Linux bash 5.0-5.3 非 WSL; 真实流量放行 136/137; 套件 831→991 例)
+#
+# 上一版: v1.77.4 review-r2-closeout (10CG/Aria#257: M-6 实修 exit 严重度排序 + scenario 15; I-1 摘录 exit 码/enum 对齐; I-3 SC 行族收口 + 反事实; Minor×3; 15 scenario/20 断言全绿)
 #
 # 上一版: v1.77.3 review-debt-cleanup (10CG/Aria#257: I-1 SKILL §C.2.4.5 摘录同步 + 4 SC 定向 fixture 套件缺口 #258; I-2 handoff 枚举面 7 处; M-4 BASE_REF_OK fetch 后重算 + M-5 warn verdict ALLOWED + 附带 rev-parse 回显 rewrite 误判修复 scenario 14; M-8/M-10)
 #

@@ -85,14 +85,30 @@
 #     retry that follows the text is blocked again; the text is unchanged on
 #     purpose (secret-hygiene.md §2.5, note).
 #   - Shell variable indirection (`f=...; cat "$f"`) is covered only in part: literal
-#     assignments are expanded in a second pass (at most 16 assignments and 8 replacements
-#     per variable; beyond those COUNTS the variable passes). The SIZE of the expansion is
-#     bounded as well -- a value up to 4096 characters, a substituted segment up to 8192
-#     characters and 65536 characters of substituted text per command -- and beyond a SIZE
-#     limit the whole command is BLOCKED as too large to scan ("split it", fail-closed,
-#     owner ruling 2026-10-14), never passed. Arrays, `read <<<`, quote-spliced paths, `cd`
-#     + a relative name, globs, `set --`, `$(printf ...)` and variables across two tool
-#     calls pass; the output side is left to secret-scan.sh.
+#     assignments are expanded in a second pass (at most 16 assignments, 8 for lists and 8
+#     replacements per variable in the baseline pass; beyond those COUNTS the variable
+#     passes). The SIZE of the expansion is bounded too: a value over 4096 characters, or
+#     more than 65536 characters of substituted text per command, blocks the command
+#     (fail-closed, owner ruling 2026-10-14). A substituted copy over 8192 characters is
+#     blocked for its size wherever the relaxed rerun of 10CG/aria-plugin#217 is not in
+#     effect, and also where it is (an x86_64 GNU/Linux build of bash 5.0-5.3 outside WSL,
+#     no project extension, time left) whenever that rerun falls back. The rerun runs the
+#     pass again under a hard deadline with no count bound, the growth over the input as
+#     the limit and the copy judged in full: growth over 8192 characters blocks with the
+#     growth text, a value over 4096 characters with the value text (the rerun reaches
+#     values that the counts cut off in the baseline pass), and the deadline, a time
+#     checkpoint, the self-check or any other failure of the rerun falls back to that size
+#     block. The one exception (What 4): a fatal error of bash itself inside the rerun that
+#     makes it exit with status 2 and write its error message is passed on as the block
+#     text -- the command is still blocked, but with bash's message instead of the size
+#     block's text. The pass substitutes text; it does not run the shell: a
+#     variable assigned twice is replaced by its FIRST value (bash reads the last), and in
+#     segment mode a value holding shell syntax (`G='| jq keys'`) becomes syntax in the
+#     copy, so a read can earn a filter credit that bash never applies. Both pass, in small
+#     commands since the baseline and, with the rerun, in big ones (declared under owner
+#     ruling A, 2026-10-23). Arrays, `read <<<`, quote-spliced paths, `cd` + a relative
+#     name, globs, `set --`, `$(printf ...)` and variables across two tool calls pass;
+#     the output side is left to secret-scan.sh.
 #
 # === History ===
 #   v1.0: PR #429 initial — basic regex blacklist for Bash tool only
@@ -176,6 +192,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 
 set -uo pipefail   # NOT -e — we control exit codes
+_SG_P0=${EPOCHREALTIME:-}; _SG_RELAXED=   # 10CG/aria-plugin#217: hook-start anchor of the relaxed rerun's hard deadline (empty under a bash without EPOCHREALTIME: no relaxation); _SG_RELAXED is never taken from the environment
 
 # 复刻 `echo "$x" | grep -qE "$re"` 的记录语义: 按 \n 拆行, 任一行命中即真。
 # $1 = 正则 (不加引号代入 =~, 否则退化为字面匹配); $2 = 待判字符串 (段)
@@ -570,30 +587,33 @@ _sg_compute_credit() {
 
 # W10 -- path through a shell variable (partial coverage): a SECOND pass that runs only after EVERY built-in verdict allowed (_sg_vx_pass), so the built-in verdict is never
 # postponed or changed and the pass can only add blocks. Literal assignments are collected from the whole command (NAME=value, `for NAME in list`, one level of chaining; at
-# most 16 assignments and 8 replacements per variable); every segment (the whole command when it degraded) that mentions $NAME or ${NAME} is judged once more with the
+# most 16 assignments, 8 for lists and 8 replacements per variable in the baseline pass, none in the relaxed rerun of 10CG/aria-plugin#217); every segment (the whole
+# command when it degraded) that mentions $NAME or ${NAME} is judged once more with the
 # values substituted in. TEXT ONLY: prefix + suffix concatenation with the remainder taken BY LENGTH (${s:N}); no eval (a value may hold a command substitution or back
 # quotes: they must never run inside the hook), no ${s//p/r} (bash 5.2 patsub_replacement and the quote semantics of bash < 4.3 disagree about quotes and `&` in the
 # replacement), no ${s#*"$pat"} (O(n^2) when the hit sits late in a long string).
-# LENGTH BUDGET (review M6; fail-CLOSED, owner ruling 2026-10-14): without it the judged string is the segment plus references x value length, and one level of chaining
-# multiplies a value by 8, so a 5 KB command overran the 5 s hook timeout (and a timeout lets the command through). Three limits, counted in characters. Beyond ANY of them the
-# whole command is BLOCKED with a text of its own ("command too large to scan for secrets ... split it": _sg_emit_blocked with the 4th word oversize, status 2) and never
-# passed: a copy that is not judged is a way past the guard, and padding a value or a chain would be the recipe. The oversize string is never built, expanded further, judged
-# or scanned: the pass stops at the first overrun and nothing behind it is touched, so an overrun costs no more than the budgeted work in front of it (blocking is as cheap as
-# passing was; the 5 s timeout and its fail-open, 10CG/aria-plugin#216, are not touched). (The COUNTS above -- 16 assignments, 8 replacements, 8 for statements -- are another
-# bound and still pass beyond the limit, SC-21 21y.) (1) _SGV_VMAX: a value longer than that (as collected, or after chaining) blocks the
-# command whether or not the variable is mentioned: _sg_vx_collect stops at it and returns 2; 4096 is PATH_MAX, a longer value is not one path. (2) _SGV_SMAX: a substituted
-# copy (a segment, or the whole command) that would become longer blocks the command (status 2 of _sg_vx_apply; the W9 extension's look at the substituted whole command, after
-# the pass, blocks on it only when an extension is in effect -- without one nothing is left unjudged). 8192 because a BLOCK verdict costs the square of the copy length
-# (_sg_compute_credit on one long line: about 0.9 s at 8 KB, 3 s at 16 KB, 13 s at 32 KB) and a verdict that arrives after the timeout is lost. The limit counts the whole judged
-# string, not its growth: a segment (in whole-command mode: the command) over 8192 characters that mentions a collected variable is blocked however small the value is.
-# (3) _SGV_TMAX: all copies of one command together; once used up the command is blocked -- what many dense segments can cost is bounded too.
-# _sg_vx_collect, _sg_vx_apply and _SG_SUB are names of the contract, like _sg_vx_pass: the budget probes of the suite use them.
+# LENGTH BUDGET (review M6; fail-CLOSED, owner ruling 2026-10-14; narrowed by 10CG/aria-plugin#217): without it the judged string is the segment plus references x value
+# length, and one level of chaining multiplies a value by 8, so a 5 KB command overran the 5 s hook timeout (and a timeout lets the command through). Three limits, counted in
+# characters. (1) _SGV_VMAX: a value longer than that (as collected, or after chaining) blocks the command whether or not the variable is mentioned: _sg_vx_collect stops at it
+# and returns 2; 4096 is PATH_MAX, a longer value is not one path. (3) _SGV_TMAX: all copies of one command together; once used up the command is blocked -- what many dense
+# segments can cost is bounded too. Both block with a text of their own ("command too large to scan for secrets ... split it": _sg_emit_blocked with the 4th word oversize,
+# status 2), and the oversize string is never built, expanded further, judged or scanned. (2) _SGV_SMAX: a substituted copy (a segment, or the whole command) that would become
+# longer than 8192 characters ends the baseline pass at that copy (status 2 of _sg_vx_apply), because a BLOCK verdict costs the square of the copy length (_sg_compute_credit on
+# one long line: about 0.9 s at 8 KB, 3 s at 16 KB, 13 s at 32 KB) and a verdict that arrives after the 5 s timeout is lost. What follows depends on _sg_relax_ok: where the
+# relaxation is in effect, _sg_vx_pass returns status 4 and _sg_per_segment_eval re-runs the pass in a background job under a hard deadline (_sg_relax_run); there the copy
+# limit is the growth over the input (_SGV_GMAX), and a copy over 8192 characters is judged in full by _sg_vx_big_judge (a line longer than _SGV_LMAX is matched against the
+# rows only: nocredit, the longline text). Elsewhere, and whenever the rerun neither allows nor blocks on its own (the deadline, a time checkpoint, the self-check, any other
+# failure), the command is blocked with the size text, byte for byte as before (the W9 extension's look at the substituted whole command, after the pass, blocks on such a
+# copy only when an extension is in effect). (The COUNTS above -- 16 assignments, 8 replacements, 8 for statements -- bound the baseline pass and still pass beyond the
+# limit, SC-21 21y; the relaxed rerun has no count bound, the deadline caps its cost.)
 _SGV_N=(); _SGV_V=()
 _SG_SUB=""
 _SG_RP=""
 _SGV_VMAX=4096
 _SGV_SMAX=8192
 _SGV_TMAX=65536
+_SGV_GMAX=8192   # 10CG/aria-plugin#217 relaxed rerun: a copy may grow by at most this many characters over its input
+_SGV_LMAX=8192   # 10CG/aria-plugin#217 relaxed rerun: a copy over _SGV_SMAX whose longest line is longer than this is matched against the rows only (nocredit)
 # ── Time-budget fail-closed (secret-guard-time-budget-failclosed C; resolves 10CG/aria-plugin#216) ──
 # Claude Code kills a PreToolUse hook at 5 s and then FAIL-OPENS (lets the command through, UNSCANNED). The expensive second pass (W10 variable expansion) and the W9 extension
 # look can, on a slow platform (Windows MINGW64 measured ~2.6x Linux, #219), run past 5 s on a command that is still within the SIZE budget (_SGV_*). So the guard keeps its OWN
@@ -603,7 +623,8 @@ _SGV_TMAX=65536
 # to 3 and never errors; a low value such as 0 forces the first checkpoint for deterministic tests). The clock _SG_T0 is reset at the START of _sg_vx_collect -- the single choke
 # point every expensive leg passes through first -- so the budget measures THIS command's judgement (not wall time since the process started) and stays fresh when the test suite
 # sources the hook and calls the functions directly. INVARIANT: the built-in direct judgement (_sg_core_eval, the #154 core) runs BEFORE any of this, is NEVER gated by the timer,
-# and stays fast; the `# guard:ack` escape and the _SGV_* size budget are unchanged; fail-closed means an overrun BLOCKs (exit 2), never allows.
+# and stays fast; the `# guard:ack` escape is unchanged; the relaxed rerun of 10CG/aria-plugin#217 has a hard deadline of its own (_SG_P0 + min(budget, 3) s, see
+# _sg_relax_run) and its checkpoints fall back to the size block, never to the time text; fail-closed means an overrun BLOCKs (exit 2), never allows.
 _SG_T0=$SECONDS
 _SG_TIME_BUDGET=3
 _sg_time_budget() {   # resolve SECRET_GUARD_TIME_BUDGET_S -> _SG_TIME_BUDGET (fork-free; default 3 on missing / empty / non-integer; 10# so a leading zero is not read as octal)
@@ -616,12 +637,13 @@ _sg_time_budget() {   # resolve SECRET_GUARD_TIME_BUDGET_S -> _SG_TIME_BUDGET (f
 _sg_over_budget() {   # return 0 (true) once this judgement has spent >= the budget since _SG_T0 (budget resolved once at each reset site, not per checkpoint)
   (( SECONDS - _SG_T0 >= _SG_TIME_BUDGET ))
 }
-# _sg_vx_replace S PAT REP [MAX] : literal replace-all of PAT in S, at most 8 replacements -> _SG_RP; with MAX (characters) it stops with status 1 as soon as the result would be
-# longer than MAX (_SG_RP is then S unchanged)
+# _sg_vx_replace S PAT REP [MAX] : literal replace-all of PAT in S, at most 8 replacements in the baseline pass (no bound in the relaxed rerun) -> _SG_RP; with MAX
+# (characters) it stops with status 1 as soon as the result would be longer than MAX (_SG_RP is then S unchanged)
 _sg_vx_replace() {
-  local s="$1" pat="$2" rep="$3" max="${4:-0}" out="" g=0 pre
+  local s="$1" pat="$2" rep="$3" max="${4:-0}" out="" g=0 pre gc=8
+  [[ -n "${_SG_RELAXED:-}" ]] && gc=1000000   # 10CG/aria-plugin#217 relaxed rerun: no count bound
   _SG_RP="$s"
-  while (( g < 8 )) && [[ "$s" == *"$pat"* ]]; do
+  while (( g < gc )) && [[ "$s" == *"$pat"* ]]; do
     g=$((g+1)); pre="${s%%"$pat"*}"; out="${out}${pre}${rep}"; s="${s:$(( ${#pre} + ${#pat} ))}"
     (( max > 0 && ${#out} + ${#s} > max )) && return 1
   done
@@ -631,12 +653,13 @@ _sg_vx_replace() {
 # value at once -- the value is neither stored nor looked at again and nothing behind it is collected -- and the caller blocks the command.
 _sg_vx_collect() {
   _SG_T0=$SECONDS; _sg_time_budget   # reset the time-budget clock + resolve the budget once here: the single choke point every expensive leg (this collect's i×j chaining, _sg_vx_pass, the W9 extension look) passes first
-  local rest="$1" m name val i j n=0 dup pre
+  local rest="$1" m name val i j n=0 dup pre ca=16 cf=8
+  [[ -n "${_SG_RELAXED:-}" ]] && ca=1000000 cf=1000000   # 10CG/aria-plugin#217 relaxed rerun: no count bound (the deadline caps the cost)
   local _q="'" _d='"' _b='`'
   _SGV_N=(); _SGV_V=()
   [[ "$rest" == *'$'* && "$rest" == *=* ]] || [[ "$rest" == *'$'* && "$rest" == *' in '* ]] || return 0
   local re="(^|[;&|[:space:](${_d}${_b}${_q}])((export|declare|local|readonly|typeset)[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?([A-Za-z_][A-Za-z0-9_]*)=(${_d}([^${_d}]*)${_d}|${_q}([^${_q}]*)${_q}|\\\$\\([^)]*\\)|${_b}[^${_b}]*${_b}|[^[:space:];&|)${_d}${_b}${_q}]*)"
-  while (( n < 16 )) && [[ "$rest" =~ $re ]]; do
+  while (( n < ca )) && [[ "$rest" =~ $re ]]; do
     (( n += 1 ))
     m="${BASH_REMATCH[0]}"; name="${BASH_REMATCH[5]}"; val="${BASH_REMATCH[6]}"
     pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
@@ -652,7 +675,7 @@ _sg_vx_collect() {
   done
   rest="$1"; n=0
   local rf="(^|[;&|[:space:](])for[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+in[[:space:]]+([^;&|)]*)"
-  while (( n < 8 )) && [[ "$rest" =~ $rf ]]; do
+  while (( n < cf )) && [[ "$rest" =~ $rf ]]; do
     (( n += 1 ))
     m="${BASH_REMATCH[0]}"; name="${BASH_REMATCH[2]}"; val="${BASH_REMATCH[3]}"
     pre="${rest%%"$m"*}"; rest="${rest:$(( ${#pre} + ${#m} ))}"
@@ -663,7 +686,6 @@ _sg_vx_collect() {
   for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
     for (( j = 0; j < ${#_SGV_N[@]}; j++ )); do
       (( i == j )) && continue
-      [[ -z "${_SGV_V[j]}" ]] && continue
       _sg_over_budget && return 3   # time-budget fail-closed: the O(vars^2) chaining is over budget -> status 3, caller BLOCKs (distinct from status 2 = value over _SGV_VMAX)
       if _sg_vx_replace "${_SGV_V[i]}" "\${${_SGV_N[j]}}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
       if _sg_vx_replace "${_SGV_V[i]}" "\$${_SGV_N[j]}" "${_SGV_V[j]}" "$_SGV_VMAX"; then _SGV_V[i]="$_SG_RP"; else return 2; fi
@@ -671,27 +693,29 @@ _sg_vx_collect() {
   done
   return 0
 }
-# _sg_vx_apply S : S with the collected values substituted -> _SG_SUB. Status 0 = a copy was built, 1 = nothing to substitute, 2 = the copy would be longer than _SGV_SMAX (not
-# built, _SG_SUB stays S; the caller blocks the command). Per variable: ${NAME} through _sg_vx_replace, then $NAME with the same prefix accumulation (the already substituted text is never scanned again;
-# the remainder keeps the character that ended the match, so $f$f works), at most 8 times.
+# _sg_vx_apply S : S with the collected values substituted -> _SG_SUB. Status 0 = a copy was built, 1 = nothing to substitute, 2 = the copy would be over the limit (not
+# built, _SG_SUB stays S; the caller decides): the limit is _SGV_SMAX in the baseline pass and the input length + _SGV_GMAX in the relaxed rerun (_SG_RELAXED). Per
+# variable: ${NAME} through _sg_vx_replace, then $NAME with the same prefix accumulation (the already substituted text is never scanned again; the remainder keeps the
+# character that ended the match, so $f$f works), at most 8 times in the baseline pass and with no count bound in the relaxed rerun.
 _sg_vx_apply() {
-  local s="$1" i n v m tail pre out guard changed=1
+  local s="$1" i n v m tail pre out guard changed=1 lim=$_SGV_SMAX gc=8
+  [[ -n "${_SG_RELAXED:-}" ]] && lim=$(( ${#1} + _SGV_GMAX )) gc=1000000   # 10CG/aria-plugin#217 relaxed rerun: the limit is the growth over the input (${#1}: s is rewritten below)
   _SG_SUB="$s"
   (( ${#_SGV_N[@]} )) || return 1
   [[ "$s" == *'$'* ]] || return 1
   for (( i = 0; i < ${#_SGV_N[@]}; i++ )); do
     n="${_SGV_N[i]}"; v="${_SGV_V[i]}"
     [[ -n "$v" ]] || continue
-    if [[ "$s" == *"\${$n}"* ]]; then _sg_vx_replace "$s" "\${$n}" "$v" "$_SGV_SMAX" || return 2; s="$_SG_RP"; changed=0; fi
+    if [[ "$s" == *"\${$n}"* ]]; then _sg_vx_replace "$s" "\${$n}" "$v" "$lim" || return 2; s="$_SG_RP"; changed=0; fi
     out=""; guard=0
-    while (( guard < 8 )) && [[ "$s" =~ \$${n}([^A-Za-z0-9_]|$) ]]; do
+    while (( guard < gc )) && [[ "$s" =~ \$${n}([^A-Za-z0-9_]|$) ]]; do
       (( guard += 1 ))
       m="${BASH_REMATCH[0]}"; tail="${BASH_REMATCH[1]}"
       if [[ -z "$tail" ]]; then pre="${s%"$m"}"; else pre="${s%%"$m"*}"; fi
       s="${s:$(( ${#pre} + ${#m} - ${#tail} ))}"
       [[ "$pre" == *\\ ]] && pre="${pre%\\}"
       out="${out}${pre}${v}"; changed=0
-      (( ${#out} + ${#s} > _SGV_SMAX )) && return 2
+      (( ${#out} + ${#s} > lim )) && return 2
     done
     (( guard )) && s="${out}${s}"
   done
@@ -699,13 +723,17 @@ _sg_vx_apply() {
   return $changed
 }
 # _sg_vx_pass CMD MODE : the second pass -- judge the substituted copies. MODE is whole or segment, as _sg_core_eval left it in _SG_MODE (in segment mode _SG_SEGS holds
-# the segments). The function name is a contract: the fault-injection and evaluation-order probes locate it by name. An overrun of the length budget (a value, a copy, the total)
-# ends the pass at once with an oversize BLOCK (the size text of _sg_emit_blocked, status 2): nothing behind the overrun is built or judged.
+# the segments). The function name is a contract: the fault-injection and evaluation-order probes locate it by name. A value or total overrun stops the pass with an oversize
+# BLOCK (status 2). A copy over _SGV_SMAX ends the baseline pass too: with status 4 when the relaxation is in effect (_sg_relax_ok; the baseline reason string and mode are
+# kept in _SG_OV_PAT / _SG_OV_MODE -- not a text: on a fallback _sg_emit_blocked writes the baseline block text from them again), else with the oversize BLOCK. Inside the
+# relaxed rerun (_SG_RELAXED) a growth overrun blocks with the growth text, a copy over _SGV_SMAX goes to _sg_vx_big_judge, and a time checkpoint returns 3 (no time text:
+# the caller falls back to the baseline block). Nothing behind an overrun is built or judged.
 _sg_vx_pass() {
   local cmd="$1" mode="$2" seg rc ar cr spent=0
   _sg_vx_collect "$cmd"
   cr=$?
   if [[ $cr -eq 3 ]]; then   # time-budget fail-closed: the chaining in _sg_vx_collect ran out of time
+    [[ -n "${_SG_RELAXED:-}" ]] && return 3   # 10CG/aria-plugin#217 relaxed rerun: no time text of its own, the caller falls back to the baseline block
     _sg_emit_blocked "time" "$cmd" "$mode" timeout
     return 2
   fi
@@ -716,20 +744,30 @@ _sg_vx_pass() {
   (( ${#_SGV_N[@]} )) || return 0
   if [[ "$mode" == whole ]]; then
     if _sg_over_budget; then   # time-budget fail-closed before the O(copy^2) whole-command judgement
+      [[ -n "${_SG_RELAXED:-}" ]] && return 3   # 10CG/aria-plugin#217 relaxed rerun: no time text of its own, the caller falls back to the baseline block
       _sg_emit_blocked "time" "$cmd" whole timeout
       return 2
     fi
     _sg_vx_apply "$cmd"
     ar=$?
     if [[ $ar -eq 2 ]]; then
+      if [[ -n "${_SG_RELAXED:-}" ]]; then
+        _sg_emit_blocked "the command grows by more than $_SGV_GMAX characters after variable expansion" "$cmd" whole oversize
+        return 2
+      fi
+      if _sg_relax_ok; then _SG_OV_PAT="the command is longer than $_SGV_SMAX characters after variable expansion"; _SG_OV_MODE=whole; return 4; fi
       _sg_emit_blocked "the command is longer than $_SGV_SMAX characters after variable expansion" "$cmd" whole oversize
       return 2
     fi
-    if [[ $ar -eq 0 ]]; then _sg_judge_one "$_SG_SUB" whole; return $?; fi
+    if [[ $ar -eq 0 ]]; then
+      if [[ -n "${_SG_RELAXED:-}" ]] && (( ${#_SG_SUB} > _SGV_SMAX )); then _sg_vx_big_judge "$_SG_SUB" whole; return $?; fi
+      _sg_judge_one "$_SG_SUB" whole; return $?
+    fi
     return 0
   fi
   for seg in "${_SG_SEGS[@]}"; do
     if _sg_over_budget; then   # time-budget fail-closed before each per-segment _sg_vx_apply / _sg_judge_one (the O(copy^2) hot leg)
+      [[ -n "${_SG_RELAXED:-}" ]] && return 3   # 10CG/aria-plugin#217 relaxed rerun: no time text of its own, the caller falls back to the baseline block
       _sg_emit_blocked "time" "$cmd" segment timeout
       return 2
     fi
@@ -737,6 +775,11 @@ _sg_vx_pass() {
     ar=$?
     [[ $ar -eq 1 ]] && continue
     if [[ $ar -eq 2 ]]; then
+      if [[ -n "${_SG_RELAXED:-}" ]]; then
+        _sg_emit_blocked "a command segment grows by more than $_SGV_GMAX characters after variable expansion" "$cmd" segment oversize
+        return 2
+      fi
+      if _sg_relax_ok; then _SG_OV_PAT="a command segment is longer than $_SGV_SMAX characters after variable expansion"; _SG_OV_MODE=segment; return 4; fi
       _sg_emit_blocked "a command segment is longer than $_SGV_SMAX characters after variable expansion" "$cmd" segment oversize
       return 2
     fi
@@ -745,11 +788,97 @@ _sg_vx_pass() {
       _sg_emit_blocked "the command segments together are longer than $_SGV_TMAX characters after variable expansion" "$cmd" segment oversize
       return 2
     fi
-    _sg_judge_one "$_SG_SUB" segment
+    if [[ -n "${_SG_RELAXED:-}" ]] && (( ${#_SG_SUB} > _SGV_SMAX )); then _sg_vx_big_judge "$_SG_SUB" segment; else _sg_judge_one "$_SG_SUB" segment; fi
     rc=$?
     [[ $rc -ne 0 ]] && return "$rc"
   done
   return 0
+}
+
+# 10CG/aria-plugin#217 relaxed rerun. When the relaxation is in effect (_sg_relax_ok), a copy over _SGV_SMAX is not blocked for its size alone: _sg_vx_pass
+# returns 4 instead and keeps the baseline reason and mode in _SG_OV_PAT / _SG_OV_MODE; _sg_per_segment_eval re-runs the W10 pass with the relaxed rules
+# (_SG_RELAXED: the copy limit is the growth over the input, _SGV_GMAX; a copy over _SGV_SMAX is judged in full, _sg_vx_big_judge; the counts -- 16
+# assignments, 8 for statements, 8 replacements per variable -- are not bounded, so every reference is expanded) in a background job under a HARD
+# deadline: _SG_P0 (hook start) + min(_SG_TIME_BUDGET, 3) s. The job leads its own process group (set -m); its timer runs inside the group and is started
+# before the first expensive step; the deadline kills the whole group, and so does _sg_relax_run once the job has ended, so nothing of the job outlives it
+# or holds the pipe. The verdict is the job's exit status, never parsed from text: 77 allows, 2 blocks with the job's own text; any other outcome -- the
+# deadline, a time checkpoint, the self-check, an internal error, a bare 0 -- falls back to the baseline block, byte for byte. The one exception (What 4):
+# a fatal error of bash itself inside the job that makes it exit with status 2 and write its error message is passed on as the block text -- the command is
+# still blocked, but with bash's message instead of the baseline text. In effect only on an x86_64 GNU/Linux build of bash 5.0-5.3 outside WSL (the
+# versions, architecture and platform measured), with no project extension in effect (with one, the extension blocks a copy over _SGV_SMAX by its own
+# absolute limit anyway), and with time left before the deadline.
+_sg_vx_big_judge() {   # COPY MODE: the longest line (one linear read loop) routes the copy -- longer than _SGV_LMAX: rows only, no credit; otherwise the normal judgement
+  local line max=0 seen=0
+  while IFS= read -r line; do seen=1; (( ${#line} > max )) && max=${#line}; done <<< "$1"
+  (( seen )) || max=$(( _SGV_LMAX + 1 ))   # the length could not be measured: rows only, never the cheaper-to-pass credit path
+  if (( max > _SGV_LMAX )); then _sg_judge_one "$1" "$2" nocredit; else _sg_judge_one "$1" "$2"; fi
+}
+_sg_relax_left() {   # sets _SG_LEFT to the time left before the deadline, as seconds with 6 decimals; status 1 when there is no anchor or no time left
+  local now p0 cap
+  [[ -n "${_SG_P0:-}" && -n "${EPOCHREALTIME:-}" ]] || return 1
+  _sg_time_budget
+  now=${EPOCHREALTIME/[.,]/}; p0=${_SG_P0/[.,]/}
+  [[ "$now" =~ ^[0-9]+$ && "$p0" =~ ^[0-9]+$ ]] || return 1
+  cap=$(( _SG_TIME_BUDGET < 3 ? _SG_TIME_BUDGET : 3 ))
+  now=$(( 10#$p0 + cap * 1000000 - 10#$now ))
+  (( now > 0 )) || return 1
+  (( now > cap * 1000000 )) && now=$(( cap * 1000000 ))   # a clock that went backwards never extends the deadline
+  printf -v _SG_LEFT '%d.%06d' $(( now / 1000000 )) $(( now % 1000000 ))
+}
+_sg_relax_ok() {   # status 0 when the relaxation is in effect for this command; the extension is asked inside a command substitution, like every extension call
+  [[ -z "${_SG_RELAXED:-}" ]] || return 1
+  local osr= wsl=
+  { IFS= read -r osr < /proc/sys/kernel/osrelease; } 2>/dev/null
+  [[ -n "${WSL_DISTRO_NAME:-}${WSL_INTEROP:-}" ]] && wsl=wsl   # WSL marks in the environment; the environment can only switch the relaxation off with them
+  _sg_relax_platform "${BASH_VERSINFO[5]:-}" "${BASH_VERSINFO[0]:-0}" "${BASH_VERSINFO[1]:-0}" "$osr" "$wsl" || return 1   # read-only build and kernel facts, which the environment cannot rewrite (OSTYPE, MACHTYPE and HOSTTYPE can be)
+  _sg_relax_left || return 1
+  _sg_relax_nowslfs || return 1   # the WSL mark of the file system (_sg_relax_nowslfs: a WSLInterop or WSLInterop-late entry seen under a topmost binfmt_misc, a DIR there that cannot be searched, or a mount table that cannot be read or reads empty), asked only where the platform and the time would relax: elsewhere the mount table is never read
+  [[ "$( _sg_relax_noext 2>/dev/null )" == none ]]
+}
+_sg_relax_platform() {   # MACHINE MAJOR MINOR OSRELEASE [WSL]: status 0 on an x86_64 GNU/Linux build of a bash version the mechanism was measured on, 5.0 to 5.3, outside WSL (owner ruling E, 2026-10-22 and 2026-10-23: an untested platform -- macOS, Windows, WSL1 and WSL2, musl, Android, aarch64 and other architectures, another bash -- keeps the baseline)
+  [[ "${1:-}" == x86_64-*-linux-gnu* && -n "${4:-}" && "${4:-}" != *[Mm]icrosoft* && "${4:-}" != *WSL* && -z "${5:-}" ]] && (( ${2:-0} == 5 && ${3:-0} <= 3 ))
+}
+_sg_relax_nowslfs() {   # [MOUNTS [DIR]]: status 0 only when no WSL interop entry is seen -- the mount table (default /proc/self/mounts) reads and is not empty, and the topmost mount at DIR (default /proc/sys/fs/binfmt_misc; taken to be the table's last line for it) is not a binfmt_misc file system, or it is, DIR is a directory that can be searched, and it holds neither WSLInterop nor WSLInterop-late. awk reads the table in one pass: a line-by-line read of /proc/self/mounts in bash costs O(n^2) (bash seeks back after every line and procfs regenerates the table from the start), seconds on a host with a few thousand mounts, outside the hard deadline. The entries are looked at only when binfmt_misc is the topmost mount there, so the look never triggers an automount; an entry under a lower mount (a binfmt_misc with another mount on top of it) is not looked for and counts as none. The two names are tested one by one, not by a glob, so noglob or failglob imported from the environment cannot change the look. A table that cannot be read, or reads empty, keeps the relaxation off, and so does a DIR that is not a directory that can be searched. The two arguments exist for the direct-call cases only; the gate calls it with none
+  local d="${2:-/proc/sys/fs/binfmt_misc}" r
+  r=$(awk -v d="$d" '$2 == d { t = $3 } END { print NR, t }' "${1:-/proc/self/mounts}" 2>/dev/null) || return 1
+  [[ "${r%% *}" =~ ^[1-9][0-9]*$ ]] || return 1   # no line read: a table that cannot be read, or reads empty
+  [[ "${r#* }" == binfmt_misc ]] || return 0   # binfmt_misc is not the topmost mount at DIR: nothing under DIR is looked at (an entry under a lower mount is not looked for: looking could trigger an automount)
+  [[ -d "$d" && -x "$d" ]] || return 1   # DIR is not a directory that can be searched: the entries cannot be seen, so they may exist
+  [[ -e "$d/WSLInterop" || -e "$d/WSLInterop-late" ]] && return 1
+  return 0
+}
+_sg_relax_noext() {   # prints "none" only when no extension can be in effect: no project root is found (_sg_ext_root prints nothing, which includes a cwd that jq cannot read: without a root no extension can be in effect), or there is no .aria/secret-guard.paths under it. A file there, in any state, keeps the relaxation off
+  local root
+  root="$(_sg_ext_root)"
+  if [[ -z "$root" || ! -e "$root/.aria/secret-guard.paths" ]]; then printf none; fi
+}
+_sg_relax_job() {   # CMD: body of the background job; refuses to judge (status 9) unless it leads its own process group, which is what the deadline kills
+  local st f
+  { IFS= read -r st < "/proc/$BASHPID/stat"; } 2>/dev/null || return 9
+  st="${st##*) }"; f=( $st )
+  [[ "${f[2]:-}" == "$BASHPID" ]] || return 9
+  local me=$BASHPID tp
+  ( sleep "$_SG_LEFT"; kill -KILL -- "-$me" ) >/dev/null 2>&1 </dev/null &
+  tp=${!:-}
+  [[ -n "$tp" ]] && kill -0 "$tp" 2>/dev/null || return 9   # no running timer, no judgement: the deadline must exist before the first expensive step
+  _SG_RELAXED=1
+  _sg_vx_pass "$1" "$_SG_MODE"
+  case $? in 0) return 77 ;; 2) return 2 ;; *) return 1 ;; esac   # allow only as 77: a bare 0 reaching _sg_relax_run from anywhere else falls back
+}
+_sg_relax_run() {   # CMD: status 0 = allowed (the job exited 77), 2 = blocked (the job exited 2 with a text, now on stderr), 4 = fall back to the baseline block
+  local out rc
+  _sg_relax_left || return 4
+  out="$( exec 2>/dev/null; set -m
+          _sg_relax_job "$1" 2>&1 </dev/null &
+          jp=${!:-}
+          [[ -n "$jp" ]] || exit 99
+          wait "$jp"; r=$?
+          kill -KILL -- "-$jp"   # the timer and anything the judgement left behind: nothing of the job outlives it or holds the pipe
+          exit "$r" )"
+  rc=$?
+  [[ $rc -eq 77 ]] && return 0
+  [[ $rc -eq 2 && -n "$out" ]] && { printf '%s\n' "$out" >&2; return 2; }
+  return 4
 }
 
 # W9 -- project-level extension <project root>/.aria/secret-guard.paths: one LITERAL substring per line; it can only ADD blocks (the built-in verdict always comes first).
@@ -823,9 +952,10 @@ _sg_ext_path_pass() {   # Read/Edit face: entry (lower-cased) as a literal subst
   return 0
 }
 
-# _sg_emit_blocked PAT SEG MODE [oversize] : the (unchanged) BLOCKED text, shared by every block path. With the 4th word `oversize` it prints the SIZE text instead (W10 length
-# budget, fail-closed): nothing was matched, the command is too large to be checked; PAT then names the limit that was hit, SEG and MODE are not used. The size text echoes only
-# the first 200 characters of the command (the command is by definition a large one).
+# _sg_emit_blocked PAT SEG MODE [oversize|timeout|longline] : the BLOCKED text, shared by every block path. With the 4th word `oversize` it prints the SIZE text instead
+# (W10 length budget, fail-closed): nothing was matched, the command is too large to be checked; PAT then names the limit that was hit, SEG and MODE are not used. With
+# `longline` (10CG/aria-plugin#217) it prints the text for a big copy that matched a row on a line longer than _SGV_LMAX, where credit is not evaluated; PAT is the row. The
+# size, time and longline texts echo only the first 200 characters of the command (the command is by definition a large one).
 _sg_emit_blocked() {
   local pat="$1" seg="$2" mode="$3" kind="${4:-}"
   if [[ "$kind" == timeout ]]; then
@@ -861,6 +991,26 @@ Split it into smaller commands and run them one at a time:
   - do not repeat one long \$VAR many times in a single command;
   - write long files with the Write / Edit tool instead of a heredoc.
 命令过大, 无法扫描其中是否含密钥, 请拆成更小的命令
+
+Command was (first 200 characters): $(_sg_redact_echo "${command:0:200}")
+EOF
+    return 0
+  fi
+  if [[ "$kind" == longline ]]; then
+    cat >&2 <<EOF
+[secret-guard] BLOCKED: command reads a secret-bearing source, and after variable
+expansion it has a line longer than ${_SGV_LMAX} characters. Matched pattern: $pat
+
+At this size the guard does not look for value-REDACTING filters (| jq 'keys',
+| wc -c, >/dev/null, ...): on a line this long that check alone is too slow to
+finish within the hook's time limit, so the match alone blocks the command
+(fail-closed).
+
+Split it into smaller commands and run them one at a time:
+  - keep every variable value, and every command after expansion, short;
+  - do not repeat one long \$VAR many times in a single command;
+  - write long files with the Write / Edit tool instead of a heredoc.
+命令读取含密钥的来源, 且变量展开后有超长的行, 这个尺寸下不评估脱敏过滤, 请拆成更小的命令
 
 Command was (first 200 characters): $(_sg_redact_echo "${command:0:200}")
 EOF
@@ -1491,11 +1641,14 @@ _sg_redact_echo() {
 
 # _sg_judge_one() — evaluate one string (whole command in "whole" mode, or one
 # top-level segment in "segment" mode) against risky_patterns + credit. $1 =
-# string to judge, $2 = mode (whole|segment). Returns 0 = allow, 2 = blocked
-# (BLOCKED message already written to stderr; mode=whole reproduces canonical
-# stderr byte-for-byte, zero new lines).
+# string to judge, $2 = mode (whole|segment), $3 = nocredit or empty: with
+# nocredit (10CG/aria-plugin#217: a big copy with a line longer than _SGV_LMAX)
+# a matched row blocks at once with the longline text and credit is not
+# evaluated; the W12 neutralisation still runs first. Return 0 = allow,
+# 2 = blocked (BLOCKED message already written to stderr; mode=whole reproduces
+# canonical stderr byte-for-byte, zero new lines).
 _sg_judge_one() {
-  local seg="$1" mode="$2" pat
+  local seg="$1" mode="$2" pat nocredit="${3:-}"
   local credit="" subj="$1" _w
   # W12 (secret-net-l3-and-bypass-paths): an os.environ single-key read (.environ.get( / .environb.get( / .environ[ / .environb[) is the same information as the
   # allowed os.getenv, but its `.env` prefix trips the interpreter rows. Every occurrence of the four literal substrings is cut out of the COPY that is
@@ -1510,6 +1663,10 @@ _sg_judge_one() {
   fi
   for pat in "${risky_patterns[@]}"; do
     if [[ "$subj" =~ $pat ]]; then
+      if [[ "$nocredit" == nocredit ]]; then   # 10CG/aria-plugin#217: a big copy with a line longer than _SGV_LMAX -- the match alone blocks, credit is not evaluated
+        _sg_emit_blocked "$pat" "$seg" "$mode" longline
+        return 2
+      fi
       if [[ -z "$credit" ]]; then
         if _sg_compute_credit "$seg"; then credit=1; else credit=0; fi
       fi
@@ -1528,12 +1685,15 @@ _sg_judge_one() {
 # top-level ; && || and judge each segment independently (credit computed
 # fresh per segment — §What.3 SFH-M2, no sticky global). $1 = whole command.
 # Returns 0 = allow, 2 = blocked, propagates _sg_judge_one's return code.
-# Order (W9 / W10): 1. the built-in judgement (_sg_core_eval: the baseline body of this function, unchanged); 2. only if it allowed, the W10 variable pass (_sg_vx_pass);
-# 3. only if both allowed, the W9 project extension -- on the original command, then on the variable-substituted whole command. A built-in block ends the evaluation
-# before either later stage is even called, so nothing the built-ins decide is postponed or reversed. The extension runs ONLY inside command substitutions; its answer
-# is the literal sentinel BLOCK, anything else (empty, error, fault) means "no extension block". Its own block prints the shared BLOCKED text (W13). Length budget: an overrun
-# inside _sg_vx_pass blocks there; the extension's look at the substituted whole command, when that copy is too large to build, blocks here -- but only when an extension is in
-# effect (entries exist: asked inside a command substitution like every other extension call), because without one nothing is left unjudged.
+# Order (W9 / W10): 1. the built-in judgement (_sg_core_eval: the baseline body of this function, unchanged); 2. only if it allowed, the W10 variable pass (_sg_vx_pass),
+# and when that pass returns status 4 (a copy over _SGV_SMAX with the relaxation in effect), the relaxed rerun under the hard deadline (_sg_relax_run,
+# 10CG/aria-plugin#217): its allow or block is final -- the relaxation is in effect only when no extension is, so stage 3 would add nothing -- and any failure of the
+# rerun falls back to the baseline size block; 3. only if both allowed, the W9 project extension -- on the original command, then on the variable-substituted whole
+# command. A built-in block ends the evaluation before either later stage is even called, so nothing the built-ins decide is postponed or reversed. The extension runs
+# ONLY inside command substitutions; its answer is the literal sentinel BLOCK, anything else (empty, error, fault) means "no extension block". Its own block prints the
+# shared BLOCKED text (W13). Length budget: a value or total overrun inside _sg_vx_pass blocks there; the extension's look at the substituted whole command, when that
+# copy is too large to build, blocks here -- but only when an extension is in effect (entries exist: asked inside a command substitution like every other extension
+# call), because without one nothing is left unjudged.
 _sg_per_segment_eval() {
   local cmd="$1" rc ar _x
   _sg_core_eval "$cmd"
@@ -1543,6 +1703,12 @@ _sg_per_segment_eval() {
   if [[ "$_SG_MODE" != none ]]; then
     _sg_vx_pass "$cmd" "$_SG_MODE"
     rc=$?
+    if [[ $rc -eq 4 ]]; then   # 10CG/aria-plugin#217: a copy over _SGV_SMAX and the relaxation is in effect -> the relaxed rerun decides; any failure falls back to the baseline block
+      _sg_relax_run "$cmd"
+      rc=$?
+      [[ $rc -eq 4 ]] && { _sg_emit_blocked "$_SG_OV_PAT" "$cmd" "$_SG_OV_MODE" oversize; return 2; }
+      return "$rc"   # 0 also skips the extension look below: the relaxation is in effect only when no extension is
+    fi
     [[ $rc -ne 0 ]] && return "$rc"
   fi
   _x="$( _sg_ext_pass "$cmd" 2>/dev/null )"

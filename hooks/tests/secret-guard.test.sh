@@ -2,16 +2,34 @@
 # Regression test suite for secret-guard.sh PreToolUse hook.
 #
 # Run: bash aria/hooks/tests/secret-guard.test.sh  (from aria-plugin repo root)
-# Expects: jq installed. python3 installed (used only by the #128 SC-20
-# internal-error-injection cases to produce two on-the-fly modified hook
-# copies via precise text replacement — no other case depends on it).
+# Expects: bash 5.0 or later to run the suite itself: it runs under `set -u`, and SC-8's timing helpers and sg_w10_run
+# read $EPOCHREALTIME directly, which bash 4.x and 3.2 do not set, so the suite aborts there (SC_BASH, the bash that
+# runs the hook in the ported W10 cases, is not bound by this). External tools: jq; python3 (the #128 SC-20
+# internal-error-injection cases, which make two modified hook copies by precise text replacement, and the SC-19
+# census, corpus_census.py); timeout from coreutils (the ported W10 end-to-end cases); ps (two ported W10 cases in
+# lib/secret-guard-w10-direct.sh, SKIP [platform] without it); git (SC-8 and the pre-change part of SC-9a read the
+# hook of af87cae through git show: outside a git checkout that reaches it they print a [SKIP] line and are not
+# counted). zsh is optional: 6 cases run only with it.
 # Outputs PASS/FAIL per case + summary at end.
 # Exit code: 0 if all pass, 1 if any fail.
 #
-# Coverage: 831 cases (825 without zsh) across Bash (block/allow), Read/Edit (block/allow),
+# Coverage: 991 cases (985 without zsh), counted in a git checkout of aria, across Bash (block/allow), Read/Edit (block/allow),
 # guard:ack escapes, jq fail-closed paths, Round 1 audit bypass attempts, and
 # the Nomad var WRITE direction (#170). Keep this number in sync — a stale
 # count here has already misled one spec into planning against "~50".
+#
+# 150 of those cases are the W10 fail-closed narrowing (10CG/aria-plugin#217) acceptance cases ported from
+# v31 (sg_w10_cases, defined after the helpers and run once, before every older case; ids V<k>-... and the harness checks V0-H1 / V0-H2): the direct calls in
+# lib/secret-guard-w10-direct.sh, the end-to-end and static ones in this file. They run the hook with SC_BASH
+# (default: bash on PATH); every older case runs it as before. lib/sg-shim/delay-first, linked as jq and sed
+# (relative symlinks), puts fixed delays at known points of the hook for the deadline cases; the end-to-end
+# cases also need timeout (coreutils). Two switches: SG_W10_ONLY=<regex> runs only the ported cases whose id
+# matches (no other case and no SC-13; the summary says it is a filtered round); SG_W10_LOG=<file> writes one
+# line per ported case, "PASS|FAIL|SKIP <id> <detail>" with v31's reason tags. A ported case that cannot be
+# judged here is SKIP with its reason: [platform] (the relaxation is not expected on SC_BASH, or a tool is
+# missing), [load] / [void] (the timing batch, INV-7: one-minute load under 2 at the start and at the end),
+# [inconclusive], [root]. Every ported id is reported exactly once on every platform, so SKIP counts in the
+# Coverage total and in SC-13, is listed on its own in the summary, and never fails the run.
 
 set -u
 
@@ -116,6 +134,367 @@ split_case() {
     failures+=("FAIL [$name]: want ${want} segment(s), got ${got} for: $cmd")
   fi
 }
+
+# ══════════════ W10 fail-closed narrowing (10CG/aria-plugin#217): the acceptance cases ported from v31 ══════════════
+# sg_w10_cases runs them: the direct calls through lib/secret-guard-w10-direct.sh (from v31/sc-direct.sh, run by SC_BASH), the end-to-end and static
+# cases below (from v31/sc-cases.sh). Ids, assertions, wanted values and reason tags are v31's, except: "the baseline's bytes" is the same hook run with
+# WSL_DISTRO_NAME=Ubuntu in its environment (the gate's closing switch), so the suite needs no git history -- and V2-E17 (that WSL mark) therefore asserts
+# the gate-closed outcome itself (status 2, the size text); V11-S4 is a fixed count (exactly one loop over risky_patterns, the baseline's count); V12-C1
+# stays in v31 (v31/commentsync.py); MISSING / SETUP of the direct calls are FAIL here (tags [missing] / [setup]). The cases of the relaxation are
+# SKIP [platform] where it is not expected, so every id is reported exactly once on every platform and under any load. Timing (INV-7): upper bounds and
+# "the rerun / the job must finish before its deadline" are judged only when the one-minute load at the start is below 2 (else SKIP [load]); a load at
+# or over 2 at the end turns the judged timing results into SKIP [void] (run again). A byte comparison in which an arm hit the 12 s timeout, or the
+# hook's own whole-second budget fired in one arm only, counts as timing; a deadline case whose wall reached the sed shim's stall without the stall
+# running to its end is SKIP [inconclusive]. sg_w10_cases runs once, right after its definition, before every older case (3a ruling (1)); SC-13 at the end counts its SKIP; with SG_W10_ONLY set the round ends after it.
+# [reference] (3c; the plan's notes, "the gap of reading (ii)"): the gate-closed arm runs the hook under test, so a slip in code or a constant that both arms
+# share moves both arms alike and the byte comparison stays green (BI-8, _SGV_VMAX 4096 -> 8192: both arms rc 0 on V9-E12, which v31 catches against the real
+# baseline). So every call that runs the gate-closed arm -- sg_w10_identity, sg_w10_deadline, sg_w10_outcome, and their fall back to identity where the
+# relaxation is not expected -- first checks that arm against the outcome 59e333c (INV-9) gives for the same input, variables and WSL mark: exit code and
+# text kind (sg_w10_ref, a table by case id, measured through v31/run-suite.sh on the five bash). A mismatch is FAIL [reference], its detail naming both,
+# unless the arm hit the 12 s timeout or shows the time text: that counts as timing, as in sg_w10_slow. Only a check is added; v31's wanted values and
+# reason tags are unchanged. V2-E17 (one arm, an outcome of its own) has none; the direct calls V6-S20 / V6-S21 check theirs in the helper (fbref).
+SG_W10_DIR="$(cd "$(dirname "$0")" && pwd)/lib"
+skip=0; skip_platform=0; skip_load=0; skip_void=0; skip_inconclusive=0; skip_root=0; skip_other=0
+sg_w10_batch=''
+SGW_ST=(); SGW_ID=(); SGW_DET=(); SGW_TM=(); SGW_HWRAP=()
+SGW_W=''; SGW_BASH=''; SGW_HOOK=''; SGW_JQ=''; SGW_SED=''; SGW_SHIM=''; SGW_SEL='.'; SGW_RELAX=no; SGW_TGATE=no
+SGW_H_RC=''; SGW_H_ERR=''; SGW_H_ST=''; SGW_H_WALL=''; SGW_B_RC=''; SGW_B_ERR=''; SGW_B_ST=''; SGW_B_WALL=''
+# the ids every platform reports (V0-H2); the second group is the relaxation's (SKIP [platform] where it is not expected)
+SGW_EXP_DIRECT="V2-G1-gate
+V2-G2-platform:x86_64-pc-linux-gnu:5.0 V2-G2-platform:x86_64-pc-linux-gnu:5.1 V2-G2-platform:x86_64-pc-linux-gnu:5.2 V2-G2-platform:x86_64-pc-linux-gnu:5.3
+V2-G2-platform:aarch64-unknown-linux-gnu:5.2 V2-G2-platform:x86_64-pc-linux-gnu:5.4 V2-G2-platform:x86_64-pc-linux-gnu:6.0 V2-G2-platform:x86_64-pc-linux-gnu:4.4
+V2-G2-platform:x86_64-unknown-linux-gnu:3.2 V2-G2-platform:x86_64-apple-darwin23.0.0:5.2 V2-G2-platform:x86_64-pc-msys:5.2 V2-G2-platform:x86_64-pc-cygwin:5.2
+V2-G2-platform:x86_64-alpine-linux-musl:5.2 V2-G2-platform:aarch64-unknown-linux-android:5.2 V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-wsl1
+V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-wsl2 V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-wsl2-2020 V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-WSL-tag
+V2-G2-platform:x86_64-pc-linux-gnu:5.2:wsl-mark V2-G2-platform:x86_64-pc-linux-gnu:5.2:osrelease-empty V2-G2-platform:x86_64-pc-linux-gnu:5.2:three-args
+V2-G3-gate-calls-platform V2-G3b-gate-uses-build-facts V2-G4-project-without-extension-file V2-G4-extension-file-with-entry V2-G4-empty-extension-file
+V2-G4-extension-path-is-a-directory V2-G5-nested V2-G6-no-time-left V2-G7-no-anchor V2-G8-budget-0 V2-G11-flag-not-from-environment
+V2-G12-segment-trigger-asks-gate V2-G13-whole-trigger-asks-gate V2-G14-cwd-extension-file-with-entry V2-G15-cwd-project-without-extension-file
+V2-G16-environment-root-before-cwd V2-G17-wsl-distro-name-closes-gate V2-G18-wsl-interop-closes-gate
+V11-S5-longline-head-verbatim V11-S6-longline-chinese-line-verbatim V11-S7-longline-text-verbatim
+V3-G9-clock-backwards V3-G10-cap-3 V3-G12-time-left-zero-padded
+V4-S1-allow V4-S2-block-with-text V4-S3-block-without-text V3-S4-slow-judgement V5-S5-pipe-holder V4-S6-spoofed-tail-0 V4-S7-time-checkpoint V4-S8-internal-error
+V5-S9-child-left-behind V5-S13-detached-child V5-S13b-nothing-outlives-the-run V4-S11-bare-zero V5-S10-timer-fork-fails V5-S10b-no-judgement-without-timer
+V5-S10c-dead-timer-no-judgement V5-S10d-no-judgement-with-dead-timer V5-S14-failing-sleep-kills-at-once V5-S15-job-refuses-outside-group-leader
+V4-S19-block-text-bytes V5-S12-no-leftovers V4-S16-rerun-collect-checkpoint V4-S17-rerun-whole-checkpoint V4-S18-rerun-segment-checkpoint
+V6-S20-segment-fallback-text V6-S21-whole-fallback-text
+V8-D1-late-references-plain V8-D1-late-references-braced V8-D2-growth-8192-plain V8-D3-growth-8193-plain V8-D2-growth-8192-braced V8-D3-growth-8193-braced
+V8-D4-growth-text-whole V8-D5-growth-text-segment
+V9-C1-assignments-rerun V9-C1b-assignments-baseline V9-C2-references-rerun-c12 V9-C2b-references-baseline-c12 V9-C2-references-rerun-cb12
+V9-C2b-references-baseline-cb12 V9-C3-for-statements-rerun V9-C3b-for-statements-baseline V9-C4-value-limit-in-rerun
+V10-N1-environ-rows-only V10-N2-read-rows-only V10-N3-environ-big-judge V10-N4-read-big-judge V7-N5-read-big-judge-short-lines
+V10-N6-filtered-long-line-rows-only V7-N7-big-judge-filtered-long-line V7-N10-blank-padded-long-line V7-N11-lmax-edge-normal V7-N12-lmax-edge-rows-only
+V7-N8-whole-branch-returns-big-judge V7-N9-segment-routes-to-big-judge V7-N13-unmeasured-length-rows-only
+V14-N1-nocredit-never-runs-credit V14-N2-longline-pattern-is-a-rule V14-G1-triggers-return-4-with-the-baseline-reason V14-G2-growth-limit-follows-gmax V14-F1-status-4-falls-back-to-the-baseline-block
+V15-W1a-autofs-mount-point-not-looked-at V15-W1b-binfmt-misc-with-wslinterop-late V15-W1c-binfmt-misc-without-entry V15-W1d-unreadable-mount-table V15-W1f-empty-mount-table V15-W1g-autofs-on-top-of-binfmt-misc-not-looked-at V15-W1h-directory-as-mount-table V15-W1i-noglob-binfmt-misc-with-wslinterop-late V15-W1j-failglob-binfmt-misc-without-entry V15-W1k-unsearchable-directory V15-W1l-unlistable-directory-with-wslinterop-late V15-W1m-mount-table-read-only-after-platform-and-time V15-W1o-regular-file-as-directory V15-T1-timer-sleeps-time-left V15-T2-anchor-taken-once-at-hook-start V15-T3-job-errors-silenced V15-W1e-gate-closed-by-wsl-file-system V15-W1n-mount-table-read-in-one-pass"
+SGW_EXP_E2E="V7-E1-benign-big-allowed V6-E2-deadline-fallback-bytes V3-E3-anchor-at-hook-start V3-E4-cap-3-at-budget-4 V3-E5-budget-2 V2-E6-flag-from-environment-ignored
+V2-E7-no-time-left V2-E8-ostype-from-environment-ignored V2-E9-extension-project V9-E10-count-axis-read-blocked V9-E11-tmax-in-rerun V9-E12-vmax-unchanged
+V7-E13-multiline-copy-normal-text V7-E14-long-line-from-expansion V7-E15-credit-as-normal V1-E16-p1-small-benign V1-E16-p1-small-read V1-E16-p1-small-read-filter
+V1-E16-p1-var-read V1-E16-p1-var-mid V1-E16-p1-var-mid-read V2-E17-wsl-mark-keeps-baseline V2-E18-extension-via-stdin-cwd V5-E19-deadline-with-term-ignored"
+SGW_EXP_STATIC="V11-S1-above-gate:_sg_vx_big_judge V11-S1-above-gate:_sg_relax_left V11-S1-above-gate:_sg_relax_ok V11-S1-above-gate:_sg_relax_platform
+V11-S1-above-gate:_sg_relax_nowslfs V11-S1-above-gate:_sg_relax_noext V11-S1-above-gate:_sg_relax_job V11-S1-above-gate:_sg_relax_run V11-S3-longline-instructions-verbatim V11-S4-one-rule-loop"
+SG_W10_SHAPES="benign-big count-axis count-axis-ctl ext-read longline-expansion multiline-credit p1-small-benign p1-small-read p1-small-read-filter p1-var-mid p1-var-mid-read p1-var-read stall-read tmax-rerun vmax"
+
+sg_w10_rep() {   # VAR WORD N : VAR = WORD repeated N times (by doubling; a trailing newline survives, unlike in a command substitution)
+  local _w=$2 _n=$3 _r=''
+  while (( _n > 0 )); do (( _n & 1 )) && _r+=$_w; _w+=$_w; _n=$(( _n >> 1 )); done
+  printf -v "$1" '%s' "$_r"
+}
+sg_w10_shape() {   # SHAPE OUTFILE : the command texts of v31/shapes.py, byte for byte, in bash (shapes.py is not run). No credential values anywhere; the
+                   # credential-shaped paths are assembled at run time (the hook only judges the text, nothing is ever read)
+  local s=$1 dot=. cred appini ext=/srv/billing/conf/prod.toml x4000 x2000 x1000 v4097 y196 a24000 f4200 f300 r8 n60 l140 c4 e40 t8 t
+  cred="~/${dot}aw""s/cred""entials"; appini="/etc/forg""ejo/app${dot}ini"
+  sg_w10_rep x4000 x 4000; sg_w10_rep x2000 x 2000; sg_w10_rep x1000 x 1000; sg_w10_rep v4097 v 4097; sg_w10_rep y196 y 196; sg_w10_rep a24000 A 24000
+  sg_w10_rep f4200 ' y' 2100; sg_w10_rep f300 ' y' 150; sg_w10_rep r8 ' $F' 8; sg_w10_rep n60 0 60; sg_w10_rep l140 "echo $n60"$'\n' 140
+  sg_w10_rep c4 ': $x'$'\n' 4; sg_w10_rep e40 'echo line'$'\n' 40; sg_w10_rep t8 '; : $x $x $y' 8
+  case $s in
+    benign-big)           t="(true); x=$x4000; : \$x \$x$f4200" ;;
+    stall-read)           t="(true); C=$cred; x=$x4000; : \$x \$x$f4200; cat \$C" ;;
+    count-axis)           t="F=$appini; { echo$r8; cat \$F; }"$'\n'"$l140" ;;
+    count-axis-ctl)       t="F=$appini; { cat \$F; echo$r8; }"$'\n'"$l140" ;;
+    longline-expansion)   t="(true)"$'\n'"p=$x4000"$'\n'"f=$appini"$'\n'": \$p\$p$f300"$'\n'"cat \$f" ;;
+    multiline-credit)     t="(true)"$'\n'"x=$x2000"$'\n'"$c4${e40}F=$appini; cat \$F | wc -c" ;;
+    vmax)                 t="v=$v4097; echo \$v" ;;
+    tmax-rerun)           t="x=$x4000; y=$y196$t8" ;;
+    ext-read)             t="(x=1; : \$x"$'\n'"$a24000"$'\n'"cat $ext)" ;;
+    p1-small-benign)      t="ls -la /tmp && echo done" ;;
+    p1-small-read)        t="cat $appini" ;;
+    p1-small-read-filter) t="cat $appini | wc -c" ;;
+    p1-var-read)          t="F=$appini; cat \$F" ;;
+    p1-var-mid)           t="x=$x1000; : \$x \$x \$x; echo ok" ;;
+    p1-var-mid-read)      t="x=$x1000; F=$appini; : \$x \$x \$x; cat \$F" ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$t" > "$2"
+}
+sg_w10_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 < b+0)}'; }
+sg_w10_ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
+sg_w10_le() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 <= b+0)}'; }
+sg_w10_sel() { [[ "$1" =~ $SGW_SEL ]]; }
+sg_w10_wslfs() {   # [MOUNTS [DIR]] -> status 0 where the gate must see a WSL mark in the file system (WSLF in sg_w10_cases, wpa_rx6_wslf): the rule of the hook's
+  # _sg_relax_nowslfs (What 1 supplement 2, v3.4), written apart from it, never sourced or called (status 0 here is status 1 there) -- the mount table (default
+  # /proc/self/mounts) cannot be read or reads empty; or the topmost mount at DIR (default /proc/sys/fs/binfmt_misc; the table's last line for it) is a
+  # binfmt_misc file system and DIR cannot be searched (cd fails) or holds WSLInterop or WSLInterop-late (each name tested on its own: no glob, no listing).
+  # DIR is looked at only under a topmost binfmt_misc, so the check never triggers an automount. The two arguments exist to check it against the hook's function
+  local t y d="${2:-/proc/sys/fs/binfmt_misc}"
+  t=$(cat -- "${1:-/proc/self/mounts}" 2>/dev/null && echo .) || return 0
+  [[ "$t" != . ]] || return 0
+  y=$(printf '%s\n' "${t%.}" | awk -v d="$d" '$2 == d { print $3 }' | tail -n 1)
+  [[ "$y" == binfmt_misc ]] || return 1
+  ( cd -- "$d" ) >/dev/null 2>&1 || return 0
+  [ -e "$d/WSLInterop" ] || [ -e "$d/WSLInterop-late" ]
+}
+sg_w10_relax_rule() {   # MACH MAJ MIN OSRELEASE WSLINTEROP(yes|no) -> status 0 where the gate's platform rule (What 1 and its supplement) lets the relaxation in
+  [[ "${1:-}" == x86_64-*-linux-gnu* && -n "${4:-}" && "${4:-}" != *[Mm]icrosoft* && "${4:-}" != *WSL* && "${5:-yes}" == no ]] && (( ${2:-0} == 5 && ${3:-0} <= 3 ))
+}
+sg_w10_res() { SGW_ST+=("$1"); SGW_ID+=("$2"); SGW_DET+=("$3"); SGW_TM+=("${4:-0}"); }   # results wait for the load at the end (INV-7)
+sg_w10_timed() {   # ID HARD SOFT DETAIL : hard bad -> FAIL under any load; otherwise PASS / FAIL by the soft part, or SKIP [load] when the batch is not judged
+  if [[ $2 != ok ]]; then sg_w10_res FAIL "$1" "$4"
+  elif [[ $SGW_TGATE != yes ]]; then sg_w10_res SKIP "$1" "[load] $4"
+  elif [[ $3 == ok ]]; then sg_w10_res PASS "$1" "$4" 1
+  else sg_w10_res FAIL "$1" "$4" 1; fi
+}
+sg_w10_kind() { if grep -q 'has a line longer than' "$1"; then echo longline; elif grep -q 'grows by more than' "$1"; then echo growth
+  elif grep -q 'segments together are longer than' "$1"; then echo tmax; elif grep -q 'variable value is longer than' "$1"; then echo vmax
+  elif grep -q 'too large to scan' "$1"; then echo oversize; elif grep -q 'within the time budget' "$1"; then echo time
+  elif grep -q 'value-REDACTING filter' "$1"; then echo finding; elif [[ -s "$1" ]]; then echo other; else echo none; fi; }
+sg_w10_run() {   # ARM SHAPE [VAR=VALUE ...] : the hook under SC_BASH on the shape -> SGW_<ARM>_RC, _WALL, _ERR (file), _ST (the shim's state dir).
+                 # ARM B is the gate-closed arm: its callers pass WSL_DISTRO_NAME=Ubuntu. The five variables are cleared first; HOME is private (INV-5)
+  local p=$1 s=$2 st e t0 t1 rc; shift 2
+  local -a wrap=(); [[ $p == H ]] && wrap=("${SGW_HWRAP[@]}")
+  st=$(mktemp -d "$SGW_W/st.XXXXXX"); e=$(mktemp "$SGW_W/err.XXXXXX")
+  t0=$EPOCHREALTIME
+  env -u CLAUDE_PROJECT_DIR -u _SG_RELAXED -u SECRET_GUARD_TIME_BUDGET_S -u WSL_DISTRO_NAME -u WSL_INTEROP HOME="$SGW_W/home" SC_SHIM_STATE="$st" \
+    SC_REAL_jq="$SGW_JQ" SC_REAL_sed="$SGW_SED" "$@" timeout 12 "${wrap[@]}" "$SGW_BASH" "$SGW_HOOK" < "$SGW_W/in/$s.json" >/dev/null 2>"$e"; rc=$?
+  t1=$EPOCHREALTIME
+  printf -v "SGW_${p}_RC" '%s' "$rc"; printf -v "SGW_${p}_ERR" '%s' "$e"; printf -v "SGW_${p}_ST" '%s' "$st"
+  printf -v "SGW_${p}_WALL" '%s' "$(awk -v a="${t0/,/.}" -v b="${t1/,/.}" 'BEGIN{printf "%.2f", b-a}')"
+}
+sg_w10_same() { [[ $SGW_H_RC == "$SGW_B_RC" ]] && cmp -s "$SGW_H_ERR" "$SGW_B_ERR"; }
+sg_w10_desc() { printf 'hook rc=%s %s %ss | gate-closed rc=%s %s %ss | stderr %s' "$SGW_H_RC" "$(sg_w10_kind "$SGW_H_ERR")" "$SGW_H_WALL" "$SGW_B_RC" \
+  "$(sg_w10_kind "$SGW_B_ERR")" "$SGW_B_WALL" "$(sg_w10_same && echo IDENTICAL || echo DIFFERENT)"; }
+sg_w10_slow() {   # a tag when an arm shows the host was too slow for a byte comparison: the 12 s timeout (rc 124), or the hook's own whole-second time
+                  # budget firing in one arm only (its time text). Such a result is judged only in a judged timing batch (INV-7)
+  local ht=no bt=no
+  if [[ $SGW_H_RC == 124 || $SGW_B_RC == 124 ]]; then printf '[timeout12]'; return 0; fi
+  [[ "$(sg_w10_kind "$SGW_H_ERR")" == time ]] && ht=yes; [[ "$(sg_w10_kind "$SGW_B_ERR")" == time ]] && bt=yes
+  [[ $ht == "$bt" ]] || printf '[time-text]'
+  return 0
+}
+sg_w10_ref() {   # ID -> "<rc> <kind>": what 59e333c gives at this case's gate-closed call (the same input and variables; it ignores the WSL mark),
+                 # measured through v31/run-suite.sh on the five bash in 3c: the same on each bash and in both modes. An id without an entry fails.
+  case $1 in
+    V1-E16-p1-small-benign|V1-E16-p1-small-read-filter|V1-E16-p1-var-mid) echo '0 none' ;;
+    V1-E16-p1-small-read|V1-E16-p1-var-read|V1-E16-p1-var-mid-read) echo '2 finding' ;;
+    V9-E12-vmax-unchanged) echo '2 vmax' ;;
+    V7-E1-benign-big-allowed|V6-E2-deadline-fallback-bytes|V3-E3-anchor-at-hook-start|V3-E4-cap-3-at-budget-4|V3-E5-budget-2) echo '2 oversize' ;;
+    V2-E6-flag-from-environment-ignored|V2-E7-no-time-left|V2-E8-ostype-from-environment-ignored|V2-E9-extension-project) echo '2 oversize' ;;
+    V9-E10-count-axis-read-blocked|V9-E11-tmax-in-rerun|V7-E13-multiline-copy-normal-text|V7-E14-long-line-from-expansion) echo '2 oversize' ;;
+    V7-E15-credit-as-normal|V2-E18-extension-via-stdin-cwd|V5-E19-deadline-with-term-ignored) echo '2 oversize' ;;
+    *) echo 'unrecorded -' ;;
+  esac
+}
+sg_w10_refok() {   # ID TAIL : [reference] the gate-closed arm (SGW_B_*) must give sg_w10_ref's outcome -> status 0. Otherwise the case is recorded here and the
+                   # status is 1: timing when that arm hit the 12 s timeout or shows the time text (as sg_w10_slow), else FAIL [reference]. TAIL ends the detail.
+  local want got w=''; want=$(sg_w10_ref "$1"); got="$SGW_B_RC $(sg_w10_kind "$SGW_B_ERR")"
+  [[ $got == "$want" ]] && return 0
+  if [[ $SGW_B_RC == 124 ]]; then w=' [timeout12]'; elif [[ ${got#* } == time ]]; then w=' [time-text]'; fi
+  if [[ -n "$w" ]]; then sg_w10_timed "$1" ok bad "$(sg_w10_desc)$2 | gate-closed arm rc=${got% *} ${got#* }, reference (59e333c) rc=${want% *} ${want#* }$w"
+  else sg_w10_res FAIL "$1" "$(sg_w10_desc)$2 | gate-closed arm rc=${got% *} ${got#* }, reference (59e333c) rc=${want% *} ${want#* } [reference]"; fi
+  return 1
+}
+sg_w10_identity() {   # ID SHAPE [VAR=VALUE ...] : the hook must equal the gate-closed hook, byte for byte (timing only when the host was too slow)
+  local id=$1 s=$2 w; shift 2; sg_w10_sel "$id" || return 0
+  sg_w10_run B "$s" WSL_DISTRO_NAME=Ubuntu "$@"; sg_w10_run H "$s" "$@"; sg_w10_refok "$id" '' || return 0; w=$(sg_w10_slow)
+  if [[ -n "$w" ]]; then sg_w10_timed "$id" ok bad "$(sg_w10_desc) $w"
+  elif sg_w10_same; then sg_w10_res PASS "$id" "$(sg_w10_desc)"; else sg_w10_res FAIL "$id" "$(sg_w10_desc) [bytes]"; fi
+}
+sg_w10_deadline() {   # ID SHAPE MIN MAX [VAR=VALUE ...] : (relaxation expected) the job is cut by the deadline: the gate-closed bytes, wall in [MIN, MAX]
+  local id=$1 s=$2 lo=$3 hi=$4 a sd='' st w hard=ok soft=ok t=''; shift 4; sg_w10_sel "$id" || return 0
+  if [[ $SGW_RELAX != yes ]]; then sg_w10_identity "$id" "$s" "$@"; return 0; fi   # the variables reach the hook on every bash
+  for a in "$@"; do [[ $a == SC_DELAY_sed=* ]] && sd=${a#*=}; done
+  sg_w10_run B "$s" WSL_DISTRO_NAME=Ubuntu; sg_w10_run H "$s" "PATH=$SGW_SHIM:$PATH" "$@"
+  st=none; [[ -f "$SGW_H_ST/sed.stall" ]] && st=job; [[ -f "$SGW_H_ST/sed.uncut" ]] && st=uncut
+  sg_w10_refok "$id" " sed-stall=$st (want IDENTICAL, wall window $lo..$hi)" || return 0
+  if [[ $st == uncut ]]; then sg_w10_res FAIL "$id" "$(sg_w10_desc) sed-stall=$st (want IDENTICAL, wall window $lo..$hi) [uncut]"; return 0; fi
+  w=$(sg_w10_slow); if [[ -n "$w" ]]; then sg_w10_timed "$id" ok bad "$(sg_w10_desc) sed-stall=$st (want IDENTICAL, wall window $lo..$hi) $w"; return 0; fi
+  if [[ -n "$sd" ]] && sg_w10_ge "$SGW_H_WALL" "$sd"; then
+    sg_w10_res SKIP "$id" "[inconclusive] $(sg_w10_desc) sed-stall=$st: the wall reached the ${sd} s stall, which did not run to its end inside the job"; return 0
+  fi
+  sg_w10_same || { hard=bad; t+=' [bytes]'; }
+  sg_w10_ge "$SGW_H_WALL" "$lo" || { hard=bad; t+=' [wall<lo]'; }
+  sg_w10_le "$SGW_H_WALL" "$hi" || { soft=bad; t+=' [wall>hi]'; }
+  sg_w10_timed "$id" $hard $soft "$(sg_w10_desc) sed-stall=$st (want IDENTICAL, wall window $lo..$hi)$t"
+}
+sg_w10_outcome() {   # ID SHAPE WANT_RC WANT_KINDS(|-separated) [VAR=VALUE ...] : (relaxation expected) the rerun finishes before the deadline with this rc / text
+  local id=$1 s=$2 wr=$3 wk=$4 k hard=ok soft=ok t=''; shift 4; sg_w10_sel "$id" || return 0
+  if [[ $SGW_RELAX != yes ]]; then sg_w10_identity "$id" "$s" "$@"; return 0; fi
+  sg_w10_run B "$s" WSL_DISTRO_NAME=Ubuntu "$@"; sg_w10_run H "$s" "$@"; sg_w10_refok "$id" " (want rc=$wr text=$wk within 4.5 s)" || return 0
+  k=$(sg_w10_kind "$SGW_H_ERR")
+  if [[ $SGW_H_RC == "$wr" && "|$wk|" == *"|$k|"* ]]; then sg_w10_le "$SGW_H_WALL" 4.5 || { soft=bad; t=' [wall>hi]'; }
+  elif [[ -n "$(sg_w10_slow)" ]]; then soft=bad; t=" $(sg_w10_slow)"
+  elif sg_w10_same; then soft=bad; t=' [fallback]'   # the gate-closed bytes: the rerun did not finish before the deadline (a slow host) or never ran
+  else hard=bad; [[ $SGW_H_RC == "$wr" ]] || t+=' [rc]'; [[ "|$wk|" == *"|$k|"* ]] || t+=' [kind]'; fi
+  sg_w10_timed "$id" $hard $soft "$(sg_w10_desc) (want rc=$wr text=$wk within 4.5 s)$t"
+}
+sg_w10_e17() {   # V2-E17: a WSL mark in the environment closes the gate. The gate-closed arm is itself made that way, so instead of a byte comparison the
+                 # case asserts the gate-closed outcome: status 2 and the size text (benign-big is a copy over 8192 that only the relaxation allows)
+  local id=V2-E17-wsl-mark-keeps-baseline k d; sg_w10_sel "$id" || return 0
+  sg_w10_run H benign-big WSL_DISTRO_NAME=Ubuntu; k=$(sg_w10_kind "$SGW_H_ERR")
+  d="hook with WSL_DISTRO_NAME=Ubuntu: rc=$SGW_H_RC $k ${SGW_H_WALL}s (want rc=2 text=oversize: the gate stays closed, the baseline's size block)"
+  if [[ $SGW_H_RC == 124 ]]; then sg_w10_timed "$id" ok bad "$d [timeout12]"
+  elif [[ $k == time ]]; then sg_w10_timed "$id" ok bad "$d [time-text]"
+  elif [[ $SGW_H_RC == 2 && $k == oversize ]]; then sg_w10_res PASS "$id" "$d"
+  else sg_w10_res FAIL "$id" "$d$([[ $SGW_H_RC == 2 ]] || printf ' [rc]')$([[ $k == oversize ]] || printf ' [kind]')"; fi
+}
+sg_w10_blk() { awk -v k="$2" '$0 ~ "kind\" == " k " \\]\\]; then" {f=1} f && /^Split it into smaller commands/ {p=1} p {print} p && /请拆成更小的命令/ {exit}' "$1"; }
+sg_w10_static() {   # V11-S1 (the new functions above the sourcing gate, INV-4), V11-S3 (the longline instruction lines), V11-S4 (one rule loop)
+  local g l f id o ll lz b
+  g=$(grep -n '^if \[\[ "${BASH_SOURCE\[0\]}" != "$0" \]\]; then' "$SGW_HOOK" | head -1 | cut -d: -f1)
+  for f in _sg_vx_big_judge _sg_relax_left _sg_relax_ok _sg_relax_platform _sg_relax_nowslfs _sg_relax_noext _sg_relax_job _sg_relax_run; do
+    id="V11-S1-above-gate:$f"; sg_w10_sel "$id" || continue
+    l=$(grep -n "^$f() {" "$SGW_HOOK" | head -1 | cut -d: -f1)
+    if [[ -z "$l" ]]; then sg_w10_res FAIL "$id" "[missing] $f is not defined in the hook (sourcing gate at line ${g:-missing})"
+    elif [[ -n "$g" ]] && (( l < g )); then sg_w10_res PASS "$id" "line $l < sourcing gate $g"
+    else sg_w10_res FAIL "$id" "line $l, gate ${g:-missing} [value]"; fi
+  done
+  if sg_w10_sel V11-S3-longline-instructions-verbatim; then
+    o=$(sg_w10_blk "$SGW_HOOK" oversize | sed '$d'); ll=$(sg_w10_blk "$SGW_HOOK" longline | sed '$d'); lz=$(sg_w10_blk "$SGW_HOOK" longline | tail -1)
+    if [[ -n "$o" && "$o" == "$ll" && "$lz" == *请拆成更小的命令 ]]; then
+      sg_w10_res PASS V11-S3-longline-instructions-verbatim "the longline instruction lines equal the oversize ones ($(printf '%s\n' "$ll" | wc -l | tr -d ' ') lines)"
+    else sg_w10_res FAIL V11-S3-longline-instructions-verbatim "oversize [$(printf '%s' "$o" | head -c 60 | tr '\n' '/')] longline [$(printf '%s' "$ll" | head -c 60 | tr '\n' '/')] [text]"; fi
+  fi
+  if sg_w10_sel V11-S4-one-rule-loop; then   # a fixed count in the suite (no baseline file): exactly one loop over risky_patterns, as in the baseline
+    b=$(grep -c 'risky_patterns\[@\]' "$SGW_HOOK")
+    if [[ $b == 1 ]]; then sg_w10_res PASS V11-S4-one-rule-loop "loops over risky_patterns: $b (want exactly 1, the baseline's count)"
+    else sg_w10_res FAIL V11-S4-one-rule-loop "loops over risky_patterns: $b (want exactly 1, the baseline's count) [count]"; fi
+  fi
+}
+sg_w10_skips() { printf 'platform %d, load %d, void %d, inconclusive %d, root %d, other %d' "$skip_platform" "$skip_load" "$skip_void" "$skip_inconclusive" "$skip_root" "$skip_other"; }
+sg_w10_cases() {
+  local s i id st det line rest h sf drc last mode setup='' MACH='' MAJ='' MIN='' OSR WSLF LOAD0 L0 LOAD1 L1 VOID=no tb want got dup missing extra nw ng
+  SGW_SEL=${SG_W10_ONLY:-.}; SGW_ST=(); SGW_ID=(); SGW_DET=(); SGW_TM=(); SGW_HWRAP=()
+  SGW_W=$(mktemp -d "$_TEST_HOME/w10.XXXXXX"); mkdir -p "$SGW_W/in" "$SGW_W/home" "$SGW_W/ext/.aria"
+  SGW_HOOK="$(cd "$(dirname "$HOOK")" && pwd)/$(basename "$HOOK")"; SGW_SHIM="$SG_W10_DIR/sg-shim"
+  SGW_BASH=$(readlink -f "${SC_BASH:-$(command -v bash)}" 2>/dev/null); SGW_JQ=$(command -v jq); SGW_SED=$(command -v sed)
+  [[ -n "$SGW_BASH" && -f "$SGW_BASH" && -x "$SGW_BASH" ]] && "$SGW_BASH" -c : </dev/null >/dev/null 2>&1 || setup+="SC_BASH does not run (${SC_BASH:-bash on PATH}); "
+  for s in $SG_W10_SHAPES; do
+    sg_w10_shape "$s" "$SGW_W/in/$s.txt" && "$SGW_JQ" -Rs '{tool_name:"Bash", tool_input:{command:.}}' < "$SGW_W/in/$s.txt" > "$SGW_W/in/$s.json" || setup+="input $s; "
+  done
+  printf '%s\n' "billing/conf/prod.toml" > "$SGW_W/ext/.aria/secret-guard.paths"
+  "$SGW_JQ" -Rs --arg cwd "$SGW_W/ext" '{tool_name:"Bash", cwd:$cwd, tool_input:{command:.}}' < "$SGW_W/in/ext-read.txt" > "$SGW_W/in/ext-read-cwd.json" || setup+="input ext-read-cwd; "
+  # the gate's rule (What 1 and its supplement), asked of the bash that runs the hook; the WSL variables are cleared for every run, so the kernel facts decide
+  [[ -z "$setup" ]] && read -r MACH MAJ MIN < <("$SGW_BASH" -c 'echo "${BASH_VERSINFO[5]} ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' 2>/dev/null)
+  OSR=$(cat /proc/sys/kernel/osrelease 2>/dev/null); WSLF=no; sg_w10_wslfs && WSLF=yes
+  SGW_RELAX=no
+  sg_w10_relax_rule "$MACH" "$MAJ" "$MIN" "$OSR" "$WSLF" && SGW_RELAX=yes
+  mode=norelax; [[ $SGW_RELAX == yes ]] && mode=relax
+  LOAD0=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null); L0=${LOAD0%% *}
+  SGW_TGATE=no; [[ -n "$L0" ]] && sg_w10_lt "$L0" 2 && SGW_TGATE=yes   # no load reading: the timing batch is not judged
+  if [[ -n "$setup" ]]; then
+    for i in $SGW_EXP_DIRECT $SGW_EXP_E2E $SGW_EXP_STATIC; do sg_w10_sel "$i" && sg_w10_res FAIL "$i" "[setup] ${setup% }"; done
+    sg_w10_res FAIL V0-H1-direct-complete "[setup] ${setup% } [harness]"
+  else
+    # ---- direct calls (lib/secret-guard-w10-direct.sh under SC_BASH): MISSING and SETUP are FAIL here; TIMED goes through the load rule ----
+    HOME="$SGW_W/home" SC_ONLY="$SGW_SEL" "$SGW_BASH" "$SG_W10_DIR/secret-guard-w10-direct.sh" "$SGW_HOOK" "$mode" </dev/null >"$SGW_W/direct.out" 2>"$SGW_W/direct.err"; drc=$?
+    while IFS= read -r line; do
+      st=${line%% *}; rest=${line#* }; id=${rest%% *}; det=${rest#"$id"}; det=${det# }
+      case $st in
+        PASS|FAIL|SKIP) sg_w10_sel "$id" && sg_w10_res "$st" "$id" "$det" ;;
+        MISSING) sg_w10_sel "$id" && sg_w10_res FAIL "$id" "$det" ;;
+        SETUP) sg_w10_sel "$id" && sg_w10_res FAIL "$id" "[setup] $det" ;;
+        TIMED) h=${det%% *}; det=${det#* }; sf=${det%% *}; det=${det#* }; sg_w10_sel "$id" && sg_w10_timed "$id" "$h" "$sf" "$det" ;;
+      esac
+    done < "$SGW_W/direct.out"
+    last=$(tail -n 1 "$SGW_W/direct.out")
+    if [[ "$last" == "END sc-direct" && $drc == 0 ]]; then sg_w10_res PASS V0-H1-direct-complete "lib/secret-guard-w10-direct.sh ($mode) ran to its sentinel and exited 0"
+    else sg_w10_res FAIL V0-H1-direct-complete "lib/secret-guard-w10-direct.sh ($mode): last line [$(printf '%s' "$last" | cut -c1-80)] (want END sc-direct), exit $drc (want 0); stderr: $(tail -n 3 "$SGW_W/direct.err" | tr '\n' ' ' | cut -c1-200) [harness]"; fi
+    # ---- end-to-end: the hook executed by SC_BASH on a JSON input, as Claude Code runs it ----
+    if ! command -v timeout >/dev/null 2>&1; then
+      for i in $SGW_EXP_E2E; do sg_w10_sel "$i" && sg_w10_res SKIP "$i" "[platform] timeout (coreutils) not found: every end-to-end run is bounded by it"; done
+    else
+      # P7 allow path; P3/P6 deadline and fallback bytes (the sed shim stalls the job's block text for 10 s, so only the deadline can end the job)
+      sg_w10_outcome   V7-E1-benign-big-allowed            benign-big 0 none
+      sg_w10_deadline  V6-E2-deadline-fallback-bytes       stall-read 2.85 3.6 SC_DELAY_sed=10
+      sg_w10_deadline  V3-E3-anchor-at-hook-start          stall-read 2.85 3.6 SC_DELAY_jq=1.5 SC_DELAY_sed=10
+      sg_w10_deadline  V3-E4-cap-3-at-budget-4             stall-read 2.85 3.6 SC_DELAY_sed=10 SECRET_GUARD_TIME_BUDGET_S=4
+      sg_w10_deadline  V3-E5-budget-2                      stall-read 1.85 2.6 SC_DELAY_sed=10 SECRET_GUARD_TIME_BUDGET_S=2
+      sg_w10_deadline  V2-E6-flag-from-environment-ignored stall-read 2.85 3.6 SC_DELAY_sed=10 _SG_RELAXED=1
+      sg_w10_deadline  V2-E7-no-time-left                  stall-read 3.2 4.3 SC_DELAY_jq=3.2
+      # P2: OSTYPE, MACHTYPE and HOSTTYPE come from the environment and decide nothing; an extension project keeps the baseline
+      sg_w10_outcome   V2-E8-ostype-from-environment-ignored benign-big 0 none OSTYPE=darwin21 MACHTYPE=x86_64-apple-darwin23.0.0 HOSTTYPE=aarch64
+      sg_w10_identity  V2-E9-extension-project             ext-read CLAUDE_PROJECT_DIR="$SGW_W/ext"
+      # P9: no count bound in the rerun; TMAX holds in the rerun; VMAX unchanged
+      sg_w10_outcome   V9-E10-count-axis-read-blocked      count-axis 2 "finding|longline"
+      sg_w10_outcome   V9-E11-tmax-in-rerun                tmax-rerun 2 tmax
+      sg_w10_identity  V9-E12-vmax-unchanged               vmax
+      # P7 routing: by the copy's longest line; multi-line copies get the normal judgement, credit included
+      sg_w10_outcome   V7-E13-multiline-copy-normal-text   count-axis-ctl 2 finding
+      sg_w10_outcome   V7-E14-long-line-from-expansion     longline-expansion 2 longline
+      sg_w10_outcome   V7-E15-credit-as-normal             multiline-credit 0 none
+      # P1 sampler: commands that never reach a trigger point
+      for s in p1-small-benign p1-small-read p1-small-read-filter p1-var-read p1-var-mid p1-var-mid-read; do sg_w10_identity "V1-E16-$s" "$s"; done
+      # P2: a WSL mark in the environment closes the gate (What 1 supplement); an extension project known only through the stdin cwd
+      sg_w10_e17
+      sg_w10_identity  V2-E18-extension-via-stdin-cwd      ext-read-cwd
+      # P3/P5: the deadline holds when the hook starts with SIGTERM ignored -- the timer and the group kill use KILL
+      SGW_HWRAP=("$SGW_BASH" -c 'trap "" TERM; exec "$0" "$@"')
+      sg_w10_deadline  V5-E19-deadline-with-term-ignored   stall-read 2.85 3.6 SC_DELAY_sed=10
+      SGW_HWRAP=()
+    fi
+    sg_w10_static
+  fi
+  # ---- V0-H2: every id of the one list (the same on every platform), reported once ----
+  want=" "; got=" "; dup=''
+  for i in $SGW_EXP_DIRECT $SGW_EXP_E2E $SGW_EXP_STATIC; do sg_w10_sel "$i" && want+="$i "; done
+  for i in "${!SGW_ID[@]}"; do id=${SGW_ID[i]}; [[ $id == V0-H* ]] && continue; [[ "$got" == *" $id "* ]] && dup+="$id "; got+="$id "; done
+  missing=''; for id in $want; do [[ "$got" == *" $id "* ]] || missing+="$id "; done
+  extra=''; for id in $got; do [[ "$want" == *" $id "* ]] || extra+="$id "; done
+  nw=$(wc -w <<< "$want" | tr -d ' '); ng=$(wc -w <<< "$got" | tr -d ' ')
+  if [[ -z "$missing$extra$dup" ]]; then sg_w10_res PASS V0-H2-case-list "all $nw expected case ids reported once (mode $mode; one list on every platform)"
+  else sg_w10_res FAIL V0-H2-case-list "expected $nw ids, reported $ng; missing: [${missing% }] unexpected: [${extra% }] reported twice: [${dup% }] [harness]"; fi
+  # ---- the load at the end decides whether the timing batch stands (INV-7); then the counts, and the log ----
+  LOAD1=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null); L1=${LOAD1%% *}
+  [[ $SGW_TGATE == yes ]] && { [[ -z "$L1" ]] || ! sg_w10_lt "$L1" 2; } && VOID=yes
+  if [[ $VOID == yes ]]; then
+    for i in "${!SGW_ST[@]}"; do [[ ${SGW_TM[i]} == 1 ]] && { SGW_DET[i]="[void] ${SGW_ST[i]} at load $L0 -> $L1: ${SGW_DET[i]}"; SGW_ST[i]=SKIP; }; done
+  fi
+  if [[ $SGW_TGATE != yes ]]; then tb='SKIP [load]'; elif [[ $VOID == yes ]]; then tb='void (SKIP [void]): run again'; else tb=judged; fi
+  sg_w10_batch="SC_BASH $SGW_BASH (${MACH:-?} ${MAJ:-?}.${MIN:-?}) -> relaxation expected: $SGW_RELAX | load start ${LOAD0:-unavailable} end ${LOAD1:-unavailable} | timing batch: $tb"
+  [[ -n "${SG_W10_LOG:-}" ]] && printf '# secret-guard.test.sh W10 ported cases | %s | hook %s | direct %s | shim %s | filter %s | %s\n' "$(date -u +%FT%TZ)" \
+    "$(sha256sum < "$SGW_HOOK" 2>/dev/null | cut -c1-12)" "$(sha256sum < "$SG_W10_DIR/secret-guard-w10-direct.sh" 2>/dev/null | cut -c1-12)" \
+    "$(sha256sum < "$SGW_SHIM/delay-first" 2>/dev/null | cut -c1-12)" "$SGW_SEL" "${sg_w10_batch%% | load start*}" > "$SG_W10_LOG"
+  for i in "${!SGW_ST[@]}"; do
+    st=${SGW_ST[i]}; id=${SGW_ID[i]}; det=${SGW_DET[i]}
+    [[ -n "${SG_W10_LOG:-}" ]] && printf '%s %s %s\n' "$st" "$id" "$det" >> "$SG_W10_LOG"
+    case $st in
+      PASS) pass=$((pass + 1)) ;;
+      FAIL) fail=$((fail + 1)); failures+=("FAIL [W10-port $id]: $det") ;;
+      *) skip=$((skip + 1))
+         case $det in '[platform]'*) skip_platform=$((skip_platform + 1)) ;; '[load]'*) skip_load=$((skip_load + 1)) ;; '[void]'*) skip_void=$((skip_void + 1)) ;;
+           '[inconclusive]'*) skip_inconclusive=$((skip_inconclusive + 1)) ;; '[root]'*) skip_root=$((skip_root + 1)) ;; *) skip_other=$((skip_other + 1)) ;; esac ;;
+    esac
+  done
+  [[ -n "${SG_W10_LOG:-}" ]] && printf '# load start %s end %s | timing batch: %s\n' "${LOAD0:-unavailable}" "${LOAD1:-unavailable}" "$tb" >> "$SG_W10_LOG"
+  return 0
+}
+# The ported W10 cases run here, once, first: before every older case (3a ruling (1), 2026-10-24). Run at the end of the suite, their timing batch read a
+# one-minute load that held the suite's own load from the older cases (2.10 or more at the start of the batch in every whole round of 3a), so the batch was never
+# judged; the threshold (2) and the batch's two readings, at its start and at its end, are unchanged. SC-13 at the end counts their SKIP. SG_W10_ONLY: a
+# filtered round -- only the ported cases whose id matches; no other case and no SC-13.
+sg_w10_cases
+if [[ -n "${SG_W10_ONLY:-}" ]]; then
+  total=$((pass + fail + skip))
+  echo
+  echo "──────────────────────────────────────────────────"
+  echo "secret-guard.sh regression test -- FILTERED ROUND (SG_W10_ONLY=$SG_W10_ONLY): only the ported W10 cases whose id matches ran; no other case, no SC-13"
+  echo "PASS: $pass / $total"
+  echo "FAIL: $fail / $total"
+  echo "SKIP: $skip / $total ($(sg_w10_skips))"
+  echo "W10 ported cases: $sg_w10_batch"
+  if [[ $fail -gt 0 ]]; then echo; echo "Failures:"; printf '  %s\n' "${failures[@]}"; echo; exit 1; fi
+  exit 0
+fi
 
 # ── BLOCK cases (exit 2) — Nomad / Vault / cloud / managers ───────────────
 
@@ -2509,13 +2888,25 @@ wpa_use_none
 
 # ── review M6 (TASK-014): the second pass has a LENGTH BUDGET -- three limits, each pinned to the character on both sides (21aa-21ap) ──
 # Without them the judged copy is the segment plus references x value length, one level of chaining multiplies a value by 8 per level, and the pass overran the 5 s hook
-# timeout on a 5 KB command (a timeout lets the command through). Owner ruling 2026-10-14: beyond a limit the command is BLOCKED -- exit 2 with the "command too large to scan for
-# secrets ... split it" text, NOT the finding text -- never passed (the COUNT bounds, 21y, still pass). After the flip both sides of a limit exit 2, so the exit code alone no
-# longer tells "judged" from "refused": the text does. wpa_x_finding = the call was judged and blocked as a finding (the shared BLOCKED text, not the size text); wpa_x_toolarge =
-# it was refused as too large (the size text, not the finding text). The inside of every limit asserts the first, the outside the second: a limit that is one too low or too high
-# swaps the text of a side and turns the case red; an overrun that passes (the fail-open M6, exit 0) or is blocked with the finding text turns the outside red.
-# The numbers are part of the contract (_SGV_SMAX 8192 = one substituted copy, _SGV_VMAX 4096 = one collected value, _SGV_TMAX 65536 = all copies of one command); changing one
-# means changing these cases. The pad value p has 4000 characters: every `$p` adds 3998 to a copy, the reader `$f` (the 20-character app.ini name) adds 18.
+# timeout on a 5 KB command (a timeout lets the command through). Owner ruling 2026-10-14, narrowed by 10CG/aria-plugin#217 (owner rulings A and E, 2026-10-23): a value
+# over the value limit, or copies over the pass-wide limit, block the command on every platform -- exit 2 with the "command too large to scan for secrets ... split it"
+# text, not the finding text -- and are never passed (P9); a copy over the copy limit is blocked that way wherever the relaxation is not in effect (What 1 and its
+# supplement: another platform or bash version, WSL, a project extension, or no time left; P2), and also where it is whenever the rerun falls back (the deadline, a time
+# checkpoint, the self-check, any other failure: What 4). Where it is in effect the pass is re-run under a hard deadline with the relaxed rules (What 1): a copy that grows
+# by more than _SGV_GMAX over its input is blocked with the growth text (P8, What 5), a copy over _SGV_SMAX whose longest line is longer than _SGV_LMAX is matched against
+# the rows only and a match blocks with the longline text (P7, What 5), and any other copy is judged as usual, so it may pass
+# (R-a). The COUNT bounds of the baseline pass, 21y, still pass (P9). After the flip both sides of a limit exit 2 wherever a row matches (in the relaxed branch the outside
+# of the copy limit passes when none does, 21ab), so the exit code alone does not tell "judged" from "refused": the text does. wpa_x_finding = the call was judged and
+# blocked as a finding (the shared BLOCKED text, not the size text); wpa_x_toolarge = it was refused as too large (the size text, not the finding text). Every limit is
+# pinned from both sides. In the cases that the relaxation does not change, and in the baseline branch of the six groups that it changes (21ab, 21ac, 21ag, 21aj, 21al,
+# 21ao; the branch is chosen once, below: wpa_rx6), the inside asserts the first helper and the outside the second, so a limit one too low or too high swaps the text of
+# a side and turns a case red, and an overrun there that passes (exit 0, the fail-open M6) or draws the finding text turns the outside red. In the relaxed branch of the
+# six groups wpa_x_hit asserts the ordinary finding text (value-REDACTING filter, and not the longline text), wpa_x_longline the longline text (has a line longer than ...
+# Matched pattern:), and wpa_x_toolarge the growth line where a copy grows too much: wpa_x_finding cannot tell the ordinary finding text from the longline text, both say
+# that the command reads a secret-bearing source (PP1-A12). The numbers are part of the contract (_SGV_SMAX 8192 = the longest copy the baseline pass builds, _SGV_VMAX
+# 4096 = one collected value, _SGV_TMAX 65536 = all copies of one command; in the relaxed rerun _SGV_GMAX 8192 = the most a copy may grow over its input, _SGV_LMAX 8192 =
+# the longest line of a copy over _SGV_SMAX that is still judged with credit); changing one means changing these cases. The pad value p has 4000 characters: every `$p`
+# adds 3998 to a copy, the reader `$f` (the 20-character app.ini name) adds 18.
 wpa_rep() { printf '%*s' "$2" '' | tr ' ' "$1"; }                                   # <char> <count>
 wpa_vx_pad="$(wpa_rep x 4000)"
 wpa_vx_fill() { [[ "$1" -ge 2 ]] && printf ' %s' "$(wpa_rep y $(( $1 - 1 )))"; return 0; }   # <n> -> a filler word of exactly n characters (a space and n-1 y); nothing for n < 2
@@ -2541,29 +2932,160 @@ wpa_x_toolarge() {   # <command> <the limit line it must name: wpa_L_*>: refused
   wpa_chk "refused [${p:0:48}]: not an internal error" no "$([[ "$e" == *"internal error"* ]] && echo yes || echo no)"
   wpa_chk "refused [${p:0:48}]: short (echoes the start of the command only)" yes "$([[ ${#e} -lt 3000 ]] && echo yes || echo no)"
 }
+# The six groups whose outcome the relaxation of 10CG/aria-plugin#217 changes (21ab, 21ac, 21ag, 21aj, 21al, 21ao) assert in two branches (the plan's design, suite (1)
+# supplement (iv); owner ruling E). The branch is chosen once, here, by the gate's platform rule of What 1 and its supplement (sg_w10_relax_rule, the rule that sets
+# SGW_RELAX for the ported cases), asked of the bash that runs these cases: wpa_err runs the hook file itself, so its shebang (/usr/bin/env bash) picks the bash on PATH,
+# not SC_BASH. These cases pass the suite's environment to the hook, so WSL_DISTRO_NAME or WSL_INTEROP set in it closes the gate as well (the ported cases clear both).
+# None of the six runs in a project (wpa_use_none), so the gate's extension condition holds; its time condition holds unless the host is too slow for the deadline.
+# wpa_rx6=yes: the relaxation is expected and a group asserts the outcome the proposal gives (its comment names the What / P item); wpa_rx6=no: the group keeps its
+# baseline assertions word for word. Either way a group is one case, so the count does not depend on the platform (SC-13). The summary prints the branch and its inputs.
+# In the relaxed branch a trigger-point command (a copy over 8192) goes through wpa_x6, which also accepts the deadline fallback (the baseline branch's
+# assertion on the same output, with a wall only a fallback for time gives: >= 3.0 s, or over 2.0 s with one of up to three gate-closed runs of the
+# same input at least 1.0 s quicker; see wpa_x6), and the summary counts those fallbacks.
+wpa_rx6=no; wpa_rx6_mach=''; wpa_rx6_maj=''; wpa_rx6_min=''; wpa_rx6_ver=''; wpa_rx6_osr=$(cat /proc/sys/kernel/osrelease 2>/dev/null); wpa_rx6_wslf=no
+sg_w10_wslfs && wpa_rx6_wslf=yes
+read -r wpa_rx6_mach wpa_rx6_maj wpa_rx6_min wpa_rx6_ver < <(env bash -c 'echo "${BASH_VERSINFO[5]} ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]} $BASH_VERSION"' 2>/dev/null)
+sg_w10_relax_rule "$wpa_rx6_mach" "$wpa_rx6_maj" "$wpa_rx6_min" "$wpa_rx6_osr" "$wpa_rx6_wslf" && [[ -z "${WSL_DISTRO_NAME:-}${WSL_INTEROP:-}" ]] && wpa_rx6=yes
+wpa_rx6_note="$([[ $wpa_rx6 == yes ]] && echo 'relaxed branch (new outcomes)' || echo 'baseline branch (assertions as before)') | bash on PATH $(command -v bash) ${wpa_rx6_ver:-?} (machtype ${wpa_rx6_mach:-?}) | osrelease ${wpa_rx6_osr:-unreadable} | WSLInterop $wpa_rx6_wslf | WSL_DISTRO_NAME '${WSL_DISTRO_NAME:-}' WSL_INTEROP '${WSL_INTEROP:-}'"
+wpa_L_gseg='a command segment grows by more than 8192 characters after variable expansion'   # the growth line of the relaxed rerun, segment mode (What 5; _SGV_GMAX 8192)
+wpa_x_longline() {   # <command>: (relaxed branch) judged in full and blocked with the longline text of What 5: a row matched on a line longer than _SGV_LMAX
+  local e p="${1//$wpa_nl/ }"; e="$(wpa_err Bash "$1")"
+  wpa_chk "longline [${p:0:48}]: exit code" 2 "${e##*WPA_RC=}"
+  wpa_chk "longline [${p:0:48}]: has a line longer than" yes "$([[ "$e" == *"has a line longer than"* ]] && echo yes || echo no)"
+  wpa_chk "longline [${p:0:48}]: Matched pattern:" yes "$([[ "$e" == *"Matched pattern:"* ]] && echo yes || echo no)"
+  wpa_chk "longline [${p:0:48}]: not the size text" no "$([[ "$e" == *"too large to scan"* ]] && echo yes || echo no)"
+  wpa_chk "longline [${p:0:48}]: short (the first 200 characters of the command, no triggering segment)" yes "$([[ ${#e} -lt 3000 ]] && echo yes || echo no)"
+}
+wpa_x_hit() {   # <command>: (relaxed branch) judged and blocked with the ordinary finding text -- value-REDACTING filter, and not the longline text (PP1-A12)
+  local e p="${1//$wpa_nl/ }"; e="$(wpa_err Bash "$1")"
+  wpa_chk "finding [${p:0:48}]: exit code" 2 "${e##*WPA_RC=}"
+  wpa_chk "finding [${p:0:48}]: value-REDACTING filter" yes "$([[ "$e" == *"value-REDACTING filter"* ]] && echo yes || echo no)"
+  wpa_chk "finding [${p:0:48}]: not the longline text" no "$([[ "$e" == *"has a line longer than"* ]] && echo yes || echo no)"
+}
+# Deadline fallback of the relaxed branch (plan notes: the 3b ruling, its 2.85 s bound replaced by (1) of the 3c ruling; technical, the posture unchanged).
+# A trigger-point command there -- its copy over 8192: 21ab's three, 21ac's 4096-character for list, 21ag, 21aj's three, the 8193 of 21al and 21ao --
+# runs the hook ONCE (wpa_x6_hook; SECRET_GUARD_TIME_BUDGET_S cleared, so the deadline is _SG_P0 + 3 s). Its wall W is taken by EPOCHREALTIME and
+# compared in whole microseconds, never rounded first (shown cut to two decimals). Why the hook falls back: the baseline pass runs first and on a busy
+# host takes much of the 3 s (21ab: 2.37-2.58 s for the whole hook at load 1.2-1.6, 2.39-3.08 s gate-closed, b2/t002d-verify/probe.txt), and then the
+# hook gives the baseline's block (What 4; P3, P6). Worked out from the hook, a fallback for time has three ways and no other:
+#   F1 the gate closes for lack of time: _sg_relax_left gives status 1 only once now >= _SG_P0 + 3 s;
+#   F2 the deadline kills the job: its timer (sleep "$_SG_LEFT") starts after _SG_LEFT is worked out, so the kill comes after _SG_P0 + 3 s;
+#   F3 the rerun's own time checkpoint: _sg_vx_collect resets _SG_T0=$SECONDS and _sg_over_budget sends the rerun back (status 3, then the baseline
+#      block) once SECONDS - _SG_T0 >= 3; SECONDS counts whole seconds, so that is more than 2 s and at most 3 s after the reset, which comes after the
+#      job starts, which comes after the baseline pass (its time Tb) ends.
+# W starts before the hook process does, so before _SG_P0: F1 and F2 give W > 3.0 s; F3 gives W > Tb + 2 s, which is 2-3 s for a command whose
+# baseline pass takes under 1 s; any fallback for time gives W > 2.0 s. A gate that closes early (a bad implementation) gives W about Tb. The rule:
+# (1) the relaxed branch's assertion holds on that output: passes. (2) Otherwise, when the baseline branch's assertion for that command (the else
+# branch's wpa_x_toolarge and its limit line) does not hold on the SAME output either: the check is off, its detail naming both assertions' misses and
+# W. (3) Otherwise (the output is the baseline's block): (a) W >= 3.0 s: a deadline fallback (F1, F2 or a late F3). (b) 2.0 s < W < 3.0 s: the same
+# input runs again up to three times, 1 s apart -- each run the same variables and directory, the budget variable cleared, plus WSL_DISTRO_NAME=Ubuntu,
+# which closes the gate -- and each run's wall is a reading Tb'. The first reading with 0 < Tb' <= W - 1.0 s is a deadline fallback (F3: the
+# checkpoint sent the rerun back, W more than 2 s over the baseline pass) and ends the runs; when none of the three is, the check is off with W and all
+# three readings (the gate-closed runs are as slow: the gate closed early, not the rerun's checkpoint). 1 s sits in the middle of F3's 2 s gap and
+# leaves 1 s on each side for load jitter. Why up to three runs (the 3c2 ruling): with one reading, a host that stalls that one run turns a lawful
+# fallback red, and a lawful (b) shows up only when the host held the rerun past 2 s -- the host is busy just then, so the gate-closed run that follows
+# is likely held up too (3c2: W 2.86 s with Tb' 1.74 s, for a command that takes about 0.66 s). A gate that closes early reads about W every time and
+# stays red; a false green still needs W itself drawn out by more than 1 s (the retries only make Tb' less exposed to stalls).
+# (c) W <= 2.0 s: the check is off with W (a fallback for time does not end this early).
+# This replaces the 3b rule's lower bound of 2.85 s, which was copied from the deadline cases instead of worked out from the hook and had a hole on
+# each side: from 2.0 to 2.85 s it turned a lawful F3 red, and from 2.85 to 3.0 s it could not tell F3 from a gate that closed early. Left as it is
+# (the 3c ruling): a command whose baseline pass alone runs past 3 s gives the same output as a lawful "no time to close the gate" and cannot be told
+# apart; each group has a command with a quick baseline pass, and the ported cases cover the rest. No load gate: the six groups run late in the suite,
+# where 3b's seven full rounds ended at load 2.21-4.13, so a gate would SKIP them nearly every round. A group still counts once; the summary line of the
+# six groups gives the fallbacks over the trigger-point commands judged, each with its group and W (and for (b) the Tb' that met the bound, followed by
+# "(try k)" when that was the k-th run, k > 1).
+wpa_x6_n=0; wpa_x6_fb=0; wpa_x6_where=''
+wpa_x6_eval() {   # <output as wpa_err gives it> <longline | pass | growth | toolarge> <limit line> <command> -> "<checks off>" TAB "<their list>": the assertion
+                  # helper itself, in a subshell where wpa_err / wpa_rc hand back that output, so both branches judge ONE run of the hook
+  ( wpa_x6_e=$1; wpa_err() { printf '%s' "$wpa_x6_e"; }; wpa_rc() { printf '%s' "${wpa_x6_e##*WPA_RC=}"; }; _wpa_bad=''; _wpa_nbad=0
+    case $2 in longline) wpa_x_longline "$4" ;; pass) wpa_x Bash 0 "$4" ;; growth) wpa_x_toolarge "$4" "$wpa_L_gseg" ;; *) wpa_x_toolarge "$4" "$3" ;; esac
+    printf '%s\t%s' "$_wpa_nbad" "$_wpa_bad" )
+}
+wpa_x6_hook() {   # <input> [NAME=VALUE ...]: one run of the hook on <input> the way wpa_err runs it (in wpa_cwd, with WPA_ENV), SECRET_GUARD_TIME_BUDGET_S
+                  # cleared and the extra variables last; sets wpa_x6_out (stderr, then WPA_RC=), wpa_x6_us (the wall in whole microseconds by EPOCHREALTIME,
+                  # 0 without a usable clock) and wpa_x6_s (that wall in seconds cut to two decimals, for display only) -- wpa_x6's locals
+  local in=$1 t0 t1; shift
+  t0=${EPOCHREALTIME:-}
+  wpa_x6_out="$( cd "$wpa_cwd" && printf '%s' "$in" | env -u SECRET_GUARD_TIME_BUDGET_S "${WPA_ENV[@]}" "$@" "$WPA_HOOK" 2>&1 >/dev/null; echo "WPA_RC=$?" )"
+  t1=${EPOCHREALTIME:-}; t0=${t0/[.,]/}; t1=${t1/[.,]/}; wpa_x6_us=0
+  [[ $t0 =~ ^[0-9]+$ && $t1 =~ ^[0-9]+$ ]] && (( 10#$t1 > 10#$t0 )) && wpa_x6_us=$(( 10#$t1 - 10#$t0 ))
+  printf -v wpa_x6_s '%d.%02d' $(( wpa_x6_us / 1000000 )) $(( wpa_x6_us % 1000000 / 10000 ))
+}
+wpa_x6() {   # <the relaxed assertion: longline | pass (exit 0) | growth (wpa_L_gseg)> <the baseline branch's limit line for this command> <command>
+  local how=$1 lim=$2 c=$3 input e wus ws r b fb='' bad='' g='?' p="${3//$wpa_nl/ }" wpa_x6_out wpa_x6_us wpa_x6_s
+  input="$(wpa_in Bash "$c")"   # built before the clock starts: W is the hook's run alone
+  wpa_x6_hook "$input"; e=$wpa_x6_out; wus=$wpa_x6_us; ws=$wpa_x6_s
+  wpa_x6_n=$((wpa_x6_n + 1))
+  r=$(wpa_x6_eval "$e" "$how" "$lim" "$c"); [[ ${r%%$'\t'*} == 0 ]] && return 0   # (1) the relaxed branch's assertion holds
+  b=$(wpa_x6_eval "$e" toolarge "$lim" "$c")
+  if [[ ${b%%$'\t'*} != 0 ]]; then   # (2) nor does the baseline branch's
+    bad="relaxed ($how):${r#*$'\t'} | baseline branch:${b#*$'\t'} | wall ${ws}s"
+  elif (( wus >= 3000000 )); then   # (3a) F1, F2 or a late F3
+    fb="${ws}s"
+  elif (( wus > 2000000 )); then   # (3b) F3 or a gate closed early: the same input with the gate closed, up to three runs 1 s apart (a reading of 0 is no reading)
+    local try tbs=''
+    for try in 1 2 3; do
+      (( try > 1 )) && sleep 1
+      wpa_x6_hook "$input" WSL_DISTRO_NAME=Ubuntu
+      tbs+="${tbs:+, }${wpa_x6_s}s"
+      if (( wpa_x6_us > 0 && wpa_x6_us <= wus - 1000000 )); then fb="${ws}s/Tb ${wpa_x6_s}s"; (( try > 1 )) && fb+=" (try $try)"; break; fi
+    done
+    [[ -n $fb ]] || bad="baseline block at wall ${ws}s, gate-closed Tb' ${tbs} (want <= wall - 1.0 s): 关门那一遍同样慢：是准入门提前关，不是重跑的检查点"
+  else   # (3c) W <= 2.0 s
+    bad="baseline block at wall ${ws}s (want > 2.0 s): 因时间的回落不会这么早结束"
+  fi
+  if [[ -n $fb ]]; then
+    [[ $_wpa_name =~ SC-(21a[a-z]) ]] && g=${BASH_REMATCH[1]}
+    wpa_x6_fb=$((wpa_x6_fb + 1)); wpa_x6_where+="$g $fb; "; return 0
+  fi
+  _wpa_nbad=$((_wpa_nbad + 1))
+  [[ $_wpa_nbad -le 6 ]] && _wpa_bad="$_wpa_bad {Bash ${p:0:72}: $bad}"
+  return 0
+}
 # 21aa / 21ab: the segment ` echo $p $p<filler> | cat $f` has 20 characters + the filler and becomes 2 x 4000 + 34 + filler: a 158-character filler makes exactly 8192, 159 makes 8193.
-# 21aa is judged (the reader is found), 21ab is refused. 21ab's second command pins what the limit counts: the WHOLE judged string, not its growth -- a 9000-character segment with a
-# one-character value and one reference is refused as well (so is a big heredoc that happens to hold `x=1` and `$x`): a decision of the owner's ruling, pinned here so that
-# narrowing it is deliberate. The third command is made of short words (nothing the echo's redaction would cut away): the size text echoes only the START of the command.
-# Red when (21ab): the 8193-character copy or the 9000-character segment passes (exit 0 -- the fail-open M6), is refused with the finding text or by another limit line, or the limit is
-# 8191 / 8193 (21aa and 21ab swap sides); the whole command is echoed back.
+# 21aa's copy (8192) is not over the copy limit, so it is not a trigger point of the relaxation: it is judged and its reader found on every platform (What 1, P1). 21ab's
+# three commands are over it: the 8193-character copy, a 9000-character segment with a one-character value and one reference, and a segment of short words (nothing the
+# echo's redaction would cut away). Where the relaxation is not in effect all three are refused as too large, the baseline bytes (P2): the limit counts the whole copy, not
+# its growth, so a tiny value behind one reference is refused too (so is a big heredoc that happens to hold `x=1` and `$x`), and the size text echoes only the START of
+# the command. 10CG/aria-plugin#217 narrowed that posture on purpose (owner ruling A): where the relaxation is in effect the copy limit of the rerun is the growth over the
+# input (_SGV_GMAX, P8) and none of the three grows by that much, so each copy is judged in full (What 1, R-a); each is one line longer than _SGV_LMAX, so it is matched
+# against the rows only (P7): the first, whose reader matches a row, is blocked with the longline text (What 5), and the other two hold no reader, match no row and pass
+# (R-a). Red when (21ab), where the relaxation is not in effect: a command passes (exit 0 -- the fail-open M6), is refused with the finding text or by another limit line,
+# the limit is 8191 / 8193 (21aa and 21ab swap sides), or the size text echoes the whole command; where it is in effect: the first command passes, is refused as too large
+# or draws the ordinary finding text, or one of the other two is blocked.
 wpa_vx_cmd() { printf 'f=%s; p=%s; echo $p $p%s | cat $f' "$wpa_AI" "$wpa_vx_pad" "$(wpa_vx_fill "$1")"; }
 wpa_begin_bash_case "W10 SC-21aa bf: copy limit, last accepted — a substituted segment of exactly 8192 characters is judged and blocked"; wpa_x_finding "$(wpa_vx_cmd 158)"; wpa_end_case
-wpa_begin_bash_case "W10 SC-21ab bf: copy limit exceeded is refused — 8193 characters: the copy is not judged, the command is blocked as too large (no padding passes)"
+wpa_begin_bash_case "W10 SC-21ab bf: copy limit exceeded — 8193 characters, or a 9000-character segment with a one-character value: refused as too large where the relaxation is not in effect; where it is, each copy is judged in full: the reader is blocked with the longline text, the two commands with no reader pass"
+if [[ $wpa_rx6 == yes ]]; then
+wpa_x6 longline "$wpa_L_seg" "$(wpa_vx_cmd 159)"; wpa_x6 pass "$wpa_L_seg" "f=x; echo \$f$(wpa_vx_fill 9000)"
+wpa_x6 pass "$wpa_L_seg" "f=x; echo \$f$(wpa_rep a 4500 | sed 's/a/ a/g')"
+else
 wpa_x_toolarge "$(wpa_vx_cmd 159)" "$wpa_L_seg"; wpa_x_toolarge "f=x; echo \$f$(wpa_vx_fill 9000)" "$wpa_L_seg"
 wpa_x_toolarge "f=x; echo \$f$(wpa_rep a 4500 | sed 's/a/ a/g')" "$wpa_L_seg"
+fi
 wpa_end_case
-# 21ac / 21ad: a collected value of exactly 4096 characters (a path that ends in the app.ini name) is expanded and its read found, one character more refuses the command. The list of
-# a for statement is the third place a value is collected: 3000 characters are expanded (not 4096: the list stays in the command, so its copy holds the list twice and 2 x 4096 is over
-# the copy limit -- which is how a 4096-character list is refused: by the COPY limit, not by the value limit), 4097 refuses the command by the value limit. 21ad's
-# second command pins the posture of the value limit: the variable does not have to be MENTIONED -- an oversize assignment blocks the command on its own ("absolutely not passed"),
-# as soon as the command holds a `$` at all (the collector's entry gate: with no `$` nothing could be expanded and nothing is refused). A reference check would narrow that, and
-# narrowing is the owner's call, not the code's. Red when (21ad): an oversize value is dropped and the command passes (exit 0 -- the fail-open M6), in the assignment, in the for list or
-# in the command that never mentions it, or the value is refused by another limit line; (21ac): the 4096-character for list is refused by the value limit instead of the copy limit.
+# 21ac / 21ad: a collected value of exactly 4096 characters (a path that ends in the app.ini name) is expanded and its read found, one character more refuses the command.
+# The list of a for statement is the third place a value is collected: 3000 characters are expanded and the read is found on every platform (the list stays in the
+# command, so the copy holds it twice, about 6 KB: inside the copy limit, not a trigger point of the relaxation, P1), and 4097 refuses the command by the value limit on
+# every platform (P9). A 4096-character list makes a copy over the copy limit (2 x 4096 and the rest). Where the relaxation is not in effect that copy is refused by the
+# COPY limit with the size text, not by the value limit (P2); where it is in effect the copy grows by about 4 KB over the input, under _SGV_GMAX, so it is judged in full,
+# and as its one line is longer than _SGV_LMAX the read is blocked with the longline text (P7, What 5). The two reads inside the limits draw the ordinary finding text on
+# every platform (P1), which the relaxed branch checks with wpa_x_hit: not the longline text. 21ad's second command pins the posture of the value limit: the variable does
+# not have to be MENTIONED -- an oversize assignment blocks the command on its own ("absolutely not passed"), as soon as the command holds a `$` at all (the collector's
+# entry gate: with no `$` nothing could be expanded and nothing is refused). A reference check would narrow that, and narrowing is the owner's call, not the code's. Red
+# when (21ad): an oversize value is dropped and the command passes (exit 0 -- the fail-open M6), in the assignment, in the for list or in the command that never mentions
+# it, or the value is refused by another limit line; (21ac), where the relaxation is not in effect: the 4096-character for list is refused by the value limit instead of the
+# copy limit; where it is in effect: that list passes, is refused as too large or draws the ordinary finding text instead of the longline text, or a read inside the limits
+# draws the longline text.
 wpa_vx_val() { printf '/%s%s' "$(wpa_rep d $(( $1 - 21 )))" "$wpa_AI"; }            # <length> -> a path of exactly that many characters ending in the app.ini name
 wpa_begin_bash_case "W10 SC-21ac bf: value limit, last accepted — a collected value of exactly 4096 characters is expanded and its read blocked"
+if [[ $wpa_rx6 == yes ]]; then
+wpa_x_hit "f=$(wpa_vx_val 4096); cat \$f"; wpa_x_hit "for f in $(wpa_vx_val 3000); do cat \"\$f\"; done"
+wpa_x6 longline "$wpa_L_whole" "for f in $(wpa_vx_val 4096); do cat \"\$f\"; done"
+else
 wpa_x_finding "f=$(wpa_vx_val 4096); cat \$f"; wpa_x_finding "for f in $(wpa_vx_val 3000); do cat \"\$f\"; done"
 wpa_x_toolarge "for f in $(wpa_vx_val 4096); do cat \"\$f\"; done" "$wpa_L_whole"
+fi
 wpa_end_case
 wpa_begin_bash_case "W10 SC-21ad bf: value limit exceeded is refused — a 4097-character value (an assignment, or the list of a for statement) blocks the command as too large, mentioned or not; but a command with no variable reference at all is left alone (the collector's entry gate — removing it would refuse name=value commands that never expand anything)"
 wpa_x_toolarge "f=$(wpa_vx_val 4097); cat \$f" "$wpa_L_val"; wpa_x_toolarge "f=$(wpa_vx_val 4097); echo \$HOME" "$wpa_L_val"; wpa_x_toolarge "for f in $(wpa_vx_val 4097); do cat \"\$f\"; done" "$wpa_L_val"; wpa_x Bash 0 "f=$(wpa_vx_val 4097); echo hi"
@@ -2582,8 +3104,17 @@ wpa_vx_dense() {   # <padding value length> -> the command
   printf '%sf=%s; echo%s | cat $f' "$out" "$wpa_AI" "$refs"
 }
 wpa_begin_bash_case "W10 SC-21af bf: a dense command inside the budget — 15 assignments of 50 B, 8 references each, then the reader: the 6.2 KB copy is judged and blocked"; wpa_x_finding "$(wpa_vx_dense 50)"; wpa_end_case
-# Red when (21ag): the 36 KB dense copy passes (exit 0 -- the fail-open M6), or is refused by another limit line.
-wpa_begin_bash_case "W10 SC-21ag bf: the dense shape of the review (15 assignments of 300 B, 8 references each: a 36 KB copy; 16 x 300 B x 8 took 5.4 s) is over the copy limit and refused as too large"; wpa_x_toolarge "$(wpa_vx_dense 300)" "$wpa_L_seg"; wpa_end_case
+# 21ag: the dense copy (about 36 KB in one segment) is over the copy limit, and it grows by far more than _SGV_GMAX over its input: it is refused as too large on every
+# platform, only the limit line differs -- the copy limit where the relaxation is not in effect (P2), the growth line of the rerun where it is (P8, What 5: "a command
+# segment grows by more than 8192 characters after variable expansion"). Red when (21ag): the command passes (exit 0 -- the fail-open M6), or the refusal names a limit
+# line other than its branch's.
+wpa_begin_bash_case "W10 SC-21ag bf: the dense shape of the review (15 assignments of 300 B, 8 references each: a 36 KB copy; 16 x 300 B x 8 took 5.4 s) is refused as too large on every platform — by the copy limit where the relaxation is not in effect, by the growth limit where it is"
+if [[ $wpa_rx6 == yes ]]; then
+wpa_x6 growth "$wpa_L_seg" "$(wpa_vx_dense 300)"
+else
+wpa_x_toolarge "$(wpa_vx_dense 300)" "$wpa_L_seg"
+fi
+wpa_end_case
 # 21ah / 21ai: all copies of one command together stay within 65536. Seven heavy segments ` echo $p $p<185>` (copy 8192 each), a last one (8167 or 8168) and the reader ` cat $f` (25):
 # 7 x 8192 + 8167 + 25 = 65536 exactly -- the reader is judged and found; one character more and the command is refused as too large (the reader is never judged)
 # Red when (21ai): the 65537th character is not refused (exit 0 -- the fail-open M6 broke off and passed), or the pass-wide limit is off by one (21ah and 21ai swap sides).
@@ -2594,16 +3125,22 @@ wpa_vx_many() {   # <filler length of the last heavy segment> -> the command
 }
 wpa_begin_bash_case "W10 SC-21ah bf: pass-wide limit, last accepted — copies adding up to exactly 65536 characters (7 x 8192, 8167 and the reader's 25): the reader is judged and blocked"; wpa_x_finding "$(wpa_vx_many 160)"; wpa_end_case
 wpa_begin_bash_case "W10 SC-21ai bf: pass-wide limit exceeded is refused — one character more (65537): the reader is not judged, the command is blocked as too large (no padding passes)"; wpa_x_toolarge "$(wpa_vx_many 161)" "$wpa_L_total"; wpa_end_case
-# 21aj: a segment whose copy is over the copy limit ends the pass -- the command is refused at once, and the reader behind it is never judged. (The fail-open M6 refused such a segment
-# cheaply but counted it as a whole copy, 8192, against the pass-wide limit: after seven of them the reader was still judged and blocked, after eight it passed.)
-# Red when (21aj): such a segment is skipped or counted instead of refused -- the finding text after seven of them, exit 0 after eight (the fail-open M6).
+# 21aj: each heavy segment ` echo $p $p $p` makes a copy of about 12 KB, over the copy limit, that grows by about 12 KB over its own text, over _SGV_GMAX as well: the
+# first of them ends the pass, the command is refused at once and the reader behind it is never judged -- by the copy limit where the relaxation is not in effect (P2),
+# by the growth line of the rerun where it is (P8, What 5). (The fail-open M6 refused such a segment cheaply but counted it as a whole copy, 8192, against the pass-wide
+# limit: after seven of them the reader was still judged and blocked, after eight it passed.) Red when (21aj): a heavy segment does not refuse the command -- the finding
+# text after seven of them, exit 0 after eight (the fail-open M6) -- or the refusal names a limit line other than its branch's.
 wpa_vx_over() {   # <n> -> n segments of three 4000-character references (a 12 KB copy each), then the reader
   local j out="f=$wpa_AI; p=$wpa_vx_pad"
   for ((j = 0; j < $1; j++)); do out="$out; echo \$p \$p \$p"; done
   printf '%s; cat $f' "$out"
 }
-wpa_begin_bash_case "W10 SC-21aj bf: a segment over the copy limit ends the pass — with one, seven or eight of them in front of the reader the command is refused as too large and the reader is never judged"
+wpa_begin_bash_case "W10 SC-21aj bf: a segment over the copy limit that also grows over the growth limit ends the pass — with one, seven or eight of them in front of the reader the command is refused as too large (the copy limit, or the growth limit where the relaxation is in effect) and the reader is never judged"
+if [[ $wpa_rx6 == yes ]]; then
+wpa_x6 growth "$wpa_L_seg" "$(wpa_vx_over 1)"; wpa_x6 growth "$wpa_L_seg" "$(wpa_vx_over 7)"; wpa_x6 growth "$wpa_L_seg" "$(wpa_vx_over 8)"
+else
 wpa_x_toolarge "$(wpa_vx_over 1)" "$wpa_L_seg"; wpa_x_toolarge "$(wpa_vx_over 7)" "$wpa_L_seg"; wpa_x_toolarge "$(wpa_vx_over 8)" "$wpa_L_seg"
+fi
 wpa_end_case
 # 21ak (rg): the pass-wide limit bounds the WORK too -- once it is used up the pass stops at once (the command is refused) instead of building the copy of every later segment. The
 # command has 9 heavy segments (the 9th takes the total past 65536), then two more references and the reader; _sg_vx_apply is entered 11 times (2 assignment segments and the 9 heavy
@@ -2625,13 +3162,20 @@ wpa_vx_late() {   # 9 heavy segments (copy 8192 each), then two segments with on
 wpa_begin_bash_case "W10 SC-21ak rg: the pass-wide limit bounds the work too — after it is used up the pass stops applying (11 entries of _sg_vx_apply, not 14)"
 wpa_chk "_sg_vx_apply entries" 11 "$(wpa_vx_calls "$(wpa_vx_late)")"
 wpa_end_case
-# 21al: the copy limit holds for the braced form ${NAME} too (it goes through _sg_vx_replace, not through the $NAME loop). A brace makes the command unsafe to split, so the unit is the WHOLE
-# command: with a 2700-character pad value, `f=<app.ini>; p=<pad>; echo ${p} ${p}<filler> | cat ${f}` has 53 + 2700 + filler characters and its copy 2 x 2696 + 16 more -- 8161 + filler,
-# so a 31-character filler makes exactly 8192
+# 21al: the braced form ${NAME} goes through the same copy limit as $NAME (through _sg_vx_replace, not through the $NAME loop). A brace makes the command unsafe to split,
+# so the unit is the WHOLE command: with a 2700-character pad value, `f=<app.ini>; p=<pad>; echo ${p} ${p}<filler> | cat ${f}` has 53 + 2700 + filler characters and its
+# copy 2 x 2696 + 16 more -- 8161 + filler, so a 31-character filler makes exactly 8192. Exactly 8192 is not over the limit: it is judged, with the ordinary finding text,
+# on every platform (P1). 8193 is refused as too large where the relaxation is not in effect (P2); where it is in effect the whole copy grows by about 5.4 KB over the
+# input, under _SGV_GMAX, so it is judged in full, and as its one line is longer than _SGV_LMAX its read is blocked with the longline text (P7, What 5).
 wpa_vx_braced() { printf 'f=%s; p=%s; echo ${p} ${p}%s | cat ${f}' "$wpa_AI" "$(wpa_rep x 2700)" "$(wpa_vx_fill "$1")"; }     # <filler length>
-# Red when (21al): the braced 8193-character whole copy passes (exit 0 -- the fail-open M6), or the edge moves by one (the two commands swap sides).
-wpa_begin_bash_case "W10 SC-21al bf: the copy limit holds for the braced form too — a substituted whole command of exactly 8192 characters is judged and blocked, 8193 is refused as too large"
+# Red when (21al): either command passes (exit 0 -- the fail-open M6), the edge moves by one (the two commands swap sides), or the 8193-character copy draws a text other
+# than its branch's: the size text that names the whole-command limit where the relaxation is not in effect, the longline text where it is.
+wpa_begin_bash_case "W10 SC-21al bf: the braced form meets the same copy limit — a substituted whole command of exactly 8192 characters is judged and blocked; 8193 is refused as too large where the relaxation is not in effect and blocked with the longline text where it is"
+if [[ $wpa_rx6 == yes ]]; then
+wpa_x_hit "$(wpa_vx_braced 31)"; wpa_x6 longline "$wpa_L_whole" "$(wpa_vx_braced 32)"
+else
 wpa_x_finding "$(wpa_vx_braced 31)"; wpa_x_toolarge "$(wpa_vx_braced 32)" "$wpa_L_whole"
+fi
 wpa_end_case
 # 21am: the value limit holds for a value that chaining builds from two others: b=$a$c with |a| = 2048 and |c| = 2048 (4096 in all, the path at its end) is expanded, with |c| = 2049 (4097) the command is refused
 # Red when (21am): the 4097-character chained value -- plain or braced spelling -- is dropped and the command passes (exit 0 -- the fail-open M6), or the edge moves by one.
@@ -2676,11 +3220,19 @@ WPA_VX_EOF
 wpa_begin_bash_case "W10 SC-21an rg: the functions hold the limits — a built copy is at most 8192 characters, a refused one leaves _SG_SUB untouched, no collected value is over 4096 (dense 300 B refused, dense 50 B built, a chain past the value limit, both sides of the copy edge and of the value edge)"
 wpa_chk "probe shapes" "dense300 ok=yes dense50 ok=yes chain ok=yes edge8192 ok=yes edge8193 ok=yes val4096 ok=yes val4097 ok=yes" "$(bash "$wpa_vx_probe" "$wpa_hook" 2>&1 | tr '\n' ' ' | sed 's/ $//')"
 wpa_end_case
-# 21ao: whole-command mode (the command degrades because of a `(`) obeys the same copy limit -- the unit is the whole command: 6069 + filler, so a 2123-character filler makes 8192
+# 21ao: whole-command mode (the command degrades because of a `(`) meets the same copy limit -- the unit is the whole command: 6069 + filler, so a 2123-character filler
+# makes 8192. Exactly 8192 is not over the limit: it is judged, with the ordinary finding text, on every platform (P1). 8193 is refused as too large where the relaxation
+# is not in effect (P2); where it is in effect the whole copy grows by about 4 KB over the input, under _SGV_GMAX, so it is judged in full, and as its one line is longer
+# than _SGV_LMAX its read is blocked with the longline text (P7, What 5).
 wpa_vx_whole() { printf 'f=%s; p=%s; echo $p $p%s | cat $f; (true)' "$wpa_AI" "$(wpa_rep x 2000)" "$(wpa_vx_fill "$1")"; }    # <filler length>
-# Red when (21ao): the 8193-character whole copy passes (exit 0 -- the fail-open M6), or the edge moves by one (the two commands swap sides).
-wpa_begin_bash_case "W10 SC-21ao bf: whole-command mode obeys the copy limit — a whole copy of exactly 8192 characters is judged and blocked, 8193 is refused as too large"
+# Red when (21ao): either command passes (exit 0 -- the fail-open M6), the edge moves by one (the two commands swap sides), or the 8193-character copy draws a text other
+# than its branch's: the size text that names the whole-command limit where the relaxation is not in effect, the longline text where it is.
+wpa_begin_bash_case "W10 SC-21ao bf: whole-command mode meets the same copy limit — a whole copy of exactly 8192 characters is judged and blocked; 8193 is refused as too large where the relaxation is not in effect and blocked with the longline text where it is"
+if [[ $wpa_rx6 == yes ]]; then
+wpa_x_hit "$(wpa_vx_whole 2123)"; wpa_x6 longline "$wpa_L_whole" "$(wpa_vx_whole 2124)"
+else
 wpa_x_finding "$(wpa_vx_whole 2123)"; wpa_x_toolarge "$(wpa_vx_whole 2124)" "$wpa_L_whole"
+fi
 wpa_end_case
 # 21ap: the W9 extension looks at the substituted WHOLE command too (the listed path reached through a variable, 19i) and obeys the same copy limit: 6075 + filler, 2117 makes 8192.
 # With the extension in effect 8193 is refused (its look cannot be made); with NO extension in effect it is not (every segment was judged, the extension has nothing to look for) --
@@ -3210,9 +3762,11 @@ sct5="$(SECRET_GUARD_TIME_BUDGET_S=99 HK="$HOOK" bash -c 'source "$HK" 2>/dev/nu
 if [[ "$sct5" == 4 ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failures+=("FAIL [SC-T5: budget cap <5s]: SECRET_GUARD_TIME_BUDGET_S=99 resolved to '$sct5', want 4"); fi
 # ══════════════════ SC-T end ══════════════════
 
+# (the W10 cases ported from v31 ran first, before every older case: see the call right after the definition of sg_w10_cases; SC-13 below counts their SKIP)
+
 # ── TASK-020 (SC-13): SOT 计数回填断言 — 头注释 Coverage 数须 == 本次实跑总数 ──
 # 权威值 = 实跑 PASS N/N (不预测常数, TL6-F8)。**本断言须是 summary 前最后一条 test**,
-# 使 pass+fail+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
+# 使 pass+fail+skip+1 (含本条自己) = 最终 total。若未来增删用例, 头注释 (secret-guard.test.sh
 # 顶部 "Coverage: N cases") 与本断言会一起提醒同步。secret-hygiene.md 三处 + 本 spec
 # SC-11 正文的一致由 TASK-020/026 回填时机械 grep 确认 (跨仓, 不在本 test 内断言)。
 # #145 sync 时修类: 总数随 zsh 在场与否变化 (§#154 e2e 条件组), 单一钉死值在
@@ -3220,7 +3774,7 @@ if [[ "$sct5" == 4 ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); failure
 # 改为双值 "N cases (M without zsh)", 本断言接受二者之一 == 实跑总数。
 sc13_header_n="$(grep -oE 'Coverage: [0-9]+ cases' "$0" | grep -oE '[0-9]+' | head -1)"
 sc13_header_nozsh="$(grep -oE '\([0-9]+ without zsh\)' "$0" | grep -oE '[0-9]+' | head -1)"
-sc13_total_expected=$((pass + fail + 1))
+sc13_total_expected=$((pass + fail + skip + 1))
 if [[ "$sc13_header_n" == "$sc13_total_expected" || "${sc13_header_nozsh:-}" == "$sc13_total_expected" ]]; then
   pass=$((pass + 1))
 else
@@ -3229,12 +3783,15 @@ else
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
-total=$((pass + fail))
+total=$((pass + fail + skip))
 echo
 echo "──────────────────────────────────────────────────"
 echo "secret-guard.sh regression test"
 echo "PASS: $pass / $total"
 echo "FAIL: $fail / $total"
+echo "SKIP: $skip / $total ($(sg_w10_skips))"
+echo "W10 ported cases: $sg_w10_batch"
+echo "W10 older groups 21ab 21ac 21ag 21aj 21al 21ao: ${wpa_rx6_note:-branch not chosen} | deadline fallback (截止回落) ${wpa_x6_fb:-0} / ${wpa_x6_n:-0}${wpa_x6_where:+ (${wpa_x6_where%; })}"
 if [[ $fail -gt 0 ]]; then
   echo
   echo "Failures:"
