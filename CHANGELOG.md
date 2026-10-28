@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.77.5] - 2026-10-28 — secret-guard W10 尺寸误拦收窄 (`10CG/aria-plugin#217`; PATCH: 只因尺寸被拦的大命令改为完整判定; 判定语义的既有缺口随之覆盖更多大命令, 见放宽面申报)
+
+### Security — PreToolUse secret-guard (W10 尺寸预算按增长量判 + 硬截止重判)
+
+- **问题**: W10 (变量展开第二遍) 的副本上限按**总长**计: 任何超过 8192 字符、又引用了已赋值变量的命令都按「过大」拦下, 哪怕展开只多几个字符。维护者本机会话记录里 > 8 KB 的 Bash 命令有 17.6% 因此被拦 (739 条中 130 条); > 4 KB 的命令里被拦的 138 条中 137 条属这一类 (另 1 条是值过长)。
+- **修复**: 在原来按总长拦的两处, 若满足放宽条件, 改为在一个硬截止作业里按放宽规则重判 W10: 副本上限改按增长 (`_SGV_GMAX` = 8192); 重判里不设计数上限 (所有赋值与引用都代入); 超过 8192 的副本照常完整判定, 其中行长超过 8192 的只匹配规则、不评估脱敏过滤 (新 `longline` 文案)。截止 = hook 启动 + min(`SECRET_GUARD_TIME_BUDGET_S`, 3) s; 作业自成进程组, 到点整组终止; 截止前没判完、或任何异常, 一律按原来的「过大」文案拦 (逐字节相同)。
+- **放宽条件**: x86_64 GNU/Linux 上的 bash 5.0–5.3 (实测 5.0.18 / 5.1.16 / 5.2.15 / 5.3.20), 不在 WSL 里、项目没有启用 `.aria/secret-guard.paths` 扩展、hook 启动后未满截止。其他平台 (macOS / Windows 原生 / WSL1 与 WSL2 / musl / aarch64 等其他架构)、其他 bash 版本、启用扩展的项目: 行为与之前完全相同。还依赖 `/proc` 与支持小数秒的 `sleep`; 缺了它们放宽不生效, 行为同旧版。
+- **行为变更**: 本机真实流量里, 被尺寸上限拦下的 137 条命令在 Linux 上放行 136 条 (TASK-004 实测); 这类命令被拦时, 文案由「过大」变为增长超限、TMAX、VMAX、`longline` 或普通命中文案; 重判没在截止前完成的, 照旧按「过大」拦, 但要等到截止 (约 3 s; 以前在触发点当即拦, 通常 2 s 以内); `SECRET_GUARD_TIME_BUDGET_S` 设为 4 时截止仍封顶 3 s, 设得更小时截止随之缩短。
+- **放宽面申报**: 这些大命令沿用现有的判定语义, 所以判定语义上的既有缺口覆盖到更多大命令 —— 块结构命令整串判定、命令里任一处脱敏过滤都会给整条命令 credit (`10CG/aria-plugin#139`; 例: 读一个凭据路径的命令, 只要别处有一个无关的 `>/dev/null`, 就会放行并读出凭据); `10CG/aria-plugin#138` / `10CG/aria-plugin#140` / `10CG/aria-plugin#141` / `10CG/aria-plugin#142` / `10CG/aria-plugin#229` 同理。原串或中间副本超过 8192、代入后变短的命令同样按普通判定。另有两类 W10 代入语义的既有缺口同样覆盖到大命令: 同名变量赋值两次时代入用第一个值 (bash 读后一个); 分段模式下值里的 shell 语法 (如 `G='| jq keys'`) 代入后成了语法, 读取因此得到 bash 并不施加的过滤 credit (载体 `10CG/aria-plugin#231`)。
+- **已知限制**: 首遍判定不计时 (`10CG/aria-plugin#228`); 不超过 8192 的副本判定只受协作式时间预算约束, 单次可超过 5 s —— v1.76.1 条目里的「永不 fail-open」对此不成立, 特此订正 (载体 `10CG/aria-plugin#228`); 小命令的 count 轴缺口不变, for 列表跨换行误拦与 heredoc 内赋值形文本误收集同样未修 (载体 `10CG/aria-plugin#231`); 截止之后的收尾随负载增长 (负载约 10 时实测 0.2–1.2 s)。
+- **Rule #6**: hook 不是 Skill; 逻辑与套件不属 Skill 变更。AI 可见的新文字 (`longline` 模板、两条增长原因串) 与路由带来的文案变化按 Rule #6 SOT §2 第 3 行处理: 点名行为、逐字断言作定向 fixture、AB 套件不覆盖 hook 文案的缺口记在 `10CG/Aria#261`。
+- 测试: `secret-guard.test.sh` 991 例 (无 zsh 985 例; 新增 160 例; 6 组既有用例按新语义改断言); bash 3.2.57 + 5.0.18 + 5.1.16 + 5.2.15 + 5.3.20; 真实流量回放 (只出汇总)。
+
+Refs 10CG/aria-plugin#217, 10CG/aria-plugin#228, 10CG/aria-plugin#139, 10CG/aria-plugin#231, 10CG/Aria#261
+
 ## [1.77.4] - 2026-10-23 — v1.77.3 对抗 review 二轮收口 (M-6 实修 + 摘录 exit 码 + SC 形态族; `10CG/Aria#257`)
 
 ### Fixed — v1.77.3 review 债务 (0 Critical / 3 Important / 4 Minor 全清)
