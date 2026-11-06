@@ -1,0 +1,1568 @@
+{
+  "schema_version": 1,
+  "kind": "historical_extraction_provenance_not_audit",
+  "hash_encoding": {
+    "json": "UTF-8 JSON, sort_keys=true, ensure_ascii=false, separators comma/colon, allow_nan=false, no trailing newline",
+    "text": "UTF-8 bytes, no normalization",
+    "file": "exact stored bytes including final newline"
+  },
+  "baseline_anchor": {
+    "source_path_description": "/home/dev/Aria/.aria/audit-reports/audit-executor-minimal-repair/integrity-before.json",
+    "description_only_do_not_dereference": true,
+    "sha256": "5a5015ab2abfcb3f45f32a74c4a208251e8bc349d8926ab26e92d67f60e52c50",
+    "bytes": 77578
+  },
+  "sources": [
+    {
+      "source_id": "source-001",
+      "source_path_description": "/home/dev/Aria/.aria/audit-reports/pre_merge-R1-1793297337000-aria-2.0-m6-dispatch-input-delivery-aggregated.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 40239,
+      "sha256": "14a3773df15c6ba12fa213983d0ce1dbb2ab8760cd07a375d27c7e3e56d925c2",
+      "task001_baseline_sha256": "14a3773df15c6ba12fa213983d0ce1dbb2ab8760cd07a375d27c7e3e56d925c2"
+    },
+    {
+      "source_id": "source-002",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/workflows/wf_06cc4f5a-7ab.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 33949,
+      "sha256": "70f9b5b717549a58212c5183b841502755f83c6f86c08bdc9b3ed32759971b05",
+      "task001_baseline_sha256": "70f9b5b717549a58212c5183b841502755f83c6f86c08bdc9b3ed32759971b05"
+    },
+    {
+      "source_id": "source-003",
+      "source_path_description": "/home/dev/Aria/.aria/audit-reports/pre_merge-R4-1793365720245-aria-2.0-m6-dispatch-input-delivery-aggregated.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 28051,
+      "sha256": "f8147b35909734517ed5d91facada2b7b56e757de165a8f6793519c3cec43017",
+      "task001_baseline_sha256": "f8147b35909734517ed5d91facada2b7b56e757de165a8f6793519c3cec43017"
+    },
+    {
+      "source_id": "source-004",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_06cc4f5a-7ab/agent-a72a64759139038ae.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 588517,
+      "sha256": "6952e4818491317589dfcc40294a568955fa8139f49773bfb4143b2e9cad7cd4",
+      "task001_baseline_sha256": "6952e4818491317589dfcc40294a568955fa8139f49773bfb4143b2e9cad7cd4"
+    },
+    {
+      "source_id": "source-005",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_06cc4f5a-7ab/agent-a05313dba03cea070.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 703949,
+      "sha256": "50e7e68f5198ab965ee8c51e9cf24cd730e1c541e36de08bd6b55d197b3fa65b",
+      "task001_baseline_sha256": "50e7e68f5198ab965ee8c51e9cf24cd730e1c541e36de08bd6b55d197b3fa65b"
+    },
+    {
+      "source_id": "source-006",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_06cc4f5a-7ab/agent-aac2f79bde3bfcf1a.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 858684,
+      "sha256": "d6a777e8291c362e50144c23947b86c285b760dca5159bcfc1691b49bde51ca2",
+      "task001_baseline_sha256": "d6a777e8291c362e50144c23947b86c285b760dca5159bcfc1691b49bde51ca2"
+    },
+    {
+      "source_id": "source-007",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_06cc4f5a-7ab/agent-a10fce389b1ce0c7c.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 678032,
+      "sha256": "c45209c74ca3ab7acc95f3f22a5ad195492d8ffa3f0914c5e11b57dc8607a127",
+      "task001_baseline_sha256": "c45209c74ca3ab7acc95f3f22a5ad195492d8ffa3f0914c5e11b57dc8607a127"
+    },
+    {
+      "source_id": "source-008",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_06cc4f5a-7ab/agent-aa1cea7d6342a9717.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 663111,
+      "sha256": "406ec9c454ecb376dcce0abd08bba36cc0e276663f8e14f9f1bcb9f3164ae7c4",
+      "task001_baseline_sha256": "406ec9c454ecb376dcce0abd08bba36cc0e276663f8e14f9f1bcb9f3164ae7c4"
+    },
+    {
+      "source_id": "source-009",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_06cc4f5a-7ab/agent-a6855778c72ad1df8.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 810233,
+      "sha256": "599731fd93853ca3713c73fbddea0ca4127b35154ab22b8cffab40a56932b48b",
+      "task001_baseline_sha256": "599731fd93853ca3713c73fbddea0ca4127b35154ab22b8cffab40a56932b48b"
+    },
+    {
+      "source_id": "source-010",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/workflows/wf_2fa7b294-c83.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 31978,
+      "sha256": "0c5f426394ceeb03c1adb8a65bec385ee058bb9af48062aed6a9c953c19a47c4",
+      "task001_baseline_sha256": "0c5f426394ceeb03c1adb8a65bec385ee058bb9af48062aed6a9c953c19a47c4"
+    },
+    {
+      "source_id": "source-011",
+      "source_path_description": "/home/dev/Aria/.aria/audit-reports/pre_merge-R2-1793363116627-aria-2.0-m6-dispatch-input-delivery-aggregated.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 29322,
+      "sha256": "6ed91934bed862ab945b58cab8dbf6825840e9c8c413d24ceded4db627b81e83",
+      "task001_baseline_sha256": "6ed91934bed862ab945b58cab8dbf6825840e9c8c413d24ceded4db627b81e83"
+    },
+    {
+      "source_id": "source-012",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_2fa7b294-c83/agent-ad3bbdbb6c089ff25.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 622792,
+      "sha256": "a160e3832823070eb42301b37e4e86acae609b458d86efec688a61a1312ca094",
+      "task001_baseline_sha256": "a160e3832823070eb42301b37e4e86acae609b458d86efec688a61a1312ca094"
+    },
+    {
+      "source_id": "source-013",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_2fa7b294-c83/agent-a7daca61bb3a37b73.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 633872,
+      "sha256": "e1fe1bf9c9073e466dd268fb34e6c0495ee72db50d47b2794e18b14498ade1a5",
+      "task001_baseline_sha256": "e1fe1bf9c9073e466dd268fb34e6c0495ee72db50d47b2794e18b14498ade1a5"
+    },
+    {
+      "source_id": "source-014",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_2fa7b294-c83/agent-acaf14f3e27830129.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 787113,
+      "sha256": "d2feef0fede834affd74722bcb550f0e95e8e01ae935ae5a73dc55da47596222",
+      "task001_baseline_sha256": "d2feef0fede834affd74722bcb550f0e95e8e01ae935ae5a73dc55da47596222"
+    },
+    {
+      "source_id": "source-015",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_2fa7b294-c83/agent-ae96885520112a185.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 600819,
+      "sha256": "f1213c0b60e431a57816799095bb6cb83ac28b25169a003348315432a92e736b",
+      "task001_baseline_sha256": "f1213c0b60e431a57816799095bb6cb83ac28b25169a003348315432a92e736b"
+    },
+    {
+      "source_id": "source-016",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_2fa7b294-c83/agent-aba4d06d6756e0705.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 543279,
+      "sha256": "b6ae039c2e3424938ee8241e02eea83d4ac54aca970dcb59c2efd23bbd170731",
+      "task001_baseline_sha256": "b6ae039c2e3424938ee8241e02eea83d4ac54aca970dcb59c2efd23bbd170731"
+    },
+    {
+      "source_id": "source-017",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_2fa7b294-c83/agent-a0b9d9f5e36f6d3ba.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 552446,
+      "sha256": "3adf81e12eab078bcabba7d45d5f844c60b567390b7e9e0647be35f25383c308",
+      "task001_baseline_sha256": "3adf81e12eab078bcabba7d45d5f844c60b567390b7e9e0647be35f25383c308"
+    },
+    {
+      "source_id": "source-018",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/workflows/wf_41648bf4-e9b.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 34780,
+      "sha256": "2e976c4f243328bdd485c4289c90d99c95463d16dfd179b8118048ea027724a4",
+      "task001_baseline_sha256": "2e976c4f243328bdd485c4289c90d99c95463d16dfd179b8118048ea027724a4"
+    },
+    {
+      "source_id": "source-019",
+      "source_path_description": "/home/dev/Aria/.aria/audit-reports/pre_merge-R5-1793367316350-aria-2.0-m6-dispatch-input-delivery-aggregated.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 29190,
+      "sha256": "73a4fbb5c7095ba06e9629f9fd401a7283996d5b25401146131ce6b9182ff3b2",
+      "task001_baseline_sha256": "73a4fbb5c7095ba06e9629f9fd401a7283996d5b25401146131ce6b9182ff3b2"
+    },
+    {
+      "source_id": "source-020",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_41648bf4-e9b/agent-a09f36943d3fc3297.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 606852,
+      "sha256": "55fdf3ba7ee7707154e0ac3ebd6a7f0c412b488d586ba0a91320769fb7c9f31d",
+      "task001_baseline_sha256": "55fdf3ba7ee7707154e0ac3ebd6a7f0c412b488d586ba0a91320769fb7c9f31d"
+    },
+    {
+      "source_id": "source-021",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_41648bf4-e9b/agent-acf8b2cece8ac7fac.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 749401,
+      "sha256": "5e640c05add4b3e3688bb39c37a0420c7e5c26c1cd2fbe799aa5f5fc4dca7fa8",
+      "task001_baseline_sha256": "5e640c05add4b3e3688bb39c37a0420c7e5c26c1cd2fbe799aa5f5fc4dca7fa8"
+    },
+    {
+      "source_id": "source-022",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_41648bf4-e9b/agent-a9bdddafa773d695f.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 863994,
+      "sha256": "6cd1851dc49356441d7fa03fa3a73ac3a4e4aa82be7ee0844e913963cb4160c8",
+      "task001_baseline_sha256": "6cd1851dc49356441d7fa03fa3a73ac3a4e4aa82be7ee0844e913963cb4160c8"
+    },
+    {
+      "source_id": "source-023",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_41648bf4-e9b/agent-ab6407b178a581ed2.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 831628,
+      "sha256": "1abd2596799a9d0d5da9678761ed9e4bb842cc95e1ac9011036097c4838cc73e",
+      "task001_baseline_sha256": "1abd2596799a9d0d5da9678761ed9e4bb842cc95e1ac9011036097c4838cc73e"
+    },
+    {
+      "source_id": "source-024",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_41648bf4-e9b/agent-a8968eb185880e064.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 627964,
+      "sha256": "86e5cb4960de603c66ca96359f1a032aba0c154fe6a2849115a8afdc6c44dfd3",
+      "task001_baseline_sha256": "86e5cb4960de603c66ca96359f1a032aba0c154fe6a2849115a8afdc6c44dfd3"
+    },
+    {
+      "source_id": "source-025",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/workflows/wf_b21b0b9d-34d.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 33338,
+      "sha256": "aee2217f6738f450a87ed6c77408b98a9ff9a1077dcd53acb4431fc405af83b9",
+      "task001_baseline_sha256": "aee2217f6738f450a87ed6c77408b98a9ff9a1077dcd53acb4431fc405af83b9"
+    },
+    {
+      "source_id": "source-026",
+      "source_path_description": "/home/dev/Aria/.aria/audit-reports/pre_merge-R3-1793364591226-aria-2.0-m6-dispatch-input-delivery-aggregated.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 29600,
+      "sha256": "87b7f36f18579e03607da189aecbd39b7f0ea5fb055a7e9e7ca0c52b809e72c6",
+      "task001_baseline_sha256": "87b7f36f18579e03607da189aecbd39b7f0ea5fb055a7e9e7ca0c52b809e72c6"
+    },
+    {
+      "source_id": "source-027",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a39e4c3de8f01c188.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 590506,
+      "sha256": "de6ff21c5b1176a0c6ac7e5fa96b30a3334ba01cb5025006f79caf35a03023c9",
+      "task001_baseline_sha256": "de6ff21c5b1176a0c6ac7e5fa96b30a3334ba01cb5025006f79caf35a03023c9"
+    },
+    {
+      "source_id": "source-028",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a056156984f640605.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 721890,
+      "sha256": "35bd4b6ea8c1e2ede060f3c9c1bfc0091c28addaf72a851a40086b0a92c98e1c",
+      "task001_baseline_sha256": "35bd4b6ea8c1e2ede060f3c9c1bfc0091c28addaf72a851a40086b0a92c98e1c"
+    },
+    {
+      "source_id": "source-029",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a0e744d7eb513cb83.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 834445,
+      "sha256": "b14c21c85b7522b24425849d373659f17f6bc8915bba873f761cab7d7299d383",
+      "task001_baseline_sha256": "b14c21c85b7522b24425849d373659f17f6bc8915bba873f761cab7d7299d383"
+    },
+    {
+      "source_id": "source-030",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a2f9efed9011168c1.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 749241,
+      "sha256": "65810cb63735096de9fe8ae248038bb76727e9300d3559f53d4415cb7b99daaf",
+      "task001_baseline_sha256": "65810cb63735096de9fe8ae248038bb76727e9300d3559f53d4415cb7b99daaf"
+    },
+    {
+      "source_id": "source-031",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a23486f35f33366df.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 631246,
+      "sha256": "95f66751260ae441d1fb7e2ec9ae98dfc70ce9ac64261f285f01ce20b20036af",
+      "task001_baseline_sha256": "95f66751260ae441d1fb7e2ec9ae98dfc70ce9ac64261f285f01ce20b20036af"
+    },
+    {
+      "source_id": "source-032",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a2ce0b7b189ad0d0c.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 816426,
+      "sha256": "797c982871117f61d4d26aa49b0b7bb60658824734c285e8727deec1dcf191ff",
+      "task001_baseline_sha256": "797c982871117f61d4d26aa49b0b7bb60658824734c285e8727deec1dcf191ff"
+    },
+    {
+      "source_id": "source-033",
+      "source_path_description": "/home/dev/.claude/projects/-home-dev-Aria/243b146b-24e0-4cff-af95-8224649826f6/subagents/workflows/wf_b21b0b9d-34d/agent-a51499d42fd9aba8d.jsonl",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 298272,
+      "sha256": "21662cb22c4f264a286a8f8e4cc4882c8b05fa2164f3c67e0f74204c48bb1b57",
+      "task001_baseline_sha256": "21662cb22c4f264a286a8f8e4cc4882c8b05fa2164f3c67e0f74204c48bb1b57"
+    },
+    {
+      "source_id": "source-034",
+      "source_path_description": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/persist_pr38_R2.py",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 6918,
+      "sha256": "980fea25db67200bea903f98ccc6d98274d87455183abb141d4ab1ea31ea8dc4",
+      "task001_baseline_sha256": "980fea25db67200bea903f98ccc6d98274d87455183abb141d4ab1ea31ea8dc4"
+    },
+    {
+      "source_id": "source-035",
+      "source_path_description": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/persist_pr38_round.py",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 6694,
+      "sha256": "c2beb879164c6adcea4f7937af6f3c609aefa92210656cd6d3580aae51ad45f9",
+      "task001_baseline_sha256": "c2beb879164c6adcea4f7937af6f3c609aefa92210656cd6d3580aae51ad45f9"
+    },
+    {
+      "source_id": "source-036",
+      "source_path_description": "/home/dev/Aria/aria/.claude-plugin/plugin.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 367,
+      "sha256": "15bea0d95d6cd68dda9dc1dbe7908bbfc8a64039183c40f40e1ac7287e52db84",
+      "task001_baseline_sha256": "15bea0d95d6cd68dda9dc1dbe7908bbfc8a64039183c40f40e1ac7287e52db84"
+    },
+    {
+      "source_id": "source-037",
+      "source_path_description": "/home/dev/Aria/aria/skills/audit-engine/SKILL.md",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 26237,
+      "sha256": "dcfea12b586113e7ae078220035a1a42165263fdd60361e4f6313ba8bf3f2cf4",
+      "task001_baseline_sha256": "dcfea12b586113e7ae078220035a1a42165263fdd60361e4f6313ba8bf3f2cf4"
+    },
+    {
+      "source_id": "source-038",
+      "source_path_description": "/home/dev/Aria/aria/skills/audit-engine/references/convergence-algorithm.md",
+      "description_only_do_not_dereference": true,
+      "task001_group": "source_original",
+      "bytes": 14075,
+      "sha256": "8d6978bafcdc6ab41bc0b2a3b6cb543ee5237a1877b209c2c3a3fc80ba1576f9",
+      "task001_baseline_sha256": "8d6978bafcdc6ab41bc0b2a3b6cb543ee5237a1877b209c2c3a3fc80ba1576f9"
+    },
+    {
+      "source_id": "source-039",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/README.md",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 10257,
+      "sha256": "a68371baa6bc8f6baf4b73432531eb59ec0e8f0178bab88b1f174c760b3fc98b",
+      "task001_baseline_sha256": "a68371baa6bc8f6baf4b73432531eb59ec0e8f0178bab88b1f174c760b3fc98b"
+    },
+    {
+      "source_id": "source-040",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/analysis.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 51685,
+      "sha256": "f5e36aad61aa7307bd8e693bbe207f961763486df782fa0d3e697ec20866a3b8",
+      "task001_baseline_sha256": "f5e36aad61aa7307bd8e693bbe207f961763486df782fa0d3e697ec20866a3b8"
+    },
+    {
+      "source_id": "source-041",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/helper-typecheck.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 448,
+      "sha256": "858a7421dd0706e8b856e9e9ebc87e777bd03963529b286f519da951dea20cff",
+      "task001_baseline_sha256": "858a7421dd0706e8b856e9e9ebc87e777bd03963529b286f519da951dea20cff"
+    },
+    {
+      "source_id": "source-042",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/render_report.py",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 12078,
+      "sha256": "70626eefeeaefaaa4ba017544effff2374eba67d59c66a795bef11cffe8be9fd",
+      "task001_baseline_sha256": "70626eefeeaefaaa4ba017544effff2374eba67d59c66a795bef11cffe8be9fd"
+    },
+    {
+      "source_id": "source-043",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/replay-fixture.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 50237,
+      "sha256": "5bf7a45cac0903689179236689a254390645022d13b08f3ef6019c28845e99e9",
+      "task001_baseline_sha256": "5bf7a45cac0903689179236689a254390645022d13b08f3ef6019c28845e99e9"
+    },
+    {
+      "source_id": "source-044",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/replay-result.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 5950,
+      "sha256": "41cafaa1a86b8dbee185eb9daac3b4fb65f06b75fb87cad76e9ad3d58c457e43",
+      "task001_baseline_sha256": "41cafaa1a86b8dbee185eb9daac3b4fb65f06b75fb87cad76e9ad3d58c457e43"
+    },
+    {
+      "source_id": "source-045",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/replay.py",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 7896,
+      "sha256": "b1f9d6d7094a0f76e3a3766b2c1554566ba7714eb436caf221ee55beaee00386",
+      "task001_baseline_sha256": "b1f9d6d7094a0f76e3a3766b2c1554566ba7714eb436caf221ee55beaee00386"
+    },
+    {
+      "source_id": "source-046",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources/persist_pr38_R2.py.txt",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 6918,
+      "sha256": "980fea25db67200bea903f98ccc6d98274d87455183abb141d4ab1ea31ea8dc4",
+      "task001_baseline_sha256": "980fea25db67200bea903f98ccc6d98274d87455183abb141d4ab1ea31ea8dc4"
+    },
+    {
+      "source_id": "source-047",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources/persist_pr38_round.py.txt",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 6694,
+      "sha256": "c2beb879164c6adcea4f7937af6f3c609aefa92210656cd6d3580aae51ad45f9",
+      "task001_baseline_sha256": "c2beb879164c6adcea4f7937af6f3c609aefa92210656cd6d3580aae51ad45f9"
+    },
+    {
+      "source_id": "source-048",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources/workflow-R2-script.txt",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 5630,
+      "sha256": "4acd8ec5aac2bcd1f38990e6452dfc30a1f2a856a7d4889b71f13cdc196b41c9",
+      "task001_baseline_sha256": "4acd8ec5aac2bcd1f38990e6452dfc30a1f2a856a7d4889b71f13cdc196b41c9"
+    },
+    {
+      "source_id": "source-049",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources/workflow-R3-script.txt",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 5708,
+      "sha256": "4d604d52bb4e0aca05e138d7a8b5b3de2f92b10bca46198624e0a988d627f9bb",
+      "task001_baseline_sha256": "4d604d52bb4e0aca05e138d7a8b5b3de2f92b10bca46198624e0a988d627f9bb"
+    },
+    {
+      "source_id": "source-050",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources/workflow-R4-script.txt",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 5845,
+      "sha256": "3221cc90aa48b1a34f6332cac491948fba39e3e173eaa9b3990d8f145240504b",
+      "task001_baseline_sha256": "3221cc90aa48b1a34f6332cac491948fba39e3e173eaa9b3990d8f145240504b"
+    },
+    {
+      "source_id": "source-051",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources/workflow-R5-script.txt",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 5841,
+      "sha256": "919018ff955f3cfe272f0c3b7f333194c3362ece3ac780bb4af96c95d736ea6e",
+      "task001_baseline_sha256": "919018ff955f3cfe272f0c3b7f333194c3362ece3ac780bb4af96c95d736ea6e"
+    },
+    {
+      "source_id": "source-052",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/sources.json",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 10476,
+      "sha256": "2660357d153d7af0fe392bff435d6d9e633fb87f8bc42d1af45eff98e3e8eda9",
+      "task001_baseline_sha256": "2660357d153d7af0fe392bff435d6d9e633fb87f8bc42d1af45eff98e3e8eda9"
+    },
+    {
+      "source_id": "source-053",
+      "source_path_description": "/home/dev/Aria/.aria/notes/2026-11-01-pr38-audit-execution-diagnosis/timeline.tsv",
+      "description_only_do_not_dereference": true,
+      "task001_group": "diagnostic_artifact",
+      "bytes": 4486,
+      "sha256": "02b8bc7f07d1d98fedc603ff9981c36bbe642cd010b85960025a97b5072ed862",
+      "task001_baseline_sha256": "02b8bc7f07d1d98fedc603ff9981c36bbe642cd010b85960025a97b5072ed862"
+    }
+  ],
+  "extractions": [
+    {
+      "source_id": "source-010",
+      "source_selector": "/",
+      "transformation": "Select runId/startTime/durationMs/status/agentCount verbatim; omit prompts/args/log previews. Partial historical extract, not a complete native record.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/native_fields"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "aa8d1781677e8076d2475aa257bd79b140bb267577dfb150cae445671c53478e"
+    },
+    {
+      "source_id": "source-011",
+      "source_selector": "/",
+      "transformation": "Select only named legacy aggregate fields verbatim; no new aggregation, policy inference, or vote inheritance.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/historical_aggregate_only"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "a81d9deb5958a387419657a8ede03971dd1a8e46281de1e96e811c887f9df77a"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/workflowProgress/1",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/0/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "ef9a5edcb7321bf5c8587b2b47f6d87e0250429a4c7012de5cc231a1ba643fb9"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/0",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/0/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "e54c67a093302a34318e2a5021849ffd7041f648a8df34bf68c597f738109476"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/0/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/0/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "c57b5d95c225ecd07dca2d745904848411696bbe1b89a34912ec1ae8cfe94dfb"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/workflowProgress/2",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/1/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "266c3b87221deb7ec256313c360f03d818717fde8e880e6fc639856cb91bf0c7"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/1",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/1/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "6cc57f23ccb6b2aef7ecce4c270ba7b3d947563b58fd7b0932379506c7dc8f70"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/workflowProgress/3",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/2/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "124d435d75e277941fbd6f2f33e2f827c906132e68df03230aa29749d04cd246"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/2",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/2/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "742278fe01e3ea07c054798f370c0043e4f0b981f872b41647763eababc37692"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/2/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/2/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "01d16a9f976ddf8f3c921b15c9c6b4a263f8afb38539a5aad2589ad82e1c6c37"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/workflowProgress/4",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/3/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "d45ba9a56008b3c67c87a1dbf509526e59fdc6ada46454c3a38a39d62a08ce22"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/3",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/3/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "cc9b7df241714897d3e1635b24b44ce3453081a656cc4a362246d196cfcfdf6b"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/workflowProgress/5",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/4/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "ec2b718e4d03e74ac6b8d549780ffcd2f928404bb4b761bed49f3878048b6669"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/4",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/4/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "651a58ee6d76a85b69a227a1a2d1ebfa076d96c57302e075e20b0fe59c959a82"
+    },
+    {
+      "source_id": "source-016",
+      "source_selector": "JSONL line 41 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/4/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "76f7542228da3b0707b04d999344a3c81a00fb3c0a4b65107776a5da3aebe5a9",
+      "source_line_1based": 41,
+      "source_line_bytes": 563,
+      "source_line_sha256": "42bd04aa2892586e4393ed3088f5aaa99a0f2d2884882038e3b7048bafdde490",
+      "workflow_run_id": "wf_2fa7b294-c83",
+      "agent_id": "aba4d06d6756e0705",
+      "event_uuid": "b1b83970-d3d0-4de5-b1fe-28e4ed208efe"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/workflowProgress/6",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/5/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "6144a7e8d362ffd925d6f60d8a1167ead0d4aed6b94edf5b4b7a03135bc7e916"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/5",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/5/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "054cd8787a7df4ce43357ffe6551b2400edcd1fe630db74961d008ce0cc9e169"
+    },
+    {
+      "source_id": "source-017",
+      "source_selector": "JSONL line 42 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/5/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "7b6ce5a163d7512ae89574b70369bde7e832ddd5cb2266d2a8daedbd02391a89",
+      "source_line_1based": 42,
+      "source_line_bytes": 563,
+      "source_line_sha256": "017516aed477af5ad41ca9783a10393a0a96ccebf74780eb0c74684fde1a958d",
+      "workflow_run_id": "wf_2fa7b294-c83",
+      "agent_id": "a0b9d9f5e36f6d3ba",
+      "event_uuid": "b2db0e82-43c1-4934-ac14-8a71d3a504a6"
+    },
+    {
+      "source_id": "source-010",
+      "source_selector": "/result/results/6",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/roles/6/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "876a28f387c37ee06faad66c599ed11cbb17f968076ce087acafcdac15fc5fe1"
+    },
+    {
+      "source_id": "source-048",
+      "source_selector": "lines 3-11 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/inert_script_slices/0/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "ad6e9960c5fe91e94ca5a7d837bb60522a0a968ce458dbf456c3ae9d4d7b68c3"
+    },
+    {
+      "source_id": "source-048",
+      "source_selector": "lines 12-29 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/inert_script_slices/1/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+    },
+    {
+      "source_id": "source-048",
+      "source_selector": "lines 30-34 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/inert_script_slices/2/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+    },
+    {
+      "source_id": "source-048",
+      "source_selector": "lines 37-52 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/0/inert_script_slices/3/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "91bf258770b07a01e038526519c5a99d32c623b3edb4cd1187c7fae88c8f620a"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/",
+      "transformation": "Select runId/startTime/durationMs/status/agentCount verbatim; omit prompts/args/log previews. Partial historical extract, not a complete native record.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/native_fields"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "da33d3c90ea06669af520de52092143689d9d88670e01562a6f45c7f5030abdb"
+    },
+    {
+      "source_id": "source-026",
+      "source_selector": "/",
+      "transformation": "Select only named legacy aggregate fields verbatim; no new aggregation, policy inference, or vote inheritance.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/historical_aggregate_only"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "b451504c9899f46600931f54fa67ecfa908293f0f87e53061c90f8a88bd8a539"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/1",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/0/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "b06dba3a37ddc59c60a6b7bf9046b181d5b5bab0fb673fbca5c18c6683eaa27e"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/0",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/0/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "dad016a0a6f96a6878c7a00dbbeaf2eab7e3fc033eae5af12a15e44074bbf78a"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/0/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/0/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "3051487aec8c4db165b2da1dc1fceb1f2eb6e64ecd32385451b79f060ea76c94"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/2",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/1/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "c74aada073e92de4993c5040924a67fae3d21db7e5f08278d319e21245f152d8"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/1",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/1/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "fe6f90d36bb6d2710a84830445db6e48cd44492a5cc11baee8361f568abc5421"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/3",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/2/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "561985a32d3b3466bce550744038a417f96bb76b99efd22cf315137c8970d817"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/2",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/2/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "d6e97b882e2dab7e2167f84fe6a968ea473c95163a4c4edac1dd99b70358d569"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/4",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/3/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "f7d07b80c42d11daee92896d38deb298f022e3976440a4b1716c5953889b1581"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/3",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/3/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "9f42904e41d9445cd8b549fc885102f5bc87ebce4a52421595f041d5b1402a81"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/5",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/4/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "ce9fd8ecb88203a916ad3c9cd28878b9d8c702fe8b5877da68910257d67487f9"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/4",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/4/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "42cbfa3c6432f5477728c37f917bbe006d75627856335637b89a80159196af2c"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/6",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/5/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "6f2a8d0fea4a7ec62347627405948ebfc85528f9e9d32df9c2cab1a07f5479b8"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/5",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/5/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "054cd8787a7df4ce43357ffe6551b2400edcd1fe630db74961d008ce0cc9e169"
+    },
+    {
+      "source_id": "source-032",
+      "source_selector": "JSONL line 74 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/5/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "89f05c20c6c5d48115b6b39d475846b1f25066619b19cc0216a41e7ece16f1cb",
+      "source_line_1based": 74,
+      "source_line_bytes": 563,
+      "source_line_sha256": "d55045beb688c0a1158a212297c45d57509d77d8cfe446a2fab583427af7aaeb",
+      "workflow_run_id": "wf_b21b0b9d-34d",
+      "agent_id": "a2ce0b7b189ad0d0c",
+      "event_uuid": "d687502c-b100-496a-9440-961214118006"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/workflowProgress/7",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/6/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "8290e37d6cc50ef5445c2fe59e50a0d0ede1f70f1f6cf4ba9b656717e6e015ef"
+    },
+    {
+      "source_id": "source-025",
+      "source_selector": "/result/results/6",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/6/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "876a28f387c37ee06faad66c599ed11cbb17f968076ce087acafcdac15fc5fe1"
+    },
+    {
+      "source_id": "source-033",
+      "source_selector": "JSONL line 17 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/roles/6/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "be7fa95d5cba995d798cddb8ff8e5dbe4b9e42b82800cb44e8501a68227932b5",
+      "source_line_1based": 17,
+      "source_line_bytes": 563,
+      "source_line_sha256": "670a0a6399910f78ce87c495360c1f69f99532639e50ca1f0355a08a694af1cf",
+      "workflow_run_id": "wf_b21b0b9d-34d",
+      "agent_id": "a51499d42fd9aba8d",
+      "event_uuid": "6cf71734-fb98-4097-b1b7-d071f7ef372c"
+    },
+    {
+      "source_id": "source-049",
+      "source_selector": "lines 3-11 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/inert_script_slices/0/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "9fefd97eaa4d0464a1a2adabf676df0bef21d997b9c79e60c25257e7df6af4b6"
+    },
+    {
+      "source_id": "source-049",
+      "source_selector": "lines 12-29 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/inert_script_slices/1/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+    },
+    {
+      "source_id": "source-049",
+      "source_selector": "lines 30-34 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/inert_script_slices/2/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+    },
+    {
+      "source_id": "source-049",
+      "source_selector": "lines 37-52 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/1/inert_script_slices/3/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "a67df56f562fd34427b1cddef6313483dfa2c2a3906c0a2735fdd27fa8f19137"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/",
+      "transformation": "Select runId/startTime/durationMs/status/agentCount verbatim; omit prompts/args/log previews. Partial historical extract, not a complete native record.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/native_fields"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "6de886e69b009487de6c3c5b7123b6bf088a0ec643d47f93934c6f3de07ccbf5"
+    },
+    {
+      "source_id": "source-003",
+      "source_selector": "/",
+      "transformation": "Select only named legacy aggregate fields verbatim; no new aggregation, policy inference, or vote inheritance.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/historical_aggregate_only"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "5577b9b4c1feb3ea000fab2060dd8a8abd5e0ccc7732f89b23f17373c04e756c"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/workflowProgress/1",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/0/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "07d139ac7b51be4962f0ccd322b3c3178222abfe683a5578b6885df5685fdfce"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/0",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/0/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "1144217e155077ca5955fb500a76cccebdcca4f81141082e8bd6d1d1fdb50bb7"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/0/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/0/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "5de894d59de13f61e601c0799348e3f15e372449fd9430569c5b43c927ea2930"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/workflowProgress/2",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/1/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "d505bec48e31a913d2bab91133bfe73dfbb99cb7f097b9088f87d633026d3811"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/1",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/1/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "259d4d8176b17030ce27cd6936f5e8f691aff96e029e87fc0eef7b6c71d56f01"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/1/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/1/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "3486aae0785d0b07ace19ee2febfc06ffe5668fe7d37f352a00675afd20b02c1"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/workflowProgress/3",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/2/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "a1836d6d81d4cef0b921fd47c18f86508eddd4146921e2bc1d8a7b93fda8ecad"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/2",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/2/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "d92b3fe083218456ea7ffb547603b8859103ccc1f5ce7d2f08ad5a633236db79"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/workflowProgress/4",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/3/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "b95784a64f37c9bdeccb5fa9df81b1ccc2a30f486ffd54a4b9d061ffd5a514ed"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/3",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/3/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "437c183205034376112beed1ed9f91a80c7eb8caf5d9135e568237d2ce9f3f3b"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/workflowProgress/5",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/4/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "7bb5c646518217e0bcff87f32b36df3fd9c8217f55e0db79e1f87214cd47cbc5"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/4",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/4/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "651a58ee6d76a85b69a227a1a2d1ebfa076d96c57302e075e20b0fe59c959a82"
+    },
+    {
+      "source_id": "source-008",
+      "source_selector": "JSONL line 68 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/4/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "3f218413f886ab8cd0ed6b854d53679d00995c985bc005d3ee48ee7573f22165",
+      "source_line_1based": 68,
+      "source_line_bytes": 563,
+      "source_line_sha256": "f974b942469069f287246c08f6f2384caea36e2b8a5db43c967b6809e3580827",
+      "workflow_run_id": "wf_06cc4f5a-7ab",
+      "agent_id": "aa1cea7d6342a9717",
+      "event_uuid": "0dccb88b-3adc-4e98-834b-f647a3a7c790"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/workflowProgress/6",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/5/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "768458ccec15b99cb89fa7948300edcbfcad199d344bb39df3ada56ca45e276a"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/5",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/5/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "054cd8787a7df4ce43357ffe6551b2400edcd1fe630db74961d008ce0cc9e169"
+    },
+    {
+      "source_id": "source-009",
+      "source_selector": "JSONL line 82 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/5/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "1d4a2c120c0b0f88aef999bdf19b05585748eeef00735e4d14d97931979f2673",
+      "source_line_1based": 82,
+      "source_line_bytes": 563,
+      "source_line_sha256": "b3c7e9cf7e31199ed824e1c9a2de788a98f3fd490fce2b880ef547041432b92d",
+      "workflow_run_id": "wf_06cc4f5a-7ab",
+      "agent_id": "a6855778c72ad1df8",
+      "event_uuid": "e51168db-8582-48a5-a291-ea4f5d4564cd"
+    },
+    {
+      "source_id": "source-002",
+      "source_selector": "/result/results/6",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/roles/6/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "876a28f387c37ee06faad66c599ed11cbb17f968076ce087acafcdac15fc5fe1"
+    },
+    {
+      "source_id": "source-050",
+      "source_selector": "lines 3-11 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/inert_script_slices/0/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "be9bca04438a183da07a1f0a9095c7b32a7aa62ad759d1d005f5699038d040af"
+    },
+    {
+      "source_id": "source-050",
+      "source_selector": "lines 12-29 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/inert_script_slices/1/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+    },
+    {
+      "source_id": "source-050",
+      "source_selector": "lines 30-34 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/inert_script_slices/2/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+    },
+    {
+      "source_id": "source-050",
+      "source_selector": "lines 37-52 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/2/inert_script_slices/3/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "c3d04a1b3d67e7ad29ef25f01e130077f2a934c4b956d829b2a78bace0869470"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/",
+      "transformation": "Select runId/startTime/durationMs/status/agentCount verbatim; omit prompts/args/log previews. Partial historical extract, not a complete native record.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/native_fields"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "205e250dc66d9478c54b6db4ef150e4ffa2db6500563763880f616d19242da9b"
+    },
+    {
+      "source_id": "source-019",
+      "source_selector": "/",
+      "transformation": "Select only named legacy aggregate fields verbatim; no new aggregation, policy inference, or vote inheritance.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/historical_aggregate_only"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "6227fd45d7b56980abe1dda44230704dbeab3f39dc472f4a455f3a5d39bca36c"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/workflowProgress/1",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/0/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "b072439dbde13721684bb401dcc23abae426d7ac45fe7b9929002970b2aa3f60"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/0",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/0/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "032ebab44a883f3072dd259b492a1a0fd2868fa625fb70780cc082d2a69150c9"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/0/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/0/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "19593ec3937959c82fa11cab74884bb2fe878817edfc054275c2f018c3f24c50"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/workflowProgress/2",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/1/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "0f2bbf5e355c6ead921e4d82ba0d518564bbdd348223d72f809567e1d3c9c6c7"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/1",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/1/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "43dd8380c732004059cb985f955c338d8bb58041ddd4b349c193868785f71021"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/workflowProgress/3",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/2/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "c4a336eef035c8cfcfa17772672d832a5aad30a91a8079e3b1e9fefa1ce14923"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/2",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/2/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "b6c37fad710110f665430721f7c00a4b6ac9a4bf512872e60c4470b72b49a7e3"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/2/rawUnadmitted",
+      "transformation": "Exact original rawUnadmitted string encoded as UTF-8, diagnostic evidence only; never a vote when late.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/2/legacy_result/rawUnadmitted"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "794b99d2860f802358542a87fc738206b22d0b8ffb2c5eafc909090c437511bb"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/workflowProgress/4",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/3/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "16123e1be6fbad84d422a4baa4463998f102ca6a8ea297a0956c4f3b344b3504"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/3",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/3/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "c5bea4c51167323d8561f782a80d56798bca604efcea202e741e879faa70c7c4"
+    },
+    {
+      "source_id": "source-023",
+      "source_selector": "JSONL line 88 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/3/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "df672b30b6b38ef9f840811f36bf77d8f4e33e488c716621dbf183f07bea0985",
+      "source_line_1based": 88,
+      "source_line_bytes": 563,
+      "source_line_sha256": "23cff13f86c296c4b167154820e1d07cdcd2e6de3a207150448db182ba573e2d",
+      "workflow_run_id": "wf_41648bf4-e9b",
+      "agent_id": "ab6407b178a581ed2",
+      "event_uuid": "f005bfeb-8fda-49e9-9f05-f7a1901b9014"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/workflowProgress/5",
+      "transformation": "Select native identity and timing keys verbatim; omitted fields remain omitted, unknown completion is null only in expected adaptation.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/4/native_node"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "7e7935fea4fa95044dde5553af0bae41c1f29721787b3c7cfc66b3e39f7e1701"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/4",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/4/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "651a58ee6d76a85b69a227a1a2d1ebfa076d96c57302e075e20b0fe59c959a82"
+    },
+    {
+      "source_id": "source-024",
+      "source_selector": "JSONL line 63 (1-based)",
+      "transformation": "Copy only exact event identity/type/timestamp/message; omit all other JSONL records and unrelated metadata. This proves interrupted_observed only, not a known C, actor authorization, or OS process exit.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/4/interruption_events/0"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "f18d6c37379d687aa11cc2264458606e0810cfa21c6870d5e14d9eda8c4118d1",
+      "source_line_1based": 63,
+      "source_line_bytes": 576,
+      "source_line_sha256": "9849d8b8f08122cee7412913a7914fd29f223ba2736f9e6ef0c2fc5b8b52a9c5",
+      "workflow_run_id": "wf_41648bf4-e9b",
+      "agent_id": "a8968eb185880e064",
+      "event_uuid": "49991a26-69fa-4424-a483-a25335a43c78"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/5",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/5/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "054cd8787a7df4ce43357ffe6551b2400edcd1fe630db74961d008ce0cc9e169"
+    },
+    {
+      "source_id": "source-018",
+      "source_selector": "/result/results/6",
+      "transformation": "Preserve complete original legacy per-role result object verbatim; report is an already-parsed object, rawUnadmitted is exact captured text when present.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/roles/6/legacy_result"
+      },
+      "new_data_encoding": "json",
+      "new_data_sha256": "876a28f387c37ee06faad66c599ed11cbb17f968076ce087acafcdac15fc5fe1"
+    },
+    {
+      "source_id": "source-051",
+      "source_selector": "lines 3-11 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/inert_script_slices/0/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "8cf6c34a9db666fed6017c512018df68ff5b601019eed20a61924c9c86f654b2"
+    },
+    {
+      "source_id": "source-051",
+      "source_selector": "lines 12-29 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/inert_script_slices/1/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+    },
+    {
+      "source_id": "source-051",
+      "source_selector": "lines 30-34 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/inert_script_slices/2/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+    },
+    {
+      "source_id": "source-051",
+      "source_selector": "lines 37-52 inclusive",
+      "transformation": "Concatenate exact source line byte slices, preserving line endings; historical JS is inert text only. Lines 1-2 and prompt/frontmatter lines 35-36 are deliberately excluded.",
+      "data_ref": {
+        "path": "history-r2-r5.json",
+        "pointer": "/rounds/3/inert_script_slices/3/inert_text"
+      },
+      "new_data_encoding": "text",
+      "new_data_sha256": "6bf656eaaf06ee78ba4c28cf8449c608f4efb3018a7d9566d668feb96aedb3dc"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "history-r2-r5.json",
+      "bytes": 155153,
+      "sha256": "54ed1097fba7264b28e20b85a0a0521f9a2a0051da777718b14e28e88193696f"
+    },
+    {
+      "path": "boundary-cases.json",
+      "bytes": 22573,
+      "sha256": "ec126b7179d2be1a70509a940679ab85b4dcbbcfe1144ad6b057f209d3f8e63a"
+    },
+    {
+      "path": "probe-target.txt",
+      "bytes": 787,
+      "sha256": "31c9ae231d1080c5c44931528edf40b74cebe47d746258f126c3aabd0d9ed0e7"
+    }
+  ],
+  "self_hash_policy": "No recursive self hash: history-provenance.json exact file hash is recorded in the external TASK-003 validation log.",
+  "transformations": {
+    "historical": "All original hashes independently matched TASK-001 before extraction. Native identity/time, parsed legacy reports, captured late raw, selected legacy aggregate, exact interruption event and prompt-free script line slices are copied. C and expected states/counts are derived explicitly; no historical build/attempted/cycle objects are fabricated.",
+    "synthetic": "boundary-cases.json and probe-target.txt are new independently authored contract vectors; no historical source hash or historical execution is claimed.",
+    "no_self_hash": "Provenance file hash is external to avoid a self-reference cycle."
+  }
+}

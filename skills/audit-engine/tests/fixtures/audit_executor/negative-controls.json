@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "task_id": "TASK-011",
+  "expectation_source": "proposal SC-4/5/6/7/8/10 and executor-contract sections 7/9/12",
+  "author_role": "fresh_qa_not_TASK004_to_TASK010_implementer",
+  "shapes": {
+    "ignore_roles": {
+      "previous_roles": [0],
+      "current_roles": [0, 2],
+      "assertion": "NC_IGNORE_ROLES_STABILITY",
+      "expected": {"population_reason": "population_changed", "conclusions_stable": false, "converged": false},
+      "mutations": [{"old": "stable = equal and (not require_same_admitted_roles or comparable is True)", "new": "stable = equal"}]
+    },
+    "cardinality_only": {
+      "previous_roles": [0, 1],
+      "current_roles": [1, 2],
+      "assertion": "NC_CARDINALITY_IDENTITY",
+      "expected": {"population_reason": "population_changed", "population_comparable": false},
+      "mutations": [{"old": "elif set(aggregate['admitted_roles']) != set(prior['admitted_roles']):", "new": "elif len(aggregate['admitted_roles']) != len(prior['admitted_roles']):"}]
+    },
+    "release_without_cancel": {
+      "role_count": 4,
+      "assertion": "NC_PHYSICAL_PENDING_LIMIT",
+      "expected_correct_peak": 2,
+      "expected_fault_peak": 4,
+      "mutations": [{"old": "const raw = await agent(role.prompt, {agentType:role.agentType,label:item.label,phase:'Audit'});", "new": "const raw = await Promise.race([agent(role.prompt, {agentType:role.agentType,label:item.label,phase:'Audit'}), new Promise(resolve => setTimeout(() => resolve(null), 120000))]);"}]
+    },
+    "tampered_result": {
+      "fields": ["converged", "admitted_roles"],
+      "assertion": "NC_TAMPER_CHECK_NONZERO",
+      "mutations": [{"old": "    checking = check_result is not None\n", "new": "    checking = check_result is not None\n    if checking:\n        return {'result': {'path': str(output), 'sha256': _hash(output.read_bytes())}}\n"}]
+    },
+    "missing_evidence_fallback_false": {
+      "variants": {
+        "missing_native": {
+          "assertion": "NC_MISSING_NATIVE_NONZERO",
+          "mutations": [{"old": "    except ExecutorError as error:\n        print(_canonical({\"error_code\": error.error_code, \"reason\": error.reason,", "new": "    except ExecutorError as error:\n        if error.error_code == 'E_NATIVE_EVIDENCE':\n            return 0\n        print(_canonical({\"error_code\": error.error_code, \"reason\": error.reason,"}]
+        },
+        "invalid_guard": {
+          "assertion": "NC_INVALID_GUARD_REJECTED",
+          "mutations": [{"old": "            _fail(\"E_CONFIG_TYPE\", \"raw_guard_not_boolean\", path)", "new": "            audit[\"require_same_admitted_roles\"] = False"}]
+        },
+        "legacy_previous": {
+          "assertion": "NC_LEGACY_EVIDENCE_NOT_COMPARABLE",
+          "mutations": [{"old": "        if prior is None:\n            reason = 'missing_participant_evidence'", "new": "        if prior is None:\n            require_same_admitted_roles = False\n            prior = aggregate\n            reason = 'missing_participant_evidence'"}]
+        }
+      }
+    }
+  }
+}

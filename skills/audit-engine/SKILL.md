@@ -86,6 +86,19 @@ agent-team-audit (单轮执行引擎)
 
 **完整流程定义 (4 阶段 详细 step / pre_merge gate 5-step 流程 + 错误输出 / convergence 4-step / challenge 4-step + Round 计数)**: 见 [references/execution-modes.md](./references/execution-modes.md)。
 
+### 生产入口分流 (先于通用配置回落)
+
+先执行 execution-modes.md「严格配置入口」的可执行配方，直接校验本插件 DEFAULTS 与项目原始 JSON；非法类型/重复键/缺省注册错误立即停止，不能让 config-loader 的通用回落先把 audit 或守卫关掉。`audit.require_same_admitted_roles` 是 boolean，DEFAULTS 为 false，不自行激活项目配置。Aria 本仓的显式 true 采用已由 TASK-015 单独验证，见[配置采用证据](../../../.aria/audit-reports/audit-executor-minimal-repair/config-adoption-evidence.json)；运行时仍取当前项目原始 JSON 的严格解析值，不把本仓记录扩成其他采用方默认值。
+
+- **false**：完整沿用下文原生产入口、默认团队、agent-team-audit、汇总算法和报告消费；不要求 manifest，不要求旧报告补参与字段，不强制走 helper。
+- **true**：只走 execution-modes.md「受守卫的 Workflow/convergence」完整配方。仅支持项目 checkpoint 的显式团队；`agents_config`/人工换席/动态加人/模型覆盖、其它后端或不能从固定源解析为 convergence 均报 unsupported，不自动切 mode、模型或回 legacy。非 Workflow 的旧入口仅在 false 分支保留，不声称它已有新守卫保障。
+- true 分支互斥于下文 legacy 汇总、收敛伪代码、失败重试及手工报告生成：冻结 manifest → 真实 build → 审计 Workflow(scriptPath,args) → capture audit index → prepare → 仅冻结 request.required 时独立 checker Workflow/capture → final → 同基础输入 check → 完整 JSON/MD/commit 及合法 sidecar 消费。prepare 不是发布；helper 非零、缺源、漂移或 unsupported 即停，禁止临时 persist、直接 collect 跳准备、AI 重算或用 MD/PASS 猜结果。
+- true 的 `canonical_v1` 仅由 audit_executor.py 重算与发布（契约 executor-contract.md §10.7），不另从自由文本推断 type/scope 或按下文散文再聚合。准入集合、稳定性、converged 与 policy 只读已校验 JSON；返回 FileRef 采用 helper 的实际身份/闭包映射，不重新 hash 展示文件替换它。
+- shared：pre_merge completeness gate、每轮 sibling probe、Step 0 不可变 anchor、既有 drift 与轮数/三路径仍生效。
+- **true 的资源与恢复**：进入任何下一轮、会话恢复或 all-failed void 补跑前，核同 cycle 全部既往 attempted 审计和 auxiliary 调用及原件；unknown 时零新增派发，列调用/原件引用，不宣称 OS 已清理。build 的 `resume_only=true` 只恢复既有证据链，不再次 Workflow；缺真实回执则暂停。
+
+true 的 120s/300s/并发2 不被 hard_cap=3 或软超时释放槽放宽；合法 preflight 只补资源终态，不补旧 C/raw/票，不越额度、终局或 accept/degrade。耗尽仍用下文三路径，但提问、原生问答 capture 与不可变 sidecar 必须按 execution-modes.md「人类处置」执行；旧周期的接受不是本周期新授权。缺参与证据不宣称稳定。文字配方及 synthetic 校验不代表真实生产调用或 Rule #6 通过。
+
 **Schema 细节**: convergence 见 [references/convergence-algorithm.md](./references/convergence-algorithm.md), challenge 见 [references/challenge-mode-schema.md](./references/challenge-mode-schema.md)。
 
 ### Step 0: Anchor 固化 (Drift Guard #17, v1.44.0)
@@ -250,6 +263,8 @@ audit-engine 的内部组件，非独立 Skill。
 
 ## 收敛判定算法
 
+本节下方伪代码仅用于 guard=false 的 legacy 路径。true 只消费 helper 校验后的 `canonical_v1`：原完整 keys 相等 AND 同一非空实际 admitted role_id 集合；再满足准入票全 PASS、非 all-failed void 及既有 drift/policy 条件才能收敛。同一部分角色即使 incomplete 仍可收敛；缺旧参与证据不可比，candidate/model 不新增等式门。converged、质量 verdict 与 merge gate 分离。详见 [opt-in 公式](./references/convergence-algorithm.md#workflowconvergence-的-opt-in-守卫)，不把新守卫套到 false。
+
 ### 四元组集合比较
 
 ```
@@ -340,6 +355,8 @@ else → continue to Round N+1
 ---
 
 ## 并发控制
+
+下表仅为 guard=false 的 legacy 并发约束。true 固定最多2个未返回 Promise，不用 hard_cap=3 放宽；120000ms 是准入窗口而非取消。VM 的300000ms从 timer 安装点起算，原生 D 则是 startTime+300000，两者未知对齐；不保证原生 D 精确停派；原生 wall-clock 包含排队/工具等开销，不是纯推理时间。q/C 仅取原生字段，未知 C 保持 null；六态 first-match 与迟到 raw 隔离见 [executor-contract.md §7](./references/executor-contract.md#7-双时钟六态与迟到-raw)。true 的全 cycle 资源重放及 resume_only 零重派按上方分流执行，不改 false 的旧资源策略。
 
 继承 agent-team-audit 参数, 多轮场景补充约束:
 

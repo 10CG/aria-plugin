@@ -1,0 +1,2320 @@
+{
+  "schema_version": 1,
+  "kind": "historical_native_extract_not_production_record",
+  "partition": "historical",
+  "provenance_ref": {
+    "path": "history-provenance.json",
+    "pointer": ""
+  },
+  "boundaries": {
+    "is_new_audit": false,
+    "is_new_vote": false,
+    "production_native_record_complete": false,
+    "historical_build_record_available": false,
+    "fabricated_attempted_snapshot": false,
+    "legacy_cycle_id_available": false,
+    "legacy_scripts_executable": false,
+    "consumer": "Historical adapter only; replay through the future real normalize/classify functions in TASK-006/013. Never pass this partial extract as a production build/native record.",
+    "missing_raw": "Admitted report objects are preserved exactly. Their original raw strings were not retained by the old script; do not reserialize them and claim original raw bytes.",
+    "role_mapping": "Per-round observed result.role -> exact native label and agentType; absence uses the complete original workflowProgress plus configured inventory, not a production alias rule.",
+    "script_selection": "Only role inventory, parser, timer and worker/return lines; prompts/frontmatter and all unrelated transcript messages are omitted. Script slices are inert JSON string values, never import/eval/exec inputs.",
+    "absolute_text": "Any absolute paths inside preserved report claims are inert historical text, never file references."
+  },
+  "budgets": {
+    "single_agent_ms": 120000,
+    "round_ms": 300000,
+    "max_parallel": 2
+  },
+  "rounds": [
+    {
+      "round": 2,
+      "candidate_sha": "b44f2abc4d2a5862d43b11ea06910e140eb57e99",
+      "native_fields": {
+        "runId": "wf_2fa7b294-c83",
+        "startTime": 1793357916759,
+        "durationMs": 300021,
+        "status": "completed",
+        "agentCount": 6
+      },
+      "native_script_sha256": "4acd8ec5aac2bcd1f38990e6452dfc30a1f2a856a7d4889b71f13cdc196b41c9",
+      "control_native_alignment": "unknown",
+      "control_origin": "timer_installation",
+      "control_timer_ms": 300000,
+      "roles": [
+        {
+          "role_id": "code-reviewer",
+          "configured_model_alias": "inherit",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 1,
+            "label": "R2:code-reviewer",
+            "agentId": "ad3bbdbb6c089ff25",
+            "agentType": "aria:code-reviewer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793357916888,
+            "queuedAt": 1793357916879,
+            "durationMs": 180806
+          },
+          "legacy_result": {
+            "role": "code-reviewer",
+            "configuredModel": "inherit",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"REVISE\",\n  \"coverage_complete\": true,\n  \"findings\": [\n    {\n      \"prior_id\": null,\n      \"type\": \"issue\",\n      \"severity\": \"major\",\n      \"category\": \"implementation\",\n      \"scope\": \"_handle_s1_scan 与 _handle_s4_launch 的 Issue 身份及输入一致性\",\n      \"file\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py\",\n      \"line\": 1938,\n      \"summary\": \"S1 仍可选择非自身的候选 Issue，并在返回值中改写 issue_id，但不会同步本 PR 新增的 raw_issue_number、target_repo 等输入字段。S4 现在优先使用这些持久化字段，因此会把一个 Issue 的内容交给另一个 Issue 的 dispatch。应让已绑定输入的行只推进自身候选，或原子更新全部身份及输入字段，并增加多 Issue 回归测试。\",\n      \"failure_scenario\": \"数据库已有 #147 的终态行，#147 仍带 aria-auto；本轮为 #148 seed 新行并持久化 raw_issue_number=148。Forgejo 列表先返回 #147 时，Phase 1 因其旧行存在而跳过重建，但 S1 因其 active_count=0 将其选中，返回 issue_id=ARIA-Aria-147。状态写入后 raw_issue_number 仍为 148，S4 遂发出 ISSUE_ID=ARIA-Aria-147、ISSUE_URL=/10CG/Aria/issues/148，Layer 2 获取 #148 内容却使用 #147 的分支和结果身份。新增持久化输入与旧重选路径的接缝造成了这一不一致。\"\n    }\n  ],\n  \"prior_findings\": [\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"resolved\",\n      \"reason\": \"静态复核确认 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/db.py:1533-1607 已读取并写入四个父行输入字段，且未继承 outcome_class；新增回归测试覆盖三种 rework mode、NULL 输入和 retry→S4 META。未执行测试。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"resolved\",\n      \"reason\": \"静态复核确认 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:149-173 使用整行匹配并校验当前 issue_id；末尾残缺或异属 marker 返回 UNKNOWN，不再退用此前 SUCCESS，S5 保持已知类别白名单。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"resolved\",\n      \"reason\": \"已核对跨文件接缝。/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:149-202 在 HTTP 边界把 S4 生成的页面 URL 转成 JSON API URL，并保留 origin 和安装子路径；原页面地址直取 JSON 的缺陷已修复。\"\n    },\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 HTTP 实现分工；本角色不替该域出具关闭结论，不构成本域覆盖缺口。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 file-mode YAML 校验分工；未作该域完整复核。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于镜像冻结及 wiring 文档分工；未作该域完整复核。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 HTTP 状态分类分工；保留旧项，不将其视为已解决。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器文本截断分工；保留旧项，不将其视为已解决。\"\n    },\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于 Nomad HCL 文档分工；未作该域完整复核。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于 E2E 部署计划文档分工；未作该域完整复核。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于 egress 历史证据文档分工；未作该域完整复核。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "c57b5d95c225ecd07dca2d745904848411696bbe1b89a34912ec1ae8cfe94dfb",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793357916879,
+            "C_ms": 1793358097694,
+            "D_ms": 1793358216759,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "qa-engineer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 2,
+            "label": "R2:qa-engineer",
+            "agentId": "a7daca61bb3a37b73",
+            "agentType": "aria:qa-engineer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793357916889,
+            "queuedAt": 1793357916880,
+            "durationMs": 117344
+          },
+          "legacy_result": {
+            "role": "qa-engineer",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "04edf5d6",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "classify_http_result",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 231,
+                  "summary": "仍仅将部分 5xx 归为可重试，未兑现完整 5xx 重试合约。",
+                  "failure_scenario": "服务先返回 507、随后可恢复为 200；507 落入 NON_RETRIABLE 分支，立即产生 INPUT_FETCH_FAILED，不会尝试第二次请求。应匹配完整 5xx 范围并补充负控。"
+                },
+                {
+                  "prior_id": "bf8f462f",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "sanitize_issue_text",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 128,
+                  "summary": "按字节截断仍可能切断多字节字符，产生非法 UTF-8。",
+                  "failure_scenario": "默认上限 8000 bytes，输入为 2667 个三字节汉字；head 保留 8000 bytes，最后一个汉字仅剩两个字节，追加截断标记后仍不是合法 UTF-8。应退回完整字符边界，并增加中文或 emoji 边界夹具。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "4b3a609c",
+                  "status": "resolved",
+                  "reason": "静态核对两处真实 HTTP helper 均设置 connect-timeout 与 max-time；共享校验拒绝零、负数、非有限及小于毫秒的配置。新增 loopback 测试对两处阻塞响应设置外层 watchdog。本轮未执行测试，不以此声称运行验收完成。"
+                },
+                {
+                  "id": "594a736a",
+                  "status": "resolved",
+                  "reason": "file-mode 在 clone 前改用 yaml.safe_load，解析异常显式失败，并要求非空 mapping；Dockerfile 安装 python3-yaml。新增真实入口夹具覆盖未闭合 flow sequence、嵌套非法 YAML 及 Python object tag，并断言未 clone、未调用 Claude。"
+                },
+                {
+                  "id": "04edf5d6",
+                  "status": "open",
+                  "reason": "当前分类仍显式列举 500、502、503、504；其他 5xx 仍落入不可重试分支，unit matrix 也未补齐该类边界。"
+                },
+                {
+                  "id": "bf8f462f",
+                  "status": "open",
+                  "reason": "独立检查确认 sanitize_issue_text 仍使用 head -c；现有截断测试只使用 ASCII，未验证多字节边界。"
+                },
+                {
+                  "id": "37491bec",
+                  "status": "not_judged",
+                  "reason": "Layer 1 URL 构造归域外席位；本席已核对容器端页面 URL 到 API URL 的转换及对应测试，不据此替代 Layer 1 全路径复核。"
+                },
+                {
+                  "id": "ec35fe96",
+                  "status": "not_judged",
+                  "reason": "retry/rework 数据继承属于 Layer 1 DB 域，不在本席完整容器与测试分工内。"
+                },
+                {
+                  "id": "fbbb7094",
+                  "status": "not_judged",
+                  "reason": "Layer 1 marker 消费器属于域外；本席只覆盖容器 marker 生产及相关入口测试。"
+                },
+                {
+                  "id": "c8cd14e4",
+                  "status": "not_judged",
+                  "reason": "镜像 wiring 与 rollback 文档属于域外，不以 blob 变化作为已修依据。"
+                },
+                {
+                  "id": "3c6cfd67",
+                  "status": "not_judged",
+                  "reason": "Nomad META 示例注释属于域外，不计作本席覆盖缺口。"
+                },
+                {
+                  "id": "32b690f0",
+                  "status": "not_judged",
+                  "reason": "部署目标文档属于域外；TG4、TG6 的后续执行不倒置为本轮代码合并门。"
+                },
+                {
+                  "id": "332bb5cb",
+                  "status": "not_judged",
+                  "reason": "历史 egress 证据指针属于域外，不据历史报告推定其当前状态。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793357916880,
+            "C_ms": 1793358034233,
+            "D_ms": 1793358216759,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "tech-lead",
+          "configured_model_alias": "opus",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 3,
+            "label": "R2:tech-lead",
+            "agentId": "acaf14f3e27830129",
+            "agentType": "aria:tech-lead",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793358034242,
+            "queuedAt": 1793358034237,
+            "durationMs": 136900
+          },
+          "legacy_result": {
+            "role": "tech-lead",
+            "configuredModel": "opus",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"PASS\",\n  \"coverage_complete\": true,\n  \"findings\": [\n    {\n      \"prior_id\": \"3c6cfd67\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"documentation\",\n      \"scope\": \"parameterized META 的 ISSUE_ID 示例\",\n      \"file\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl\",\n      \"line\": 59,\n      \"summary\": \"ISSUE_ID 注释仍示例纯数字 705，与当前入口要求不符。\",\n      \"failure_scenario\": \"操作者按注释传入 ISSUE_ID=705 → initial.sh 的 is_valid_issue_id 拒绝该值 → 容器在读取输入前 FATAL。应改为 ARIA-Aria-705 等复合 ID 示例。\"\n    }\n  ],\n  \"prior_findings\": [\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"open\",\n      \"reason\": \"独立实读 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:59，示例仍为 705；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:93-95,415-417 要求字母开头，偏差仍存在。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:149-202 在实际 curl 边界将页面 URL 转为 JSON API URL，同时保留已有 API URL、origin 和安装子路径；Layer 1 可继续传递用于取证的页面地址。\"\n    },\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"resolved\",\n      \"reason\": \"完整分工包所载当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/db.py:1531-1609 显示父行查询与子行 INSERT 均包含四个输入字段，覆盖 changes/redo/retry 共用路径；未继承父次 outcome_class。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"resolved\",\n      \"reason\": \"修复 delta 中 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py 的解析器对最后一条候选 marker 执行 fullmatch 并校验当前 issue_id；残缺或异 issue marker 返回 UNKNOWN。当前 :2759-2788 的 S5 消费路径只接受两个已知成功类，其余持久化 UNKNOWN。\"\n    },\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:176-202,293-300 的两个 HTTP helper 均设置连接和总时限，并在请求前拒绝非有限值及小于 0.001 秒的配置，关闭原无限等待路径。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:512-528 改用 yaml.safe_load 校验非空 mapping，解析失败明确退出；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/Dockerfile:44-51 同时安装 python3-yaml，依赖已接入镜像定义。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-image-freeze.md:68-73,97,108 已明确区分记录用完整 digest 与 META 用裸 64-hex，手工 wiring 和 rollback 均要求剥离 sha256:，与 HCL 的 @sha256: 拼接一致。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 HTTP 分类实现席的原 Minor，不作为本席 schema、HCL 与架构接缝覆盖缺口；本票不将其标记为已修复。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器文本清洗实现席的原 Minor，不作为本席覆盖缺口；本票不将其标记为已修复。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于部署文档席对当前 Layer 1 部署目标的核对，未取得该运行目标的独立证据；不将旧文档视为当前生产事实，也不标记已修复。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于历史 egress 证据指针的文档席核对，不属于本席代码合并审查缺口；不将该历史准备状态升级为当前生产验收结论。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "01d16a9f976ddf8f3c921b15c9c6b4a263f8afb38539a5aad2589ad82e1c6c37",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793358034237,
+            "C_ms": 1793358171142,
+            "D_ms": 1793358216759,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "knowledge-manager",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 4,
+            "label": "R2:knowledge-manager",
+            "agentId": "ae96885520112a185",
+            "agentType": "aria:knowledge-manager",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793358097701,
+            "queuedAt": 1793358097697,
+            "durationMs": 91874
+          },
+          "legacy_result": {
+            "role": "knowledge-manager",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "32b690f0",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "TASK-029 §1 部署前置清单及 image-freeze §6",
+                  "file": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md",
+                  "line": 19,
+                  "summary": "部署清单仍要求核验 light-1，未同步当前 heavy Docker 部署目标。",
+                  "failure_scenario": "操作者按 TASK-029 第2项向 light-1 部署或核验 Layer 1，但当前 deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 使用 heavy_workload Docker 与 /opt/aria-layer1 数据卷，导致核验错误宿主；image-freeze 的部署步骤亦有同形残留。"
+                },
+                {
+                  "prior_id": "332bb5cb",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "TASK-028 状态说明及 TASK-029 §1 egress 前置项",
+                  "file": "docs/m6-dispatch-input-delivery-task028-egress-probe.md",
+                  "line": 4,
+                  "summary": "历史准备文档未追加后续完成证据指针，仍将已经完成的 TASK-028 呈现为 BLOCKED。",
+                  "failure_scenario": "后续操作者从准备文档或 E2E 清单读取当前阻塞项，会把 TASK-028 误判为尚未执行；而主仓 detailed-tasks.yaml:528、552–554 已记录 status=done 和 2026-09-02 双腿 PASS。应保留历史准备事实并追加完成记录入口，而非倒改历史。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "c8cd14e4",
+                  "status": "resolved",
+                  "reason": "当前完整 diff 已将记录用 sha256:<64-hex> 与 META 用裸64位 hex 分开，并在 wiring 表格和 rollback 步骤明确剥离前缀；独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:187 确认模板自身拼接 @sha256:，修复与消费方一致。"
+                },
+                {
+                  "id": "32b690f0",
+                  "status": "open",
+                  "reason": "当前完整文档 diff 与 blob 等价证据均显示旧部署目标仍保留；独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 确认为 heavy Docker，而非 light-1。"
+                },
+                {
+                  "id": "332bb5cb",
+                  "status": "open",
+                  "reason": "当前 TASK-028 文档及 TASK-029 清单仍写 BLOCKED，未提供后来完成的指针；独立读取 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554 确认已记录 done 与双腿 PASS。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793358097697,
+            "C_ms": 1793358189575,
+            "D_ms": 1793358216759,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "mobile-developer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 5,
+            "label": "R2:mobile-developer",
+            "agentId": "aba4d06d6756e0705",
+            "agentType": "aria:mobile-developer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "progress",
+            "startedAt": 1793358171147,
+            "queuedAt": 1793358171143
+          },
+          "legacy_result": {
+            "role": "mobile-developer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "aba4d06d6756e0705",
+              "uuid": "b1b83970-d3d0-4de5-b1fe-28e4ed208efe",
+              "timestamp": "2026-10-30T11:03:36.887Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793358171143,
+            "C_ms": null,
+            "D_ms": 1793358216759,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "api-documenter",
+          "configured_model_alias": "haiku",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 6,
+            "label": "R2:api-documenter",
+            "agentId": "a0b9d9f5e36f6d3ba",
+            "agentType": "aria:api-documenter",
+            "model": "Codex API/gpt-6.1-terra[1m]",
+            "state": "progress",
+            "startedAt": 1793358189580,
+            "queuedAt": 1793358189578
+          },
+          "legacy_result": {
+            "role": "api-documenter",
+            "configuredModel": "haiku",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "a0b9d9f5e36f6d3ba",
+              "uuid": "b2db0e82-43c1-4934-ac14-8a71d3a504a6",
+              "timestamp": "2026-10-30T11:03:36.889Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793358189578,
+            "C_ms": null,
+            "D_ms": 1793358216759,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "ui-ux-designer",
+          "configured_model_alias": "sonnet",
+          "native_node": null,
+          "legacy_result": {
+            "role": "ui-ux-designer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": false,
+            "q_ms": null,
+            "C_ms": null,
+            "D_ms": 1793358216759,
+            "execution_state": "not_dispatched",
+            "admitted": false,
+            "termination_evidence": "unknown",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": null,
+            "legacy_placeholder": true
+          }
+        }
+      ],
+      "inert_script_slices": [
+        {
+          "source_lines_1based": [
+            3,
+            11
+          ],
+          "inert_text": "const ROLES = [\n {name:'code-reviewer',model:null,lines:720},\n {name:'qa-engineer',model:'sonnet',lines:775},\n {name:'tech-lead',model:'opus',lines:603},\n {name:'knowledge-manager',model:'sonnet',lines:416},\n {name:'mobile-developer',model:'sonnet',lines:602},\n {name:'api-documenter',model:'haiku',lines:647},\n {name:'ui-ux-designer',model:'sonnet',lines:593}\n]\n",
+          "text_sha256": "ad6e9960c5fe91e94ca5a7d837bb60522a0a968ce458dbf456c3ae9d4d7b68c3"
+        },
+        {
+          "source_lines_1based": [
+            12,
+            29
+          ],
+          "inert_text": "const results = Array(ROLES.length).fill(null)\nlet next = 0, roundExpired = false\nlet finishRound\nconst roundDeadline = new Promise(resolve => { finishRound = resolve })\nconst roundTimer = setTimeout(() => { roundExpired = true; log('整轮300s截止；未完成与排队项不得计PASS。'); finishRound('round_timeout') }, 300000)\nfunction parse(raw) {\n if (typeof raw !== 'string') return null\n let text = raw.trim()\n const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/)\n if (fenced) text = fenced[1]\n try {\n  const r = JSON.parse(text)\n  if (!['PASS','REVISE'].includes(r.vote) || typeof r.coverage_complete !== 'boolean' || !Array.isArray(r.findings) || !Array.isArray(r.pending) || !Array.isArray(r.prior_findings)) return null\n  for (const f of r.findings) if (!['critical','major','minor'].includes(f.severity) || !['issue','risk','decision'].includes(f.type) || !['implementation','testing','documentation','architecture'].includes(f.category) || typeof f.scope !== 'string' || typeof f.file !== 'string' || !Number.isInteger(f.line) || f.line < 1 || typeof f.failure_scenario !== 'string') return null\n  if ((!r.coverage_complete || r.pending.length || r.findings.some(f => ['critical','major'].includes(f.severity))) && r.vote !== 'REVISE') return null\n  return r\n } catch { return null }\n}\n",
+          "text_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+        },
+        {
+          "source_lines_1based": [
+            30,
+            34
+          ],
+          "inert_text": "async function worker() {\n while (!roundExpired && next < ROLES.length) {\n  const index = next++, role = ROLES[index]\n  let seatExpired = false\n  const seatTimer = setTimeout(() => { seatExpired = true; log(role.name + ':120s超时，票不准入；请求未结束前不释放本worker活跃槽。') },120000)\n",
+          "text_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+        },
+        {
+          "source_lines_1based": [
+            37,
+            52
+          ],
+          "inert_text": "  const opts = {agentType:'aria:'+role.name,label:'R2:'+role.name,phase:'Formal R2'}\n  if (role.model) opts.model = role.model\n  let raw = null, error = null\n  try { raw = await agent(prompt,opts) } catch (e) { error = String(e).slice(0,200) }\n  clearTimeout(seatTimer)\n  const report = !seatExpired && !roundExpired ? parse(raw) : null\n  results[index] = {role:role.name,configuredModel:role.model || 'inherit',status:seatExpired || roundExpired ? 'timeout' : report ? 'completed' : 'error',report,rawUnadmitted:report ? null : raw,error}\n  log(role.name+':'+results[index].status+(report ? ' vote='+report.vote : ''))\n }\n}\nconst all = Promise.all([worker(),worker()]).then(()=>'collected')\nconst terminal = await Promise.race([all,roundDeadline])\nclearTimeout(roundTimer)\nfor (let i=0;i<results.length;i++) if (!results[i]) results[i]={role:ROLES[i].name,configuredModel:ROLES[i].model || 'inherit',status:roundExpired ? 'round_timeout_or_not_started' : 'missing',report:null}\nconst admitted = results.filter(r=>r.status==='completed')\nreturn {round:2,candidate:'b44f2abc4d2a5862d43b11ea06910e140eb57e99',terminal,roundExpired,maxParallel:2,singleAgentSeconds:120,roundSeconds:300,configuredRoles:7,admittedCount:admitted.length,incomplete:admitted.length!==7,allFailedVoid:admitted.length===0,unanimousPass:admitted.length>0 && admitted.every(r=>r.report.vote==='PASS'),results,mergeClearance:false,note:'宿主定时器判准入；不声称逐席原生请求在120s被硬杀，未结束前保持活跃槽。仅本轮结果，不自动宣称稳定或合并。'}",
+          "text_sha256": "91bf258770b07a01e038526519c5a99d32c623b3edb4cd1187c7fae88c8f620a"
+        }
+      ],
+      "historical_aggregate_only": {
+        "candidate": "b44f2abc4d2a5862d43b11ea06910e140eb57e99",
+        "converged": false,
+        "merge_clearance": false,
+        "counts": {
+          "critical": 0,
+          "major": 1,
+          "minor": 5
+        },
+        "conclusions": [
+          {
+            "type": "issue",
+            "severity": "major",
+            "category": "implementation",
+            "scope": "hermes-extensions/aria-layer1/aria_layer1/extension.py#_handle_s1_scan.input_identity",
+            "file": "hermes-extensions/aria-layer1/aria_layer1/extension.py",
+            "line": 1938,
+            "summary": "S1可把已绑定输入的dispatch重选到其他Issue，导致issue_id与持久化raw number不一致",
+            "failure_scenario": "148种子行在列表先出现终态147时，经真实S1/transition_state写成issue_id147而raw_issue_number仍148；真实S4数据接缝回归也红",
+            "source": "caller controlled reproduction after an unadmitted late observation; not an additional agent vote",
+            "verification": "CONFIRMED",
+            "evidence": "pr38-S1-identity-proof.json + s1-binding-red (24 assertion failures, 0 errors)",
+            "fixed_in_later_candidate": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5; not reviewed by this R2",
+            "id": "474a509a"
+          },
+          {
+            "severity": "minor",
+            "category": "implementation",
+            "type": "issue",
+            "scope": "docker/aria-runner/modes/initial.sh#classify_http_result",
+            "file": "docker/aria-runner/modes/initial.sh",
+            "line": 231,
+            "summary": "仅列举部分 5xx，未兑现全体 5xx 可重试的合约。",
+            "failure_scenario": "507→200 序列实际只调用一次即 exit 1；按契约应第二次成功。",
+            "source_refs": [
+              "qa-engineer:QA-3"
+            ],
+            "evidence": [
+              "pr38-R1-reproductions.json#cases.QA-03"
+            ],
+            "id": "04edf5d6",
+            "found_by": [
+              "qa-engineer"
+            ],
+            "verification": "CONFIRMED",
+            "resolution": "open"
+          },
+          {
+            "severity": "minor",
+            "category": "implementation",
+            "type": "issue",
+            "scope": "docker/aria-runner/modes/initial.sh#sanitize_issue_text",
+            "file": "docker/aria-runner/modes/initial.sh",
+            "line": 128,
+            "summary": "按字节截断会切断多字节字符，输出不再是合法 UTF-8。",
+            "failure_scenario": "7999 个 ASCII 字节后接 中，8000-byte cap 截断后实际 exit 0，但输出 UTF-8 decode 失败。",
+            "source_refs": [
+              "mobile-developer:mobile-developer-01"
+            ],
+            "evidence": [
+              "pr38-R1-reproductions.json#cases.MOBILE-01"
+            ],
+            "boundary": "只确认消毒函数输出，未推定下游必崩。",
+            "id": "bf8f462f",
+            "found_by": [
+              "mobile-developer"
+            ],
+            "verification": "CONFIRMED",
+            "resolution": "open"
+          },
+          {
+            "severity": "minor",
+            "category": "documentation",
+            "type": "issue",
+            "scope": "nomad/jobs/aria-layer2-runner.hcl#ISSUE_ID_example",
+            "file": "nomad/jobs/aria-layer2-runner.hcl",
+            "line": 59,
+            "summary": "META 注释仍示例纯数字 ISSUE_ID，当前入口已拒绝这种值。",
+            "failure_scenario": "照示例传 ISSUE_ID=705，会在读取输入前被复合 ID 验证拒绝。",
+            "source_refs": [
+              "tech-lead:tech-lead-1"
+            ],
+            "evidence": [
+              "repo/nomad/jobs/aria-layer2-runner.hcl:59",
+              "repo/docker/aria-runner/modes/initial.sh:91-93,365"
+            ],
+            "id": "3c6cfd67",
+            "found_by": [
+              "tech-lead"
+            ],
+            "verification": "CONFIRMED",
+            "resolution": "open"
+          },
+          {
+            "severity": "minor",
+            "category": "documentation",
+            "type": "issue",
+            "scope": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md#deployment_target",
+            "file": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md",
+            "line": 19,
+            "summary": "部署清单仍指向 light-1，与当前 heavy Docker 部署不符。",
+            "failure_scenario": "按清单去 light-1 核验 Layer1 会核错部署目标；同形残留见原席 image-freeze/E2E/root task 引用。",
+            "source_refs": [
+              "knowledge-manager:KM-R1-1"
+            ],
+            "evidence": [
+              "repo/docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md:19",
+              "repo/deploy/aria-layer1-cron.nomad.hcl:38-40,70,91-94"
+            ],
+            "id": "32b690f0",
+            "found_by": [
+              "knowledge-manager"
+            ],
+            "verification": "CONFIRMED",
+            "resolution": "open"
+          },
+          {
+            "severity": "minor",
+            "category": "documentation",
+            "type": "issue",
+            "scope": "docs/m6-dispatch-input-delivery-task028-egress-probe.md#historical_completion_pointer",
+            "file": "docs/m6-dispatch-input-delivery-task028-egress-probe.md",
+            "line": 4,
+            "summary": "历史准备文档没有后续完成证据指针，已清门仍被呈现为 BLOCKED。",
+            "failure_scenario": "TASK-028 文档和 E2E checklist 仍称 BLOCKED；主仓台账已记 2026-09-02 双腿 PASS/status=done。",
+            "source_refs": [
+              "knowledge-manager:KM-R1-2"
+            ],
+            "evidence": [
+              "repo/docs/m6-dispatch-input-delivery-task028-egress-probe.md:4",
+              "/home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528,552-554"
+            ],
+            "boundary": "应追加后续完成追记并保留准备时点，不倒改历史，不重开 done 任务。",
+            "id": "332bb5cb",
+            "found_by": [
+              "knowledge-manager"
+            ],
+            "verification": "CONFIRMED",
+            "resolution": "open"
+          }
+        ],
+        "conclusions_stable": false,
+        "caller_confirmed_requirement_failure": true,
+        "caller_is_not_additional_agent_vote": true,
+        "fact_vs_vote_note": "迟到报告不计票；经真实路径独立验证的错绑事实仍必须处置，不能利用超时过滤吞掉事实。",
+        "max_rounds": 5
+      },
+      "aggregate_usage": "Original legacy aggregation only, not canonical_v1 and not a recomputed output from current admitted roles. In particular R2 retains five R1 minors and an independently confirmed S1 Major; the caller fact channel is not an additional vote. R3-R5 also retain legacy scope normalization only as history, never as a new production rule.",
+      "expected_counts": {
+        "dispatched": 6,
+        "admitted": 2,
+        "legacy_placeholders": 3,
+        "dispatched_no_completion": 2,
+        "not_dispatched": 1
+      }
+    },
+    {
+      "round": 3,
+      "candidate_sha": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5",
+      "native_fields": {
+        "runId": "wf_b21b0b9d-34d",
+        "startTime": 1793363742311,
+        "durationMs": 300029,
+        "status": "completed",
+        "agentCount": 7
+      },
+      "native_script_sha256": "4d604d52bb4e0aca05e138d7a8b5b3de2f92b10bca46198624e0a988d627f9bb",
+      "control_native_alignment": "unknown",
+      "control_origin": "timer_installation",
+      "control_timer_ms": 300000,
+      "roles": [
+        {
+          "role_id": "code-reviewer",
+          "configured_model_alias": "inherit",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 1,
+            "label": "R3:code-reviewer",
+            "agentId": "a39e4c3de8f01c188",
+            "agentType": "aria:code-reviewer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793363742362,
+            "queuedAt": 1793363742357,
+            "durationMs": 128544
+          },
+          "legacy_result": {
+            "role": "code-reviewer",
+            "configuredModel": "inherit",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"PASS\",\n  \"coverage_complete\": true,\n  \"findings\": [],\n  \"prior_findings\": [\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/db.py:1533-1609 已读取并复制四个输入字段，changes/redo/retry 共用该 INSERT，未继承 outcome_class；新增回归 fixture 覆盖字段继承与 retry→S4 META 接缝。本轮为静态核对，未执行测试。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:148-174 使用完整行匹配并校验当前 issue_id；最后一条残缺或异 issue marker 返回 UNKNOWN，不会回退采用先前 SUCCESS。S5 继续以已知类别白名单持久化结果。\"\n    },\n    {\n      \"id\": \"474a509a\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897-1960 对 ARIA 身份或任一输入字段非 NULL 的行跳过异 issue 候选；自身候选缺失时返回 S0_IDLE，不再将 148 改为 147 并遗留 raw148。四字段全 NULL 的非 ARIA legacy driver 保留原选择语义。新增 fixture 覆盖这些分支及 S1→DB→S4 数据接缝。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"resolved\",\n      \"reason\": \"跨域接缝已静态核对：/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:149-168、194-200 在实际 HTTP 请求前将页面 ISSUE_URL 转为 JSON API 地址，保留 origin 与安装子路径；Layer 1 保持页面 URL 不再直接导致请求 HTML。\"\n    },\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 HTTP 实现域，不在本席完整 Layer 1／acceptance 分工内；未独立复核全部请求路径与超时配置，交对应席位判定。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 file-mode YAML 校验域，本轮未完整复核，不沿用旧结论。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于镜像 wiring／rollback 文档域，本轮未复核当前文档，不沿用旧结论。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器 HTTP 分类域，本轮未完整复核全部 5xx 分类；该旧 Minor 保留待对应席位判定。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于容器文本清洗域，不在本席分工内；未对该旧 Minor 作当前裁决。\"\n    },\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于 HCL 文档域；本轮仅核对新增 META 声明接缝，不代替对应席位处理旧 Minor。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于 dogfood 部署计划文档域，本轮未复核；保留旧 Minor，不视为已解决。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"not_judged\",\n      \"reason\": \"属于 egress-probe 历史证据指针文档域，本轮未复核；保留旧 Minor，不视为已解决。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "3051487aec8c4db165b2da1dc1fceb1f2eb6e64ecd32385451b79f060ea76c94",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793363742357,
+            "C_ms": 1793363870906,
+            "D_ms": 1793364042311,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "qa-engineer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 2,
+            "label": "R3:qa-engineer",
+            "agentId": "a056156984f640605",
+            "agentType": "aria:qa-engineer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793363742363,
+            "queuedAt": 1793363742357,
+            "durationMs": 108517
+          },
+          "legacy_result": {
+            "role": "qa-engineer",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "04edf5d6",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "classify_http_result",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 231,
+                  "summary": "仍只将部分 5xx 归为可重试，未兑现完整 5xx 重试合约。",
+                  "failure_scenario": "服务先返回 507、下一次请求即可返回合法 200 JSON；507 落入 NON_RETRIABLE 分支，立即产生 INPUT_FETCH_FAILED，不执行第二次请求。应匹配完整 5xx 范围，并补充 507→200 的重试夹具。"
+                },
+                {
+                  "prior_id": "bf8f462f",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "sanitize_issue_text",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 128,
+                  "summary": "按字节截断仍可能切断多字节字符，产生非法 UTF-8。",
+                  "failure_scenario": "默认上限为 8000 bytes，输入为 2667 个三字节汉字；head 保留最后一个汉字的前两个字节，随后直接追加截断标记，导致传入 prompt 的文本包含非法 UTF-8。应退回完整字符边界，并增加中文或 emoji 边界夹具；当前截断测试仅使用 ASCII。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "4b3a609c",
+                  "status": "resolved",
+                  "reason": "独立静态核对两处真实 HTTP helper，均在 curl 上设置 connect-timeout 和 max-time；共享校验拒绝零、负数、非有限及小于毫秒的值。新增 loopback 测试覆盖两处阻塞响应并设置外层 watchdog。本轮未执行测试，不据此声称运行验收完成。"
+                },
+                {
+                  "id": "594a736a",
+                  "status": "resolved",
+                  "reason": "当前 file-mode 在 clone 前调用 yaml.safe_load，解析异常显式失败，并要求非空 mapping；Dockerfile 安装 python3-yaml。真实入口测试包含未闭合 flow sequence、嵌套非法 YAML 和 Python object tag，并断言未 clone、未调用 Claude。"
+                },
+                {
+                  "id": "04edf5d6",
+                  "status": "open",
+                  "reason": "重新读取当前分类函数，仍显式列举 500、502、503、504；其余 5xx 落入不可重试分支。"
+                },
+                {
+                  "id": "bf8f462f",
+                  "status": "open",
+                  "reason": "重新读取当前 sanitize_issue_text，仍使用 head -c，未调整到字符边界；完整 unit diff 中也没有多字节边界断言。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "独立读取当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897-1960：ARIA 身份或四个输入字段任一非 NULL 即绑定身份，扫描时跳过不同 candidate_issue_id，因此 148 行不能再借用 147 候选。全 NULL 且非 ARIA 的 legacy driver 仍保留原选择语义。新增测试覆盖完整及部分字段、空字符串、外部终态候选、自身缺席和 S1→S4 META 接缝；本轮仅静态核对。"
+                },
+                {
+                  "id": "37491bec",
+                  "status": "not_judged",
+                  "reason": "Layer 1 URL 构造属于域外；本席已独立核对容器页面 URL→API URL 转换及同源、已有 API URL、安装子路径测试，不以此替代 Layer 1 全路径结论。"
+                },
+                {
+                  "id": "ec35fe96",
+                  "status": "not_judged",
+                  "reason": "retry/rework 数据继承属于 Layer 1 DB 域，不在本席完整容器与测试分工内。"
+                },
+                {
+                  "id": "fbbb7094",
+                  "status": "not_judged",
+                  "reason": "Layer 1 marker 消费器属于域外；本席覆盖容器 marker 生产及入口测试，不据此判定消费端已修。"
+                },
+                {
+                  "id": "c8cd14e4",
+                  "status": "not_judged",
+                  "reason": "镜像 wiring 与 rollback 文档属于域外，不以 blob 变化或历史票替代复核。"
+                },
+                {
+                  "id": "3c6cfd67",
+                  "status": "not_judged",
+                  "reason": "Nomad META 示例注释属于域外，不计作本席覆盖缺口。"
+                },
+                {
+                  "id": "32b690f0",
+                  "status": "not_judged",
+                  "reason": "部署目标文档属于域外；TG4、TG6 的后续构建与部署不倒置为本轮代码 merge 前提，本票不代表生产验收。"
+                },
+                {
+                  "id": "332bb5cb",
+                  "status": "not_judged",
+                  "reason": "历史 egress 证据指针属于域外，不据历史报告推定当前状态。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793363742357,
+            "C_ms": 1793363850880,
+            "D_ms": 1793364042311,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "tech-lead",
+          "configured_model_alias": "opus",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 3,
+            "label": "R3:tech-lead",
+            "agentId": "a0e744d7eb513cb83",
+            "agentType": "aria:tech-lead",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793363850886,
+            "queuedAt": 1793363850883,
+            "durationMs": 108182
+          },
+          "legacy_result": {
+            "role": "tech-lead",
+            "configuredModel": "opus",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "3c6cfd67",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "parameterized META 的 ISSUE_ID 示例",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl",
+                  "line": 59,
+                  "summary": "META 注释仍以纯数字 705 示例 ISSUE_ID，与当前容器入口的校验契约不一致。",
+                  "failure_scenario": "操作者按注释传入 ISSUE_ID=705 → initial.sh:415-417 调用 is_valid_issue_id，纯数字不满足字母开头要求 → 容器在读取输入前退出。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "3c6cfd67",
+                  "status": "open",
+                  "reason": "当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:59 仍保留数字示例；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:93-95,415-417 仍拒绝该值。保留为 Minor，不继承旧 PASS。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "静态核对当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897-1905,1955-1960,2060-2069：ARIA 身份或任一输入字段非 NULL（包括空字符串）即绑定当前 issue，异 issue 候选在返回 transition extras 前被跳过；自身候选缺席时返回空 extras，不再把 148 行改成 147。继续核对同文件 :1429-1435 的真实持久化入口及 :2280-2315 的 S4 META 构造，身份与输入元组接缝一致。/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/tests/test_pr38_s1_input_binding.py 覆盖终态外部候选、部分字段、空字符串、自身缺席和 S1→DB→S4 接缝；本席未执行测试。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793363850883,
+            "C_ms": 1793363959068,
+            "D_ms": 1793364042311,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "knowledge-manager",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 4,
+            "label": "R3:knowledge-manager",
+            "agentId": "a2f9efed9011168c1",
+            "agentType": "aria:knowledge-manager",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793363870911,
+            "queuedAt": 1793363870909,
+            "durationMs": 111247
+          },
+          "legacy_result": {
+            "role": "knowledge-manager",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "32b690f0",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "TASK-029 §1 部署前置清单及 image-freeze §6",
+                  "file": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md",
+                  "line": 19,
+                  "summary": "部署清单仍指向 light-1，未同步当前 heavy Docker 部署目标。",
+                  "failure_scenario": "操作者按清单向 light-1 部署或核验 Layer 1，但当前 deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 使用 heavy_workload Docker，并挂载 /opt/aria-layer1，导致检查错误宿主。image-freeze:128、144 亦有同形残留。"
+                },
+                {
+                  "prior_id": "332bb5cb",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "TASK-028 状态说明及 TASK-029 §1 egress 前置项",
+                  "file": "docs/m6-dispatch-input-delivery-task028-egress-probe.md",
+                  "line": 4,
+                  "summary": "历史准备文档缺少后续完成证据指针，已完成的 TASK-028 仍被呈现为 BLOCKED。",
+                  "failure_scenario": "操作者从准备文档及 TASK-029:21 判断待办，会将 TASK-028 误读为尚未完成；而 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554 已记录 done 和 2026-09-02 双腿 PASS。应保留历史准备事实并追加完成证据入口，不据此声称当前网络或凭据已重新验收。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "c8cd14e4",
+                  "status": "resolved",
+                  "reason": "独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-image-freeze.md:68–73、97、108，确认记录使用完整 digest，而手工 wiring 与 rollback 明确只传裸64位 hex；与 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:187 自行拼接 @sha256: 一致。"
+                },
+                {
+                  "id": "32b690f0",
+                  "status": "open",
+                  "reason": "当前实际文件仍保留 light-1：/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md:5、19，以及 image-freeze.md:128、144。独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94，确认当前部署声明为 heavy Docker。"
+                },
+                {
+                  "id": "332bb5cb",
+                  "status": "open",
+                  "reason": "独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task028-egress-probe.md:4–6 及 task029-e2e-dogfood-plan.md:21，仍为 BLOCKED；对照 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554，缺少后来完成记录的交叉指针。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "独立静态核对 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1955–1960、2060–2069：ARIA 身份或任一非NULL种子字段均绑定自身候选，外国候选在返回写库载荷前被跳过；自身缺失则空载荷回 idle，不再出现 issue_id=147 而 raw_issue_number=148。四字段全NULL且非ARIA的 legacy driver 仍保留全局选择。S4:2280–2315 继续从保留字段构建 URL/META；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/layer-boundary-contract.md:256 与实现一致。已阅读 test_pr38_s1_input_binding.py 的真实 S1/DB 与 S4 接缝断言，本轮未执行测试，不将其视作生产 E2E 证据。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793363870909,
+            "C_ms": 1793363982158,
+            "D_ms": 1793364042311,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "mobile-developer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 5,
+            "label": "R3:mobile-developer",
+            "agentId": "a23486f35f33366df",
+            "agentType": "aria:mobile-developer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793363959075,
+            "queuedAt": 1793363959071,
+            "durationMs": 80993
+          },
+          "legacy_result": {
+            "role": "mobile-developer",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "bf8f462f",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "sanitize_issue_text",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 128,
+                  "summary": "长度截断仍按字节执行，会切断多字节字符并产生非法 UTF-8。",
+                  "failure_scenario": "上限8000字节，输入7999个ASCII字符a后接中文字符中；head -c仅留下中的首字节，随后追加截断提示，title/body输出不再是合法UTF-8。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "bf8f462f",
+                  "status": "open",
+                  "reason": "当前sanitize_issue_text第128行仍使用head -c，没有UTF-8码点边界修正；原Minor未解决。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "当前_handle_s1_scan对ARIA身份或任一持久输入字段非NULL的行，在候选筛选前绑定自身issue_id，排除外国候选；因此148不会被改成147而保留raw148。四字段全NULL的非ARIA legacy driver仍保留原选择语义。新增回归测试覆盖空字符串、单字段绑定、自身候选缺失及S1→DB→S4 META接缝；本席只读审查，未执行测试。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793363959071,
+            "C_ms": 1793364040068,
+            "D_ms": 1793364042311,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "api-documenter",
+          "configured_model_alias": "haiku",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 6,
+            "label": "R3:api-documenter",
+            "agentId": "a2ce0b7b189ad0d0c",
+            "agentType": "aria:api-documenter",
+            "model": "Codex API/gpt-6.1-terra[1m]",
+            "state": "progress",
+            "startedAt": 1793363982162,
+            "queuedAt": 1793363982160
+          },
+          "legacy_result": {
+            "role": "api-documenter",
+            "configuredModel": "haiku",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "a2ce0b7b189ad0d0c",
+              "uuid": "d687502c-b100-496a-9440-961214118006",
+              "timestamp": "2026-10-30T12:40:42.366Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793363982160,
+            "C_ms": null,
+            "D_ms": 1793364042311,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "ui-ux-designer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 7,
+            "label": "R3:ui-ux-designer",
+            "agentId": "a51499d42fd9aba8d",
+            "agentType": "aria:ui-ux-designer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "start",
+            "startedAt": 1793364040072,
+            "queuedAt": 1793364040070
+          },
+          "legacy_result": {
+            "role": "ui-ux-designer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "a51499d42fd9aba8d",
+              "uuid": "6cf71734-fb98-4097-b1b7-d071f7ef372c",
+              "timestamp": "2026-10-30T12:40:42.370Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793364040070,
+            "C_ms": null,
+            "D_ms": 1793364042311,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        }
+      ],
+      "inert_script_slices": [
+        {
+          "source_lines_1based": [
+            3,
+            11
+          ],
+          "inert_text": "const ROLES = [\n {name:'code-reviewer',model:null,lines:1087},\n {name:'qa-engineer',model:'sonnet',lines:871},\n {name:'tech-lead',model:'opus',lines:560},\n {name:'knowledge-manager',model:'sonnet',lines:472},\n {name:'mobile-developer',model:'sonnet',lines:559},\n {name:'api-documenter',model:'haiku',lines:607},\n {name:'ui-ux-designer',model:'sonnet',lines:339}\n]\n",
+          "text_sha256": "9fefd97eaa4d0464a1a2adabf676df0bef21d997b9c79e60c25257e7df6af4b6"
+        },
+        {
+          "source_lines_1based": [
+            12,
+            29
+          ],
+          "inert_text": "const results = Array(ROLES.length).fill(null)\nlet next = 0, roundExpired = false\nlet finishRound\nconst roundDeadline = new Promise(resolve => { finishRound = resolve })\nconst roundTimer = setTimeout(() => { roundExpired = true; log('整轮300s截止；未完成与排队项不得计PASS。'); finishRound('round_timeout') }, 300000)\nfunction parse(raw) {\n if (typeof raw !== 'string') return null\n let text = raw.trim()\n const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/)\n if (fenced) text = fenced[1]\n try {\n  const r = JSON.parse(text)\n  if (!['PASS','REVISE'].includes(r.vote) || typeof r.coverage_complete !== 'boolean' || !Array.isArray(r.findings) || !Array.isArray(r.pending) || !Array.isArray(r.prior_findings)) return null\n  for (const f of r.findings) if (!['critical','major','minor'].includes(f.severity) || !['issue','risk','decision'].includes(f.type) || !['implementation','testing','documentation','architecture'].includes(f.category) || typeof f.scope !== 'string' || typeof f.file !== 'string' || !Number.isInteger(f.line) || f.line < 1 || typeof f.failure_scenario !== 'string') return null\n  if ((!r.coverage_complete || r.pending.length || r.findings.some(f => ['critical','major'].includes(f.severity))) && r.vote !== 'REVISE') return null\n  return r\n } catch { return null }\n}\n",
+          "text_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+        },
+        {
+          "source_lines_1based": [
+            30,
+            34
+          ],
+          "inert_text": "async function worker() {\n while (!roundExpired && next < ROLES.length) {\n  const index = next++, role = ROLES[index]\n  let seatExpired = false\n  const seatTimer = setTimeout(() => { seatExpired = true; log(role.name + ':120s超时，票不准入；请求未结束前不释放本worker活跃槽。') },120000)\n",
+          "text_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+        },
+        {
+          "source_lines_1based": [
+            37,
+            52
+          ],
+          "inert_text": "  const opts = {agentType:'aria:'+role.name,label:'R3:'+role.name,phase:'Formal R3'}\n  if (role.model) opts.model = role.model\n  let raw = null, error = null\n  try { raw = await agent(prompt,opts) } catch (e) { error = String(e).slice(0,200) }\n  clearTimeout(seatTimer)\n  const report = !seatExpired && !roundExpired ? parse(raw) : null\n  results[index] = {role:role.name,configuredModel:role.model || 'inherit',status:seatExpired || roundExpired ? 'timeout' : report ? 'completed' : 'error',report,rawUnadmitted:report ? null : raw,error}\n  log(role.name+':'+results[index].status+(report ? ' vote='+report.vote : ''))\n }\n}\nconst all = Promise.all([worker(),worker()]).then(()=>'collected')\nconst terminal = await Promise.race([all,roundDeadline])\nclearTimeout(roundTimer)\nfor (let i=0;i<results.length;i++) if (!results[i]) results[i]={role:ROLES[i].name,configuredModel:ROLES[i].model || 'inherit',status:roundExpired ? 'round_timeout_or_not_started' : 'missing',report:null}\nconst admitted = results.filter(r=>r.status==='completed')\nreturn {round:3,candidate:'49d7da44941ae41a9b4e5a7321d114f14e3ec3a5',terminal,roundExpired,maxParallel:2,singleAgentSeconds:120,roundSeconds:300,configuredRoles:7,admittedCount:admitted.length,incomplete:admitted.length!==7,allFailedVoid:admitted.length===0,unanimousPass:admitted.length>0 && admitted.every(r=>r.report.vote==='PASS'),results,mergeClearance:false,note:'宿主定时器判准入；不声称逐席原生请求在120s被硬杀，未结束前保持活跃槽。仅本轮结果，不自动宣称稳定或合并。'}",
+          "text_sha256": "a67df56f562fd34427b1cddef6313483dfa2c2a3906c0a2735fdd27fa8f19137"
+        }
+      ],
+      "historical_aggregate_only": {
+        "candidate": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5",
+        "converged": false,
+        "merge_clearance": false,
+        "counts": {
+          "minor": 5
+        },
+        "conclusions": [
+          {
+            "prior_id": "04edf5d6",
+            "type": "issue",
+            "severity": "minor",
+            "category": "implementation",
+            "scope": "docker/aria-runner/modes/initial.sh#classify_http_result",
+            "file": "docker/aria-runner/modes/initial.sh",
+            "line": 231,
+            "summary": "仍只将部分 5xx 归为可重试，未兑现完整 5xx 重试合约。",
+            "failure_scenario": "服务先返回 507、下一次请求即可返回合法 200 JSON；507 落入 NON_RETRIABLE 分支，立即产生 INPUT_FETCH_FAILED，不执行第二次请求。应匹配完整 5xx 范围，并补充 507→200 的重试夹具。",
+            "id": "04edf5d6",
+            "found_by": [
+              "qa-engineer"
+            ],
+            "source_refs": [
+              {
+                "role": "qa-engineer",
+                "reported_scope": "classify_http_result"
+              }
+            ]
+          },
+          {
+            "prior_id": "32b690f0",
+            "type": "issue",
+            "severity": "minor",
+            "category": "documentation",
+            "scope": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md#deployment_target",
+            "file": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md",
+            "line": 19,
+            "summary": "部署清单仍指向 light-1，未同步当前 heavy Docker 部署目标。",
+            "failure_scenario": "操作者按清单向 light-1 部署或核验 Layer 1，但当前 deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 使用 heavy_workload Docker，并挂载 /opt/aria-layer1，导致检查错误宿主。image-freeze:128、144 亦有同形残留。",
+            "id": "32b690f0",
+            "found_by": [
+              "knowledge-manager"
+            ],
+            "source_refs": [
+              {
+                "role": "knowledge-manager",
+                "reported_scope": "TASK-029 §1 部署前置清单及 image-freeze §6"
+              }
+            ]
+          },
+          {
+            "prior_id": "332bb5cb",
+            "type": "issue",
+            "severity": "minor",
+            "category": "documentation",
+            "scope": "docs/m6-dispatch-input-delivery-task028-egress-probe.md#historical_completion_pointer",
+            "file": "docs/m6-dispatch-input-delivery-task028-egress-probe.md",
+            "line": 4,
+            "summary": "历史准备文档缺少后续完成证据指针，已完成的 TASK-028 仍被呈现为 BLOCKED。",
+            "failure_scenario": "操作者从准备文档及 TASK-029:21 判断待办，会将 TASK-028 误读为尚未完成；而 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554 已记录 done 和 2026-09-02 双腿 PASS。应保留历史准备事实并追加完成证据入口，不据此声称当前网络或凭据已重新验收。",
+            "id": "332bb5cb",
+            "found_by": [
+              "knowledge-manager"
+            ],
+            "source_refs": [
+              {
+                "role": "knowledge-manager",
+                "reported_scope": "TASK-028 状态说明及 TASK-029 §1 egress 前置项"
+              }
+            ]
+          },
+          {
+            "prior_id": "3c6cfd67",
+            "type": "issue",
+            "severity": "minor",
+            "category": "documentation",
+            "scope": "nomad/jobs/aria-layer2-runner.hcl#ISSUE_ID_example",
+            "file": "nomad/jobs/aria-layer2-runner.hcl",
+            "line": 59,
+            "summary": "META 注释仍以纯数字 705 示例 ISSUE_ID，与当前容器入口的校验契约不一致。",
+            "failure_scenario": "操作者按注释传入 ISSUE_ID=705 → initial.sh:415-417 调用 is_valid_issue_id，纯数字不满足字母开头要求 → 容器在读取输入前退出。",
+            "id": "3c6cfd67",
+            "found_by": [
+              "tech-lead"
+            ],
+            "source_refs": [
+              {
+                "role": "tech-lead",
+                "reported_scope": "parameterized META 的 ISSUE_ID 示例"
+              }
+            ]
+          },
+          {
+            "prior_id": "bf8f462f",
+            "type": "issue",
+            "severity": "minor",
+            "category": "implementation",
+            "scope": "docker/aria-runner/modes/initial.sh#sanitize_issue_text",
+            "file": "docker/aria-runner/modes/initial.sh",
+            "line": 128,
+            "summary": "按字节截断仍可能切断多字节字符，产生非法 UTF-8。",
+            "failure_scenario": "默认上限为 8000 bytes，输入为 2667 个三字节汉字；head 保留最后一个汉字的前两个字节，随后直接追加截断标记，导致传入 prompt 的文本包含非法 UTF-8。应退回完整字符边界，并增加中文或 emoji 边界夹具；当前截断测试仅使用 ASCII。",
+            "id": "bf8f462f",
+            "found_by": [
+              "qa-engineer",
+              "mobile-developer"
+            ],
+            "source_refs": [
+              {
+                "role": "qa-engineer",
+                "reported_scope": "sanitize_issue_text"
+              },
+              {
+                "role": "mobile-developer",
+                "reported_scope": "sanitize_issue_text"
+              }
+            ]
+          }
+        ],
+        "conclusions_stable": false,
+        "fact_limit": "only admitted findings aggregated; any unadmitted substantive defect remains a separate verification duty before merge",
+        "scope_normalization": "same prior_id + verified file/category/severity retains canonical R1 type/scope; raw role output preserved",
+        "max_rounds": 5
+      },
+      "aggregate_usage": "Original legacy aggregation only, not canonical_v1 and not a recomputed output from current admitted roles. In particular R2 retains five R1 minors and an independently confirmed S1 Major; the caller fact channel is not an additional vote. R3-R5 also retain legacy scope normalization only as history, never as a new production rule.",
+      "expected_counts": {
+        "dispatched": 7,
+        "admitted": 4,
+        "legacy_placeholders": 2,
+        "dispatched_no_completion": 2,
+        "not_dispatched": 0
+      }
+    },
+    {
+      "round": 4,
+      "candidate_sha": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5",
+      "native_fields": {
+        "runId": "wf_06cc4f5a-7ab",
+        "startTime": 1793364927445,
+        "durationMs": 300008,
+        "status": "completed",
+        "agentCount": 6
+      },
+      "native_script_sha256": "3221cc90aa48b1a34f6332cac491948fba39e3e173eaa9b3990d8f145240504b",
+      "control_native_alignment": "unknown",
+      "control_origin": "timer_installation",
+      "control_timer_ms": 300000,
+      "roles": [
+        {
+          "role_id": "code-reviewer",
+          "configured_model_alias": "inherit",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 1,
+            "label": "R4:code-reviewer",
+            "agentId": "a72a64759139038ae",
+            "agentType": "aria:code-reviewer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793364927529,
+            "queuedAt": 1793364927521,
+            "durationMs": 129912
+          },
+          "legacy_result": {
+            "role": "code-reviewer",
+            "configuredModel": "inherit",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"PASS\",\n  \"coverage_complete\": true,\n  \"phase1\": {\n    \"verdict\": \"PASS\",\n    \"scope\": \"原完整分工域：Layer 1 输入持久化、seed/S1/S4/S5、acceptance 分层及分配的测试变更。\",\n    \"reason\": \"已对照 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/proposal.md 的 B/C/D 要求，结合完整分工 diff、修复 delta 和候选源码核对，未发现本域关键功能缺失或越界变更。\"\n  },\n  \"phase2\": {\n    \"verdict\": \"PASS\",\n    \"strengths\": [\n      \"输入字段贯穿 rework 子行与 S4 META，结果分类不继承父行；marker 完整匹配并绑定当前 issue；回归夹具通过真实 SQLite repository 和状态持久化入口验证接缝。\"\n    ],\n    \"issues\": {\n      \"critical\": [],\n      \"important\": [],\n      \"minor\": []\n    },\n    \"recommendations\": [\n      \"继续保留其他角色的未修 Minor；TG4/TG6 按既定合并后顺序执行。\"\n    ],\n    \"assessment\": {\n      \"can_proceed\": \"Yes\",\n      \"reason\": \"本席静态审查未发现新增阻断项。未执行命令、测试、网络或生产验收；本票不代表整个 PR 已收敛或生产验收通过。\"\n    }\n  },\n  \"findings\": [],\n  \"prior_findings\": [\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/db.py:1533-1609 查询并复制四个输入字段，changes/redo/retry 共用该 INSERT，未复制 outcome_class；完整回归 diff 包含字段继承和 retry→S4 META 断言。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:153-167 对最后一条 marker 作完整行匹配并核对 issue_id，残缺或异 issue 返回 UNKNOWN；:2774-2803 仅允许已知成功类别持久化，其余归 UNKNOWN。\"\n    },\n    {\n      \"id\": \"474a509a\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897-1905、1955-1960 将 ARIA 身份或任一输入字段非 NULL 的行绑定自身候选，包括空字符串；自身候选缺失时 :2069 返回空载荷。结合 :1429-1435 的实际写库入口及 :2280-2315 的 META 生产者，不再发生 issue_id 改为 147 而保留 raw148。新增夹具覆盖绑定分支及 S1→DB→S4 接缝；本轮未执行。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"resolved\",\n      \"reason\": \"已独立核对跨域 URL 接缝：/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:149-168、194-202 在真实 curl 前将页面 URL 转为 JSON API URL，保留 origin 和安装子路径；Layer 1 输出页面 URL 不再直接造成请求 HTML。\"\n    },\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"not_judged\",\n      \"reason\": \"容器 HTTP 超时完整实现域由对应角色负责；本轮只检查 URL 接缝，不以局部阅读替代完整裁决。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"not_judged\",\n      \"reason\": \"容器 file-mode YAML 校验不属于本席原分工域，未独立复核，不继承旧结论。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"not_judged\",\n      \"reason\": \"镜像 wiring/rollback 文档不属于本席原分工域，未独立复核。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"open\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:230-234 仍只枚举部分 5xx，507 会落入 NON_RETRIABLE。该旧 Minor 未修，保留原票，不重复新增 finding。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"not_judged\",\n      \"reason\": \"容器文本截断域未独立复核；旧 Minor 保留，不视为已解决，不构成本席覆盖缺口。\"\n    },\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"not_judged\",\n      \"reason\": \"HCL 示例文档属于其他角色分工；本轮未复核旧 Minor，不视为已解决。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"not_judged\",\n      \"reason\": \"dogfood 部署清单属于其他角色分工；本轮未复核旧 Minor，不视为已解决。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"not_judged\",\n      \"reason\": \"egress-probe 历史证据指针属于其他角色分工；本轮未复核旧 Minor，不视为已解决。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "5de894d59de13f61e601c0799348e3f15e372449fd9430569c5b43c927ea2930",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793364927521,
+            "C_ms": 1793365057441,
+            "D_ms": 1793365227445,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "qa-engineer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 2,
+            "label": "R4:qa-engineer",
+            "agentId": "a05313dba03cea070",
+            "agentType": "aria:qa-engineer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793364927530,
+            "queuedAt": 1793364927521,
+            "durationMs": 128652
+          },
+          "legacy_result": {
+            "role": "qa-engineer",
+            "configuredModel": "sonnet",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"PASS\",\n  \"coverage_complete\": true,\n  \"findings\": [\n    {\n      \"prior_id\": \"04edf5d6\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"implementation\",\n      \"scope\": \"classify_http_result\",\n      \"file\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh\",\n      \"line\": 231,\n      \"summary\": \"仍仅将部分 5xx 归为可重试，未兑现完整 5xx 重试合约。\",\n      \"failure_scenario\": \"服务首次返回 507，第二次本可返回合法 200 JSON；507 落入 NON_RETRIABLE 分支，立即产生 INPUT_FETCH_FAILED，不再请求。应覆盖完整 5xx 范围，并补充 507→200 的重试夹具。\"\n    },\n    {\n      \"prior_id\": \"bf8f462f\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"implementation\",\n      \"scope\": \"sanitize_issue_text\",\n      \"file\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh\",\n      \"line\": 128,\n      \"summary\": \"按字节截断仍可能切断多字节字符，产生非法 UTF-8。\",\n      \"failure_scenario\": \"默认上限为 8000 bytes，输入为 2667 个三字节汉字；head 保留末字符的前两个字节，追加截断标记后仍是非法 UTF-8，并进入渲染后的 prompt。应退回完整字符边界，并增加中文或 emoji 边界断言；当前截断夹具仅使用 ASCII。\"\n    }\n  ],\n  \"prior_findings\": [\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"resolved\",\n      \"reason\": \"独立核对当前 initial.sh:176–202、293–300，两处真实 HTTP helper 均校验时限，并向 curl 传入 connect-timeout 和 max-time。校验拒绝零、负数、非有限及小于毫秒的值；新增 loopback 测试覆盖两处阻塞响应并设置外层 watchdog。本轮仅静态审查，未执行测试。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 initial.sh:508–527 在 clone 前调用 yaml.safe_load，解析异常显式失败，并要求非空 mapping；Dockerfile 安装 python3-yaml。真实入口夹具覆盖未闭合 flow sequence、嵌套非法 YAML 和 Python object tag，断言退出失败、未 clone、未调用 Claude。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"open\",\n      \"reason\": \"重新读取当前 initial.sh:230–235，仍只列举 500、502、503、504；其他 5xx 落入不可重试分支。完整 unit diff 中未补充该范围的边界断言。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"open\",\n      \"reason\": \"重新读取当前 initial.sh:119–132，仍直接使用 head -c 截断，没有恢复 UTF-8 字符边界；unit 截断测试只验证 ASCII 输入包含截断标记。\"\n    },\n    {\n      \"id\": \"474a509a\",\n      \"status\": \"resolved\",\n      \"reason\": \"独立读取当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1944–1960、2060–2069：ARIA 身份或四个输入字段任一非 NULL 即绑定当前身份，外国候选在产生写库载荷前被跳过；自身候选缺席时返回空 extras，不再把 148 改成 147 而保留 raw148。S4:2280–2315 继续读取保留的输入元组。独立审阅 test_pr38_s1_input_binding.py，覆盖完整及部分字段、空字符串、外部终态候选、自身缺席及 S1→DB→S4 META 接缝；全 NULL 非 ARIA legacy driver 的原选择语义也有断言。本轮未运行测试，不代表生产 E2E 验收。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"not_judged\",\n      \"reason\": \"Layer 1 URL 构造属于原分工域外。本席已审容器页面 URL→API URL 转换及同源、已有 API URL、安装子路径测试，不据此替代 Layer 1 全路径结论。\"\n    },\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"not_judged\",\n      \"reason\": \"retry/rework 输入字段继承属于 Layer 1 DB 域，不在本席原完整容器与测试分工内。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"not_judged\",\n      \"reason\": \"Layer 1 marker 消费器属于域外；本席覆盖容器 marker 生产及真实入口测试，不据此判定消费端已修。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"not_judged\",\n      \"reason\": \"镜像 wiring 与 rollback 文档属于域外，不以旧票或 blob 变化替代复核。\"\n    },\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"not_judged\",\n      \"reason\": \"Nomad META 示例注释属于域外，不计作本席覆盖缺口。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"not_judged\",\n      \"reason\": \"部署目标文档属于域外；TG4 在代码 lands 后构建、TG6 等待部署，不倒置为本轮代码 merge 前提。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"not_judged\",\n      \"reason\": \"历史 egress 完成证据指针属于域外，不据历史报告推定当前网络或凭据状态。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "3486aae0785d0b07ace19ee2febfc06ffe5668fe7d37f352a00675afd20b02c1",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793364927521,
+            "C_ms": 1793365056182,
+            "D_ms": 1793365227445,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "tech-lead",
+          "configured_model_alias": "opus",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 3,
+            "label": "R4:tech-lead",
+            "agentId": "aac2f79bde3bfcf1a",
+            "agentType": "aria:tech-lead",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793365056189,
+            "queuedAt": 1793365056185,
+            "durationMs": 94623
+          },
+          "legacy_result": {
+            "role": "tech-lead",
+            "configuredModel": "opus",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "3c6cfd67",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "nomad/jobs/aria-layer2-runner.hcl#parameterized.ISSUE_ID_example",
+                  "file": "nomad/jobs/aria-layer2-runner.hcl",
+                  "line": 59,
+                  "summary": "META 注释仍以纯数字 705 示例 ISSUE_ID，与当前容器入口校验不一致。",
+                  "failure_scenario": "操作者按注释传入 ISSUE_ID=705 → initial.sh:415–417 调用 is_valid_issue_id，而 :93–95 要求字母开头 → 容器在输入读取前退出；应改为 ARIA-Aria-705 等合法复合 ID 示例。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "3c6cfd67",
+                  "status": "open",
+                  "reason": "独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:59，数字示例仍存在；同仓 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:93–95、415–417 仍拒绝该值。属于文档 Minor。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "独立核对 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1955–1960：ARIA 身份或四个输入字段任一非 NULL（包括空字符串）即绑定当前 issue，外国候选在返回 transition extras 前被跳过；:2060 只能返回自身候选，缺席时 :2069 返回空 extras。结合 :1429–1435 的真实写库入口及 :2280–2315 的 URL/META 构造，148 行不会再借用 147 身份而保留 raw148。已静态检查 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/tests/test_pr38_s1_input_binding.py:24–102，覆盖部分字段、空字符串、外部终态候选、自身缺席及真实 S1→DB→S4 接缝；未执行测试。本票覆盖原 tech-lead 完整静态审查域，包括 additive schema、认证/META、输入身份及 outcome→acceptance 接缝；不代表整个 PR 收敛或生产验收。TG-4/TG-6 按 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/tasks.md:22、57、68–72 留在代码合并后的构建部署与运行验收阶段。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793365056185,
+            "C_ms": 1793365150812,
+            "D_ms": 1793365227445,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "knowledge-manager",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 4,
+            "label": "R4:knowledge-manager",
+            "agentId": "a10fce389b1ce0c7c",
+            "agentType": "aria:knowledge-manager",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793365057445,
+            "queuedAt": 1793365057443,
+            "durationMs": 95132
+          },
+          "legacy_result": {
+            "role": "knowledge-manager",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "32b690f0",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "TASK-029 §1 部署前置清单及 image-freeze §6",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md",
+                  "line": 19,
+                  "summary": "部署清单仍指向 light-1，未同步当前 heavy Docker 部署目标。",
+                  "failure_scenario": "操作者按清单向 light-1 部署或核验 Layer 1，但 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 声明 heavy_workload Docker 与 /opt/aria-layer1 挂载，导致操作或检查错误宿主；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-image-freeze.md:128、144 亦保留同形旧目标。"
+                },
+                {
+                  "prior_id": "332bb5cb",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "documentation",
+                  "scope": "TASK-028 状态说明及 TASK-029 §1 egress 前置项",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task028-egress-probe.md",
+                  "line": 4,
+                  "summary": "历史准备文档缺少后续完成证据指针，已完成的 TASK-028 仍被呈现为 BLOCKED。",
+                  "failure_scenario": "操作者从准备文档及 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md:21 判断待办，会将 TASK-028 误读为尚未完成；而 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554 已记录 done 和 2026-09-02 双腿 PASS。应保留历史准备事实并追加完成证据入口，不据此声称当前网络或凭据已重新验收。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "c8cd14e4",
+                  "status": "resolved",
+                  "reason": "本轮实读 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-image-freeze.md:68–73、97、108，记录用完整 digest 与 META 用裸64位 hex 已明确区分，rollback 明确要求去除 sha256: 前缀；与 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:187 自行拼接 @sha256: 一致。"
+                },
+                {
+                  "id": "32b690f0",
+                  "status": "open",
+                  "reason": "本轮实读部署清单及实际部署声明，light-1 残留仍存在；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/architecture-decisions.md:4067 也已明确当前为 heavy Docker，不能将操作清单中的旧目标解释为历史背景。"
+                },
+                {
+                  "id": "332bb5cb",
+                  "status": "open",
+                  "reason": "本轮完整读取两份准备文档，仍无后续完成记录入口；独立读取 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:524–554，确认 TASK-028 已记录历史完成，准备文档状态与该记录之间的断链未修。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "本轮独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1944–1960、2060–2069：ARIA 身份或任一输入字段非 NULL（含空字符串）即绑定自身候选，异身份候选在返回持久化载荷前被跳过，自身缺席则返回空载荷回 idle；四字段全 NULL 的非 ARIA legacy driver 保留全局选择。继续核对 :1429–1435 的持久化入口与 :2280–2315 的 S4 URL/META 构造，未见身份与保留输入再次错绑。/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/layer-boundary-contract.md:256 与实现一致；已静态阅读 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/tests/test_pr38_s1_input_binding.py 的真实 S1/DB→S4 接缝断言，未执行测试，不作为生产 E2E 验收。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793365057443,
+            "C_ms": 1793365152577,
+            "D_ms": 1793365227445,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "mobile-developer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 5,
+            "label": "R4:mobile-developer",
+            "agentId": "aa1cea7d6342a9717",
+            "agentType": "aria:mobile-developer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "progress",
+            "startedAt": 1793365150819,
+            "queuedAt": 1793365150814
+          },
+          "legacy_result": {
+            "role": "mobile-developer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "aa1cea7d6342a9717",
+              "uuid": "0dccb88b-3adc-4e98-834b-f647a3a7c790",
+              "timestamp": "2026-10-30T13:00:27.527Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793365150814,
+            "C_ms": null,
+            "D_ms": 1793365227445,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "api-documenter",
+          "configured_model_alias": "haiku",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 6,
+            "label": "R4:api-documenter",
+            "agentId": "a6855778c72ad1df8",
+            "agentType": "aria:api-documenter",
+            "model": "Codex API/gpt-6.1-terra[1m]",
+            "state": "progress",
+            "startedAt": 1793365152581,
+            "queuedAt": 1793365152578
+          },
+          "legacy_result": {
+            "role": "api-documenter",
+            "configuredModel": "haiku",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "a6855778c72ad1df8",
+              "uuid": "e51168db-8582-48a5-a291-ea4f5d4564cd",
+              "timestamp": "2026-10-30T13:00:27.530Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793365152578,
+            "C_ms": null,
+            "D_ms": 1793365227445,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "ui-ux-designer",
+          "configured_model_alias": "sonnet",
+          "native_node": null,
+          "legacy_result": {
+            "role": "ui-ux-designer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": false,
+            "q_ms": null,
+            "C_ms": null,
+            "D_ms": 1793365227445,
+            "execution_state": "not_dispatched",
+            "admitted": false,
+            "termination_evidence": "unknown",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": null,
+            "legacy_placeholder": true
+          }
+        }
+      ],
+      "inert_script_slices": [
+        {
+          "source_lines_1based": [
+            3,
+            11
+          ],
+          "inert_text": "const ROLES = [\n {name:'code-reviewer',model:null,lines:198},\n {name:'qa-engineer',model:'sonnet',lines:221},\n {name:'tech-lead',model:'opus',lines:160},\n {name:'knowledge-manager',model:'sonnet',lines:181},\n {name:'mobile-developer',model:'sonnet',lines:160},\n {name:'api-documenter',model:'haiku',lines:131},\n {name:'ui-ux-designer',model:'sonnet',lines:131}\n]\n",
+          "text_sha256": "be9bca04438a183da07a1f0a9095c7b32a7aa62ad759d1d005f5699038d040af"
+        },
+        {
+          "source_lines_1based": [
+            12,
+            29
+          ],
+          "inert_text": "const results = Array(ROLES.length).fill(null)\nlet next = 0, roundExpired = false\nlet finishRound\nconst roundDeadline = new Promise(resolve => { finishRound = resolve })\nconst roundTimer = setTimeout(() => { roundExpired = true; log('整轮300s截止；未完成与排队项不得计PASS。'); finishRound('round_timeout') }, 300000)\nfunction parse(raw) {\n if (typeof raw !== 'string') return null\n let text = raw.trim()\n const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/)\n if (fenced) text = fenced[1]\n try {\n  const r = JSON.parse(text)\n  if (!['PASS','REVISE'].includes(r.vote) || typeof r.coverage_complete !== 'boolean' || !Array.isArray(r.findings) || !Array.isArray(r.pending) || !Array.isArray(r.prior_findings)) return null\n  for (const f of r.findings) if (!['critical','major','minor'].includes(f.severity) || !['issue','risk','decision'].includes(f.type) || !['implementation','testing','documentation','architecture'].includes(f.category) || typeof f.scope !== 'string' || typeof f.file !== 'string' || !Number.isInteger(f.line) || f.line < 1 || typeof f.failure_scenario !== 'string') return null\n  if ((!r.coverage_complete || r.pending.length || r.findings.some(f => ['critical','major'].includes(f.severity))) && r.vote !== 'REVISE') return null\n  return r\n } catch { return null }\n}\n",
+          "text_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+        },
+        {
+          "source_lines_1based": [
+            30,
+            34
+          ],
+          "inert_text": "async function worker() {\n while (!roundExpired && next < ROLES.length) {\n  const index = next++, role = ROLES[index]\n  let seatExpired = false\n  const seatTimer = setTimeout(() => { seatExpired = true; log(role.name + ':120s超时，票不准入；请求未结束前不释放本worker活跃槽。') },120000)\n",
+          "text_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+        },
+        {
+          "source_lines_1based": [
+            37,
+            52
+          ],
+          "inert_text": "  const opts = {agentType:'aria:'+role.name,label:'R4:'+role.name,phase:'Formal R4'}\n  if (role.model) opts.model = role.model\n  let raw = null, error = null\n  try { raw = await agent(prompt,opts) } catch (e) { error = String(e).slice(0,200) }\n  clearTimeout(seatTimer)\n  const report = !seatExpired && !roundExpired ? parse(raw) : null\n  results[index] = {role:role.name,configuredModel:role.model || 'inherit',status:seatExpired || roundExpired ? 'timeout' : report ? 'completed' : 'error',report,rawUnadmitted:report ? null : raw,error}\n  log(role.name+':'+results[index].status+(report ? ' vote='+report.vote : ''))\n }\n}\nconst all = Promise.all([worker(),worker()]).then(()=>'collected')\nconst terminal = await Promise.race([all,roundDeadline])\nclearTimeout(roundTimer)\nfor (let i=0;i<results.length;i++) if (!results[i]) results[i]={role:ROLES[i].name,configuredModel:ROLES[i].model || 'inherit',status:roundExpired ? 'round_timeout_or_not_started' : 'missing',report:null}\nconst admitted = results.filter(r=>r.status==='completed')\nreturn {round:4,candidate:'49d7da44941ae41a9b4e5a7321d114f14e3ec3a5',terminal,roundExpired,maxParallel:2,singleAgentSeconds:120,roundSeconds:300,configuredRoles:7,admittedCount:admitted.length,incomplete:admitted.length!==7,allFailedVoid:admitted.length===0,unanimousPass:admitted.length>0 && admitted.every(r=>r.report.vote==='PASS'),results,mergeClearance:false,note:'宿主定时器判准入；不声称逐席原生请求在120s被硬杀，未结束前保持活跃槽。仅本轮结果，不自动宣称稳定或合并。'}",
+          "text_sha256": "c3d04a1b3d67e7ad29ef25f01e130077f2a934c4b956d829b2a78bace0869470"
+        }
+      ],
+      "historical_aggregate_only": {
+        "candidate": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5",
+        "converged": false,
+        "merge_clearance": false,
+        "counts": {
+          "minor": 3
+        },
+        "conclusions": [
+          {
+            "prior_id": "32b690f0",
+            "type": "issue",
+            "severity": "minor",
+            "category": "documentation",
+            "scope": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md#deployment_target",
+            "file": "docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md",
+            "line": 19,
+            "summary": "部署清单仍指向 light-1，未同步当前 heavy Docker 部署目标。",
+            "failure_scenario": "操作者按清单向 light-1 部署或核验 Layer 1，但 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 声明 heavy_workload Docker 与 /opt/aria-layer1 挂载，导致操作或检查错误宿主；/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-image-freeze.md:128、144 亦保留同形旧目标。",
+            "id": "32b690f0",
+            "found_by": [
+              "knowledge-manager"
+            ],
+            "source_refs": [
+              {
+                "role": "knowledge-manager",
+                "reported_scope": "TASK-029 §1 部署前置清单及 image-freeze §6"
+              }
+            ]
+          },
+          {
+            "prior_id": "332bb5cb",
+            "type": "issue",
+            "severity": "minor",
+            "category": "documentation",
+            "scope": "docs/m6-dispatch-input-delivery-task028-egress-probe.md#historical_completion_pointer",
+            "file": "docs/m6-dispatch-input-delivery-task028-egress-probe.md",
+            "line": 4,
+            "summary": "历史准备文档缺少后续完成证据指针，已完成的 TASK-028 仍被呈现为 BLOCKED。",
+            "failure_scenario": "操作者从准备文档及 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md:21 判断待办，会将 TASK-028 误读为尚未完成；而 /home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554 已记录 done 和 2026-09-02 双腿 PASS。应保留历史准备事实并追加完成证据入口，不据此声称当前网络或凭据已重新验收。",
+            "id": "332bb5cb",
+            "found_by": [
+              "knowledge-manager"
+            ],
+            "source_refs": [
+              {
+                "role": "knowledge-manager",
+                "reported_scope": "TASK-028 状态说明及 TASK-029 §1 egress 前置项"
+              }
+            ]
+          },
+          {
+            "prior_id": "3c6cfd67",
+            "type": "issue",
+            "severity": "minor",
+            "category": "documentation",
+            "scope": "nomad/jobs/aria-layer2-runner.hcl#ISSUE_ID_example",
+            "file": "nomad/jobs/aria-layer2-runner.hcl",
+            "line": 59,
+            "summary": "META 注释仍以纯数字 705 示例 ISSUE_ID，与当前容器入口校验不一致。",
+            "failure_scenario": "操作者按注释传入 ISSUE_ID=705 → initial.sh:415–417 调用 is_valid_issue_id，而 :93–95 要求字母开头 → 容器在输入读取前退出；应改为 ARIA-Aria-705 等合法复合 ID 示例。",
+            "id": "3c6cfd67",
+            "found_by": [
+              "tech-lead"
+            ],
+            "source_refs": [
+              {
+                "role": "tech-lead",
+                "reported_scope": "nomad/jobs/aria-layer2-runner.hcl#parameterized.ISSUE_ID_example"
+              }
+            ]
+          }
+        ],
+        "conclusions_stable": false,
+        "fact_limit": "only admitted findings aggregated; any unadmitted substantive defect remains a separate verification duty before merge",
+        "scope_normalization": "same prior_id + verified file/category/severity retains canonical R1 type/scope; raw role output preserved",
+        "max_rounds": 5
+      },
+      "aggregate_usage": "Original legacy aggregation only, not canonical_v1 and not a recomputed output from current admitted roles. In particular R2 retains five R1 minors and an independently confirmed S1 Major; the caller fact channel is not an additional vote. R3-R5 also retain legacy scope normalization only as history, never as a new production rule.",
+      "expected_counts": {
+        "dispatched": 6,
+        "admitted": 2,
+        "legacy_placeholders": 3,
+        "dispatched_no_completion": 2,
+        "not_dispatched": 1
+      }
+    },
+    {
+      "round": 5,
+      "candidate_sha": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5",
+      "native_fields": {
+        "runId": "wf_41648bf4-e9b",
+        "startTime": 1793366897794,
+        "durationMs": 300022,
+        "status": "completed",
+        "agentCount": 5
+      },
+      "native_script_sha256": "919018ff955f3cfe272f0c3b7f333194c3362ece3ac780bb4af96c95d736ea6e",
+      "control_native_alignment": "unknown",
+      "control_origin": "timer_installation",
+      "control_timer_ms": 300000,
+      "roles": [
+        {
+          "role_id": "code-reviewer",
+          "configured_model_alias": "inherit",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 1,
+            "label": "R5:code-reviewer",
+            "agentId": "a09f36943d3fc3297",
+            "agentType": "aria:code-reviewer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793366897822,
+            "queuedAt": 1793366897816,
+            "durationMs": 146660
+          },
+          "legacy_result": {
+            "role": "code-reviewer",
+            "configuredModel": "inherit",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"PASS\",\n  \"coverage_complete\": true,\n  \"phase1\": {\n    \"verdict\": \"PASS\",\n    \"scope\": \"原完整分工域：Layer 1 输入持久化、seed/S1/S4/S5、acceptance 分层及分配的测试变更。\",\n    \"reason\": \"对照 proposal 的 B/C/D 要求，审阅完整分工 diff、候选修复 delta、blob 等价证据及关键当前源码，本域未发现关键功能缺失或范围越界。\"\n  },\n  \"phase2\": {\n    \"verdict\": \"PASS\",\n    \"strengths\": [\n      \"rework 继承输入但不继承结果；marker 完整匹配并绑定 issue；回归夹具覆盖真实 SQLite 持久化和 S1→DB→S4 接缝。\"\n    ],\n    \"recommendations\": [\n      \"保留全部未解决 Minor；TG4/TG6 按既定合并后顺序执行。\"\n    ],\n    \"assessment\": {\n      \"can_proceed\": \"Yes\",\n      \"reason\": \"本席完整静态域未发现新增阻断项。未执行命令、测试、网络、typecheck 或生产验收；本票不代表整个 PR 收敛或生产验收通过。\"\n    }\n  },\n  \"findings\": [],\n  \"prior_findings\": [\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/db.py:1533–1609 在 changes/redo/retry 共用的 INSERT 中复制四个输入字段，不复制 outcome_class；回归 diff 包含三种模式、NULL 输入及 retry→S4 META 断言。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:153–167 完整匹配最后一条 marker 并核对 issue_id；残缺、跨行或异 issue 返回 UNKNOWN，:2774–2803 仅持久化已知成功类别，否则写 UNKNOWN。\"\n    },\n    {\n      \"id\": \"474a509a\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1955–1960 将 ARIA 身份或任一输入非 NULL 的行绑定自身候选，包括空字符串；无自身候选时 :2069 返回空载荷。结合 :1429–1435 的写库入口及 :2280–2315 的 META 生产者，148 行不会再借用 147 身份而保留 raw148。新增测试覆盖此分支和持久化接缝，本轮未运行。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"resolved\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:149–168、194–202 在 curl 前将页面 URL 转成 JSON API URL，保留 origin 和安装子路径；Layer 1 页面 URL 与容器请求端点之间的接缝已修复。\"\n    },\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"not_judged\",\n      \"reason\": \"容器 HTTP 超时完整实现不属于本席原分工域；局部读取 curl 参数不替代对应角色的完整复核。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"not_judged\",\n      \"reason\": \"file-mode YAML 校验属于其他角色实现域，本轮未独立裁决，不继承旧结论。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"not_judged\",\n      \"reason\": \"镜像 wiring/rollback 文档属于其他角色分工，本轮未独立裁决。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"open\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:230–234 仍只枚举部分 5xx；507→200 场景会在首次响应立即归为 NON_RETRIABLE，不执行第二次请求。保留旧 Minor，不重复建票。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"open\",\n      \"reason\": \"/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:125–130 仍直接 head -c 后追加标记，未退回完整 UTF-8 字符边界；截断点落在汉字或 emoji 内时输出非法 UTF-8。保留旧 Minor，不重复建票。\"\n    },\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"not_judged\",\n      \"reason\": \"HCL ISSUE_ID 示例属于其他角色文档域；已知未修 Minor 继续保留，本轮未独立复核，不标记 resolved。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"not_judged\",\n      \"reason\": \"dogfood/image-freeze 部署目标属于其他角色文档域；已知未修 Minor 继续保留，本轮未独立复核，不标记 resolved。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"not_judged\",\n      \"reason\": \"egress-probe 历史完成证据指针属于其他角色文档域；已知未修 Minor 继续保留，本轮未独立复核，不标记 resolved。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "19593ec3937959c82fa11cab74884bb2fe878817edfc054275c2f018c3f24c50",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793366897816,
+            "C_ms": 1793367044482,
+            "D_ms": 1793367197794,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "qa-engineer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 2,
+            "label": "R5:qa-engineer",
+            "agentId": "acf8b2cece8ac7fac",
+            "agentType": "aria:qa-engineer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793366897823,
+            "queuedAt": 1793366897816,
+            "durationMs": 110575
+          },
+          "legacy_result": {
+            "role": "qa-engineer",
+            "configuredModel": "sonnet",
+            "status": "completed",
+            "report": {
+              "vote": "PASS",
+              "coverage_complete": true,
+              "findings": [
+                {
+                  "prior_id": "04edf5d6",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "classify_http_result",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 231,
+                  "summary": "仍仅将部分 5xx 归为可重试，未兑现完整 5xx 重试合约。",
+                  "failure_scenario": "首次请求返回 507，第二次本可返回合法 200 JSON；507 在当前 case 中落入 NON_RETRIABLE 分支，立即输出 INPUT_FETCH_FAILED，不尝试第二次请求。应覆盖完整 5xx 范围，并增加 507→200 的重试夹具。"
+                },
+                {
+                  "prior_id": "bf8f462f",
+                  "type": "issue",
+                  "severity": "minor",
+                  "category": "implementation",
+                  "scope": "sanitize_issue_text",
+                  "file": "/home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh",
+                  "line": 128,
+                  "summary": "按字节截断可能切断多字节字符，产生非法 UTF-8。",
+                  "failure_scenario": "默认上限 8000 bytes，输入为 2667 个三字节汉字；head 保留末字符的前两个字节，追加截断标记后仍为非法 UTF-8，并被送入渲染后的 prompt。应退回完整字符边界，并增加中文或 emoji 边界夹具；当前截断测试仅使用 ASCII。"
+                }
+              ],
+              "prior_findings": [
+                {
+                  "id": "4b3a609c",
+                  "status": "resolved",
+                  "reason": "独立静态核对 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:176–202、293–300，两处输入 HTTP helper 均验证时限并传入 connect-timeout、max-time；校验拒绝零、负数、非有限及小于毫秒的值。已审新增 loopback 及外层 watchdog 夹具，本轮未执行测试。"
+                },
+                {
+                  "id": "594a736a",
+                  "status": "resolved",
+                  "reason": "独立核对 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:508–527，clone 前调用 yaml.safe_load，拒绝解析异常和非空 mapping 以外的结果；Dockerfile:44–51 安装 python3-yaml。真实入口夹具包含未闭合 flow sequence、嵌套非法 YAML、Python object tag，并断言失败发生于 clone 和 Claude 调用之前；本轮未运行夹具。"
+                },
+                {
+                  "id": "04edf5d6",
+                  "status": "open",
+                  "reason": "当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:230–235 仍只列举 500、502、503、504；507 等其他 5xx 被判不可重试。unit matrix 未覆盖该范围。"
+                },
+                {
+                  "id": "bf8f462f",
+                  "status": "open",
+                  "reason": "当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:119–132 仍直接使用 head -c，没有恢复 UTF-8 字符边界；已审 unit 截断夹具只检查 ASCII 输入中的标记。"
+                },
+                {
+                  "id": "474a509a",
+                  "status": "resolved",
+                  "reason": "独立读取 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1944–1960、2060–2069，ARIA 身份或任一输入字段非 NULL 即绑定当前 issue，外国候选在生成写库载荷前跳过；自身缺席返回空 extras，不再改写 issue_id 而保留外国输入元组。S4:2280–2315 继续读取保留字段。已审 test_pr38_s1_input_binding.py，包含完整和部分字段、空字符串、外国终态、自身缺席、真实 S1→DB→S4 META 接缝及全 NULL legacy 选择语义。本轮仅静态审查，不代表生产 E2E 验收。"
+                },
+                {
+                  "id": "37491bec",
+                  "status": "not_judged",
+                  "reason": "Layer 1 URL 构造的完整复核属于原分工域外；本席已审容器页面 URL→API URL 转换及同源、已有 API URL、安装子路径夹具，不据此替代域外结论。"
+                },
+                {
+                  "id": "ec35fe96",
+                  "status": "not_judged",
+                  "reason": "retry/rework 子行输入继承属于 Layer 1 DB 域，不在本席原完整容器及指定测试分工内，不以其他席位旧票判定已修。"
+                },
+                {
+                  "id": "fbbb7094",
+                  "status": "not_judged",
+                  "reason": "Layer 1 marker 消费器属于域外；本席覆盖容器 marker 生产、退出码和真实入口夹具，不替代消费端复核。"
+                },
+                {
+                  "id": "c8cd14e4",
+                  "status": "not_judged",
+                  "reason": "镜像 wiring 与 rollback 文档属于域外；未用 blob 变化或旧结论推定已修。"
+                },
+                {
+                  "id": "3c6cfd67",
+                  "status": "not_judged",
+                  "reason": "Nomad META 示例注释属于域外；材料记录该 Minor 未修，本席未独立重判，不将其移除或记为 resolved。"
+                },
+                {
+                  "id": "32b690f0",
+                  "status": "not_judged",
+                  "reason": "部署目标文档属于域外；材料记录该 Minor 未修，本席未独立重判。TG4 在代码 lands 后构建、TG6 等待部署，不倒置为当前代码 merge 前提。"
+                },
+                {
+                  "id": "332bb5cb",
+                  "status": "not_judged",
+                  "reason": "历史 egress 完成证据指针属于域外；材料记录该 Minor 未修，本席未独立重判，不将历史准备状态当作当前网络或凭据验收结论。"
+                }
+              ],
+              "pending": []
+            },
+            "rawUnadmitted": null,
+            "error": null
+          },
+          "original_admitted_raw_available": false,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793366897816,
+            "C_ms": 1793367008398,
+            "D_ms": 1793367197794,
+            "execution_state": "completed_admitted",
+            "admitted": true,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "tech-lead",
+          "configured_model_alias": "opus",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 3,
+            "label": "R5:tech-lead",
+            "agentId": "a9bdddafa773d695f",
+            "agentType": "aria:tech-lead",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "done",
+            "startedAt": 1793367008407,
+            "queuedAt": 1793367008402,
+            "durationMs": 135019
+          },
+          "legacy_result": {
+            "role": "tech-lead",
+            "configuredModel": "opus",
+            "status": "timeout",
+            "report": null,
+            "rawUnadmitted": "{\n  \"vote\": \"PASS\",\n  \"coverage_complete\": true,\n  \"findings\": [\n    {\n      \"prior_id\": \"04edf5d6\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"implementation\",\n      \"scope\": \"docker/aria-runner/modes/initial.sh#classify_http_result\",\n      \"file\": \"docker/aria-runner/modes/initial.sh\",\n      \"line\": 231,\n      \"summary\": \"5xx 重试仍只覆盖部分状态码，未兑现完整 5xx 可重试合约。\",\n      \"failure_scenario\": \"服务先返回 507、下一次请求可返回合法 200 JSON → 507 落入 NON_RETRIABLE 分支 → 立即产生 INPUT_FETCH_FAILED，不执行下一次请求。\"\n    },\n    {\n      \"prior_id\": \"bf8f462f\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"implementation\",\n      \"scope\": \"docker/aria-runner/modes/initial.sh#sanitize_issue_text\",\n      \"file\": \"docker/aria-runner/modes/initial.sh\",\n      \"line\": 128,\n      \"summary\": \"按字节截断可能切断多字节字符，使送入 prompt 的文本包含非法 UTF-8。\",\n      \"failure_scenario\": \"上限为 8000 bytes，输入为 2667 个三字节汉字 → head -c 保留末尾汉字的前两个字节 → 随后直接追加截断标记，未退回完整字符边界。\"\n    },\n    {\n      \"prior_id\": \"32b690f0\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"documentation\",\n      \"scope\": \"docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md#deployment_target\",\n      \"file\": \"docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md\",\n      \"line\": 19,\n      \"summary\": \"部署清单仍指向 light-1，未同步当前 heavy Docker 部署目标。\",\n      \"failure_scenario\": \"操作者按清单向 light-1 部署或核验 Layer 1 → 与 deploy/aria-layer1-cron.nomad.hcl:38–40、70、91–94 声明的 heavy_workload Docker 和 /opt/aria-layer1 挂载不一致，可能检查或更新错误运行位置；image-freeze:128、144 同样保留旧目标。\"\n    },\n    {\n      \"prior_id\": \"332bb5cb\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"documentation\",\n      \"scope\": \"docs/m6-dispatch-input-delivery-task028-egress-probe.md#historical_completion_pointer\",\n      \"file\": \"docs/m6-dispatch-input-delivery-task028-egress-probe.md\",\n      \"line\": 4,\n      \"summary\": \"历史准备文档缺少后续完成证据入口，已完成的 TASK-028 仍被呈现为 BLOCKED。\",\n      \"failure_scenario\": \"操作者从该文档及 TASK-029 清单第 4 项判断待办 → 将 TASK-028 误读为从未完成；实际 detailed-tasks.yaml:528、552–554 已记录 done 和 2026-09-02 双腿 PASS。应保留历史状态并追加完成证据指针，而非据历史 PASS 宣称当前网络或凭据已重新验收。\"\n    },\n    {\n      \"prior_id\": \"3c6cfd67\",\n      \"type\": \"issue\",\n      \"severity\": \"minor\",\n      \"category\": \"documentation\",\n      \"scope\": \"nomad/jobs/aria-layer2-runner.hcl#parameterized.ISSUE_ID_example\",\n      \"file\": \"nomad/jobs/aria-layer2-runner.hcl\",\n      \"line\": 59,\n      \"summary\": \"META 注释仍以纯数字 705 示例 ISSUE_ID，与容器入口校验不一致。\",\n      \"failure_scenario\": \"操作者按注释传入 ISSUE_ID=705 → initial.sh:415–417 调用 is_valid_issue_id → 不满足 :93–95 的字母开头要求，在读取输入前退出。\"\n    }\n  ],\n  \"prior_findings\": [\n    {\n      \"id\": \"474a509a\",\n      \"status\": \"resolved\",\n      \"reason\": \"独立核对 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:1897–1905、1955–1960、2060、2069：ARIA 身份或任一输入字段非 NULL（包括空字符串）即绑定自身候选，外国候选在返回 transition extras 前被跳过，自身缺席返回空 extras；结合 :1429–1435 的实际持久化入口及 :2280–2315 的 URL/META 构造，不再出现把 148 行身份换成 147 却保留 raw148 的接缝错误。静态审查 test_pr38_s1_input_binding.py:24–102，覆盖部分字段、空字符串、外国终态、自身缺席及真实 S1→DB→S4 接缝。本票覆盖原完整 tech-lead 分工的 additive schema、迁移测试变更、认证/META、输入身份和 outcome→acceptance 接缝；未执行测试、typecheck、生产拉取或 E2E，不代表整个 PR 收敛或生产验收。/home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/tasks.md:22、57、68–72 明定 TG-4/TG-6 属合并后的构建部署与运行验证，未倒置为代码 merge 前提。\"\n    },\n    {\n      \"id\": \"3c6cfd67\",\n      \"status\": \"open\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/nomad/jobs/aria-layer2-runner.hcl:59 仍示例 705；initial.sh:93–95、415–417 仍拒绝纯数字值。\"\n    },\n    {\n      \"id\": \"04edf5d6\",\n      \"status\": \"open\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:230–235 仍只枚举 500、502、503、504，其他 5xx 进入不可重试分支。\"\n    },\n    {\n      \"id\": \"bf8f462f\",\n      \"status\": \"open\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:125–130 仍使用 head -c 后直接追加标记，无 UTF-8 字符边界修正。\"\n    },\n    {\n      \"id\": \"32b690f0\",\n      \"status\": \"open\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task029-e2e-dogfood-plan.md:5、19 及 image-freeze.md:128、144 仍指向 Hermes/light-1；已与同仓 deploy/aria-layer1-cron.nomad.hcl:36–40、70、91–94 的 heavy Docker 目标独立交叉核对。\"\n    },\n    {\n      \"id\": \"332bb5cb\",\n      \"status\": \"open\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-task028-egress-probe.md:4–6 仍只呈现 BLOCKED 和未执行；TASK-029:21 继续引用该状态。/home/dev/Aria/openspec/changes/aria-2.0-m6-dispatch-input-delivery/detailed-tasks.yaml:528、552–554 已记录后续完成，准备文档缺少该入口。\"\n    },\n    {\n      \"id\": \"37491bec\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:149–172、194–202 在 HTTP 边界把页面 URL 转成 /api/v1/repos/.../issues/...，已是 API URL 时保持对应路径；S4 保留人类页面 URL 不再造成直接请求 HTML。仅静态确认。\"\n    },\n    {\n      \"id\": \"ec35fe96\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/db.py:1533–1553、1585–1607 对 changes/redo/retry 均读取并写入父行四个输入字段，不继承 outcome_class；test_pr38_layer1_regressions.py:51–103 静态覆盖模式、NULL 和 S4 META 接缝。\"\n    },\n    {\n      \"id\": \"fbbb7094\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/hermes-extensions/aria-layer1/aria_layer1/extension.py:139–166 对最后一个 marker 做整行匹配及 issue_id 精确绑定；残缺或外国 marker 返回 UNKNOWN，:2774–2803 仅接受两个已知成功类并持久化其他值为 UNKNOWN。\"\n    },\n    {\n      \"id\": \"4b3a609c\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:176–198、293–300 在两条 HTTP 路径发送前校验有限且不小于 0.001 秒的超时参数，并同时传入 curl 的连接和总时限。未运行网络验证。\"\n    },\n    {\n      \"id\": \"594a736a\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docker/aria-runner/modes/initial.sh:512–527 使用 yaml.safe_load 解析完整文件，拒绝解析异常及非空 mapping 之外的结果，失败立即 die；同仓 Dockerfile:49–50 安装 python3 与 python3-yaml。\"\n    },\n    {\n      \"id\": \"c8cd14e4\",\n      \"status\": \"resolved\",\n      \"reason\": \"当前 /home/dev/aria-m6-input-baseline-20261029-10wfbakb/repo/docs/m6-dispatch-input-delivery-image-freeze.md:97、108 明确 META IMAGE_SHA 必须为去掉 sha256: 前缀的裸 64-hex，与同仓 nomad/jobs/aria-layer2-runner.hcl:187 的 @sha256:${NOMAD_META_IMAGE_SHA} 一致。\"\n    }\n  ],\n  \"pending\": []\n}",
+            "error": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": "794b99d2860f802358542a87fc738206b22d0b8ffb2c5eafc909090c437511bb",
+          "interruption_events": [],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793367008402,
+            "C_ms": 1793367143426,
+            "D_ms": 1793367197794,
+            "execution_state": "completed_late",
+            "admitted": false,
+            "termination_evidence": "completed",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": false
+          }
+        },
+        {
+          "role_id": "knowledge-manager",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 4,
+            "label": "R5:knowledge-manager",
+            "agentId": "ab6407b178a581ed2",
+            "agentType": "aria:knowledge-manager",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "progress",
+            "startedAt": 1793367044489,
+            "queuedAt": 1793367044484
+          },
+          "legacy_result": {
+            "role": "knowledge-manager",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "ab6407b178a581ed2",
+              "uuid": "f005bfeb-8fda-49e9-9f05-f7a1901b9014",
+              "timestamp": "2026-10-30T13:33:17.888Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793367044484,
+            "C_ms": null,
+            "D_ms": 1793367197794,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "mobile-developer",
+          "configured_model_alias": "sonnet",
+          "native_node": {
+            "type": "workflow_agent",
+            "index": 5,
+            "label": "R5:mobile-developer",
+            "agentId": "a8968eb185880e064",
+            "agentType": "aria:mobile-developer",
+            "model": "Codex API/gpt-6.1-sol",
+            "state": "progress",
+            "startedAt": 1793367143432,
+            "queuedAt": 1793367143428
+          },
+          "legacy_result": {
+            "role": "mobile-developer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [
+            {
+              "type": "user",
+              "agentId": "a8968eb185880e064",
+              "uuid": "49991a26-69fa-4424-a483-a25335a43c78",
+              "timestamp": "2026-10-30T13:33:17.915Z",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[Request interrupted by user for tool use]"
+                  }
+                ]
+              }
+            }
+          ],
+          "expected": {
+            "dispatched": true,
+            "q_ms": 1793367143428,
+            "C_ms": null,
+            "D_ms": 1793367197794,
+            "execution_state": "dispatched_no_completion",
+            "admitted": false,
+            "termination_evidence": "interrupted_observed",
+            "unfinished_at_native_deadline": true,
+            "dispatched_at_or_after_native_deadline": false,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "api-documenter",
+          "configured_model_alias": "haiku",
+          "native_node": null,
+          "legacy_result": {
+            "role": "api-documenter",
+            "configuredModel": "haiku",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": false,
+            "q_ms": null,
+            "C_ms": null,
+            "D_ms": 1793367197794,
+            "execution_state": "not_dispatched",
+            "admitted": false,
+            "termination_evidence": "unknown",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": null,
+            "legacy_placeholder": true
+          }
+        },
+        {
+          "role_id": "ui-ux-designer",
+          "configured_model_alias": "sonnet",
+          "native_node": null,
+          "legacy_result": {
+            "role": "ui-ux-designer",
+            "configuredModel": "sonnet",
+            "status": "round_timeout_or_not_started",
+            "report": null
+          },
+          "original_admitted_raw_available": null,
+          "raw_unadmitted_sha256": null,
+          "interruption_events": [],
+          "expected": {
+            "dispatched": false,
+            "q_ms": null,
+            "C_ms": null,
+            "D_ms": 1793367197794,
+            "execution_state": "not_dispatched",
+            "admitted": false,
+            "termination_evidence": "unknown",
+            "unfinished_at_native_deadline": false,
+            "dispatched_at_or_after_native_deadline": null,
+            "legacy_placeholder": true
+          }
+        }
+      ],
+      "inert_script_slices": [
+        {
+          "source_lines_1based": [
+            3,
+            11
+          ],
+          "inert_text": "const ROLES = [\n {name:'code-reviewer',model:null,lines:282},\n {name:'qa-engineer',model:'sonnet',lines:282},\n {name:'tech-lead',model:'opus',lines:221},\n {name:'knowledge-manager',model:'sonnet',lines:242},\n {name:'mobile-developer',model:'sonnet',lines:192},\n {name:'api-documenter',model:'haiku',lines:192},\n {name:'ui-ux-designer',model:'sonnet',lines:192}\n]\n",
+          "text_sha256": "8cf6c34a9db666fed6017c512018df68ff5b601019eed20a61924c9c86f654b2"
+        },
+        {
+          "source_lines_1based": [
+            12,
+            29
+          ],
+          "inert_text": "const results = Array(ROLES.length).fill(null)\nlet next = 0, roundExpired = false\nlet finishRound\nconst roundDeadline = new Promise(resolve => { finishRound = resolve })\nconst roundTimer = setTimeout(() => { roundExpired = true; log('整轮300s截止；未完成与排队项不得计PASS。'); finishRound('round_timeout') }, 300000)\nfunction parse(raw) {\n if (typeof raw !== 'string') return null\n let text = raw.trim()\n const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/)\n if (fenced) text = fenced[1]\n try {\n  const r = JSON.parse(text)\n  if (!['PASS','REVISE'].includes(r.vote) || typeof r.coverage_complete !== 'boolean' || !Array.isArray(r.findings) || !Array.isArray(r.pending) || !Array.isArray(r.prior_findings)) return null\n  for (const f of r.findings) if (!['critical','major','minor'].includes(f.severity) || !['issue','risk','decision'].includes(f.type) || !['implementation','testing','documentation','architecture'].includes(f.category) || typeof f.scope !== 'string' || typeof f.file !== 'string' || !Number.isInteger(f.line) || f.line < 1 || typeof f.failure_scenario !== 'string') return null\n  if ((!r.coverage_complete || r.pending.length || r.findings.some(f => ['critical','major'].includes(f.severity))) && r.vote !== 'REVISE') return null\n  return r\n } catch { return null }\n}\n",
+          "text_sha256": "66e4cdcadf54617820b841967352a2e4b4995778794f43dcbaf8e039260cc4a4"
+        },
+        {
+          "source_lines_1based": [
+            30,
+            34
+          ],
+          "inert_text": "async function worker() {\n while (!roundExpired && next < ROLES.length) {\n  const index = next++, role = ROLES[index]\n  let seatExpired = false\n  const seatTimer = setTimeout(() => { seatExpired = true; log(role.name + ':120s超时，票不准入；请求未结束前不释放本worker活跃槽。') },120000)\n",
+          "text_sha256": "d93366a4a28a5e505d246103f6a5badbc1e77fb76b3d07d9f1bdeae2e834a94c"
+        },
+        {
+          "source_lines_1based": [
+            37,
+            52
+          ],
+          "inert_text": "  const opts = {agentType:'aria:'+role.name,label:'R5:'+role.name,phase:'Formal R5'}\n  if (role.model) opts.model = role.model\n  let raw = null, error = null\n  try { raw = await agent(prompt,opts) } catch (e) { error = String(e).slice(0,200) }\n  clearTimeout(seatTimer)\n  const report = !seatExpired && !roundExpired ? parse(raw) : null\n  results[index] = {role:role.name,configuredModel:role.model || 'inherit',status:seatExpired || roundExpired ? 'timeout' : report ? 'completed' : 'error',report,rawUnadmitted:report ? null : raw,error}\n  log(role.name+':'+results[index].status+(report ? ' vote='+report.vote : ''))\n }\n}\nconst all = Promise.all([worker(),worker()]).then(()=>'collected')\nconst terminal = await Promise.race([all,roundDeadline])\nclearTimeout(roundTimer)\nfor (let i=0;i<results.length;i++) if (!results[i]) results[i]={role:ROLES[i].name,configuredModel:ROLES[i].model || 'inherit',status:roundExpired ? 'round_timeout_or_not_started' : 'missing',report:null}\nconst admitted = results.filter(r=>r.status==='completed')\nreturn {round:5,candidate:'49d7da44941ae41a9b4e5a7321d114f14e3ec3a5',terminal,roundExpired,maxParallel:2,singleAgentSeconds:120,roundSeconds:300,configuredRoles:7,admittedCount:admitted.length,incomplete:admitted.length!==7,allFailedVoid:admitted.length===0,unanimousPass:admitted.length>0 && admitted.every(r=>r.report.vote==='PASS'),results,mergeClearance:false,note:'宿主定时器判准入；不声称逐席原生请求在120s被硬杀，未结束前保持活跃槽。仅本轮结果，不自动宣称稳定或合并。'}",
+          "text_sha256": "6bf656eaaf06ee78ba4c28cf8449c608f4efb3018a7d9566d668feb96aedb3dc"
+        }
+      ],
+      "historical_aggregate_only": {
+        "candidate": "49d7da44941ae41a9b4e5a7321d114f14e3ec3a5",
+        "converged": false,
+        "merge_clearance": false,
+        "counts": {
+          "minor": 2
+        },
+        "conclusions": [
+          {
+            "prior_id": "04edf5d6",
+            "type": "issue",
+            "severity": "minor",
+            "category": "implementation",
+            "scope": "docker/aria-runner/modes/initial.sh#classify_http_result",
+            "file": "docker/aria-runner/modes/initial.sh",
+            "line": 231,
+            "summary": "仍仅将部分 5xx 归为可重试，未兑现完整 5xx 重试合约。",
+            "failure_scenario": "首次请求返回 507，第二次本可返回合法 200 JSON；507 在当前 case 中落入 NON_RETRIABLE 分支，立即输出 INPUT_FETCH_FAILED，不尝试第二次请求。应覆盖完整 5xx 范围，并增加 507→200 的重试夹具。",
+            "id": "04edf5d6",
+            "found_by": [
+              "qa-engineer"
+            ],
+            "source_refs": [
+              {
+                "role": "qa-engineer",
+                "reported_scope": "classify_http_result"
+              }
+            ]
+          },
+          {
+            "prior_id": "bf8f462f",
+            "type": "issue",
+            "severity": "minor",
+            "category": "implementation",
+            "scope": "docker/aria-runner/modes/initial.sh#sanitize_issue_text",
+            "file": "docker/aria-runner/modes/initial.sh",
+            "line": 128,
+            "summary": "按字节截断可能切断多字节字符，产生非法 UTF-8。",
+            "failure_scenario": "默认上限 8000 bytes，输入为 2667 个三字节汉字；head 保留末字符的前两个字节，追加截断标记后仍为非法 UTF-8，并被送入渲染后的 prompt。应退回完整字符边界，并增加中文或 emoji 边界夹具；当前截断测试仅使用 ASCII。",
+            "id": "bf8f462f",
+            "found_by": [
+              "qa-engineer"
+            ],
+            "source_refs": [
+              {
+                "role": "qa-engineer",
+                "reported_scope": "sanitize_issue_text"
+              }
+            ]
+          }
+        ],
+        "conclusions_stable": false,
+        "fact_limit": "only admitted findings aggregated; any unadmitted substantive defect remains a separate verification duty before merge",
+        "scope_normalization": "same prior_id + verified file/category/severity retains canonical R1 type/scope; raw role output preserved",
+        "max_rounds": 5
+      },
+      "aggregate_usage": "Original legacy aggregation only, not canonical_v1 and not a recomputed output from current admitted roles. In particular R2 retains five R1 minors and an independently confirmed S1 Major; the caller fact channel is not an additional vote. R3-R5 also retain legacy scope normalization only as history, never as a new production rule.",
+      "expected_counts": {
+        "dispatched": 5,
+        "admitted": 1,
+        "legacy_placeholders": 4,
+        "dispatched_no_completion": 2,
+        "not_dispatched": 2
+      }
+    }
+  ],
+  "expected_totals": {
+    "dispatched": 24,
+    "admitted": 9,
+    "completed_late": 7,
+    "legacy_placeholders": 12,
+    "dispatched_no_completion": 8,
+    "not_dispatched": 4,
+    "interrupted_observed": 8
+  }
+}

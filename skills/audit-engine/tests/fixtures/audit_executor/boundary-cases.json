@@ -1,0 +1,763 @@
+{
+  "schema_version": 1,
+  "kind": "synthetic_vectors_not_historical_evidence",
+  "partition": "synthetic",
+  "is_audit_vote": false,
+  "budgets": {
+    "single_agent_ms": 120000,
+    "round_ms": 300000,
+    "max_parallel": 2
+  },
+  "provenance_ref": {
+    "path": "history-provenance.json",
+    "pointer": ""
+  },
+  "purpose": "Pure data, no product test execution. Future TASK-006/013 must call the real normalize/classify implementation; expected values are contract oracles, not trusted production assertions.",
+  "classification_vectors": [
+    {
+      "id": "seat_equal_120000",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 120000
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 120000,
+        "execution_state": "completed_admitted",
+        "admitted": true,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "seat_over_120001",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 120001
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 120001,
+        "execution_state": "completed_late",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": "c8d8289bcac3f368e6400fba7f03e21b741316c73e58cebd913c3e37debe83f3"
+      }
+    },
+    {
+      "id": "completion_equal_D",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 200000,
+          "startedAt": 200000,
+          "state": "done",
+          "durationMs": 100000
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 300000,
+        "execution_state": "completed_late",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": true,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": "c8d8289bcac3f368e6400fba7f03e21b741316c73e58cebd913c3e37debe83f3"
+      }
+    },
+    {
+      "id": "late_before_null_raw",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 130000
+        },
+        "raw": null,
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 130000,
+        "execution_state": "completed_late",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "late_known_completion_310000",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 200000,
+          "startedAt": 200000,
+          "state": "done",
+          "durationMs": 110000
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 310000,
+        "execution_state": "completed_late",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": true,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": "c8d8289bcac3f368e6400fba7f03e21b741316c73e58cebd913c3e37debe83f3"
+      }
+    },
+    {
+      "id": "late_before_malformed_raw",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 130000
+        },
+        "raw": "not-json",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 130000,
+        "execution_state": "completed_late",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": "0c21a879c732a67910d80988df4919d794f6a070aab610ef865032a28046b021"
+      }
+    },
+    {
+      "id": "no_completion_unknown",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 100000,
+          "startedAt": 100000,
+          "state": "progress"
+        },
+        "raw": null,
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": null,
+        "execution_state": "dispatched_no_completion",
+        "admitted": false,
+        "termination_evidence": "unknown",
+        "unfinished_at_native_deadline": true,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "no_completion_interrupted",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 220000,
+          "startedAt": 220000,
+          "state": "progress"
+        },
+        "raw": null,
+        "termination_event": {
+          "type": "user",
+          "agentId": "synthetic-agent",
+          "uuid": "synthetic-interrupt",
+          "timestamp": "synthetic-only",
+          "message": {
+            "role": "user",
+            "content": "[Request interrupted by user]"
+          }
+        }
+      },
+      "expected": {
+        "C_ms": null,
+        "execution_state": "dispatched_no_completion",
+        "admitted": false,
+        "termination_evidence": "interrupted_observed",
+        "unfinished_at_native_deadline": true,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "not_dispatched",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": false,
+        "native_node": null,
+        "raw": null,
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": null,
+        "execution_state": "not_dispatched",
+        "admitted": false,
+        "termination_evidence": "unknown",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": null,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "in_window_null_raw",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": null,
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_no_result",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "in_window_malformed_raw",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "not-json",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "in_window_fenced_json",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "```json\n{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}\n```",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_admitted",
+        "admitted": true,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "explanatory_prefix",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "explanation\n{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "uppercase_fence",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "```JSON\n{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}\n```",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "top_array",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "[]",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "duplicate_key",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[],\"vote\":\"PASS\"}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "non_finite",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[],\"extra\":NaN}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "invalid_vote",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "{\"vote\":\"SKIP\",\"coverage_complete\":true,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "incomplete_PASS",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": "{\"vote\":\"PASS\",\"coverage_complete\":false,\"findings\":[],\"pending\":[],\"prior_findings\":[]}",
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    },
+    {
+      "id": "non_string",
+      "input": {
+        "native_start_time_ms": 0,
+        "attempted": true,
+        "native_node": {
+          "type": "workflow_agent",
+          "label": "synthetic:seat",
+          "agentType": "aria:qa-engineer",
+          "agentId": "synthetic-agent",
+          "model": "synthetic-model",
+          "queuedAt": 0,
+          "startedAt": 0,
+          "state": "done",
+          "durationMs": 1000
+        },
+        "raw": {
+          "vote": "PASS"
+        },
+        "termination_event": null
+      },
+      "expected": {
+        "C_ms": 1000,
+        "execution_state": "completed_parse_error",
+        "admitted": false,
+        "termination_evidence": "completed",
+        "unfinished_at_native_deadline": false,
+        "dispatched_at_or_after_native_deadline": false,
+        "late_raw_sha256": null
+      }
+    }
+  ],
+  "timer_offset_vectors": [
+    {
+      "id": "timer_installed_20ms_after_native_origin",
+      "modelled_input": {
+        "native_start_time_ms": 0,
+        "hypothetical_timer_installation_native_ms": 20,
+        "timer_duration_ms": 300000,
+        "hypothetical_timer_fired_native_ms": 300020,
+        "calls": [
+          {
+            "id": "a",
+            "queuedAt": 20,
+            "startedAt": 20,
+            "durationMs": 299990
+          },
+          {
+            "id": "b",
+            "queuedAt": 20,
+            "startedAt": 20,
+            "durationMs": 300010
+          },
+          {
+            "id": "c",
+            "queuedAt": 300010,
+            "startedAt": 300010,
+            "durationMs": 5
+          }
+        ]
+      },
+      "expected": {
+        "native_deadline_ms": 300000,
+        "observed_control_native_alignment": "unknown",
+        "late_dispatched_call_ids": [
+          "c"
+        ],
+        "admitted_call_ids": [],
+        "completion_ms_by_id": {
+          "a": 300010,
+          "b": 300030,
+          "c": 300015
+        },
+        "peak_unreturned_calls": 2
+      },
+      "boundary": "The 20ms offset is a synthetic model parameter, never a measured historical S0 timestamp. A soft timer may permit dispatch after native D; show it and reject its vote."
+    }
+  ],
+  "physical_slot_vectors": [
+    {
+      "id": "unreturned_calls_keep_slots_after_seat_timeout",
+      "events": [
+        {
+          "at_ms": 0,
+          "event": "call",
+          "id": "a"
+        },
+        {
+          "at_ms": 0,
+          "event": "call",
+          "id": "b"
+        },
+        {
+          "at_ms": 120000,
+          "event": "seat_timeout",
+          "id": "a"
+        },
+        {
+          "at_ms": 120000,
+          "event": "seat_timeout",
+          "id": "b"
+        },
+        {
+          "at_ms": 300000,
+          "event": "round_stop"
+        }
+      ],
+      "bad_additional_events": [
+        {
+          "at_ms": 120001,
+          "event": "call",
+          "id": "c"
+        },
+        {
+          "at_ms": 120001,
+          "event": "call",
+          "id": "d"
+        }
+      ],
+      "expected": {
+        "outstanding_after_each_event": [
+          1,
+          2,
+          2,
+          2,
+          2
+        ],
+        "peak_unreturned_calls": 2,
+        "bad_peak_unreturned_calls": 4,
+        "dispatch_at_120001_allowed": false,
+        "collect_C_by_call": {
+          "a": null,
+          "b": null
+        },
+        "termination_evidence_by_call": {
+          "a": "unknown",
+          "b": "unknown"
+        },
+        "next_round_dispatch_allowed": false
+      },
+      "boundary": "No return event exists. Neither admission expiry nor round return is cancellation or completion."
+    },
+    {
+      "id": "actual_return_releases_one_slot",
+      "events": [
+        {
+          "at_ms": 0,
+          "event": "call",
+          "id": "a"
+        },
+        {
+          "at_ms": 0,
+          "event": "call",
+          "id": "b"
+        },
+        {
+          "at_ms": 120000,
+          "event": "seat_timeout",
+          "id": "a"
+        },
+        {
+          "at_ms": 150000,
+          "event": "return",
+          "id": "a"
+        },
+        {
+          "at_ms": 150000,
+          "event": "call",
+          "id": "c"
+        },
+        {
+          "at_ms": 160000,
+          "event": "return",
+          "id": "c"
+        },
+        {
+          "at_ms": 300000,
+          "event": "round_stop"
+        }
+      ],
+      "expected": {
+        "outstanding_after_each_event": [
+          1,
+          2,
+          2,
+          1,
+          2,
+          1,
+          1
+        ],
+        "peak_unreturned_calls": 2,
+        "remaining_unreturned_ids": [
+          "b"
+        ]
+      },
+      "boundary": "At an equal timestamp process return before subsequent call; half-open [q,C) intervals do not overlap at known C."
+    }
+  ]
+}
