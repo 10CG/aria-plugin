@@ -4,6 +4,268 @@
 
 ## 入口逻辑
 
+导航：[严格配置入口](#严格配置入口) · [受守卫的 Workflow/convergence](#受守卫的-workflowconvergence) · [Capture adapter](#capture-adapter) · [人类处置](#人类处置)。下方原入口与 Convergence/Challenge、散文汇总仅用于 guard=false；true 在独占配方结束后返回，不落入 legacy 临时 persist 或 AI 聚合。Pre-merge gate、每轮 sibling probe 与不可变 anchor 两支共用。
+
+### 严格配置入口
+
+在 config-loader 的任何验证回落/静默返回之前运行此壳。`EXECUTOR` 是**当前插件**的脚本绝对路径，`REPO` 是显式主仓根。它调用当前源码 `_load_fixed_policy`：先分别验证原始 JSON/object/guard boolean 与 DEFAULTS=false 注册，再合并；项目源确实不存在才按缺省处理，读取/解析失败不当 off。非零即停止，不能继续调用通用 loader。该入口不 build、不创建 manifest，不迁移旧报告。
+
+```python
+# AUDIT_EXECUTOR_ROUTE_V1_BEGIN
+import importlib.util, json, pathlib, sys
+sys.dont_write_bytecode = True
+executor, repo = map(pathlib.Path, sys.argv[1:3])
+spec = importlib.util.spec_from_file_location('audit_executor_route', executor)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+policy = module._load_fixed_policy(repo)
+print(json.dumps({'require_same_admitted_roles': policy['require_same_admitted_roles']}))
+# AUDIT_EXECUTOR_ROUTE_V1_END
+```
+
+把上壳提取到独立临时目录，`python3 -I ROUTE.py "$EXECUTOR" "$REPO"`，捕获 stdout/stderr 并核退出码。仅成功且字段严格为 false 才继续下方原入口（默认团队、旧报告原样）；true 先读以下完整配方。不能凭“已批准 Phase B/想尽快完成”跳启用门；不为了支持 true 另选模型、覆载团队或把 challenge 改成 convergence。即使后文有 file-scope/lane 降级，helper 仍从固定源核模式，不接受 caller 的 mode_ok。
+
+### 受守卫的 Workflow/convergence
+
+以下变量全部是本次明确的绝对路径/真实值，不复制示例历史路径。运行命令均捕获 stdout/stderr、核退出码；任一 helper/capture 非零即停止并呈现 error_code 与输入引用，不回 legacy，不读 MD 推断 PASS。Workflow 工具不可用、显式团队缺失、agents_config/动态换席/model override、固定源不能解析为 convergence 均 unsupported；不要自动换 mode/后端。完整 schema 为 [executor-contract.md](./executor-contract.md) §4、§10；程序宿主是当前 [audit_executor.py](../scripts/audit_executor.py)；[agent-team-audit/SKILL.md](../../agent-team-audit/SKILL.md) 确实存在，提供既有单轮审计指令，不是本次 build/prepare/final/check 的程序宿主。插件 DEFAULTS=false；Aria 本仓 TASK-015 的显式 true 采用已单独验证，见[配置采用证据](../../../../.aria/audit-reports/audit-executor-minimal-repair/config-adoption-evidence.json)。这里不激活配置；各采用项目的有效值仍从原始 JSON 严格解析，不从本段或历史授权猜启用状态。
+
+1. **入口与资源**：保留 pre_merge 专属 completeness gate（非 pre_merge 不运行），先完成原 Step 0 的 anchor 来源选择。每次下一轮、恢复、void 补跑前检查同 cycle 的全部 attempted 审计与 auxiliary_calls，逐项列 runId、native_ref/termination_ref；任一 unknown 则暂停**下一轮（含 void 补跑）的全部新增** Workflow/agent 派发，不凭本轮 PASS、候选 SHA 未变或 `next_round_dispatch_allowed` 单字段放行，不宣称 OS 清理。未派发席不占槽。若已有 pending reservation，先走原 manifest/原 build 路径恢复，不新建 cycle/attempt。稍后取得原件时可 capture 下方 preflight：只用同 run/script/startTime/agentId/label/agentType/q 的较晚观察，不改旧结果 C/raw/票；build 重放全部 prefix 才能解除资源阻断。终态已知不等于能越有效额度、CONVERGED/DRIFT_TERMINATED/OSCILLATION、accept_current/degrade_single。
+2. **冻结输入**：VM 外固定 audit_cycle_id，跨轮/会话复用；新物理 attempt 用唯一 client_round_id 与递增 attempt_index，逻辑 round=已计费有效轮+1，void 不加逻辑号。manifest 精确含 identity 六项、attempt_index、roles、120000/300000/2、require_same_admitted_roles=true、evidence。roles 按项目原始 audit.teams[checkpoint] 逐项保持 role_id=agentType=原字符串，model_alias 仅追溯，prompt 冻结完整审计 context、原 dispatch frontmatter 模板与契约 §8 raw JSON 要求（vote/coverage_complete/findings/pending/prior_findings）；不继承旧票。evidence 的 schema_version=1，cycle_origin/previous_round/dispatch_preflight 初始可合法 null；其它为真实 policy_inputs FileRef 与本 run-dir 内未来 post_audit_index_path/post_drift_index_path/post_disposition_index_path 三字符串，禁止未来 hash。后继 cycle_origin 与紧邻有效 previous_round 取已校验链的实际 FileRef，不对展示结果重新拼 hash。policy_inputs 按 §10.2 写真实 context/spec_source、UTF-8 byte spans、fallback_sources；逐项实际读取适用 fallback，不以缺 wrapper 冒充缺锚，后续复用原 genesis anchor。已有 legacy scope 不包装成新 genesis。Aria 本项目的 PR #38 继续暂停、历史不回填；不把此项目边界扩大到其他项目同号 PR。
+3. **每轮 sibling probe**：先按本文件下方权威节运行，保留三态 advisory 措辞，未核实不等于无竞品；不删探针以消 hint。运行时再执行 build：
+
+```bash
+python3 -I "$EXECUTOR" build --repo-path "$REPO" --manifest "$MANIFEST" --output-dir "$RUN_DIR" >"$BUILD_RECEIPT" 2>"$BUILD_ERROR"
+```
+
+4. 读取成功 stdout 的 `build_record/workflow_script/resume_only`（前两项是路径字符串，不是 FileRef），读真实 build-record。`resume_only=true` **不再次 Workflow**，只回收原回执 runId/Transcript入口及原件；回执缺失/活性 unknown 就暂停，不把“找不到回执”当从未启动。仅 `resume_only=false` 且 prefix 资源/政策允许时调用：
+
+```javascript
+Workflow({scriptPath: build_receipt.workflow_script,
+  args: {identity: build_record.identity, manifest_sha256: build_record.manifest.sha256}})
+```
+
+5. 保存实际工具回执并取其**真实 runId**和 Transcript 入口；按显式路径读 Workflow 原件 `/runId /script /args /result /workflowProgress`，不能用 label/scriptPath 当 runId、顶层 status 当逐席完成。用「Capture adapter」audit 模式写 manifest 的 audit locator，然后 prepare：
+
+```bash
+python3 -I "$CAPTURE" audit --binding "$BUILD_RECORD" --run-id "$RUN_ID" --native "$LIVE_NATIVE" --transcript-entry "$TRANSCRIPT_ENTRY" --output "$AUDIT_INDEX"
+python3 -I "$EXECUTOR" collect --repo-path "$REPO" --manifest "$MANIFEST" --build-record "$BUILD_RECORD" --workflow-run-id "$RUN_ID" --native-record "$LIVE_NATIVE" --output "$ROUND_RESULT" "${PREVIOUS_ARGS[@]}" --prepare-policy >"$PREPARE_RECEIPT" 2>"$PREPARE_ERROR"
+```
+
+`PREVIOUS_ARGS=()` 在逻辑 R1（含首次有效轮前 void 重试）；R>1 为 `(--previous-round "$PREVIOUS_RESULT")`，等于 manifest.evidence.previous_round 的实际路径。capture 同样捕获输出/核退出码；可重复传 `--agent-events` **实际 agent JSONL 文件**。prepare 成功仅冻结审计证据；此时不得消费 round-result/宣称发布。读取其 `policy_request/policy_script/prepare_record/audit_index/input_closure/native_record` FileRef，按各原始 carrier/hash 解引用，不把 blob 目录当相对路径 base。
+
+6. **仅 request.required=true**：先核冻结 request 原字节及可用资源槽；这是同一 reservation 的必要辅助检查，不是下一轮。`_resource_summary(for_checker=True)` 按全部已验证调用计算 available_slots，两槽均 unknown 就停，不能伪造 checker 失败或以软超时释放槽；仅剩一槽时不额外并行派其他席。读取 request.anchor 指向的 AnchorRecord.value，调用独立新实例（不复用审计 agentId，不增加投票席）：
+
+```javascript
+Workflow({scriptPath: prepare_receipt.policy_script.path,
+  args: {identity: request.identity, request_sha256: prepare_receipt.policy_request.sha256,
+    anchor: anchor_record.value, conclusions: request.conclusions}})
+```
+
+用其独立回执 runId/native/Transcript入口调用 capture drift，`--binding "$PREPARE_RECEIPT"`；输出到 manifest.post_drift_index_path。request.required=false 时不调用 checker、不伪造 drift index。顶层 checker Workflow 在取得 runId 前实际工具错误，才可用 drift_error 模式绑定主会话原始 tool_use/tool_result（--session/--call-uuid/--response-uuid）；未知布局阻断，不能拿缺源当 fail-open。helper 验证请求/脚本/独立身份/原生时间和完整 classifications，失败本身不证明资源释放；无可验证终态的 auxiliary 调用仍为 unknown，不宣称 OS 已退出。
+7. **发布与只读重算**：`FROZEN_NATIVE` 必须取 PREPARE_RECEIPT.native_record.path（同字节冻结副本）。首次 final 的 `_CaptureInputs` 重用封存 audit origins，只实读并校验新 checker 来源后冻结 final closure；live audit 增长不回填旧票，新的 checker 缺源/漂移即停。此闭包校验不是任意外部文件的来源认证。以下两次**基础参数完全相同**，不回 live 原件、不换 previous 或 output；check 只多一个 `--check-result`：
+
+```bash
+python3 -I "$EXECUTOR" collect --repo-path "$REPO" --manifest "$MANIFEST" --build-record "$BUILD_RECORD" --workflow-run-id "$RUN_ID" --native-record "$FROZEN_NATIVE" --output "$ROUND_RESULT" "${PREVIOUS_ARGS[@]}" >"$FINAL_RECEIPT" 2>"$FINAL_ERROR"
+python3 -I "$EXECUTOR" collect --repo-path "$REPO" --manifest "$MANIFEST" --build-record "$BUILD_RECORD" --workflow-run-id "$RUN_ID" --native-record "$FROZEN_NATIVE" --output "$ROUND_RESULT" "${PREVIOUS_ARGS[@]}" --check-result "$ROUND_RESULT" >"$CHECK_RECEIPT" 2>"$CHECK_ERROR"
+```
+
+8. **消费后返回（不落入下方 legacy）**：仅 check exit=0 后，逐项核 stdout 的 result/markdown/commit FileRef 及存在时的 sidecar 引用，确认 JSON/MD/commit 齐全、身份相同、commit 为本 reservation 的提交；sidecar 必须由同次 check 合法验证。使用 check 返回的 result FileRef 解引用（展示 generated_at 变化时可指向原 blob），不改成 `hash(ROUND_RESULT)`。只读 JSON 的 configured_roles/dispatched_roles/admitted_roles、population_comparable、conclusion_keys_equal、conclusions_stable、converged 与 policy；canonical_v1 是 helper 唯一权威，不做另一轮 AI 去重/矛盾判定。incomplete 与 convergence/resource gate 正交，不增“全员准入”门。按已校验 policy 保持既有收敛/振荡/耗尽路由、refocus 与 void 计数；unknown 即使存在有效票也仍禁止下次派发。半发布只允许同 reservation/同冻结输入幂等补齐 JSON/MD/commit，不能重派或覆盖不同字节。
+
+### Capture adapter
+
+这是可提取的实际宿主壳，不是新的 AB runner。将下方 `AUDIT_EXECUTOR_CAPTURE_V1_BEGIN/END` 之间的 Python 原文保存到新独立临时目录 `$CAPTURE`，用 `python3 -I` 运行；不要在原件目录运行解释器。不新增插件持久脚本。所有路径须由真实回执 Transcript 入口或主控显式实际文件路径取得；入口不存在/原件不可取得立即阻断并请求提供显式入口，不猜固定 home、顶层 subagents 或平台字段。`--transcript-entry` 只登记已取得入口，不声称它是 native 字段或真实性证明。
+
+- audit：binding=build-record；drift/drift_error：binding=prepare stdout；question/disposition：binding=成功 check stdout。返回引用先核 hash/原始 carrier。audit/drift 的 run-id/native/transcript-entry 各恰一个；preflight 可各重复同等次数，覆盖同 cycle 既往审计及辅助 runs，写独立 observations 文件供下次 manifest.dispatch_preflight 引用。
+- `--agent-events` 仅收显式 agent JSONL 原件列表；壳按真实 agentId 映射 workflowProgress 位置，按 LF **字节**算行号，uuid 取原事件。正文完全匹配中断事件才形成 TerminationLink，不从 prompt/assistant 子串造终态。提供错 agent 文件/坏引用直接拒绝，未提供证据保持 unknown；不产生 complete/verified 之类自报布尔。
+- 每份输入两次完整读字节相等才取 hash；变动即停。冻结后 live 增长不回填旧视图。index 写入采用不存在则独占创建、相同字节幂等、不同字节拒绝。壳不代替 helper 的 schema/预算/政策验证；输出成功不是报告可消费。
+
+```python
+# AUDIT_EXECUTOR_CAPTURE_V1_BEGIN
+import argparse, hashlib, json, pathlib, sys
+
+def require(ok):
+    if not ok:
+        raise ValueError('capture evidence mismatch')
+
+CAPTURED = {}
+
+def stable(path):
+    path = pathlib.Path(path).absolute()
+    first = path.read_bytes()
+    require(first == path.read_bytes())
+    require(str(path) not in CAPTURED or CAPTURED[str(path)] == first)
+    CAPTURED[str(path)] = first
+    return path, first
+
+def parse(raw):
+    def pairs(items):
+        value = {}
+        for key, item in items:
+            require(key not in value)
+            value[key] = item
+        return value
+    def invalid(_):
+        raise ValueError('nonfinite JSON')
+    return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode('ascii')
+
+def ref(path):
+    path, raw = stable(path)
+    return {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()}
+
+def document(path):
+    path, raw = stable(path)
+    return path, parse(raw)
+
+def dereference(value, carrier):
+    require(isinstance(value, dict) and set(value) == {'path', 'sha256'})
+    path = pathlib.Path(value['path'])
+    if not path.is_absolute():
+        path = pathlib.Path(carrier).parent / path
+    actual = ref(path)
+    require(actual['sha256'] == value['sha256'])
+    return document(actual['path'])
+
+def events(path):
+    path, raw = stable(path)
+    require(raw.endswith(b'\n') and b'\r' not in raw)
+    rows = [parse(line) for line in raw[:-1].split(b'\n')]
+    require(all(isinstance(row, dict) for row in rows))
+    # Keep the hash from these exact LF-delimited bytes, not a later live read.
+    file = {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()}
+    return rows, file
+
+def event(path, uuid):
+    rows, file = events(path)
+    matches = [(i, row) for i, row in enumerate(rows, 1) if row.get('uuid') == uuid]
+    require(isinstance(uuid, str) and bool(uuid) and len(matches) == 1)
+    line, row = matches[0]
+    return row, {'file': file, 'line': line, 'event_uuid': row['uuid']}
+
+def native_runs(a):
+    require(len(a.native) == len(a.run_id) == len(a.transcript_entry) and bool(a.native))
+    runs, ids = [], set()
+    for path, run_id, entry in zip(a.native, a.run_id, a.transcript_entry):
+        require(pathlib.Path(entry).exists() and isinstance(run_id, str) and bool(run_id))
+        origin, native = document(path)
+        require(native['runId'] == run_id and run_id not in {r['workflow_run_id'] for r in runs})
+        require(native['status'] == 'completed' and isinstance(native['result'], dict))
+        nodes = {}
+        for i, node in enumerate(native['workflowProgress']):
+            if node['type'] == 'workflow_agent':
+                agent_id = node['agentId']
+                require(isinstance(agent_id, str) and bool(agent_id) and agent_id not in ids)
+                ids.add(agent_id)
+                nodes[agent_id] = '/workflowProgress/' + str(i)
+        require(type(native['agentCount']) is int and native['agentCount'] == len(nodes))
+        runs.append({'workflow_run_id': run_id, 'native_record': ref(origin), 'termination_refs': []})
+        runs[-1]['_nodes'] = nodes
+    for path in a.agent_events:
+        rows, file = events(path)
+        found = {row['agentId'] for row in rows if 'agentId' in row}
+        require(len(found) == 1 and found <= ids)
+        agent_id = next(iter(found))
+        run = next(r for r in runs if agent_id in r['_nodes'])
+        for line, row in enumerate(rows, 1):
+            if row.get('type') != 'user' or row.get('message', {}).get('role') != 'user':
+                continue
+            body = row['message'].get('content')
+            if isinstance(body, list):
+                if not body or any(not isinstance(b, dict) or b.get('type') != 'text' or not isinstance(b.get('text'), str) for b in body):
+                    continue
+                body = ''.join(b['text'] for b in body)
+            if body not in ('[Request interrupted by user]', '[Request interrupted by user for tool use]'):
+                continue
+            uuid = row.get('uuid')
+            require(row.get('agentId') == agent_id and isinstance(uuid, str) and bool(uuid))
+            require(sum(r.get('uuid') == uuid for r in rows) == 1)
+            pointer = run['_nodes'][agent_id]
+            require(not any(link['native_pointer'] == pointer for link in run['termination_refs']))
+            run['termination_refs'].append({'native_pointer': pointer, 'agent_id': agent_id,
+                'event': {'file': file, 'line': line, 'agent_id': agent_id, 'event_uuid': uuid}})
+    for run in runs:
+        del run['_nodes']
+    return runs
+
+OPTIONS = [{'label': label, 'action': action} for label, action in [
+    ('接受当前结论', 'accept_current'), ('增加轮次', 'increase_rounds'), ('降级为单轮', 'degrade_single')]]
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('kind', choices=['audit', 'drift', 'drift_error', 'preflight', 'question', 'disposition'])
+    p.add_argument('--binding', required=True)
+    p.add_argument('--output', required=True)
+    for name in ('native', 'run-id', 'transcript-entry', 'agent-events'):
+        p.add_argument('--' + name, action='append', default=[])
+    for name in ('session', 'call-uuid', 'response-uuid'):
+        p.add_argument('--' + name)
+    a = p.parse_args()
+    carrier, binding = document(a.binding)
+    if a.kind in ('audit', 'drift', 'preflight'):
+        runs = native_runs(a)
+        if a.kind == 'preflight':
+            value = {'schema_version': 1, 'observations': runs}
+        else:
+            require(len(runs) == 1)
+            run = runs[0]
+            if a.kind == 'audit':
+                value = {'schema_version': 1, 'identity': binding['identity'], 'attempt_index': binding['attempt_index'], **run}
+            else:
+                request_path, request = dereference(binding['policy_request'], carrier)
+                require(request['required'] is True)
+                value = {'schema_version': 1, 'identity': request['identity'], 'attempt_index': request['attempt_index'],
+                    'request': ref(request_path), 'kind': 'workflow', **run, 'tool_failure': None}
+    elif a.kind == 'drift_error':
+        require(not a.native and not a.run_id and not a.agent_events)
+        request_path, request = dereference(binding['policy_request'], carrier)
+        require(request['required'] is True)
+        _, call = event(a.session, a.call_uuid)
+        _, response = event(a.session, a.response_uuid)
+        value = {'schema_version': 1, 'identity': request['identity'], 'attempt_index': request['attempt_index'],
+            'request': ref(request_path), 'kind': 'tool_error', 'workflow_run_id': None, 'native_record': None,
+            'termination_refs': [], 'tool_failure': {'call': call, 'response': response}}
+    else:
+        _, result = dereference(binding['result'], carrier)
+        policy, identity = result['policy'], result['identity']
+        require(policy['terminal_state'] == 'MAX_ROUNDS_EXHAUSTED')
+        if a.kind == 'question':
+            context = {key: identity[key] for key in ('audit_cycle_id', 'checkpoint', 'change_id')}
+            context.update(target_result=binding['result'], used_rounds=policy['charged_rounds'], effective_limit=policy['effective_limit'])
+            value = {'questions': [{'question': '本次审计轮次已耗尽，请选择后续路径。\naudit-disposition-context=' + canonical(context).decode('ascii'),
+                'header': '审计处置', 'multiSelect': False,
+                'options': [{'label': o['label'], 'description': d} for o, d in zip(OPTIONS,
+                    ['接受本次未收敛结论并继续，保留未收敛标记', '仅为本周期增加两轮，仍受资源及终局约束', '以最后有效轮为最终结论，保留降级标记'])]}]}
+        else:
+            _, question = event(a.session, a.call_uuid)
+            _, response = event(a.session, a.response_uuid)
+            value = {'schema_version': 1, 'target_result': binding['result'], 'question': question, 'response': response, 'options': OPTIONS}
+    raw = canonical(value)
+    output = pathlib.Path(a.output)
+    if output.exists():
+        require(stable(output)[1] == raw)
+    else:
+        with output.open('xb') as f:
+            f.write(raw)
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, KeyError, TypeError, OSError, StopIteration):
+        print('capture blocked: check explicit original input references', file=sys.stderr)
+        raise SystemExit(1)
+# AUDIT_EXECUTOR_CAPTURE_V1_END
+```
+
+### 人类处置
+
+耗尽时先展示最后结论/四元组变化/未收敛原因，再用 capture 的 question 模式从成功 CHECK_RECEIPT 生成实际 AskUserQuestion 输入（`--binding "$CHECK_RECEIPT" --output "$QUESTION_INPUT"`），将其完整 JSON 交给真实 AskUserQuestion。只准一题、multiSelect=false，label 固定三项“接受当前结论”“增加轮次”“降级为单轮”，description 中文；正文含程序生成的唯一 ASCII `audit-disposition-context=` 行，绑定实际 cycle/checkpoint/change、当前耗尽有效 head 的返回 FileRef、charged_rounds/effective_limit。不能手填 approved=true，也不能引用本项目 legacy 接受作新授权。
+
+真实回答后，以主会话显式 `--session` 原件及真实提问 assistant.uuid / 回答 user.uuid 分别作 `--call-uuid/--response-uuid`，capture disposition 到 manifest 的 disposition locator；不要把工具通知或中断当用户选择。再用第7步**相同参数** final/check，helper `_parse_human_disposition` 核 LF行/全文件hash/uuid/sourceToolAssistantUUID/tool_use_id、原input.questions、单选答案及 context，并只发布不可变 sidecar/事件。消费 check 返回的 base+合法 sidecar，不改旧 JSON/MD，不重跑审计；+2仅一次，accept/degrade 均保持 converged=false 并阻止继续派发。问答布局未适配或原件不足即停，不从散文猜授权。
+
+### Legacy 入口 (仅 guard=false)
+
 ```
 1. 读取配置: config-loader → audit.* 块
    - audit.enabled == false → 静默返回

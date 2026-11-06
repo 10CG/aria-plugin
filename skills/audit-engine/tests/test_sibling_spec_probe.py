@@ -433,7 +433,9 @@ class TestStructuralConstraints(unittest.TestCase):
         under the anchor phrase "A.2 显式约束") still shows the original
         two-item allowed set verbatim — it is a frozen record, not kept in
         sync as this allowed set grows; THIS test case is the current,
-        authoritative definition.
+        authoritative definition. ``audit_executor.py`` is the build/collect
+        entry script specified by ``audit-executor-minimal-repair``, not a
+        helper module belonging to this probe.
 
         How this goes red: a helper module named e.g. `scripts/git_utils.py`
         (no `sibling_spec_probe_` prefix) would collide with other skills'
@@ -442,7 +444,7 @@ class TestStructuralConstraints(unittest.TestCase):
         scripts_dir = _AUDIT_ENGINE / "scripts"
         if not scripts_dir.is_dir():
             self.skipTest("scripts/ does not exist yet (baseline)")
-        allowed = {"sibling_spec_probe.py", "completeness_gate.py", "__init__.py"}
+        allowed = {"sibling_spec_probe.py", "completeness_gate.py", "audit_executor.py", "__init__.py"}
         offenders = [
             p.name for p in scripts_dir.glob("*.py")
             if p.name not in allowed and not p.name.startswith("sibling_spec_probe_")

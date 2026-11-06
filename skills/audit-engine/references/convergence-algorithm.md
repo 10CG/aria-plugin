@@ -5,6 +5,30 @@
 收敛判定是 audit-engine 的核心机制，确保多轮审计在意见稳定时自动终止，
 避免无限循环和资源浪费。
 
+**适用范围**：下文未标注 opt-in 的旧集合/投票/完整流程伪代码是 `audit.require_same_admitted_roles=false` 的 legacy 描述，保留其原入口与算法，不向 false 加入新 AND 守卫或 unknown 资源闸门。true 只支持 Workflow/convergence，以 [audit_executor.py](../scripts/audit_executor.py) 为 `canonical_v1` 唯一计算宿主；不得按下方散文或伪代码再算一份。
+
+## Workflow/convergence 的 opt-in 守卫
+
+true 的完整证据协议、规范化与只读检查见 [executor-contract.md](./executor-contract.md) §7、§9.3、§10；工具接线见 [execution-modes.md](./execution-modes.md)「受守卫的 Workflow/convergence」。准入只取六态 first-match 后的 `completed_admitted`，不是配置名单、结果数组长度或历史 frontmatter `agents`。
+
+```text
+conclusion_keys_equal = 有合法前一有效轮 AND 完整四元组集合严格相等
+population_comparable = 同 cycle/checkpoint/change 的相邻有效轮实际非空 admitted role_id 集合相等
+conclusions_stable = conclusion_keys_equal AND population_comparable
+converged = conclusions_stable AND unanimous_pass AND NOT all_failed_void
+```
+
+这是 true 的公式；`_compare_rounds` 的 false 测试向量中 population_comparable=null、population_reason=disabled，只验证旧公式，不表示生产 false 必须使用新执行器。true 的 `unanimous_pass` 只含实际准入票，空集合不是全票通过；`_apply_policy` 仍用既有 WARN 覆盖全票、REFOCUS/TERMINATE 阻断收敛，守卫不能覆盖 drift/error 或发放额度。
+
+- 首轮为 `first_round`，keys_equal/stable/converged 均 false；仅跳比较与 drift，不跳轮数预算，limit=1 的有效首轮仍耗尽。不是无条件进入第二轮。
+- 旧参与证据缺席为 `missing_participant_evidence`，空集合为 `empty_population`，不同集合（即使数量相同）为 `population_changed`；均不可比。重复身份、串 cycle、坏记录直接报错，不重置基线，也不倒写旧报告。
+- 同一部分角色、相同 keys、准入票全部 PASS 且无既有 policy 阻断，即使 `incomplete=true` 仍可收敛；不增加全员/7席门，不救迟到票、不继承缺席旧票。candidate/model 仅追溯，不增加相等条件。
+- `canonical_v1` 的完整四元组由 `_aggregate_admitted` 按契约 §10.7 产生；短 ID 只展示，不凭短 hash 相等认定 key 相等，也不复用 legacy persist/prior_id 归一化。
+- void 不计费、不推进有效轮、不替换 stability 基线、不进 normal 振荡序列、不完成 refocus 义务；skipped checker 不清零连续 refocus。`CONVERGED → DRIFT_TERMINATED → OSCILLATION → MAX_ROUNDS_EXHAUSTED` 的终局优先级、refocus 和耗尽三路径均保持既有政策；合法增轮仍绑定耗尽 head 一次性 +2，不因不可比/unknown 自动加轮。
+- `converged`、质量 `verdict` 和 merge gate 分开；PASS 不代表已收敛或可合并。资源视图也独立：unknown 可阻下一轮，但不作废已有票或重写本轮公式；具体中断/辅助调用/恢复按契约 §6.1、§10。
+
+插件 DEFAULTS=false；Aria 本仓显式 true 采用已由 TASK-015 单独验证，见[配置采用证据](../../../../.aria/audit-reports/audit-executor-minimal-repair/config-adoption-evidence.json)。本段仅指该本仓记录，不改变其他采用方默认值，也不把配置或文档同步当作真实产品调用、正式 Rule #6 或 ship。
+
 ---
 
 ## 四元组集合比较
@@ -30,7 +54,7 @@ comparison_key = (type, severity, category, scope)
 **`finding.id` 与 `comparison_key` 的关系** (v1.17.5+):
 
 `finding.id = sha256(category:scope:severity:type)[:8]` 是 `comparison_key` 的
-**确定性投影**, 两者同步: 4-tuple 相等 ⇔ ID 相等。
+**确定性投影**：4-tuple 相等会得到同 ID；短 hash 可能碰撞，反向不成立。以下 ID 用法仅描述 legacy，true 必须比较完整四元组。
 
 这意味着:
 - 集合比较可用 ID 集合 (更快, O(N) 哈希查找) 或 4-tuple 集合 (更显式) 任选其一

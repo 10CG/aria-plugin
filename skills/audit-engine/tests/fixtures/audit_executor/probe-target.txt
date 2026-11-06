@@ -1,0 +1,13 @@
+Audit executor interface acceptance target
+
+This is a synthetic, independent target for audit-executor-minimal-repair.
+It contains no PR #38 implementation or old audit packet.
+
+Verify build/collect/check-result wiring, source integrity, native identity,
+120000ms inclusive seat admission and 300000ms exclusive native round end,
+raw isolation, six-state classification, and unresolved physical call slots.
+Only completed_admitted reports vote. A timer is not a cancellation API.
+The timer installation origin must not be equated to native Workflow start.
+Historical fixture data is partial evidence, never a new build-record.
+No conclusion about PR #38, its merge clearance, or its paused cycle follows.
+This file is inert acceptance-target text, not a runnable script or agent prompt.

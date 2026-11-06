@@ -23,24 +23,40 @@ allowed-tools: Read, Glob
 ```
 1. 查找 .aria/config.json (项目根目录)
 2. 如果存在 → 解析 JSON
-3. 旧配置兼容映射 (见下方"旧配置兼容层"章节)
-4. 验证字段类型和范围
-5. 与 DEFAULTS.json 合并 (用户值覆盖默认值)
-6. 返回完整配置对象
+3. 审计执行器受控入口先执行下方严格例外 (包括分流选择，失败即中止)
+4. 旧配置兼容映射 (见下方"旧配置兼容层"章节)
+5. 验证字段类型和范围
+6. 与 DEFAULTS.json 合并 (用户值覆盖默认值)
+7. 返回完整配置对象
 ```
 
 ## 错误处理
 
 | 场景 | 行为 |
 |------|------|
-| 文件缺失 | 静默返回 DEFAULTS.json 全部默认值 |
-| JSON 格式错误 | 警告用户 + 返回默认值 |
-| 字段类型错误 | 警告 + 使用该字段默认值 |
+| 文件缺失 | 项目 .aria/config.json 缺失时静默返回 DEFAULTS.json 全部默认值；DEFAULTS 自身缺失见严格例外 |
+| JSON 格式错误 | 除下方审计执行器严格例外外，警告用户 + 返回默认值 |
+| 字段类型错误 | 除 audit.require_same_admitted_roles 的严格例外外，警告 + 使用该字段默认值 |
 | 字段值超范围 | 警告 + clamp 到有效范围 |
+
+### 审计执行器严格例外
+
+本例外优先于通用加载流程、调用方式和错误处理表，避免非法配置被默认 false 静默关门。
+
+- 审计执行器受控入口（含分流选择）固定读取项目根目录的 `.aria/config.json` 与运行中插件的 `skills/config-loader/DEFAULTS.json`。先读取原始 JSON，对两份源分别严格解析、验证 object 结构与原始 `audit.require_same_admitted_roles` 类型，再合并默认值；顶层及存在的 `audit` 块必须为 object，不得先经通用回落再判断守卫。
+- 两份源中任一 JSON 损坏、重复 object key、非有限数字或上述结构不合法，均报配置错误并中止；不得通过警告后返回默认值或回落 false 继续执行。
+- 原始 `audit.require_same_admitted_roles` 若存在，只接受 JSON `true/false`（`type(value) is bool`）；字符串（包括 `"false"`）、null、0、1、数组、对象均报配置错误。禁止 truthy 或字符串转换，不适用通用字段类型错误回落规则。
+- 项目配置文件或该键缺失时采用 DEFAULTS 的 false；DEFAULTS 必须存在并显式注册本键为 boolean false，不可把损坏、缺注册或非法类型当作缺省成功。
+- 其他字段继续遵循既有通用容错；本例外不启用检查点、不改团队或预算。有效 false 保持 legacy 路径，不因注册默认键强制采用新执行器。
 
 ## 字段验证规则
 
 ```yaml
+audit.require_same_admitted_roles:
+  type: boolean
+  default: false
+  # 原始 JSON 与类型严格校验见上方例外；非法值报错，不回落 false。
+
 workflow.auto_proceed:
   type: boolean
   default: false
@@ -313,7 +329,7 @@ phase_c_integrator.pre_merge_gate.no_run_prompt_after_observations:
 
 ## 旧配置兼容层
 
-在步骤 3（验证之前）执行以下检测和映射，确保旧配置用户无缝升级到新 `audit` 体系。
+在加载流程的“旧配置兼容映射”环节（字段验证之前）执行以下检测和映射，确保旧配置用户无缝升级到新 `audit` 体系。
 
 ### 触发条件
 
