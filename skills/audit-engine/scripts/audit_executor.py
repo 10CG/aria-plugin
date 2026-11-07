@@ -543,6 +543,50 @@ def _freeze_policy_inputs(repo: Path, manifest: Json, manifest_path: Path,
     return _freeze_blob(data, scope), anchor_ref
 
 
+def _legacy_markdown_change(frontmatter: str | None, path: Path, prefix_cp: str | None,
+                            known: set[str], contexts: dict[str, str]) -> str:
+    """只解释已识别的平面 legacy 字段；不写回原件、不推断新周期。"""
+    if frontmatter is None:
+        _fail("E_POLICY_SOURCE", "historical_legacy_frontmatter", path)
+    fields: dict[str, str] = {}
+    for line in frontmatter.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*)", line)
+        if match is None:
+            _fail("E_POLICY_SOURCE", "historical_legacy_frontmatter", path)
+        key, value = match[1], match[2].strip()
+        if key in fields:
+            _fail("E_POLICY_SOURCE", "historical_duplicate_field", path)
+        if len(value) >= 2 and value[0] in ("'", '"') and value[-1] == value[0]:
+            value = value[1:-1]
+        fields[key] = value
+    if (prefix_cp is None or fields.get("audit_type") != prefix_cp or
+            fields.get("checkpoint") not in ("convergence", "challenge")):
+        _fail("E_POLICY_SOURCE", "historical_checkpoint_conflict", path)
+    if not ({"spec_id", "context"} & fields.keys()):
+        _fail("E_POLICY_SOURCE", "historical_change_conflict", path)
+    owners: set[str] = set()
+    for key in ("spec_id", "context", "change_id"):
+        if key not in fields:
+            continue
+        value = fields[key]
+        owner = contexts.get(value) if key == "context" else value if value in known else None
+        if owner is None:
+            _fail("E_POLICY_SOURCE", "historical_change_conflict", path)
+        owners.add(owner)
+    if len(owners) != 1:
+        _fail("E_POLICY_SOURCE", "historical_change_conflict", path)
+    owner = next(iter(owners))
+    filename_ids = {item for item in known if f"-{item}-" in f"-{path.stem}-"}
+    # 完整的更长已知 ID 优先；不能把 build-target-extra 误判为 build-target。
+    filename_ids = {item for item in filename_ids if not any(
+        other != item and f"-{item}-" in f"-{other}-" for other in filename_ids)}
+    if filename_ids and filename_ids != {owner}:
+        _fail("E_POLICY_SOURCE", "historical_change_conflict", path)
+    return owner
+
+
 def _origin_observation(repo: Path, scope: Path, manifest: Json, inputs: _Inputs,
                         manifest_path: Path) -> Json:
     reports = repo / ".aria" / "audit-reports"
@@ -550,20 +594,27 @@ def _origin_observation(repo: Path, scope: Path, manifest: Json, inputs: _Inputs
     # 只绑定显式本次输入的 origin/hash；其它同形或同字节文件仍须归属检查。
     current_manifest = inputs.reference(manifest_path)
     known: set[str] = {change}
+    contexts: dict[str, str] = {change: change}
 
     def scan_error(error: OSError) -> NoReturn:
         _fail("E_POLICY_SOURCE", "historical_scan_unreadable", error.filename or reports)
 
     for directory in (repo / "openspec" / "changes", repo / "openspec" / "archive"):
         try:
-            known.update(re.sub(r"^\d{4}-\d{2}-\d{2}-", "", p.name)
-                         if directory.name == "archive" else p.name
-                         for p in directory.iterdir() if p.is_dir())
+            for entry in directory.iterdir():
+                if not entry.is_dir():
+                    continue
+                other = (re.sub(r"^\d{4}-\d{2}-\d{2}-", "", entry.name)
+                         if directory.name == "archive" else entry.name)
+                known.add(other)
+                contexts.update({other: other, str(entry / "proposal.md"): other,
+                                 str((entry / "proposal.md").relative_to(repo)): other})
         except FileNotFoundError:
             continue
         except OSError as error:
             scan_error(error)
     files: list[Json] = []
+    compatibility: list[Json] = []
     if reports.exists():
         for directory, children, names in os.walk(reports, followlinks=False, onerror=scan_error):
             for child in children:
@@ -603,19 +654,31 @@ def _origin_observation(repo: Path, scope: Path, manifest: Json, inputs: _Inputs
                     context_hit = context_id in (change, f"openspec/changes/{change}/proposal.md",
                                                   str(repo / "openspec" / "changes" / change / "proposal.md"))
                     prefix_cp = next((c for c in CHECKPOINTS if name.startswith(c + "-")), None)
-                    if cp_match and prefix_cp and cp_match[1] != prefix_cp:
-                        _fail("E_POLICY_SOURCE", "historical_checkpoint_conflict", path)
-                    actual_cp = cp_match[1] if cp_match else prefix_cp
-                    if hit and not excluded and actual_cp == cp and context_id is not None and not context_hit:
-                        _fail("E_POLICY_SOURCE", "historical_change_conflict", path)
-                    belongs = actual_cp == cp and ((hit and not excluded) or context_hit)
-                    if actual_cp is not None and (hit or context_hit):
+                    front = re.match(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", text, re.S)
+                    frontmatter = front[1] if front else None
+                    mode_fields = re.findall(r"(?m)^checkpoint:[ \t]*([^\r\n]*)", frontmatter if frontmatter is not None else text)
+                    legacy = any(value.strip().strip("\"'") in ("convergence", "challenge") for value in mode_fields)
+                    if legacy:
+                        owner = _legacy_markdown_change(frontmatter, path, prefix_cp, known, contexts)
+                        belongs = prefix_cp == cp and owner == change
                         attribution = "SAME_SCOPE" if belongs else "OTHER_SCOPE"
+                        compatibility.append({"code": "LEGACY_CHECKPOINT_MODE",
+                                              "file": {"path": str(path), "sha256": _hash(raw)}})
+                    else:
+                        if cp_match and prefix_cp and cp_match[1] != prefix_cp:
+                            _fail("E_POLICY_SOURCE", "historical_checkpoint_conflict", path)
+                        actual_cp = cp_match[1] if cp_match else prefix_cp
+                        if hit and not excluded and actual_cp == cp and context_id is not None and not context_hit:
+                            _fail("E_POLICY_SOURCE", "historical_change_conflict", path)
+                        belongs = actual_cp == cp and ((hit and not excluded) or context_hit)
+                        if actual_cp is not None and (hit or context_hit):
+                            attribution = "SAME_SCOPE" if belongs else "OTHER_SCOPE"
                 if belongs:
                     _fail("E_PREVIOUS_IDENTITY", "existing_scope_history_no_migration", path)
                 files.append({"file": {"path": str(path), "sha256": _hash(raw)}, "attribution": attribution})
     return {"schema_version": 1, "checkpoint": cp, "change_id": change, "files": files,
-            "warnings": [{"code": "UNKNOWN", "file": item["file"]} for item in files if item["attribution"] == "UNKNOWN"]}
+            "warnings": compatibility + [{"code": "UNKNOWN", "file": item["file"]}
+                                         for item in files if item["attribution"] == "UNKNOWN"]}
 
 
 def _load_scope(scope: Path, manifest: Json, inputs: _Inputs) -> Json:
