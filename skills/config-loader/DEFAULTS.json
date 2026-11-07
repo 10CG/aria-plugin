@@ -108,6 +108,7 @@
   },
   "audit": {
     "enabled": false,
+    "require_same_admitted_roles": false,
     "mode": "adaptive",
     "max_rounds": 5,
     "drift_guard": {

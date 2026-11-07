@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.78.0] - 2026-11-07 — 审计执行器与显式可比性守卫
+
+### Added — Workflow/convergence 受守卫执行路径
+
+- 新增 `audit_executor.py` 的 build/collect、原生结果捕获与只读重算链；身份、逐席计时、实际参评集合、状态及固定scope历史均从可核来源生成，不由AI手填收敛布尔值。
+- 新增 `audit.require_same_admitted_roles`，默认false保持旧生产路径；显式true使用项目配置团队与受守卫Workflow路径。只要求相邻轮实际非空参评角色集合可比，不新增全员到齐门，不放宽120s/300s/并发2或重置旧周期预算。
+- 完整保留首次/迟到/未派发/无完成证据的区别、未知资源终态阻断、配置严格类型与来源校验、独立漂移与真实人类处置证据；不承诺未公开的取消API或原生硬截止。
+
+### Fixed — 旧报告读取兼容
+
+- 按owner裁定读取可明确识别的legacy字段形态，原始报告字节/hash不改；真实checkpoint矛盾、未知/矛盾归属、已有当前scope周期仍拒绝，不以兼容为由新建旧周期。
+
+### Validation and scope
+
+- 原Phase B的297项judged测试、独立审查、实际接线与Rule #6记录保持原归属；legacy读取修订另有定向TDD与非作者负控，发布前以主仓集成证据记录实际结果，不改旧接受记录。
+- 本次不恢复PR #38、不构建部署、不启动168h；不包含另议的state-scanner目标对齐行为变更。未顺手关闭关联的更广范围issue。
+
 ## [1.77.5] - 2026-10-28 — secret-guard W10 尺寸误拦收窄 (`10CG/aria-plugin#217`; PATCH: 只因尺寸被拦的大命令改为完整判定; 判定语义的既有缺口随之覆盖更多大命令, 见放宽面申报)
 
 ### Security — PreToolUse secret-guard (W10 尺寸预算按增长量判 + 硬截止重判)
