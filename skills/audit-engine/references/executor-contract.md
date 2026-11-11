@@ -1,6 +1,6 @@
 # Workflow 审计执行器契约
 
-> 归属：`audit-executor-minimal-repair`。接口宿主为 [audit_executor.py](../scripts/audit_executor.py)，本文描述其当前 build/prepare/final/check 契约。
+> 归属：`audit-executor-minimal-repair`，派发前容量拒绝扩展见§13（`audit-executor-pre-dispatch-recovery`）。接口宿主为 [audit_executor.py](../scripts/audit_executor.py)，本文描述其当前 build/prepare/final/check 与受限恢复的程序事实，不新增 AI 编排选择或恢复流程。
 > 文档同步与离线测试不代表完整验收、真实产品调用、正式 Rule #6 AB 或 ship；这些证据分别核验，不沿用旧审计绿灯。
 > 本文件不激活配置、不改历史报告，不授权取消、预算扩充或后端替换。Aria 本项目的 PR #38 继续暂停，旧报告不回填、不追加轮次；不是冻结其他项目的同号 PR。
 
@@ -50,11 +50,22 @@
 
 ## 3. CLI 与生产路由
 
-当前 CLI（已与 `build --help`、`collect --help` 核对；路径和大写参数是可移植占位，不是要写入结果的值）。实际 capture、Workflow 调用和 stdout 解引用按 [execution-modes.md](./execution-modes.md)「受守卫的 Workflow/convergence」执行：
+当前 CLI（参数对应 `main` 的 argparse 定义；路径和大写参数是可移植占位，不是要写入结果的值）。普通 capture、Workflow 调用和 stdout 解引用按 [execution-modes.md](./execution-modes.md)「受守卫的 Workflow/convergence」执行；下列新增入口不表示旧 Skill 已自动调用它：
 
 ```bash
 python3 -I aria/skills/audit-engine/scripts/audit_executor.py build \
   --repo-path REPO --manifest MANIFEST --output-dir RUN_DIR
+
+# 仅§13首次后继的新 build 必需 recovery-sources；不是普通 native preflight
+python3 -I aria/skills/audit-engine/scripts/audit_executor.py build \
+  --repo-path REPO --manifest SUCCESSOR_MANIFEST --output-dir SUCCESSOR_RUN_DIR \
+  --recovery-sources RECOVERY_SOURCES_INDEX
+
+python3 -I aria/skills/audit-engine/scripts/audit_executor.py recover-dispatch-rejection \
+  --repo-path REPO --manifest OLD_MANIFEST --build-record OLD_BUILD_RECORD \
+  --native-record NATIVE_ROOT_JSONL --tool-use-id TOOL_USE_ID \
+  --operator-index OPERATOR_INDEX --evidence-acceptance-index ACCEPTANCE_INDEX \
+  --check-only
 
 python3 -I aria/skills/audit-engine/scripts/audit_executor.py collect \
   --repo-path REPO --manifest MANIFEST --build-record BUILD_RECORD \
@@ -73,6 +84,7 @@ python3 -I aria/skills/audit-engine/scripts/audit_executor.py collect \
   --check-result ROUND_RESULT
 ```
 
+- `recover-dispatch-rejection` 的上述七个取值参数均必需；`--check-only` 是可选只读 flag，省略时进入 mutation；另有可重复的 `--additional-source PATH`（默认空数组）。它不接受 `--workflow-run-id`、`--output`、caller catalog 或新预算。`build --recovery-sources PATH` 是可选参数，仅在§13.8的实际首续接状态变为必需；不是所有 build 的新前置。恢复输出与幂等边界见§13.1/13.7。
 - 显式准备调用使用 `collect --prepare-policy`，在真实审计 Workflow 和 audit capture 后执行。与 `--check-result` 互斥；成功仅封存审计证据并产出同 output stem 的 `.policy-request.json`、必要时的 `policy-workflow.js` 及准备证据，不发布 round-result JSON/MD、不提交成功轮、不表示审计通过。缺独立 drift 证据的最终 collect 报 `E_POLICY_SOURCE`，不以错误回执暗藏准备协议。
 - `--previous-round` 指紧邻前一**有效**轮；逻辑 round=1（含首次有效轮之前的 void 重试）省略，round>1 必传，且与 manifest.evidence.previous_round 的实际文件/hash 相符。void 尝试另由固定账本验证，不能省略历史。
 - `--repo-path` 必传，不取 cwd；输入是实际文件，不猜会话目录。`--workflow-run-id` 取真实回执并等于原件 `/runId`。准备时可读取显式 live 原件；封存后最终 collect/check 的 `--native-record` 使用准备包内同字节的冻结副本；最终与 check 的所有参数一致。
@@ -129,7 +141,7 @@ python3 -I aria/skills/audit-engine/scripts/audit_executor.py collect \
 
 ## 5. build-record、脚本与返回快照
 
-本节字段是待实现宿主应生成的 schema，不声称历史存在这些记录。
+本节字段为当前宿主生成/验证的 schema，不声称旧 R2–R5 原件曾具有这些记录；§13的条件扩展不要求全部旧记录补字段。
 
 ### 5.1 `build-record.json`
 
@@ -144,6 +156,7 @@ python3 -I aria/skills/audit-engine/scripts/audit_executor.py collect \
 | `roles` | array，必需 | manifest 顺序的 `index/role_id/agentType/model_alias/prompt_sha256/label`；index 为从0开始整数，prompt hash 为字符串 UTF-8 字节 hash |
 | `workflow_script` | `FileRef`，必需 | 生成脚本的最终字节，先生成后计算 hash；不包含循环自 hash |
 | `attempt_index/genesis/prefix_head/reservation/input_closure` | integer/FileRef/nullable FileRef/FileRef/FileRef，必需 | §10固定 scope 的真实 reservation、此前事件 head 与运行前字节闭包；无反向自 hash |
+| `recovery_preflight` | `FileRef`，仅§13首次后继必需 | 指向本 run-dir 的 `recovery-preflight.json`；首后继之外键必须不存在，不补 null；由真实 prefix/reservation 判条件，不由字段自报决定 |
 | `host_build_duration_ms` | integer>=0，必需 | build 宿主单调时钟的本次构建区间；非原生准入时长，不参与票判定 |
 | `generated_at` | string，展示字段 | VM 外记录，允许只读比较时忽略，不能充当任何截止或身份 |
 
@@ -176,6 +189,16 @@ python3 -I aria/skills/audit-engine/scripts/audit_executor.py collect \
 | `results[].error` | string，必需、nullable | 脚本观察到的异常；不据此猜 API失败/用户skip/原生终态 |
 
 `attempted=false` 必须 `settled=false/raw=null/error=null`；`settled=false` 必须 `raw=null/error=null`。若原生节点与快照身份、调用事实矛盾，报证据错误，不用快照覆盖原生时间。截止后 native 更新可给出更晚 C，但不能将新 raw 塞回冻结快照补票。
+
+### 5.4 最终 JS 容量与普通 pending 边界
+
+`MAX_WORKFLOW_SCRIPT_BYTES=524288` 固定，无配置或 CLI 覆盖。`_check_workflow_capacity` 量 renderer 返回的最终 bytes，`len(program)>524288` 报 `E_WORKFLOW_CAPACITY`，reason 恰为 `workflow_bytes=<实际整数> limit=524288`；等于 L 允许。manifest 文件大小、prompt 字符数、UTF-8 输入大小都不是判据，JSON 转义后的最终 JS 才是判据。
+
+`build` 在读/校验 manifest、固定配置与路径形状后渲染 `program`，在进入 `_writer_lock` 之前检查容量；因此该容量拒绝不创建/改写 scope、run、锁、blob、genesis、observe、reserve 或 record。新 reservation 发布同一份已检查 bytes，不二次渲染替换；容量诊断先于锁内历史来源漂移/预算诊断，但不覆盖之前的输入/配置错误，也不提供派发许可。纯 `_workflow` renderer 不内嵌容量门，仍可重建旧字节。
+
+普通精确 pending resume 仍限六源兼容、最终脚本合规、manifest/身份/冻结输入匹配的准备物：`_resume_build` 只返回原 script/record，必要时补同一 record，`resume_only=true`，不新建 reserve、不派发。当前 host 对超限输入仍先零写入拒绝，不承诺任意旧源码的超限 pending 可跨源码普通 resume；单独的源变化在尺寸合规时仍报 `E_SOURCE_DRIFT`，唯一受限旧→新承接见§13。
+
+`_prepare_policy` 对 required checker 的最终 `_render_policy_workflow` bytes 使用同门，检查位于 `policy-workflow.js` 与成功 `prepare-record.json` 发布前。此前 audit closure、blobs、policy-request 可能已发布，故不是整次 prepare 零写入。超限不生成假 checker 结果；既有真实 checker `tool_error`/unknown 资源路径保留，§13不支持 checker 容量拒绝恢复。
 
 ## 6. 原生字段映射与完整性边界
 
@@ -405,15 +428,15 @@ Step0按SKILL的checkpoint fallback顺序逐项实际读源：proposal优先取�
 
 genesis由首次build排他创建，形状为 `{schema_version:1,algorithm_version:"canonical_v1",audit_cycle_id,checkpoint,change_id,policy_inputs:FileRef,anchor:FileRef,origin_observation:FileRef,initial_sources:{config,defaults,executor,contract,convergence_algorithm,report_storage},initial_max_rounds:integer>=1}`（initial_sources值均FileRef）。它只引用已存在冻结字节，不含manifest/reservation/build-record hash；manifest初次cycle_origin=null不回写，build-record引用新genesis最终hash。故bootstrap无自hash或未来hash环。
 
-`input_closure={schema_version:1,algorithm_version:"canonical_v1",sources:[{origin:string,sha256:Hash,blob:FileRef}]}`，按origin/hash排序且唯一；blob为实际原字节不可变副本，包含manifest、固定源、政策、历史及运行后原件，不能只存旧源路径/hash。解析嵌套引用时保留原承载文件origin作为base，按(origin,hash)找blob；无匹配拒绝，同origin不同hash只允许明确分时证据包，不混为同一次输入。当前轮仍重读固定config/defaults/code/contract等全部build.sources，任何漂移 `E_SOURCE_DRIFT`；历史回放只读冻结字节，不要求旧可变原路径仍相等。后续build也核对当前固定config/defaults/executor/contract/convergence_algorithm/report_storage字节与genesis.initial_sources完全相同，active cycle任何该类漂移均 `E_SOURCE_DRIFT`，不通过新build接受增大的config上限；合法+2只经处置事件。不执行归档代码。
+`input_closure={schema_version:1,algorithm_version:"canonical_v1",sources:[{origin:string,sha256:Hash,blob:FileRef}]}`，按origin/hash排序且唯一；blob为实际原字节不可变副本，包含manifest、固定源、政策、历史及运行后原件，不能只存旧源路径/hash。解析嵌套引用时保留原承载文件origin作为base，按(origin,hash)找blob；无匹配拒绝，同origin不同hash只允许明确分时证据包，不混为同一次输入。当前轮仍重读固定config/defaults/code/contract等全部build.sources，任何漂移 `E_SOURCE_DRIFT`；历史回放只读冻结字节，不要求旧可变原路径仍相等。后续build核对当前固定config/defaults/executor/contract/convergence_algorithm/report_storage与已验证 active sources 的逐项SHA；未恢复scope的active sources仍为genesis.initial_sources，任何漂移均 `E_SOURCE_DRIFT`。唯一有界转换是§13经完整验证的首个dispatch_rejected导出to_sources；不改initial_sources、不通过普通build迁移或接受增大的config上限；合法+2仍只经处置事件。不执行归档代码。
 
 ### 10.3 固定账本、hash冻结顺序与恢复
 
-账本只存genesis及连续事件，不保存可被信任的used_rounds/allowed。`events/0000000001.json`起，seq十位十进制连续；事件为 `{schema_version:1,seq:integer>=1,genesis:FileRef,previous_event:FileRef|null,kind:"reserve"|"commit"|"observe"|"disposition",payload:object}`。seq1前驱null，其他恰为seq-1真实hash；缺口、重复、分叉、未知事件拒绝。不以选最新mtime恢复。write锁为固定 `writer.lock` 的stdlib `fcntl.flock(LOCK_EX|LOCK_NB)`；本后端要求可用的本地POSIX文件锁，不支持时报 `E_UNSUPPORTED`。build/prepare/final短事务持锁，锁被占用报 `E_SCOPE_BUSY`；不用PID/超时抢锁，崩溃由OS释放描述符。check不建锁，读取前后事件head不一致报 `E_SCOPE_BUSY`，不得读混合视图。
+账本只存genesis及连续事件，不保存可被信任的used_rounds/allowed。`events/0000000001.json`起，seq十位十进制连续；事件为 `{schema_version:1,seq:integer>=1,genesis:FileRef,previous_event:FileRef|null,kind:"reserve"|"commit"|"observe"|"disposition"|"dispatch_rejected",payload:object}`。seq1前驱null，其他恰为seq-1真实hash；缺口、重复、分叉、未知事件拒绝。不以选最新mtime恢复。write锁为固定 `writer.lock` 的stdlib `fcntl.flock(LOCK_EX|LOCK_NB)`；本后端要求可用的本地POSIX文件锁，不支持时报 `E_UNSUPPORTED`。build/prepare/final短事务持锁，锁被占用报 `E_SCOPE_BUSY`；不用PID/超时抢锁，崩溃由OS释放描述符。check不建锁，读取前后事件head不一致报 `E_SCOPE_BUSY`，不得读混合视图。
 
 | 阶段 | 有序写入与引用（全部完整SHA-256） |
 |---|---|
-| build | 冻结已有输入→必要时genesis→生成workflow最终字节→reserve事件→build-record。reserve payload为 `{identity,attempt_index,manifest:FileRef,workflow_script:FileRef,previous_round:FileRef|null,previous_attempt:FileRef|null}`；previous_attempt是最近commit（含void）。build-record引用genesis/reserve/此前prefix_head与运行前input_closure，不被reserve反向引用 |
+| build | 先按§5.4生成并检查最终bytes，再入锁冻结已有输入→必要时genesis→发布已检查workflow字节/metadata→input_closure→reserve事件→build-record；§13首后继另先冻结handoff并在reserve前复核live。reserve payload为 `{identity,attempt_index,manifest:FileRef,workflow_script:FileRef,previous_round:FileRef|null,previous_attempt:FileRef|null}`；previous_attempt是最近commit（含void）。build-record引用genesis/reserve/此前prefix_head与运行前input_closure，不被reserve反向引用 |
 | audit后 | 实际capture adapter取得工具runId/Transcript入口和原件路径，稳定读取完整字节，生成§10.4 audit index；prepare验证并冻结原件/JSONL/所有叶子→审计input_closure→policy-request最终字节→必要的policy-workflow.js。request不引用该脚本，因此脚本可嵌入request hash而无环 |
 | drift后 | capture adapter取得独立checker回执/原件，写drift index；最终collect验证、冻结新叶子→最终input_closure→result/MD最终字节→commit。commit payload为 `{reservation:FileRef,result:FileRef,markdown:FileRef,input_closure:FileRef}`；result只引用reservation与此前prefix，不引用未来commit或自身hash |
 | 结果后 | 可选真实人类处置另冻输入→disposition sidecar→disposition事件；不修改已发布result/MD。check只重读冻结来源及当前固定源，不补文件、不重新接受hash |
@@ -422,7 +445,7 @@ prepare还写 `prepare-record.json={schema_version:1,identity:<六项>,attempt_i
 
 所有capture对源作连续两次完整读取且字节一致才封存，变动则拒绝重试准备，不假造flush标记。封存后的live JSONL/native增长不改变旧证据视图；冻结blob自身改变按hash拒绝。后取得的终态仅作为新preflight，不能补旧raw或票。
 
-每次build锁内重放完整prefix，校验latest有效previous及所有attempt资源。一个scope最多一个pending reserve，pending不能自动void；同reservation的精确恢复不产生新attempt、script或reserve。build在同manifest字节/同client_round_id/同attempt_index/同输入且已有脚本与record均匹配时只返回已有路径并标 `resume_only`；缺record但reserve/脚本/闭包齐全可补record，不得重新派发；源不齐拒绝。Workflow回执缺失/调用活性unknown时暂停，不重用身份调用工具。消费方须把真实回执保存在本run-dir再恢复；没有回执不能证明从未启动。
+每次build锁内重放完整prefix，校验latest有效previous及所有attempt资源。一个scope最多一个pending reserve，pending不能自动void；同reservation的精确恢复不产生新attempt、script或reserve。§13独立CLI只对已验证的首轮容量拒绝追加dispatch_rejected清除其pending，不把它当void或普通resume。build在同manifest字节/同client_round_id/同attempt_index/同输入且已有脚本与record均匹配时只返回已有路径并标 `resume_only`；缺record但reserve/脚本/闭包齐全可补record，不得重新派发；源不齐拒绝。Workflow回执缺失/调用活性unknown时暂停，不重用身份调用工具。消费方须把真实回执保存在本run-dir再恢复；没有回执不能证明从未启动。
 
 除上述仅恢复分支外，生成任何新script或追加reserve前，必须在同一锁内用§10.5/6既有折叠重算当前prefix的政策view：`effective_limit=initial_max_rounds+已验证且一次性消费的increase_rounds事件数×2`、`remaining_rounds=max(0,effective_limit-charged_rounds)`；要求remaining_rounds>0，且不得已有CONVERGED/DRIFT_TERMINATED/OSCILLATION终局或accept_current/degrade_single处置（overridden_by_user/degraded）。MAX_ROUNDS_EXHAUSTED仅在当前prefix已有绑定该耗尽有效head的合法increase_rounds事件、重算后remaining_rounds>0且没有上述其它阻断时可重新开放；旧base的耗尽结果不回写。非终局（含REFOCUS_ROUND）的新attempt同样受额度与资源约束，void不耗额度也不豁免该检查。任一政策条件不满足报 `E_POLICY_BLOCKED`，不生成新script/reserve、不派发；不得凭轮号相邻、next_round_dispatch_allowed=true、改config或caller boolean绕过。此为既有policy折叠的build前置，不增加策略服务；最终collect/check及同reservation窄恢复不因此被当作新派发。
 
@@ -458,7 +481,7 @@ partial-anchor严格复用challenge-mode-schema.md第291–297行：仅当冻结
 
 ### 10.6 历史递归、void/refocus与policy折叠
 
-`_replay_history`从固定scope genesis/连续events遍历reserve→commit→result→input_closure及schema显式依赖边；不遍历raw文本中的任意path对象。仅沿schema声明的结构化依赖边遍历。结构化节点的visiting键为按承载文件上下文解析出的冻结origin字符串（沿用§10.2，键不含hash）；先检查该origin是否已在当前栈，若重入立即E_HISTORY_CYCLE，优先于该回边的hash/身份检查。非回边才读取blob、校验完整hash并解析schema，再入栈遍历；visited缓存键为(origin,sha256)，仅在完整验证后复用。结构化产物origin在本周期内不可覆写为另一hash；分时native/JSONL等不递归的opaque叶子不入visiting栈，仍逐FileRef校验hash。环fixture允许回边故意携带不匹配hash，不要求构造内容寻址自hash固定点；无栈重入的损坏叶子E_POLICY_SOURCE，跳seq/轮/串身份E_PREVIOUS_IDENTITY。遍历至seq1的null前驱及有效R1的previous=null才到起点，绝不将缺源当首轮。所有attempt_index连续、client_round_id及成功原生runId唯一；build不能选较早head。每个commit的previous_attempt为最近commit，previous_round为最近非void commit；void可重复同一逻辑round，其后首个有效attempt仍用该号。全部旧manifest/build/native/raw/policy原字节须可取得，不执行归档代码，不信历史admitted/converged/used等派生值。
+`_replay_history`从固定scope genesis/连续events遍历reserve→commit→result→input_closure及schema显式依赖边；§13新增dispatch_rejected及首次后继handoff的冻结验证，不生成audit row。不遍历raw文本中的任意path对象。仅沿schema声明的结构化依赖边遍历。结构化节点的visiting键为按承载文件上下文解析出的冻结origin字符串（沿用§10.2，键不含hash）；先检查该origin是否已在当前栈，若重入立即E_HISTORY_CYCLE，优先于该回边的hash/身份检查。非回边才读取blob、校验完整hash并解析schema，再入栈遍历；visited缓存键为(origin,sha256)，仅在完整验证后复用。结构化产物origin在本周期内不可覆写为另一hash；分时native/JSONL等不递归的opaque叶子不入visiting栈，仍逐FileRef校验hash。环fixture允许回边故意携带不匹配hash，不要求构造内容寻址自hash固定点；无栈重入的损坏叶子E_POLICY_SOURCE，跳seq/轮/串身份E_PREVIOUS_IDENTITY。遍历至seq1的null前驱及有效R1的previous=null才到起点，绝不将缺源当首轮。所有attempt_index连续、client_round_id及成功原生runId唯一；build不能选较早head。每个commit的previous_attempt为最近commit，previous_round为最近非void commit；void可重复同一逻辑round，其后首个有效attempt仍用该号。全部旧manifest/build/native/raw/policy原字节须可取得，不执行归档代码，不信历史admitted/converged/used等派生值。
 
 三入口prepare/final/check共用 `_recompute_round`，调用同一 `_classify_native/_aggregate_admitted/_replay_history/_apply_policy`。build也用这些函数重放prefix。result.policy必含 `algorithm_version/is_refocus/consecutive_refocus_count/pending_refocus/charged_rounds/effective_limit/remaining_rounds/drift_required/drift_reason/drift_ratio/drift_check_skipped/drift_action/terminal_state/overridden_by_user/degraded`，各值来自下列折叠，不允许缺源默认false/0。原始全票PASS取非空准入票；verdict按canonical conclusions：无Critical/Major为PASS，有Major无Critical为PASS_WITH_WARNINGS，有Critical为FAIL，drift_terminated覆盖FAIL，仍不等于converged。
 
@@ -509,7 +532,9 @@ partial-anchor严格复用challenge-mode-schema.md第291–297行：仅当冻结
 | 固定源缺失、DEFAULTS未注册新键的新路径 | `E_CONFIG_SOURCE` |
 | manifest guard/角色/固定预算与源不符 | `E_MANIFEST_MISMATCH` |
 | true下非Workflow/非convergence、人工团队/model覆载、无显式团队 | `E_UNSUPPORTED` |
-| build后config/defaults/code/contract字节改变 | `E_SOURCE_DRIFT`，包括check模式 |
+| build后config/defaults/code/contract字节改变 | `E_SOURCE_DRIFT`，包括check模式；§13只有独立验证的精确来源转换，不允许普通路径任意漂移 |
+| 主build/checker发布的最终JS大于524288 bytes | `E_WORKFLOW_CAPACITY`；主build在锁/任何scope或run写入前拒绝，checker不承诺整次prepare零写入（§5.4） |
+| 首轮恢复证据、authority、来源/事务或首续接handoff不合法 | §13.7的精确错误/原因；不生成审计PASS、void或新预算 |
 | run_id不匹配、内嵌script hash错、args/冻结身份错 | `E_RUN_IDENTITY` |
 | 原生记录缺失/截断/非完整返回/节点数或快照映射矛盾 | `E_NATIVE_EVIDENCE` |
 | 不识别的原生schema/state | `E_NATIVE_SCHEMA`，不猜完成 |
@@ -535,4 +560,217 @@ partial-anchor严格复用challenge-mode-schema.md第291–297行：仅当冻结
 - SC-5/6负例可直接从§6–11派生；timer偏移20ms的合成fixture应允许观察D后派发，但必须拒票；不得让fixture自行宣称原生硬截止或假造完成C。
 - 消费者必须先重算校验，然后读取**同一run-key** JSON的admitted集合、stability/converged与配套MD；不是检查文件存在、grep `PASS` 或信任AI手填frontmatter。篡改参与集合/converged/policy须被重算拒绝。
 - frontmatter继续用 `checkpoint/mode/rounds/context/agents/verdict` 和既有drift/override字段；`agents`仍是配置说明，参与信息只additive，不拿它作实际集合。未知policy字段不得为了渲染套模板而填false。
-- 已接受的离线实现/测试证据见项目 TASK-013 验收记录；其中测试日志和固定观察下的实际 AI 决策不等于真实产品 Workflow 接线。TASK-016 真实产品调用与 TASK-017 正式 Rule #6 AB 仍须独立取得证据，SC-10 不因本次文档同步而完成。
+- `audit-executor-minimal-repair` 的 TASK-013 离线验收记录属于旧修复证据，不能充作 `audit-executor-pre-dispatch-recovery` 同号任务的验收。测试日志和固定观察下的实际 AI 决策不等于真实产品 Workflow 接线；真实调用、Rule #6 与 SC-10 仍按各变更自身证据独立核验，不因本次文档同步而完成。
+
+## 13. 派发前容量拒绝的受限程序扩展
+
+本节依据 `audit-executor-pre-dispatch-recovery` 的 proposal 与 design §2–§6.1，对应当前 `audit_executor.py` 的实际函数；只定义程序输入、产物、重算与拒绝条件。它不新增 AI 临场选择/恢复步骤，不表示 SKILL.md、description 或旧 Skill 已自动接入此 CLI，不是审计放行或真实恢复完成声明。以下 schema 为封闭键集；`FileRef`、完整原字节 SHA、整数排除 boolean、未知键拒绝仍按§2。示例类型是抽象占位，不是真实记录。
+
+### 13.1 适用对象、CLI 输出与非目标
+
+`recover_dispatch_rejection` 只接受同 scope 的原 genesis + 唯一 seq1 首 reserve（`attempt_index=1, round=1`），无 commit、observe、disposition 或其它事件；旧 manifest/build-record/script/input_closure、原六源、固定预算及 head 共同绑定。只支持 `cause="workflow_input_file_too_large"`，不是通用取消、未知活性清理、任意旧版迁移、后续轮或 checker 恢复。
+
+§3列出实际 argparse 参数；`--native-record` 在本命令中指完整 root session JSONL，不是 collect 的 Workflow export JSON。没有 runId 参数，因为通过本入口验证的是派发前精确拒绝，不伪造 native run。返回对象恰为 `{eligible:boolean,would_append:boolean,event:FileRef|null}`：
+
+| 调用/已验证状态 | `eligible` | `would_append` | `event` |
+|---|---|---|---|
+| 首次 `--check-only` | true | true | null |
+| 已有同一 seq2 的 `--check-only` | true | false | null |
+| 首次 mutation 成功 | true | true | 新 seq2 FileRef |
+| 当前 head 仍为同一 seq2、完全同输入的 mutation 重入 | true | false | 既有 seq2 FileRef |
+
+不符合条件抛错误，不返回 `eligible=false` 作为替代终态。check-only 使用同一证据判定，但不取得写锁、不建目录、不冻结、不生成实际 event FileRef；不能据其输出推定后来的 head 仍有效。mutation 在原 scope writer.lock 内重新执行验证并比较 TargetBinding，只有 seq2 event 的原子不覆盖发布是提交点；blobs 可先封存，未提交时旧 pending 不变。此命令本身不调用 Workflow、不创建 successor build。
+
+### 13.2 原生容量拒绝与本机静态依据
+
+`_parse_recovery_rejection` 独立验证原拒绝。原生 namespace 为宿主启动环境非空 `CLAUDE_CONFIG_DIR` 或 `Path.home()/".claude"` 下 `projects/<project>/<session_id>.jsonl`；CLI 无可信根覆盖。绝对规范路径、非 symlink、repo 外原件、完整且以 LF 结束的稳定 UTF-8 JSONL 都必需。选定 root assistant/user 的 cwd 必须等于 repo、sessionId 等于 filename 身份、`isSidechain is False`、`isMeta` 缺省或为 false；同名 API envelope 不是原件 authority。原行 hash 对去掉行分隔 LF 的原 bytes 计算，不重排 JSON，行内 CR 不被抹掉。
+
+选定工具对必须唯一且 request 先于 response；UUID 唯一、`parentUuid=sourceToolAssistantUUID=request.uuid`、tool_use_id 完整相等，timestamp 有 timezone 且不倒序。工具名严格 `Workflow`，input 恰为 `{scriptPath:<旧绝对script路径>,args:{identity:<六字段>,manifest_sha256:<旧manifest SHA>}}`；script 原字节/hash及旧冻结绑定一致，实际 script 必须大于 L。response 的 `is_error is True`，content 恰为 `<tool_use_error>Workflow script file <该scriptPath> exceeds 524288 bytes</tool_use_error>`；若存在非 null `toolUseResult`，它只能等于对应 `Error: Workflow script file <该scriptPath> exceeds 524288 bytes` 字符串。timeout、network、quoted error、substring 命中都不是此分支。
+
+选定结构里的 runId/taskId/native run/启动成功等信号、另一关联请求、重复/未配对请求或其它关联结构都拒绝。选定行的其它 blocks 仍被检查；仅移除该精确 tool block 及已验证同值的 wire 表示，不豁免整行。`wireToolInputs[tool_use_id]` 若存在必须与完整 input 逐值一致；其它行的相关 wire、未知 role 中的相关结构不能被当成普通 prose 忽略。API 请求副本不提供额外 authority，也不代替 root 对；无关结构不被误当本次运行。
+
+当前 `_RUNTIME_REJECTION_PROFILES` 仅识别 `native_version="2.1.318"`。request/response version 同值并命中该固定 profile；其 capacity/loader 静态来源的 `kind` 分别为 `static_distribution_bytes_not_executed`、`static_only_no_private_module_execution`，binary SHA、三个固定半开窗口的 start/end/hash、实际 text 或 bytes_hex 必须匹配代码 profile。验证的是 loader 容量拒绝→resolver 传播→Tool call 创建 run 之前抛错的已取证本机静态路径，不执行私有模块。分发契约不携带原生全文、个人 locator、静态窗口原文或 ELF 内容。
+
+这些静态字节、当前 PID/版本都**不证明历史执行映像身份相同**。历史映像未独立验证的残余不确定只能由§13.3的第二项独立、单对象政策接受；不生成 capacity_certificate、全历史不可执行证书、全平台 fencing 或未来裸 Workflow 隔离保证。无 runId、空搜索、本地超限 stat、单份 transcript 均不是全称无运行证明。
+
+### 13.3 两项独立真人 authority 与 TargetBinding
+
+生产入口分别为 `_parse_operator_recovery_statement`、`_parse_evidence_acceptance`，共用封闭验证核 `_parse_recovery_authority`，不调用或放宽§10.5耗尽处置 parser。两项均必需，分别派生不同语义；一个 index 或相同文字副本不能替代另一个。两项可以共享同一 root snapshot，但必须各自验证真实 question/response。
+
+```text
+AuthorityIndex = {schema_version:1, adapter:<本角色固定token>, target:FileRef,
+  question:{path:string,line:integer>=1,uuid:Id,line_sha256:Hash},
+  response:{path:string,line:integer>=1,uuid:Id,line_sha256:Hash}, tool_use_id:Id}
+TargetBinding = {identity:<六字段>,attempt_index:1,genesis:FileRef,
+  reservation:FileRef,head:FileRef,manifest:FileRef,script:FileRef}
+NativeSource = {original_locator:string,runtime_config_root:string,snapshot:FileRef}
+Authority = {schema_version:1,sourceData:{adapter,decision,counterevidence_policy:"veto",
+  target:TargetBinding,target_locator:FileRef,source:NativeSource,
+  question:{uuid:Id,line:integer>=1,line_sha256:Hash},
+  response:{uuid:Id,line:integer>=1,line_sha256:Hash},tool_use_id:Id,
+  <下表本角色独有的字段>}}
+```
+
+| 角色/固定 adapter | 唯一肯定输出与独有字段 |
+|---|---|
+| OperatorStatement / `operator_boundary_20261109_v1` | `decision="confirm_local_domain"`；`authorization_domain="root_session_and_explicit_delegations"`，`transfer_state="not_authorized_or_transferred"`，`recovery_scope="local_interactive_legacy_recovery"` |
+| EvidenceAcceptance / `historical_evidence_acceptance_20261109_v1` | `decision="accept_boundary"`；`policy="accept_native_capacity_rejection_with_local_static_basis_and_prior_exclusive_operator_statement_for_this_target_only"`，`residual_uncertainty="historical_executable_identity_not_independently_verified"` |
+
+这些输出只由宿主从原件派生。拒绝选择不输出肯定 authority：已观察三选项中的“不能确认，保持挂起”/“仍要求全自动全域证明”不变为 confirm；两选项中的“保留门槛，保持阻塞”不变为 accept。它们不映射成 `accept_current/increase_rounds/degrade_single`，不覆盖成功/未知运行反证。
+
+输入解释的边界如下。
+
+- canonical index 的键精确如上；adapter 按角色固定。兼容 legacy locator 时，operator 从 `exact_target/native_source/native_binding.question/native_binding.answer` 映射，原行 hash 字段为 `raw_line_sha256`；acceptance 从 `target/native_source/question/response` 映射，hash 字段为 `line_sha256`。各自 question 的 tool_use_id 映射到顶层。归一化是输入解析，不是索引声明的授权；原 index/locator 字节被冻结，重放重新做同一解析。不以 `selection/authorizes/approved/no_recovery_executed` 或嵌入摘录推定结果。
+- 两个 event.path 必须相同且位于§13.2可信 root namespace；line 必须是非 boolean 正整数，原行 SHA/UUID 精确匹配，root UUID 唯一，cwd/session/isSidechain/parent/sourceToolAssistantUUID/先后与 timestamp 均逐项核验。只有真实 `AskUserQuestion` 与其 tool_result，`is_error` 缺省或为 false 才可继续；API envelope、sidechain、普通同文 user 记录不是回答。选定 question 行恰一个 AskUserQuestion；目标 tool id 的重复/错误 role/wire 关联也拒绝，不把其它无关工具 block 一律视为冲突。
+- `_recovery_authority_questions` 固化两份已观察 UI 的完整 question/header、三选项或两选项 label/description/preview；仅 preview 的 change_id、checkpoint、reservation SHA、script SHA 由实际目标填充。`multiSelect=false` 必须为 boolean。`toolUseResult` 键恰为 questions/answers/annotations；questions 与 request 逐值相同，answers 恰以该题为唯一键且选中唯一肯定 option，annotations 恰为该题的 `{preview:<选中option原preview>}`。caller 不能自选模板；合法非空 annotations 不套用旧耗尽 parser 的空 annotations 条件。
+- TargetBinding 从真实 manifest/genesis/reserve/script 的五个 FileRef 重新核验。首 reserve 的 seq/attempt/round 均为整数1、previous_event/previous_round/previous_attempt 均为 null，完整六项 identity 相符，`head=reservation`，scope/cycle/manifest/script 及原预算来源一致。target locator 的 identity、genesis/reservation/current_head/script、script_bytes、initial_max_rounds 与实际对象逐项相等，且其 `known_workflow_tool_call/known_request_uuid/known_response_uuid` 必须在该 authority 的 root 中形成真实、唯一、正确输入的旧 Workflow 对。locator 本身不是签字。
+- 这是已观察 UI 的窄 adapter，不是任意超限对象的授权模板：operator 的固定问题明示 570716-byte 历史对象，`_validate_recovery_operator_length` 因而要求该 script 恰 570716 bytes；acceptance 没有额外固定长度断言，但仍绑定同一完整旧对象。仅大于 L 不足以通过两项 authority。
+
+机器核验具体旧状态/已知载体，人类分别提供未另授权/转交的有界历史操作域声明、以及仅此对象的有限证据接受政策。两者不是密码学证明或全平台运行活性证明；能改写可信原生存储和执行器代码的同权限恶意主体仍在既有 TCB 之外。无人值守 AI 不能用生成的声明代替真人原件。
+
+### 13.4 seq2 的封闭 schema、冻结叶子与计数
+
+事件仍为§10.3外壳，`kind="dispatch_rejected",seq=2,previous_event=<seq1完整FileRef>`，genesis 不变。payload 精确如下，source_transition 不可为 null：
+
+```text
+payload = {reservation:FileRef,build_record:FileRef,evidence:FileRef,
+  input_closure:FileRef,source_transition:SourceTransition}
+RecoveryEvidence = {schema_version:1,cause:"workflow_input_file_too_large",
+  source:NativeSource,session_id:Id,
+  request:{uuid:Id,tool_use_id:Id,line_sha256:Hash,input:<原两字段工具input>},
+  response:{uuid:Id,tool_use_id:Id,line_sha256:Hash,error:<精确原生错误串>},
+  script:FileRef,runtime_rejection_basis:FileRef,operator_statement:FileRef,
+  evidence_acceptance:FileRef,known_binding_sources:[FileRef],additional_sources:[NativeSource]}
+RuntimeRejectionBasis = {schema_version:1,binary_sha256:Hash,native_version:"2.1.318",
+  capacity_source:FileRef,loader_source:FileRef,
+  windows:[{start:integer,end:integer,sha256:Hash}]}
+SourceTransition = {compatibility_id:"pre-dispatch-rejection-v1",
+  compatibility_manifest:FileRef,from_sources:<六源FileRef map>,
+  to_sources:<六源FileRef map>,new_source_closure:FileRef}
+```
+
+`_recovery_publish` 冻结完整原生 snapshot、静态来源实际字节、两个实际 index/locator、target、派生 authority/basis/evidence 及所有实读叶子；NativeSource 的 snapshot 换为不可变 blob FileRef，original_locator/runtime_config_root 仍保留来源身份。`known_binding_sources` 是本次实际实读来源的完整 FileRef 排序去重列表，不是 caller 自填“已检查”；不含其后生成的观察/派生记录。`additional_sources` 仅列显式传入的其它 root 的 NativeSource，递归发现的必读载体仍进入实际闭包，不因此遗漏。
+
+此处没有独立序列化或另给 FileRef 的归一化 `AuthorityIndex` 文件。§13.3 归一化的承重信息由冻结原 index/locator 与派生 authority 的 `sourceData` 共同保全：例如 `adapter`、`target_locator`、`question/response`、`tool_use_id`；`authority_indexes` 的角色 FileRef 指向原 index/locator，而非另一个 canonical 产物。冻结重放从这些角色引用重新归一化、重派生 authority 并比较，不只信任派生摘要。
+
+独立观察记录的逻辑 origin 固定为 `SCOPE/recovery-read-observations.json`，其字节由 closure 冻结，不要求把该 origin 当 live 文件发布：
+
+```text
+RecoveryReadObservations = {schema_version:1,unreadable_scripts:[string],
+  authority_indexes:{operator_statement:FileRef,evidence_acceptance:FileRef}}
+```
+
+`authority_indexes` 保存**实际通过验证的两个 CLI index 参数**的角色→FileRef provenance，不能按文件名、候选顺序、JSON 形状或含 adapter 字样猜角色。`unreadable_scripts` 是关联核尝试读取绝对 scriptPath 候选得到不可读时的规范化、排序唯一观察，不是 root/声明缺失的豁免，也不是“没有运行”布尔。冻结重放使用 `_RecoveryFrozenInputs` 的记录观察，不从当前磁盘猜当时可读性。
+
+`_verify_recovery_event` 用 `new_source_closure` 的 `_TrackedFrozenInputs` 和共享读取追踪重新派生拒绝、两项 authority 与全部递归来源；两角色 index 必须分别解引用并调用正确 parser。它验证新验证包与外层 input_closure 的每一实读 origin 字节一致、原对象绑定一致，重推 `expected_known`（排除该宿主观察 origin）恰等于 known_binding_sources，并要求验证包每个输入均实际消费。删来源、加未消费来源、伪标记/错角色、错 hash、跨 capture 替换，不能凭摘要相等通过。静态来源、原生 snapshots、authority target/index 及传递叶子都须实际取得冻结字节。
+
+| 量 | seq1 reserve后 | seq2 rejection后 | seq3 successor reserve后 |
+|---|---:|---:|---:|
+| reserve_count | 1 | 1 | 2 |
+| committed audit attempts / charged_rounds | 0 / 0 | 0 / 0 | 0 / 0 |
+| effective_limit / remaining_rounds | 原初值 / 原初值 | 不变 | 不变 |
+| pending | seq1 | null | seq3 |
+| latest有效round / latest committed attempt | null / null | null / null | null / null |
+
+rejection 不产生 audit row、票、结论、PASS/FAIL、void 或资源终态，不授予取消/扩预算权。`previous_round` 仍指最近非 void 结果，`previous_attempt` 仍指最近 commit，不改指 rejection；本首续接两者均 null。下个新 manifest 使用新 client/run-dir、原 checkpoint/change_id/audit_cycle_id/cycle_origin，`attempt_index=2,round=1`；candidate 仍按普通当前候选规则，不回写旧对象。程序仍执行原资源与 `_require_dispatch_policy` 门，不以 seq2 自动发放 Workflow 许可。
+
+### 13.5 固定兼容 catalog 与双 source generation
+
+catalog 固定为当前插件 `references/pre-dispatch-recovery-compat.json`，由 executor 自身路径定位，无 CLI/config 覆盖。封闭 schema 为 `{schema_version:1,compatibility_id:"pre-dispatch-rejection-v1",from:{executor:Hash,contract:Hash},to:{executor:Hash,contract:Hash}}`。`_recovery_compatibility_manifest` 只计算机械期望值，不写 catalog，也没有同名 CLI 子命令。from 固定为旧发布 executor `5b9a32e23d665e494a21dc002a1a8498db445462762fba52916ce79716333777` 与 contract `27e145e159e5b828e2c60d9a743ca8a0ea59bfb11560ce4f1e8783e2ed711920`；to 必须匹配当前实际两文件原字节。未知/缺键/多键、stale、未知旧对、from 整对等于 to 都拒绝；不要求两分量各自都变化。
+
+`_recovery_source_generations` 对两个 reader 分别验证：
+
+- `from_sources` 恰为旧 build-record.sources 的六个**逻辑来源** FileRef：`config/defaults/executor/contract/convergence_algorithm/report_storage`，每一逻辑路径都必须等于 `_fixed_paths`，不是只比 SHA 或任意同字节副本。旧 executor/contract SHA 配 from；原 input_closure 取得每一 origin 的旧 bytes。
+- genesis.initial_sources 的 FileRef 是 `SCOPE/blobs/<sha256>.blob` 存储地址，不要求它等于逻辑来源路径；逐个验证原闭包来源 bytes/hash与对应 genesis blob 完全一致。旧 build/policy/roles/budgets/graph 经私有旧代 `_FrozenInputs` 调用 `_native_build` 完整验证；不执行旧代码。
+- `to_sources` 为本命令从固定路径实际读取的六源；config/defaults/convergence_algorithm/report_storage **完整 FileRef** 前后相等，executor/contract SHA 配 to，旧/新 guard 都为 true。catalog、当前六源和实际验证输入被冻结进 new_source_closure。原 genesis、初始预算、anchor、policy_inputs、旧 reserve/build/script/closure 不改。
+
+两个闭包分时读取同一逻辑路径，允许经此精确转换有不同 SHA，不把旧/新 reader 扁平合并。`_verify_recovery_event` 先分别验证旧包和新包，再导出 active sources；后续闭包保留旧物理 blob 与新的逻辑来源，不拿当前源码读旧 initial_sources，也不跳 source gate。`_load_scope/_prefix_active_sources/build/_verify_pending_graph/_native_build/_HistoryGraph/_replay_history` 只消费已验证转换；普通未恢复 scope 仍绑定 initial_sources。v1无旧审计 commit，不支持把旧版本已投票结果跨版本混算。
+
+### 13.6 已知来源、关联反证与有限扫描
+
+`_recovery_validate` 的来源起点包含原拒绝 root、operator root、acceptance root、显式 additional_sources，及旧准备物/闭包、现存 post-run index/preflight 的结构化 locator。`_recovery_native_links` 继续读取其中明确引用的 native_source/original_locator、SessionEventRef、JsonlRef、native_record 及其递归载体，不把 JSON-looking prose 当结构化链接。不扫描无已知线索的全平台会话、不猜远端 API；来源集合的完整性不能由 caller 的自报布尔证明。
+
+首次 `_recovery_validate` 在闭包扫描前经 `_recovery_native_root_bytes` 取得 primary root：先验证 namespace/非 symlink，再按 native_root 角色稳定读取。缺失或不可读的 primary 报 `native_source_unreadable`，不把另一 authority locator 中的原选定拒绝先误判为额外运行。该前检只取得原字节，不扩大精确 tool block 排除范围；完整原拒绝/静态依据验证、metadata/root fixedpoint 及晚读依据后的再次 drain 保留。
+
+首次验证、冻结事件重算、handoff bindings 与 committed rescan 的通用载体识别共用 `_recovery_carrier_links`：按实际完整 bytes 能否解析成 JSON object/list 枚举，不由 `.json`、大小写、其它后缀或无后缀决定；carrier 保持闭包记录的逻辑 origin，不替换为物理 blob 地址，carrier-relative FileRef 基准不变。通用解析仍只在 `json.loads` 阶段保留原 `ValueError/UnicodeError` opaque 边界；JSON-looking 正文、Markdown fenced JSON、顶层 JSON string 不递归解释，后续读取/明确 native 引用/typed 校验错误不转成 opaque。committed rescan 读取完整 known sources 路径集合；实际 manifest index 与 authority 参数路径仍严格解析，普通源码/文档不因此变成严格 JSON。root Session JSONL 的 `.jsonl` namespace 约束不变。
+
+recovery 的种子来自 `_RecoveryReadTrace` 在成功语义读取后记录的 `(view,logical_origin,bytes,role)`，不来自 `raw` 成员资格或 `known_binding_sources`。old/current/handoff 各有独立视图；原代 `_native_build` 内部的 frozen reader 与其 pending graph 共享同代 trace。默认 logical binding 经 `_recovery_carrier_links`；root/typed JSONL 保留逐行 parser 与 API-envelope 排除，storage 解包、宿主 control 与稳定性 recheck 不成为 generic 种子。角色由内部调用点限定，物理 blob 名称不决定逻辑输入资格；原 logical origin 保留相对引用基准。
+
+`_RecoveryBindingClosure` 交替耗尽实际 binding 事件与 root 队列，复用原 native/typed 关系核及其 `seen/target_context`；静态依据和 authority role refs 读取后再次 drain。`_recovery_frozen_bindings` 由冻结事件消费者与 handoff baseline 共用，只消费已验证封存映射，不递归执行发布或读取 live 原件。baseline 的 roots、非 root 固定绑定及角色由实际重建读取导出；handoff/committed rescan 按这些角色取得当前字节并追读新链接，新增反证优先于普通输入变化。committed rescan 中已被实际 typed parser 拒绝的当前 carrier 保留原错误，不再按 generic union 重解释；其它有效 metadata/roots 仍继续扫描反证，错误未消除不能成功返回。known/精确消费比较在 fixedpoint 后执行，publish/recheck 不以复读补齐未消费 cache，seq2 仍为唯一恢复提交点。本段仅描述内部实现，不增加持久字段、外部协议或 AI 调度指令。
+
+通用结构化归档/native carrier 的 `native_record` 为缺键或 null 时没有此链接；dict 仍是精确 `{path,sha256}` FileRef（保留 carrier-relative path 与原 expected digest）。旧式 string 的字段语义是 Workflow export locator，仅接受规范 Linux 绝对路径：单前导 `/`、无 U+0000–U+001F/U+007F，且原串等于 `str(Path(os.path.abspath(s)))`，无后缀约束。live string acquisition 拒绝本体/祖先 symlink；Frozen 只读捕获 origin 映射并追踪 `read_origins`，缺映射无 live fallback。audit index、workflow drift index、preflight observation、result inputs 等实际 typed 位置仍是 FileRef；首次恢复及 committed rescan 共用绑定 index/preflight 的类型检查，tool_error 的显式 null 分支不变。
+
+string 与 FileRef acquisition 后共用严格 JSON/object、非空 `runId:string`、`args:object`、`script:string`、外层 runId 一致性、关联反证、termination 和递归验证。宿主稳定实读的 string export/递归叶子进入现有 known sources 与闭包；该 hash 是本次内容绑定，不是历史真实性签名。首次后继 handoff 从 seq2 冻结实读重建非 root export digest 并接入 live/Frozen reader，保持既有 bytes 精确绑定；root 仍保留 snapshot 前缀及完整当前载体扫描，不固定其整体旧 hash。最终 reserve 前复读覆盖所有实际捕获叶子；pending resume 仍只消费冻结视图。
+
+`_recovery_associated` 对完整载体检查选定 tool id（含 wire map、toolUseID 等结构字段）、旧 script 逻辑路径、可读候选/内嵌 script 的完整 SHA、manifest SHA、旧完整 identity 或同 audit_cycle_id。关联不要求另一次调用具有合法 build 资格；不同脚本但同 cycle 的成功/未知调用同样否决。只有原选定精确拒绝 tool block 可排除，不能排除整条 assistant 行；其它相关 system/progress/未知 role 结构也不能被静默略过。API replay envelopes 不作真人 authority 或额外运行反证；无关消息/无关运行不导致恒红。
+
+必读 root/引用缺失、截断、不可读、不能归属、native runId矛盾、locator 环、typed interruption 的行/agent/uuid/时间错误都拒绝，不能从清单剔除。带 agent_id 的 JsonlRef 经 `_recovery_typed_event/_interruption_body` 验证完整载体，native 的 termination_refs 经既有 `_verify_termination`；SessionEventRef 不被错误套用 agent namespace。关联 native run/已存在审计 index 是反证或结构拒绝，不以“尚无新 runId”“没有完成”解锁。已有 authority 不能 override 这些条件。
+
+### 13.7 事务、幂等、stale 与精确拒绝
+
+首 mutation 在锁内复核唯一当前首 reserve/head，再冻结输入；`_recovery_publish` 在 seq2 发布前调用同一 `_verify_recovery_event` 离线证明消费者，证明失败最多留 blobs，不提交无法重放的 event。原 genesis/reserve/manifest/script/build-record/blobs不覆写。writer.lock 是本 scope 合作写事务锁，不是全平台派发锁或锁住原生 journal 的 fence。
+
+`_recovery_idempotency_key` 是完整 TargetBinding + 原拒绝 request/response UUID、tool_use_id、原行 SHA + 两项 authority 各自 question/response UUID、行号、原行 SHA、tool_use_id 和 target 的 canonical bytes；不是 journal 整体 hash、日期或活跃 mtime。`_recovery_submission` 在任何已提交重入早返回前，先按旧已证明身份调用 `_recovery_rescan_committed` 重新稳定读取当前已知输入和新 locator，优先检查新增反证，再比较实际角色 index 参数路径、additional 来源集合、key、known origins 及 bytes。
+
+两项 authority/拒绝所在已知 root 可仅追加无关消息，但必须保留旧冻结 snapshot 为当前同 locator 的完整字节前缀且原选定行不变；其它输入必须逐字节不变，已知来源集合也须相同。新增无关来源是 input_changed，不冒充同一输入；新增相关成功/未知调用先反证拒绝，不由“输入已变”掩盖。截断、前缀改写、同字节换 index locator、换签字工具对都不是精确重入。check-only 不替 mutation 预留有效性；输入未变时复用既有签字，不因日期/无关追加要求重签。
+
+只有 head 恰为原同 key seq2 时可幂等确认。head 已到合法 seq3 successor或更后事件，恢复 CLI 报 `E_RECOVERY_EVIDENCE/target_head_changed`，不返回旧 eligible/成功；合法后继历史仍可冻结重放，不能把它倒判成非法重复派发。event 前崩溃可能留孤立 blobs，原 pending 仍在，同输入可复用同内容后提交；event 后丢回执须先完成上述 live 检查才返回既有 event。竞争者只可幂等或拒绝，不追加第二个 rejection。
+
+以下为真实实现 token；不是所有错误都统一包装成 E_RECOVERY_EVIDENCE，原因由实际失败层决定：
+
+| 失败分支 | code / reason（列出已实现的精确 token 或明确前缀） |
+|---|---|
+| 首前缀/目标 head 已变、锁内目标不一致、合法后继后重用恢复 | `E_RECOVERY_EVIDENCE / target_head_changed`；更早非法事件链也可先 `E_PREVIOUS_IDENTITY` |
+| 原生不是容量拒绝、配对/namespace/静态来源不符 | `E_RECOVERY_EVIDENCE`；`native_error/native_pair_binding/native_namespace/native_associated_evidence` 或 `runtime_` 原因前缀 |
+| 两项 authority 的来源/对象/UI/选择不符 | `E_RECOVERY_EVIDENCE`；`native_`、`target_`、`operator_`、`evidence_acceptance_` 原因前缀；含 `target_operator_script_bytes` |
+| 关联成功/未知/结构化运行反证 | `E_RECOVERY_EVIDENCE / counterevidence_native`，或 `counterevidence_index/counterevidence_typed_event/counterevidence_target_native_record/counterevidence_native_record` |
+| catalog/来源不配 | `E_SOURCE_DRIFT / recovery_compat_catalog/recovery_compat_same_generation/recovery_compat_stale/recovery_source_path/recovery_source_changed` 等实际来源分支 |
+| 幂等参数、key、根或来源改变 | `E_RECOVERY_EVIDENCE / input_changed_recovery_arguments/input_changed_recovery_key/input_changed_known_roots/input_changed_known_sources/input_changed_source_prefix_or_bytes`；缺损来源可先原 `native_` 等错误 |
+| 冻结验证来源集合/角色/capture不符 | `E_POLICY_SOURCE / history_recovery_known_sources_membership/history_recovery_unconsumed_verification_input/history_recovery_authority_roles/history_recovery_cross_capture_binding`，角色 parser 也可直接抛其证据错误 |
+| 显式 native/typed引用结构损坏 | 既有 `E_NATIVE_EVIDENCE`（如 `jsonl_line_bounds`）或对应 source/hash错误，不降成空证据 |
+| 首续接缺来源输入/发现反证/最终观察变化 | `E_RECOVERY_EVIDENCE / recovery_sources_required/recovery_handoff_counterevidence`；正常live reader发现变化为 `recovery_handoff_source_changed_during_capture`，不稳定/不可读分别为 `recovery_handoff_source_unstable/recovery_handoff_source_unreadable`，已观察不可读脚本变可读为 `recovery_handoff_script_availability_changed` |
+| 后继handoff路径/对象/snapshot错配 | `E_RECOVERY_EVIDENCE / recovery_handoff_path/recovery_handoff_binding/recovery_handoff_fixed_prefix_binding/recovery_handoff_snapshot_mapping/recovery_handoff_sources_recomputed`；条件 build 键错由实际消费者报 `build_record_keys` |
+| 锁占用、不可覆盖产物冲突、CLI参数不齐 | 既有 `E_SCOPE_BUSY`、`E_OUTPUT_CONFLICT`、exit2/`E_ARGUMENTS` |
+
+错误沿§3输出 stderr JSON `{error_code,reason,input_ref}`，stdout不伪造成功对象；不输出原生正文、prompt 或 secret。反证不撤销/改写已提交 seq2，也不产生“恢复失败已取消”记录，当前重入/首续接保持拒绝。
+
+### 13.8 首次后继 build 的 live handoff
+
+`_first_recovery_successor` 仅在实际前缀恰 `reserve,dispatch_rejected`、pending=null、reserve_count=1，且新 manifest attempt=2/round=1 时成立。此时 `build(...,recovery_sources=PATH)` 必需；普通 `evidence.dispatch_preflight` 必须为 null，不把原 native 终态 preflight 复用成恢复来源索引、不追加 observe。其它 scope不增加该前置。
+
+```text
+RecoverySourcesIndex = {schema_version:1,recovery_event:FileRef,
+  additional_sources:[string]}
+RecoveryHandoff = {schema_version:1,recovery_event:FileRef,prefix_head:FileRef,
+  rejected_reservation:FileRef,
+  successor:{identity:<六字段>,attempt_index:2,manifest:FileRef,workflow_script:FileRef},
+  sources_index:{original_locator:string,snapshot:FileRef},
+  sources:[{original_locator:string,runtime_config_root:string,
+    baseline_snapshot:FileRef|null,snapshot:FileRef}]}
+RecoveryHandoffObservations = {schema_version:1,unreadable_scripts:[string],
+  sources:[{original_locator:string,snapshot:FileRef}]}
+```
+
+index.additional_sources 为规范化绝对 root locator、排序唯一；只能增加已知来源，不替换 seq2来源，不含 approved/no_conflict/token/timestamp。handoff.prefix_head 与 recovery_event 都必须是本 scope 固定 `events/0000000002.json` 的**完整 FileRef**，rejected_reservation 为固定 seq1，genesis 也须该 scope 固定路径，不能拿同字节另一路径冒充 head。successor 恰绑定这次实际 manifest 原字节、六项identity、attempt2及容量检查过的唯一最终 script bytes，不接受只比较 SHA 或部分身份。
+
+真实生产顺序如下（程序调用链说明，不是新 AI 调度指令）。
+
+1. `build` 容量前检→锁内 `_load_scope/_replay_history` 冻结历史→active source/identity/预算/资源门。相同 pending 的精确 resume 在此独立返回，不进入首续接 live 门。
+2. 首续接在新 handoff/script/metadata/closure/reserve 发布前，调用 `_capture_recovery_handoff`。它先用冻结 seq2 重推 baseline，再创建独立、未灌入 view.frozen_raw 的 `_HandoffCaptureInputs` 读取当前 index 与完整已知 root/传递载体；两项 authority root 均纳入，已知来源不得少。旧 root 必须仍有冻结前缀；新相关成功/未知调用报 `recovery_handoff_counterevidence`。不依赖先再次运行 recover，也不重新签字。
+3. `_publish_recovery_handoff` 在第一个 freeze/publish 之前再次运行下述独立 live rescan，通过后才把独立 live reader 的所有实际字节冻成 `SCOPE/blobs/<sha256>.blob`，仅按物理 snapshot 路径加入新 build reader，保留 seq2逻辑原路径的旧时间视图。run-dir 不可变发布 `recovery-handoff-observations.json`（全实际输入含 index/脚本候选等）及 `recovery-preflight.json`（上面 RecoveryHandoff）；后者由条件 build-record.recovery_preflight 引用，两者及其叶子进入 attempt2 input_closure。
+4. sources按original_locator排序唯一；既有root的baseline_snapshot恰等于seq2冻结snapshot，新发现root才为null。`_verify_recovery_handoff` 从闭包解引用index snapshot与observations全部snapshot，用 `_HandoffFrozenInputs/_handoff_scan` 重推集合/关联、expected sources及实际消费/不可读观察。index和observations的snapshot必须是该scope内容寻址blob的完整FileRef；root snapshot由重推值逐项相等，baseline不能任意清空。**同字节另一路径snapshot也拒绝**（`recovery_handoff_snapshot_mapping`），缺叶子、少来源、多来源、错successor/head不能靠重算hash洗白。
+5. 发布已检查script/metadata、冻结input_closure后，`_reserve_build` 对此首续接要求内部 `recovery_preflight/inputs/live` 三项齐全，重算冻结handoff与实际state/manifest/script，再执行既有政策及round/attempt序列门。在reserve排他发布的紧前调用 `_handoff_recheck`，仅接受真实 `_HandoffCaptureInputs`。该复核及capture端复核均绑定已验证的旧root前缀/native hashes，以raw初始为空的新reader重跑同一 `_handoff_scan`，先验证关系，再比较实际消费域、全部bytes与不可读脚本集合；不把新读入内容补进旧proof。清单、任一root/实读来源发生变化即零新reserve；不是仅重读旧snapshot。
+
+共同扫描从已验证旧manifest取得 `post_audit_index_path/post_drift_index_path/post_disposition_index_path` 三个 `(role,path)`，相对路径基于旧record.manifest carrier，每个role独立保留。live每次用 `_recovery_index_present` 实际探测，只有真正缺失的optional index可略过；存在即实际读取并严格复用 `_recovery_index_links`，typed必需叶子不可缺省或generic降级。Frozen只以此handoff已验证origin映射的membership重建存在性，不探现场、不补读。新增反证仍报 `recovery_handoff_counterevidence`，`E_NATIVE_EVIDENCE` typed错误原样传播，不重复handoff前缀。最终复核以瞬态reader记录的错误来源区分新typed index缺陷与捕获漂移：只有非bound-index typed消费器发出的原生hash错，且实际成功重读的origin属于原捕获、字节确已变化，才报既有 `E_RECOVERY_EVIDENCE/recovery_handoff_source_changed_during_capture`；不提前复读expected绕过共同扫描，也不重包新index的坏hash/缺叶子/schema错。无新持久schema或负观察状态。
+
+capture或首发布前复核失败不发布handoff/script/reserve，但不承诺此次普通build没有锁文件。已发布handoff后最终复核失败或reserve前崩溃可留无reservation的不可变准备物/blobs；旧seq1/seq2不改，原 `unreserved_existing_output` 冲突仍成立，不覆盖旧run。首次成功只追加普通seq3 reserve，不捆绑新恢复事件、不改变预算。最终复核是本机有限观察，不锁住原生日志，不承诺观察之后全平台裸调用已被阻止。
+
+### 13.9 条件 record、冻结消费者与 pending resume
+
+`_record` 只给seq2之后的首次后继记录增加 `recovery_preflight:FileRef`；其它记录继续原BUILD_RECORD_KEYS，夹带字段（含null）不合法。`_recovery_build_schema` 从真实prefix内容决定条件，不按该键是否存在决定。`_native_build` 先验证原build闭包，再调用 `_verify_recovery_handoff`，核该handoff在输入reader与冻结包中的同字节关系。恢复闭合的旧首build不成为真实审计运行，live消费它时拒绝 `E_PREVIOUS_IDENTITY/rejected_dispatch_not_a_run`。
+
+`_HistoryGraph` 的 build分支增加recovery_handoff结构边，handoff的event/prefix/reservation/successor/index及baseline/current snapshots均按明确schema走结构边或opaque叶子；`_replay_history` 对seq3调用 `_replay_recovery_reserve`，校验实际reservation、冻结run包与条件record对应，record缺失的崩溃缺口也不放弃handoff验证。prepare/final collect/check通过 `_native_build`、同一graph/history及共享纯重算消费这些字节，不把 live 旧root增长灌回历史，不要求重签或重新读取个人原生存储/静态取证原路径。当前固定源与既有source gate仍保留，缺/坏冻结叶子不是可忽略缺源。
+
+已发布seq3、尚未commit的相同manifest走 `_resume_build`：从固定run-dir的input_closure与recovery-preflight冻结包重算，只返回 `build_record/workflow_script/resume_only:true`，必要时按冻结metadata补同一record；不要求再传recovery-sources、不重做live capture、不新建reserve、不重派。合法attempt2 Workflow本身可以已出现在当前root，不倒灌成seq2时的反证；live原件或来源index移除也不破坏已经冻结的精确resume。不同manifest仍按原pending/source/identity规则拒绝；后续commit/新attempt继续原policy/resource门，不反复触发首续接门。
+
+本节描述代码与字段，不构成真实恢复、产品调用、发版或正式审计终态证据。分发契约不发布私人原件/ledger内容；各项目启用闸门、Rule #6正式逐hunk判定及真实调用证据仍独立验证。

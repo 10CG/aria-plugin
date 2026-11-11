@@ -7,7 +7,7 @@ TASK-010：共享来源投影的 final/check、逐文件原子发布与冻结原
 from __future__ import annotations
 
 import argparse
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -27,8 +27,14 @@ Json = dict[str, Any]
 SOURCE_NAMES = ("config", "defaults", "executor", "contract", "convergence_algorithm", "report_storage")
 IDENTITY_KEYS = ("audit_cycle_id", "client_round_id", "checkpoint", "change_id", "round", "candidate_sha")
 BUDGETS = {"single_agent_ms": 120000, "round_ms": 300000, "max_parallel": 2}
+MAX_WORKFLOW_SCRIPT_BYTES = 524288
 EVIDENCE_KEYS = {"schema_version", "cycle_origin", "previous_round", "dispatch_preflight", "policy_inputs",
                  "post_audit_index_path", "post_drift_index_path", "post_disposition_index_path"}
+BUILD_RECORD_KEYS = {"schema_version", "manifest", "identity", "sources", "effective_config", "budgets", "roles",
+                     "workflow_script", "attempt_index", "genesis", "prefix_head", "reservation", "input_closure",
+                     "generated_at", "host_build_duration_ms"}
+RECOVERY_HANDOFF_KEYS = {"schema_version", "recovery_event", "prefix_head", "rejected_reservation",
+                         "successor", "sources_index", "sources"}
 MANIFEST_KEYS = set(IDENTITY_KEYS) | {"attempt_index", "roles", "require_same_admitted_roles", "evidence"} | set(BUDGETS)
 OVERRIDES = {"model", "agents_config", "team", "teams", "mode", "backend", "model_override", "additional_agents"}
 CHECKPOINTS = {"post_brainstorm", "post_spec", "post_planning", "mid_implementation", "mid_post_spec",
@@ -54,6 +60,11 @@ def _canonical(value: Any) -> bytes:
 
 def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _check_workflow_capacity(program: bytes) -> None:
+    if len(program) > MAX_WORKFLOW_SCRIPT_BYTES:
+        _fail("E_WORKFLOW_CAPACITY", f"workflow_bytes={len(program)} limit={MAX_WORKFLOW_SCRIPT_BYTES}")
 
 
 def _parse(data: bytes, path: Path, code: str = "E_INPUT_SCHEMA") -> Any:
@@ -706,22 +717,23 @@ def _load_scope(scope: Path, manifest: Json, inputs: _Inputs) -> Json:
         inputs.dereference(genesis[key], genesis_path)
     _keys(genesis["initial_sources"], set(SOURCE_NAMES), "E_POLICY_SOURCE", "genesis_sources")
     for source in genesis["initial_sources"].values():
-        inputs.dereference(source, genesis_path)
+        _recovery_dereference(inputs, source, genesis_path, 'E_POLICY_SOURCE', 'storage')
     events: list[Json] = []
     head: Json | None = None
     pending: Json | None = None
+    active_sources = genesis['initial_sources']
     if event_dir.exists():
         for seq, path in enumerate(sorted(event_dir.iterdir()), 1):
             if path.name != f"{seq:010d}.json":
                 _fail("E_PREVIOUS_IDENTITY", "event_sequence", path)
-            event_raw = inputs.read(path)
+            event_raw = _recovery_read(inputs, path, 'E_POLICY_SOURCE', 'host_control' if seq == 2 else 'binding')
             event = _parse(event_raw, path, "E_POLICY_SOURCE")
             _keys(event, {"schema_version", "seq", "genesis", "previous_event", "kind", "payload"},
                   "E_POLICY_SOURCE", "event_keys", path)
             _version(event["schema_version"])
             if type(event["seq"]) is not int or event["seq"] != seq or event["genesis"] != genesis_ref or event["previous_event"] != head:
                 _fail("E_PREVIOUS_IDENTITY", "event_chain", path)
-            if event["kind"] not in ("reserve", "commit", "observe", "disposition") or not isinstance(event["payload"], dict):
+            if event["kind"] not in ("reserve", "commit", "observe", "disposition", "dispatch_rejected") or not isinstance(event["payload"], dict):
                 _fail("E_PREVIOUS_IDENTITY", "event_kind", path)
             event_ref = {"path": str(path), "sha256": _hash(event_raw)}
             if event["kind"] == "reserve":
@@ -733,12 +745,24 @@ def _load_scope(scope: Path, manifest: Json, inputs: _Inputs) -> Json:
             elif event["kind"] == "commit":
                 # 完整语义由后续共享重算宿主实现；绝不直接使用 result.policy。
                 pending = None
+            elif event["kind"] == "dispatch_rejected":
+                _keys(event["payload"], {"reservation", "build_record", "evidence", "input_closure", "source_transition"},
+                      "E_POLICY_SOURCE", "rejection_payload", path)
+                if (seq != 2 or pending is None or pending["event"]["seq"] != 1 or
+                        event["payload"]["reservation"] != pending["ref"]):
+                    _fail("E_PREVIOUS_IDENTITY", "rejection_without_first_reservation", path)
+                # The graph must validate the frozen proof before this transition
+                # can change the scope view. Never trust the event's own flags.
+                _HistoryGraph(scope).walk(event_ref, path, "event")
+                active_sources = _verify_recovery_event(event, event_ref, scope)['active_sources']
+                pending = None
             elif event["kind"] == "observe":
                 _keys(event["payload"], {"preflight"}, "E_NATIVE_EVIDENCE", "observe_payload", path)
                 _read_preflight(event["payload"]["preflight"], path, _StoredObserveInputs(scope))
             events.append({"event": event, "ref": event_ref})
             head = event_ref
     return {"genesis": genesis, "genesis_ref": genesis_ref, "events": events, "head": head, "pending": pending,
+            "active_sources": active_sources,
             "reserve_count": sum(entry["event"]["kind"] == "reserve" for entry in events)}
 
 
@@ -906,9 +930,8 @@ class _HistoryGraph:
             'genesis': {'schema_version', 'algorithm_version', 'audit_cycle_id', 'checkpoint', 'change_id',
                         'policy_inputs', 'anchor', 'origin_observation', 'initial_sources', 'initial_max_rounds'},
             'manifest': MANIFEST_KEYS,
-            'build': {'schema_version', 'manifest', 'identity', 'sources', 'effective_config', 'budgets', 'roles',
-                      'workflow_script', 'attempt_index', 'genesis', 'prefix_head', 'reservation', 'input_closure',
-                      'generated_at', 'host_build_duration_ms'},
+            'build': BUILD_RECORD_KEYS,
+            'recovery_handoff': RECOVERY_HANDOFF_KEYS,
             'request': {'schema_version', 'algorithm_version', 'identity', 'attempt_index', 'genesis', 'anchor',
                         'audit_index', 'input_closure', 'conclusions', 'required', 'reason', 'checker'},
             'prepare': ROUND_METADATA_KEYS['prepare'],
@@ -925,7 +948,11 @@ class _HistoryGraph:
             'sidecar': DISPOSITION_KEYS}
         if kind not in schemas:
             _fail('E_POLICY_SOURCE', 'history_unknown_schema', origin)
-        _keys(value, schemas[kind], 'E_POLICY_SOURCE', 'history_' + kind, origin)
+        recovery_required = False
+        if kind == 'build':
+            recovery_required = _recovery_build_schema(value, origin, _StoredObserveInputs(self.scope), 'E_POLICY_SOURCE')
+        else:
+            _keys(value, schemas[kind], 'E_POLICY_SOURCE', 'history_' + kind, origin)
         if kind in ROUND_METADATA_KEYS:
             _validate_round_metadata(value, kind, origin)
         elif kind != 'manifest':
@@ -959,6 +986,14 @@ class _HistoryGraph:
                     edge(payload['reservation'], 'event'); edge(payload['result'], 'result')
                     edge(payload['input_closure'], 'closure')
                     self.leaf(payload['markdown'], origin, published=True)
+                elif value['kind'] == 'dispatch_rejected':
+                    _keys(payload, {'reservation', 'build_record', 'evidence', 'input_closure', 'source_transition'},
+                          'E_POLICY_SOURCE', 'history_recovery_payload')
+                    edge(payload['reservation'], 'event')
+                    edge(payload['build_record'], 'build')
+                    edge(payload['input_closure'], 'closure')
+                    edge(payload['source_transition']['new_source_closure'], 'closure')
+                    _verify_recovery_event(value, reference, self.scope)
                 elif value['kind'] == 'observe':
                     _keys(payload, {'preflight'}, 'E_POLICY_SOURCE', 'observe_keys')
                     edge(payload['preflight'], 'preflight')
@@ -1002,6 +1037,37 @@ class _HistoryGraph:
                 for ref in value['sources'].values():
                     leaf(ref)
                 leaf(value['workflow_script'])
+                closure_raw = self.leaf(value['input_closure'], origin, published=True)
+                frozen = _history_closure(value['input_closure'], origin, self.scope, raw=closure_raw)
+                reservation = self.walk(value['reservation'], origin, 'event')
+                if (reservation['kind'] != 'reserve' or reservation['genesis'] != value['genesis'] or
+                        reservation['previous_event'] != value['prefix_head'] or
+                        any(reservation['payload'][key] != value[key] for key in
+                            ('identity', 'attempt_index', 'manifest', 'workflow_script'))):
+                    _fail('E_PREVIOUS_IDENTITY', 'history_reservation_sequence', origin)
+                _verify_reserved_clients(reservation['payload']['identity'], reservation['genesis'],
+                    reservation['previous_event'], origin, frozen)
+                if recovery_required:
+                    edge(value['recovery_preflight'], 'recovery_handoff')
+                    manifest_path, manifest_raw = frozen.dereference(value['manifest'], origin)
+                    manifest = _parse(manifest_raw, manifest_path)
+                    _verify_recovery_handoff(value['recovery_preflight'], manifest, value['manifest'],
+                        value['workflow_script'], value['prefix_head'], frozen, self.scope.parents[3])
+            elif kind == 'recovery_handoff':
+                edge(value['recovery_event'], 'event'); edge(value['prefix_head'], 'event')
+                edge(value['rejected_reservation'], 'event')
+                _keys(value['successor'], {'identity', 'attempt_index', 'manifest', 'workflow_script'},
+                      'E_POLICY_SOURCE', 'history_recovery_successor')
+                edge(value['successor']['manifest'], 'manifest'); leaf(value['successor']['workflow_script'])
+                _keys(value['sources_index'], {'original_locator', 'snapshot'},
+                      'E_POLICY_SOURCE', 'history_recovery_sources_index')
+                leaf(value['sources_index']['snapshot'])
+                if not isinstance(value['sources'], list):
+                    _fail('E_POLICY_SOURCE', 'history_recovery_handoff_sources', origin)
+                for source in value['sources']:
+                    _keys(source, {'original_locator', 'runtime_config_root', 'baseline_snapshot', 'snapshot'},
+                          'E_POLICY_SOURCE', 'history_recovery_handoff_source')
+                    leaf(source['baseline_snapshot']); leaf(source['snapshot'])
             elif kind in ('request', 'prepare'):
                 targets = ({'genesis': 'genesis', 'anchor': 'anchor', 'audit_index': 'audit', 'input_closure': 'closure'}
                            if kind == 'request' else {'audit_index': 'audit', 'input_closure': 'closure', 'policy_request': 'request'})
@@ -1100,9 +1166,10 @@ def _round_from_sources(repo: Path, result: Json, frozen: _FrozenInputs, genesis
             'defaults': build_record['sources']['defaults']}.items():
         if refs[field] != expected:
             _fail('E_PREVIOUS_IDENTITY', 'round_input_binding_' + field)
-    for name, source in build_record['sources'].items():
-        if source['sha256'] != genesis['initial_sources'][name]['sha256']:
-            _fail('E_SOURCE_DRIFT', 'history_fixed_source_changed', source['path'])
+    # _classify_native -> _native_build -> _verify_pending_graph already bound
+    # these sources to the verified prefix using the build's own frozen closure.
+    # A round capture need not repeat that prefix's logical event origins.
+    attempt_offset = int(build_record['sources']['executor']['sha256'] != genesis['initial_sources']['executor']['sha256'])
     anchor_path, anchor_raw = frozen.dereference(genesis['anchor'], Path(refs['genesis']['path']))
     anchor = {'record': _parse(anchor_raw, anchor_path, 'E_POLICY_SOURCE'), 'source': genesis['anchor']}
     effective = build_record['effective_config']
@@ -1110,7 +1177,7 @@ def _round_from_sources(repo: Path, result: Json, frozen: _FrozenInputs, genesis
     reason = _policy_reason(aggregate, ident, effective['drift_guard'], anchor)
     if preparing:
         # The very same origin-bound native/history kernel precedes request output.
-        _apply_policy(genesis, attempts, effective, anchor)
+        _apply_policy(genesis, attempts, effective, anchor, attempt_offset=attempt_offset)
         request = _make_policy_request(manifest, build_record, audit, anchor,
                                       refs['audit_index'], refs['input_closure'])
         _resource_view([a['audit'] for a in attempts] +
@@ -1170,7 +1237,7 @@ def _round_from_sources(repo: Path, result: Json, frozen: _FrozenInputs, genesis
     elif refs['drift_index'] is not None or prepare_refs['policy_script'] is not None:
         _fail('E_POLICY_SOURCE', 'unexpected_checker_evidence')
     attempt = {'identity': ident, 'attempt_index': manifest['attempt_index'], 'audit': audit, 'drift': drift}
-    folded = _apply_policy(genesis, [*attempts, attempt], effective, anchor)
+    folded = _apply_policy(genesis, [*attempts, attempt], effective, anchor, attempt_offset=attempt_offset)
     row = folded['attempts'][-1]
     resources = _resource_view([a['audit'] for a in [*attempts, attempt]] +
         [a['drift'] for a in [*attempts, attempt] if a['drift'] is not None],
@@ -1213,7 +1280,10 @@ def _replay_history(state: Json) -> Json:
                 'resource_attempts': [], 'resource_view': _resource_summary([]), 'frozen_raw': {}}
     if not state.get('genesis_ref'):
         _fail('E_POLICY_SOURCE', 'missing_history_genesis')
-    if state.get('pending') is not None:
+    recovery_pending = (state.get('pending') is not None and len(state['events']) == 3 and
+                        state['pending'] == state['events'][-1] and state['reserve_count'] == 2 and
+                        [entry['event']['kind'] for entry in state['events']] == ['reserve', 'dispatch_rejected', 'reserve'])
+    if state.get('pending') is not None and not recovery_pending:
         _fail('E_POLICY_SOURCE', 'pending_requires_exact_resume')
     scope = Path(state['genesis_ref']['path']).parent
     repo = scope.parents[3]
@@ -1264,6 +1334,8 @@ def _replay_history(state: Json) -> Json:
             if not resources['next_round_dispatch_allowed']:
                 _fail('E_RESOURCE_PENDING', 'historical_dispatch_with_unknown_calls')
             _require_dispatch_policy(policy)
+            if seq == 3 and state['events'][1]['event']['kind'] == 'dispatch_rejected':
+                frozen_raw.update(_replay_recovery_reserve(entry, repo, scope))
             pending = entry
         elif event['kind'] == 'commit':
             if pending is None or payload['reservation'] != pending['ref']:
@@ -1294,6 +1366,16 @@ def _replay_history(state: Json) -> Json:
             latest_attempt = reference
             if not row['all_failed_void']:
                 latest_round = payload['result']
+            pending = None
+        elif event['kind'] == 'dispatch_rejected':
+            if (seq != 2 or reserves != 1 or pending is None or
+                    pending['event']['seq'] != 1 or payload['reservation'] != pending['ref']):
+                _fail('E_PREVIOUS_IDENTITY', 'rejection_without_first_reservation')
+            # Graph validation above established the proof. Capture the current
+            # generation plus physical old blobs, never old logical code paths.
+            proof = _verify_recovery_event(event, reference, scope)
+            frozen_raw.update(proof['capture'])
+            frozen_raw.update(graph.raw)
             pending = None
         elif event['kind'] == 'observe':
             observes.append(entry)
@@ -1343,7 +1425,7 @@ def _replay_history(state: Json) -> Json:
         else:
             _fail('E_POLICY_SOURCE', 'unknown_history_event')
         head = reference
-    if (pending is not None or state['head'] != head or state['reserve_count'] != reserves):
+    if ((pending is not None and not recovery_pending) or state['head'] != head or state['reserve_count'] != reserves):
         _fail('E_PREVIOUS_IDENTITY', 'history_incomplete_or_stale_prefix')
     resources = _resource_view(resource_attempts, inputs=_FrozenInputs(frozen_raw), observes=observes, scope=scope)
     frozen_raw.update(graph.raw)
@@ -1592,12 +1674,22 @@ return snapshot;
 
 
 def _record(manifest: Json, manifest_ref: Json, sources: Json, effective: Json,
-            state: Json, reservation: Json, closure: Json, script: Json, metadata: Json) -> Json:
-    return {"schema_version": 1, "manifest": manifest_ref, "identity": _identity(manifest),
+            state: Json, reservation: Json, closure: Json, script: Json, metadata: Json,
+            recovery_preflight: Json | None = None) -> Json:
+    record = {"schema_version": 1, "manifest": manifest_ref, "identity": _identity(manifest),
             "sources": sources, "effective_config": effective, "budgets": dict(BUDGETS), "roles": _roles(manifest),
             "workflow_script": script, "attempt_index": manifest["attempt_index"], "genesis": state["genesis_ref"],
             "prefix_head": reservation["event"]["previous_event"], "reservation": reservation["ref"], "input_closure": closure,
             "generated_at": metadata["generated_at"], "host_build_duration_ms": metadata["host_build_duration_ms"]}
+    prefix_seq = reservation['event']['seq'] - 1
+    required = (prefix_seq == 2 and len(state['events']) >= 2 and
+                state['events'][1]['event']['kind'] == 'dispatch_rejected')
+    if required != (recovery_preflight is not None):
+        _fail('E_RECOVERY_EVIDENCE', 'recovery_handoff_build_record_required' if required else 'recovery_handoff_unexpected')
+    if recovery_preflight is not None:
+        _ref_shape(recovery_preflight, 'E_RECOVERY_EVIDENCE')
+        record['recovery_preflight'] = recovery_preflight
+    return record
 
 
 class _FrozenInputs(_Inputs):
@@ -1609,6 +1701,105 @@ class _FrozenInputs(_Inputs):
         if str(path) not in self.raw:
             _fail(code, "incomplete_pending_closure", path)
         return self.raw[str(path)]
+
+
+class _RecoveryReadTrace:
+    """One recovery view's successful logical reads; never persisted or caller supplied."""
+    def __init__(self) -> None:
+        self.role = 'binding'
+        self.read_origins: set[str] = set()
+        self.events: dict[tuple[str, str], bytes] = {}
+        self.bytes_by_origin: dict[str, bytes] = {}
+        self.digests: dict[str, str] = {}
+
+    def record(self, path: Path, raw: bytes) -> None:
+        origin = str(path)
+        if origin in self.bytes_by_origin and self.bytes_by_origin[origin] != raw:
+            _fail('E_RECOVERY_EVIDENCE', 'source_changed_during_capture', path)
+        if origin not in self.bytes_by_origin:
+            self.bytes_by_origin[origin] = raw
+            self.digests[origin] = _hash(raw)
+        self.read_origins.add(origin)
+        self.events[(origin, self.role)] = raw
+
+
+def _recovery_trace(inputs: _Inputs) -> _RecoveryReadTrace | None:
+    trace = getattr(inputs, 'recovery_trace', None)
+    return trace if isinstance(trace, _RecoveryReadTrace) else None
+
+
+@contextmanager
+def _recovery_read_role(inputs: _Inputs, role: str) -> Generator[None, None, None]:
+    if role not in {'binding', 'native_root', 'typed_event', 'storage', 'host_control', 'recheck'}:
+        _fail('E_POLICY_SOURCE', 'recovery_read_role')
+    trace = _recovery_trace(inputs)
+    previous = trace.role if trace is not None else None
+    if trace is not None:
+        trace.role = role
+    try:
+        yield
+    finally:
+        if trace is not None and previous is not None:
+            trace.role = previous
+
+
+def _recovery_read(inputs: _Inputs, path: Path, code: str, role: str) -> bytes:
+    with _recovery_read_role(inputs, role):
+        return inputs.read(path, code)
+
+
+def _recovery_dereference(inputs: _Inputs, value: Any, carrier: Path,
+                           code: str, role: str) -> tuple[Path, bytes]:
+    with _recovery_read_role(inputs, role):
+        return inputs.dereference(value, carrier, code)
+
+
+class _RecoveryCaptureInputs(_Inputs):
+    """Capture readable script candidates and actual semantic reads in this live view."""
+    def __init__(self) -> None:
+        super().__init__()
+        self.unreadable_scripts: set[str] = set()
+        self.recovery_trace = _RecoveryReadTrace()
+        self.read_origins = self.recovery_trace.read_origins
+
+    def read(self, path: Path, code: str = 'E_POLICY_SOURCE') -> bytes:
+        raw = super().read(path, code)
+        self.recovery_trace.record(path, raw)
+        return raw
+
+
+class _TrackedFrozenInputs(_FrozenInputs):
+    """Record actual frozen reads, sharing a recovery view only when explicitly passed."""
+    def __init__(self, raw: dict[str, bytes], trace: _RecoveryReadTrace | None = None) -> None:
+        super().__init__(raw)
+        self.recovery_trace = trace
+        self.read_origins: set[str] = trace.read_origins if trace is not None else set()
+
+    def read(self, path: Path, code: str = 'E_POLICY_SOURCE') -> bytes:
+        raw = super().read(path, code)
+        self.read_origins.add(str(path))
+        if self.recovery_trace is not None:
+            self.recovery_trace.record(path, raw)
+        return raw
+
+
+class _RecoveryFrozenInputs(_TrackedFrozenInputs):
+    """An immutable recovery carrier with its recorded namespace, never a live override."""
+    def __init__(self, raw: dict[str, bytes], runtime_config_root: str,
+                 unreadable_scripts: set[str] | None = None, trace: _RecoveryReadTrace | None = None) -> None:
+        super().__init__(raw, trace if trace is not None else _RecoveryReadTrace())
+        self.runtime_config_root = runtime_config_root
+        self.unreadable_scripts = frozenset(unreadable_scripts or ())
+        self.observed_unreadable_scripts: set[str] = set()
+
+
+def _recovery_config_root(inputs: _Inputs) -> Path:
+    if isinstance(inputs, _RecoveryFrozenInputs):
+        root = Path(inputs.runtime_config_root)
+        if not root.is_absolute() or Path(os.path.abspath(root)) != root:
+            _fail('E_POLICY_SOURCE', 'history_recovery_namespace')
+        return root
+    return Path(os.environ.get('CLAUDE_CONFIG_DIR') or (Path.home() / '.claude')).resolve(strict=True)
 
 
 class _CaptureInputs(_Inputs):
@@ -1623,19 +1814,61 @@ class _CaptureInputs(_Inputs):
         return super().read(path, code)
 
 
+def _verify_reserved_clients(identity: Json, genesis: Json, head: Json | None,
+                             carrier: Path, frozen: _Inputs, *,
+                             reason: str = 'history_reservation_sequence') -> None:
+    """Check all hash-bound reserve identities, without replaying policy or old sources."""
+    _round_identity(identity)
+    clients = {identity['client_round_id']}
+    seen: set[str] = set()
+    next_seq: int | None = None
+    while head is not None:
+        path, raw = frozen.dereference(head, carrier, 'E_POLICY_SOURCE')
+        if str(path) in seen:
+            _fail('E_HISTORY_CYCLE', 'structural_origin_reentry', path)
+        seen.add(str(path))
+        event = _parse(raw, path, 'E_POLICY_SOURCE')
+        _keys(event, {'schema_version', 'seq', 'genesis', 'previous_event', 'kind', 'payload'},
+              'E_POLICY_SOURCE', 'event_keys', path)
+        _version(event['schema_version'])
+        _integer(event['seq'], 1, 'E_PREVIOUS_IDENTITY')
+        if (event['genesis'] != genesis or (next_seq is not None and event['seq'] != next_seq) or
+                event['kind'] not in ('reserve', 'commit', 'observe', 'disposition', 'dispatch_rejected')):
+            _fail('E_PREVIOUS_IDENTITY', reason, path)
+        if event['kind'] == 'reserve':
+            payload = event['payload']
+            _keys(payload, {'identity', 'attempt_index', 'manifest', 'workflow_script', 'previous_round', 'previous_attempt'},
+                  'E_POLICY_SOURCE', 'reservation_keys', path)
+            previous = payload['identity']
+            _round_identity(previous)
+            if (any(previous[k] != identity[k] for k in ('audit_cycle_id', 'checkpoint', 'change_id')) or
+                    previous['client_round_id'] in clients):
+                _fail('E_PREVIOUS_IDENTITY', reason, path)
+            clients.add(previous['client_round_id'])
+        next_seq = event['seq'] - 1
+        head, carrier = event['previous_event'], path
+    if next_seq not in (None, 0):
+        _fail('E_PREVIOUS_IDENTITY', reason, carrier)
+
+
 def _verify_pending_graph(state: Json, manifest: Json, manifest_path: Path,
                           sources: Json, effective: Json, frozen: _Inputs) -> None:
     """仅验证本次 pending 的运行前依赖闭包，不冒充完整历史/policy 折叠。"""
     payload = state["pending"]["event"]["payload"]
+    _verify_reserved_clients(_identity(manifest), state['genesis_ref'],
+        state['pending']['event']['previous_event'], manifest_path, frozen)
     frozen.dereference(payload["manifest"], manifest_path)
     frozen.dereference(payload["workflow_script"], manifest_path)
     genesis_path, genesis_raw = frozen.dereference(state["genesis_ref"], manifest_path)
     genesis = _parse(genesis_raw, genesis_path)
     if genesis != state["genesis"]:
         _fail("E_OUTPUT_CONFLICT", "pending_genesis_conflict", genesis_path)
+    expected_sources = state.get('active_sources')
+    if expected_sources is None:
+        expected_sources = _prefix_active_sources(genesis, payload.get('previous_event') or state['pending']['event']['previous_event'], manifest_path, frozen)
     for name, source in sources.items():
         frozen.dereference(source, manifest_path)
-        if source["sha256"] != genesis["initial_sources"][name]["sha256"]:
+        if source['sha256'] != expected_sources[name]['sha256']:
             _fail("E_OUTPUT_CONFLICT", "pending_fixed_source_conflict", source["path"])
     for evidence in effective["resolved_mode"]["evidence"]:
         if "source" in evidence:
@@ -1760,6 +1993,8 @@ def _resume_build(state: Json, manifest: Json, manifest_path: Path, run: Path, i
         _integer(metadata["host_build_duration_ms"], 0, "E_OUTPUT_CONFLICT")
         _id(metadata["generated_at"], "E_OUTPUT_CONFLICT")
     except ExecutorError as error:
+        if error.error_code == 'E_PREVIOUS_IDENTITY' and error.reason == 'history_reservation_sequence':
+            raise
         _fail("E_OUTPUT_CONFLICT", error.reason, error.input_ref)
     # 缺 record 的窄恢复使用冻结外部叶子；完整记录重调用保留同输入比较。
     live_origins = {source["path"] for source in sources.values()} | {
@@ -1770,15 +2005,461 @@ def _resume_build(state: Json, manifest: Json, manifest_path: Path, run: Path, i
     for origin in live_origins:
         if inputs.read(Path(origin), "E_OUTPUT_CONFLICT") != frozen.read(Path(origin), "E_OUTPUT_CONFLICT"):
             _fail("E_OUTPUT_CONFLICT", "pending_input_conflict", origin)
-    record = _record(manifest, current_ref, sources, effective, state, pending, closure_ref, script_ref, metadata)
+    recovery_preflight = None
+    if (pending['event']['seq'] == 3 and len(state['events']) >= 2 and
+            state['events'][1]['event']['kind'] == 'dispatch_rejected'):
+        handoff_path = run / 'recovery-preflight.json'
+        recovery_preflight = {'path': str(handoff_path), 'sha256': _hash(frozen.read(handoff_path, 'E_RECOVERY_EVIDENCE'))}
+        _verify_recovery_handoff(recovery_preflight, manifest, current_ref, script_ref,
+                                  pending['event']['previous_event'], frozen, repo)
+    record = _record(manifest, current_ref, sources, effective, state, pending, closure_ref, script_ref, metadata,
+                     recovery_preflight=recovery_preflight)
     _publish(run / "build-record.json", _canonical(record), run, resume=True)
     return {"build_record": str(run / "build-record.json"), "workflow_script": str(run / "workflow.js"), "resume_only": True}
 
 
-def _reserve_build(state: Json, scope: Path, manifest: Json, manifest_ref: Json, script_ref: Json) -> Json:
+def _first_recovery_successor(state: Json, manifest: Json) -> bool:
+    return (len(state['events']) == 2 and state['pending'] is None and state['reserve_count'] == 1 and
+            [entry['event']['kind'] for entry in state['events']] == ['reserve', 'dispatch_rejected'] and
+            manifest['attempt_index'] == 2 and manifest['round'] == 1)
+
+
+def _recovery_build_schema(value: Json, carrier: Path, inputs: _Inputs,
+                            code: str = 'E_NATIVE_EVIDENCE') -> bool:
+    # Determine the conditional field from the actual prefix, not its presence.
+    if not isinstance(value, dict) or not BUILD_RECORD_KEYS <= set(value):
+        _fail(code, 'build_record_keys', carrier)
+    required = False
+    if value['prefix_head'] is not None:
+        path, raw = inputs.dereference(value['prefix_head'], carrier, code)
+        prefix = _parse(raw, path, code)
+        required = isinstance(prefix, dict) and prefix.get('kind') == 'dispatch_rejected'
+    _keys(value, BUILD_RECORD_KEYS | ({'recovery_preflight'} if required else set()),
+          code, 'build_record_keys', carrier)
+    return required
+
+
+def _handoff_closure(reference: Json, inputs: _FrozenInputs, carrier: Path, scope: Path) -> _FrozenInputs:
+    """Decode an already enclosed package; never read an original or a live blob."""
+    code = 'E_RECOVERY_EVIDENCE'
+    path, raw = inputs.dereference(reference, carrier, code)
+    value = _parse(raw, path, code)
+    _keys(value, {'schema_version', 'algorithm_version', 'sources'}, code, 'recovery_closure_keys', path)
+    _version(value['schema_version'], code)
+    if value['algorithm_version'] != 'canonical_v1' or not isinstance(value['sources'], list):
+        _fail(code, 'recovery_closure_schema', path)
+    captured: dict[str, bytes] = {}
+    for entry in value['sources']:
+        _keys(entry, {'origin', 'sha256', 'blob'}, code, 'recovery_closure_source', path)
+        _ref_shape({'path': entry['origin'], 'sha256': entry['sha256']}, code)
+        origin = entry['origin']
+        if (not Path(origin).is_absolute() or str(Path(os.path.abspath(origin))) != origin or origin in captured or
+                entry['blob'] != {'path': str(scope / 'blobs' / (entry['sha256'] + '.blob')), 'sha256': entry['sha256']}):
+            _fail(code, 'recovery_closure_mapping', path)
+        # Enclosing closures can retain a leaf under its logical origin or
+        # physical blob path; either must match this package's exact digest.
+        retained = entry['blob'] if entry['blob']['path'] in inputs.raw else {'path': origin, 'sha256': entry['sha256']}
+        _, data = inputs.dereference(retained, path, code)
+        captured[origin] = data
+    if value['sources'] != sorted(value['sources'], key=lambda x: (x['origin'], x['sha256'])):
+        _fail(code, 'recovery_closure_order', path)
+    return _FrozenInputs(captured)
+
+
+def _handoff_baseline(repo: Path, reference: Json, inputs: _FrozenInputs) -> Json:
+    """Re-derive the seq2 carrier set from its verified frozen input packages."""
+    code = 'E_RECOVERY_EVIDENCE'
+    carrier = Path(reference['path'])
+    scope = carrier.parent.parent
+    def document(ref: Json, reader: _Inputs = inputs) -> Json:
+        path, raw = reader.dereference(ref, carrier, code)
+        return _parse(raw, path, code)
+    event = document(reference)
+    _keys(event, {'schema_version', 'seq', 'genesis', 'previous_event', 'kind', 'payload'}, code, 'recovery_prefix_event')
+    _version(event['schema_version'], code)
+    payload = event['payload']
+    _keys(payload, {'reservation', 'build_record', 'evidence', 'input_closure', 'source_transition'}, code, 'recovery_prefix_payload')
+    reserve = document(payload['reservation'])
+    if (type(event['seq']) is not int or event['seq'] != 2 or event['kind'] != 'dispatch_rejected' or
+            event['previous_event'] != payload['reservation'] or reserve['seq'] != 1 or
+            reserve['kind'] != 'reserve' or reserve['previous_event'] is not None or reserve['genesis'] != event['genesis']):
+        _fail(code, 'recovery_prefix_binding', carrier)
+    package = _handoff_closure(payload['input_closure'], inputs, carrier, scope)
+    record = document(payload['build_record'], package)
+    expected_scope = repo / '.aria' / 'audit-reports' / '_executor-ledgers' / _hash(
+        _canonical([record['identity']['checkpoint'], record['identity']['change_id']]))
+    # Same bytes at another event locator are not this scope's actual head.
+    if (scope != expected_scope or reference['path'] != str(expected_scope / 'events' / '0000000002.json') or
+            payload['reservation']['path'] != str(expected_scope / 'events' / '0000000001.json') or
+            event['genesis']['path'] != str(expected_scope / 'genesis.json') or
+            record['genesis'] != event['genesis'] or record['reservation'] != payload['reservation'] or
+            any(_canonical(record[key]) != _canonical(reserve['payload'][key]) for key in
+                ('identity', 'attempt_index', 'manifest', 'workflow_script'))):
+        _fail(code, 'recovery_handoff_fixed_prefix_binding', carrier)
+    evidence = document(payload['evidence'], package)
+    proof = _recovery_frozen_bindings(event, reference, scope, package)
+    runtime, old = proof['runtime'], proof['old']
+    config = evidence['source']['runtime_config_root']
+    sources: Json = {}
+    for origin, source in proof['sources'].items():
+        data = runtime.raw[origin]
+        snapshot = {'path': str(scope / 'blobs' / (_hash(data) + '.blob')), 'sha256': _hash(data)}
+        if inputs.dereference(snapshot, carrier, code)[1] != data:
+            _fail(code, 'recovery_baseline_snapshot', origin)
+        sources[origin] = {**source, 'snapshot': snapshot}
+    trace = _recovery_traces(runtime)[0]
+    roles = {origin: {role for path, role in trace.events if path == origin}
+             for origin in runtime.read_origins if origin != str(scope / 'recovery-read-observations.json')}
+    native_hashes = {origin: _hash(runtime.raw[origin]) for origin in roles if origin not in sources}
+    return {'event': event, 'record': record, 'manifest': proof['manifest'], 'evidence': evidence, 'sources': sources,
+            'old': old, 'config': config, 'native_hashes': native_hashes, 'roles': roles}
+
+
+def _handoff_dereference(inputs: _Inputs, baselines: dict[str, bytes], value: Any,
+                          carrier: Path, code: str) -> tuple[Path, bytes]:
+    _ref_shape(value, code)
+    path = _path(value['path'], carrier)
+    raw = inputs.read(path, code)
+    if _hash(raw) != value['sha256']:
+        baseline = baselines.get(str(path))
+        # Only a verified old root FileRef can name an append-only prefix.
+        if baseline is None or _hash(baseline) != value['sha256'] or not raw.startswith(baseline):
+            _fail(code, 'recovery_source_hash_mismatch', path)
+    return path, raw
+
+
+class _HandoffCaptureInputs(_RecoveryCaptureInputs):
+    def __init__(self, baselines: dict[str, bytes], native_hashes: dict[str, str] | None = None) -> None:
+        super().__init__()
+        self.baselines = baselines
+        self.native_hashes = dict(native_hashes or {})
+        self.bound_index_error: ExecutorError | None = None
+
+    def dereference(self, value: Any, carrier: Path, code: str = 'E_POLICY_SOURCE') -> tuple[Path, bytes]:
+        return _handoff_dereference(self, self.baselines, value, carrier, code)
+
+
+class _HandoffFrozenInputs(_RecoveryFrozenInputs):
+    def __init__(self, raw: dict[str, bytes], config: str, unavailable: set[str], baselines: dict[str, bytes],
+                 native_hashes: dict[str, str] | None = None) -> None:
+        super().__init__(raw, config, unavailable)
+        self.baselines = baselines
+        self.native_hashes = dict(native_hashes or {})
+
+    def dereference(self, value: Any, carrier: Path, code: str = 'E_POLICY_SOURCE') -> tuple[Path, bytes]:
+        return _handoff_dereference(self, self.baselines, value, carrier, code)
+
+
+def _handoff_bound_indexes(baseline: Json) -> tuple[tuple[str, Path], ...]:
+    carrier = Path(baseline['record']['manifest']['path'])
+    return tuple((role, _path(baseline['manifest']['evidence'][role], carrier)) for role in
+                 ('post_audit_index_path', 'post_drift_index_path', 'post_disposition_index_path'))
+
+
+def _handoff_bound_index_links(baseline: Json, reader: _Inputs, roots: set[Path]) -> None:
+    if not isinstance(reader, (_HandoffCaptureInputs, _HandoffFrozenInputs)):
+        _fail('E_RECOVERY_EVIDENCE', 'recovery_handoff_live_reader_required')
+    for role, path in _handoff_bound_indexes(baseline):
+        present = (str(path) in reader.raw if isinstance(reader, _HandoffFrozenInputs)
+                   else _recovery_index_present(path))
+        if present:
+            raw = _recovery_read(reader, path, 'E_RECOVERY_EVIDENCE', 'binding')
+            value = _parse(raw, path, 'E_NATIVE_EVIDENCE')
+            try:
+                _recovery_index_links(value, path, role, reader, roots, baseline['record'],
+                                      baseline['evidence']['request']['tool_use_id'])
+            except ExecutorError as error:
+                if isinstance(reader, _HandoffCaptureInputs):
+                    reader.bound_index_error = error
+                raise
+
+
+def _handoff_scan(repo: Path, baseline: Json, index_path: Path, expected_event: Json,
+                   reader: _Inputs) -> list[Json]:
+    """One relation kernel for live capture and immutable handoff reconstruction."""
+    code = 'E_RECOVERY_EVIDENCE'
+    index = _parse(reader.read(index_path, code), index_path, code)
+    _keys(index, {'schema_version', 'recovery_event', 'additional_sources'}, code, 'recovery_sources_index', index_path)
+    _version(index['schema_version'], code)
+    _ref_shape(index['recovery_event'], code)
+    additional = index['additional_sources']
+    if (index['recovery_event'] != expected_event or not isinstance(additional, list) or
+            any(not isinstance(p, str) or not Path(p).is_absolute() or str(Path(os.path.abspath(p))) != p for p in additional) or
+            additional != sorted(set(additional))):
+        _fail(code, 'recovery_sources_index_binding', index_path)
+    roots = {Path(p) for p in baseline['sources']} | {Path(p) for p in additional}
+    record, evidence = baseline['record'], baseline['evidence']
+    primary = Path(evidence['source']['original_locator'])
+    selected = (evidence['request']['uuid'], evidence['response']['uuid'])
+    def scan(root: Path, pending: set[Path]) -> Json:
+        raw = _recovery_read(reader, root, code, 'native_root')
+        previous = baseline['sources'].get(str(root))
+        if previous is not None:
+            old = reader.baselines[str(root)] if isinstance(reader, (_HandoffCaptureInputs, _HandoffFrozenInputs)) else b''
+            if not old or not raw.startswith(old):
+                _fail(code, 'recovery_handoff_prefix_rewritten', root)
+        if root == primary:
+            rows = [_parse(line, root, code) for line in raw.split(b'\n') if line]
+            if any(sum(isinstance(row, dict) and row.get('uuid') == uuid for row in rows) != 1 for uuid in selected):
+                _fail(code, 'recovery_handoff_selected_binding', root)
+        observed = _recovery_scan_root(repo, root, record, evidence['request']['tool_use_id'],
+                                       selected if root == primary else None, reader, pending)
+        if observed['runtime_config_root'] != baseline['config']:
+            _fail(code, 'recovery_handoff_namespace', root)
+        return {**observed, 'baseline_snapshot': previous['snapshot'] if previous else None}
+    try:
+        _handoff_bound_index_links(baseline, reader, roots)
+        read_errors: list[ExecutorError] = []
+        for origin, roles in sorted(baseline['roles'].items()):
+            if origin not in baseline['sources']:
+                for role in sorted(roles):
+                    try:
+                        _recovery_read(reader, Path(origin), code, role)
+                    except ExecutorError as error:
+                        read_errors.append(error)
+        closure = _RecoveryBindingClosure(repo, record, evidence['request']['tool_use_id'], primary,
+                                          selected, reader, _recovery_traces(baseline['old'], reader), roots, scan)
+        sources = closure.drain()
+        # Let real native/typed acquisition preserve its established error layer.
+        if read_errors:
+            raise read_errors[0]
+        # New counterevidence takes precedence over ordinary fixed-binding drift.
+        for origin, expected in baseline['native_hashes'].items():
+            if _hash(reader.raw[origin]) != expected:
+                _fail(code, 'recovery_source_hash_mismatch', origin)
+    except ExecutorError as error:
+        if error.reason.startswith('counterevidence_'):
+            _fail(code, 'recovery_handoff_counterevidence', error.input_ref)
+        raise
+    return [sources[key] for key in sorted(sources)]
+
+
+def _handoff_recheck(live: _Inputs, expected: dict[str, bytes] | None = None,
+                       unavailable: set[str] | None = None, *, repo: Path, baseline: Json,
+                       index_path: Path, expected_event: Json) -> None:
+    code = 'E_RECOVERY_EVIDENCE'
+    if not isinstance(live, _HandoffCaptureInputs):
+        _fail(code, 'recovery_handoff_live_reader_required')
+    if set(live.raw) != live.read_origins:
+        _fail(code, 'recovery_handoff_unconsumed_input')
+    expected = dict(live.raw) if expected is None else expected
+    observed_unavailable = set(live.unreadable_scripts)
+    if live.raw != expected or (unavailable is not None and observed_unavailable != unavailable):
+        _fail(code, 'recovery_handoff_live_capture_binding')
+    if (set(live.baselines) != set(baseline['sources']) or
+            any(_hash(raw) != baseline['sources'][origin]['snapshot']['sha256']
+                for origin, raw in live.baselines.items()) or live.native_hashes != baseline['native_hashes']):
+        _fail(code, 'recovery_handoff_live_capture_binding')
+    # Rediscover absent bound indexes in a fresh live view, not an expected/raw cache.
+    fresh = _HandoffCaptureInputs(live.baselines, baseline['native_hashes'])
+    try:
+        _handoff_scan(repo, baseline, index_path, expected_event, fresh)
+    except ExecutorError as error:
+        # A changed captured origin is a capture drift, not a new typed-index defect.
+        # Classify only after the common kernel has checked all bound indexes.
+        if (error.error_code == 'E_NATIVE_EVIDENCE' and error.reason == 'recovery_source_hash_mismatch' and
+                error is not fresh.bound_index_error and error.input_ref in expected and
+                error.input_ref in fresh.read_origins and fresh.raw[error.input_ref] != expected[error.input_ref]):
+            _fail(code, 'recovery_handoff_source_changed_during_capture', error.input_ref)
+        if error.error_code != code or error.reason.startswith('recovery_handoff_'):
+            raise
+        _fail(code, 'recovery_handoff_' + error.reason, error.input_ref)
+    if set(fresh.raw) != fresh.read_origins:
+        _fail(code, 'recovery_handoff_unconsumed_input')
+    for origin in sorted(set(fresh.raw) | set(expected)):
+        if fresh.raw.get(origin) != expected.get(origin):
+            _fail(code, 'recovery_handoff_live_bytes_changed', origin)
+    if fresh.unreadable_scripts != observed_unavailable:
+        origin = min(fresh.unreadable_scripts ^ observed_unavailable)
+        _fail(code, 'recovery_handoff_script_availability_changed', origin)
+
+
+def _capture_recovery_handoff(repo: Path, state: Json, manifest: Json, manifest_ref: Json,
+                               script_ref: Json, index_path: Path, frozen: _FrozenInputs) -> Json:
+    code = 'E_RECOVERY_EVIDENCE'
+    if manifest['evidence']['dispatch_preflight'] is not None:
+        _fail(code, 'recovery_handoff_dispatch_preflight')
+    index_path = Path(os.path.abspath(index_path))
+    if any(p.is_symlink() for p in (index_path, *index_path.parents)):
+        _fail(code, 'recovery_sources_index_symlink', index_path)
+    baseline = _handoff_baseline(repo, state['head'], frozen)
+    baselines = {origin: frozen.dereference(value['snapshot'], index_path, code)[1]
+                 for origin, value in baseline['sources'].items()}
+    live = _HandoffCaptureInputs(baselines, baseline['native_hashes'])
+    sources = _handoff_scan(repo, baseline, index_path, state['head'], live)
+    _handoff_recheck(live, repo=repo, baseline=baseline, index_path=index_path, expected_event=state['head'])
+    return {'live': live, 'repo': repo, 'baseline': baseline, 'sources': sources, 'index_path': index_path,
+            'successor': {'identity': _identity(manifest), 'attempt_index': 2,
+                          'manifest': manifest_ref, 'workflow_script': script_ref}}
+
+
+def _publish_recovery_handoff(captured: Json, state: Json, scope: Path, run: Path, inputs: _Inputs) -> Json:
+    live = captured['live']
+    _handoff_recheck(live, repo=captured['repo'], baseline=captured['baseline'],
+                       index_path=captured['index_path'], expected_event=state['head'])
+    # Physical paths alone enter the successor closure. Seq2 logical origins
+    # retain their old time view, including roots that have grown since seq2.
+    def snapshot(raw: bytes) -> Json:
+        ref = _freeze_blob(raw, scope)
+        inputs.raw[ref['path']] = raw
+        return ref
+    references = {origin: snapshot(raw) for origin, raw in sorted(live.raw.items())}
+    observations = {'schema_version': 1, 'unreadable_scripts': sorted(live.unreadable_scripts),
+                    'sources': [{'original_locator': origin, 'snapshot': ref} for origin, ref in references.items()]}
+    observation_path = run / 'recovery-handoff-observations.json'
+    observation_raw = _canonical(observations)
+    _publish(observation_path, observation_raw, run)
+    inputs.raw[str(observation_path)] = observation_raw
+    value = {'schema_version': 1, 'recovery_event': state['head'], 'prefix_head': state['head'],
+             'rejected_reservation': state['events'][0]['ref'], 'successor': captured['successor'],
+             'sources_index': {'original_locator': str(captured['index_path']),
+                               'snapshot': references[str(captured['index_path'])]},
+             'sources': [{**source, 'snapshot': references[source['original_locator']]} for source in captured['sources']]}
+    raw = _canonical(value)
+    ref = _publish(run / 'recovery-preflight.json', raw, run)
+    inputs.raw[ref['path']] = raw
+    return ref
+
+
+def _verify_recovery_handoff(reference: Json, manifest: Json, manifest_ref: Json, script_ref: Json,
+                              prefix_head: Json, frozen: _FrozenInputs, repo: Path) -> Json:
+    """Pure proof reconstruction from the already verified build closure."""
+    code = 'E_RECOVERY_EVIDENCE'
+    if not isinstance(frozen, _FrozenInputs):
+        _fail(code, 'recovery_handoff_frozen_inputs_required')
+    path, raw = frozen.dereference(reference, Path(script_ref['path']), code)
+    if path != Path(script_ref['path']).parent / 'recovery-preflight.json' or reference['path'] != str(path):
+        _fail(code, 'recovery_handoff_path', path)
+    value = _parse(raw, path, code)
+    _keys(value, RECOVERY_HANDOFF_KEYS, code, 'recovery_handoff_keys', path)
+    _version(value['schema_version'], code)
+    expected = {'identity': _identity(manifest), 'attempt_index': 2, 'manifest': manifest_ref, 'workflow_script': script_ref}
+    _keys(value['successor'], set(expected), code, 'recovery_handoff_successor', path)
+    if (manifest['attempt_index'] != 2 or manifest['round'] != 1 or
+            type(value['successor']['attempt_index']) is not int or
+            _canonical(value['successor']) != _canonical(expected) or value['recovery_event'] != prefix_head or
+            value['prefix_head'] != prefix_head or manifest['evidence']['dispatch_preflight'] is not None):
+        _fail(code, 'recovery_handoff_binding', path)
+    manifest_path, manifest_raw = frozen.dereference(manifest_ref, path, code)
+    actual_manifest = _parse(manifest_raw, manifest_path, code)
+    _validate_manifest(actual_manifest)
+    if _canonical(actual_manifest) != _canonical(manifest):
+        _fail(code, 'recovery_handoff_manifest_bytes', manifest_path)
+    _, script = frozen.dereference(script_ref, path, code)
+    _check_workflow_capacity(script)
+    if script != _workflow(manifest, manifest_ref['sha256']):
+        _fail(code, 'recovery_handoff_script', path)
+    baseline = _handoff_baseline(repo, prefix_head, frozen)
+    if (value['rejected_reservation'] != baseline['event']['payload']['reservation'] or
+            manifest['evidence']['cycle_origin'] != baseline['event']['genesis'] or
+            any(manifest[k] != baseline['record']['identity'][k] for k in ('audit_cycle_id', 'checkpoint', 'change_id'))):
+        _fail(code, 'recovery_handoff_prefix_binding', path)
+    index = value['sources_index']
+    _keys(index, {'original_locator', 'snapshot'}, code, 'recovery_handoff_index', path)
+    observations_path = path.parent / 'recovery-handoff-observations.json'
+    observations = _parse(frozen.read(observations_path, code), observations_path, code)
+    _keys(observations, {'schema_version', 'unreadable_scripts', 'sources'}, code, 'recovery_handoff_observations')
+    _version(observations['schema_version'], code)
+    unavailable = observations['unreadable_scripts']
+    def locator(value: Any) -> str:
+        if not isinstance(value, str) or not Path(value).is_absolute() or str(Path(os.path.abspath(value))) != value:
+            _fail(code, 'recovery_handoff_locator', path)
+        return value
+    if not isinstance(unavailable, list) or any(locator(p) != p for p in unavailable) or unavailable != sorted(set(unavailable)):
+        _fail(code, 'recovery_handoff_unreadable_scripts', path)
+    rawmap: dict[str, bytes] = {}
+    if not isinstance(observations['sources'], list):
+        _fail(code, 'recovery_handoff_observation_sources', path)
+    for entry in observations['sources']:
+        _keys(entry, {'original_locator', 'snapshot'}, code, 'recovery_handoff_observation_source')
+        origin = locator(entry['original_locator'])
+        if origin in rawmap or origin in unavailable:
+            _fail(code, 'recovery_handoff_observation_duplicate', origin)
+        _, data = frozen.dereference(entry['snapshot'], path, code)
+        if entry['snapshot'] != {'path': str(Path(prefix_head['path']).parent.parent / 'blobs' / (_hash(data) + '.blob')), 'sha256': _hash(data)}:
+            _fail(code, 'recovery_handoff_snapshot_mapping', origin)
+        rawmap[origin] = data
+    if [x['original_locator'] for x in observations['sources']] != sorted(rawmap):
+        _fail(code, 'recovery_handoff_observation_order', path)
+    baselines = {origin: frozen.dereference(source['snapshot'], path, code)[1]
+                 for origin, source in baseline['sources'].items()}
+    runtime = _HandoffFrozenInputs(rawmap, baseline['config'], set(unavailable), baselines,
+                                   baseline['native_hashes'])
+    index_path = Path(locator(index['original_locator']))
+    _, index_raw = frozen.dereference(index['snapshot'], path, code)
+    if index['snapshot'] != {'path': str(Path(prefix_head['path']).parent.parent / 'blobs' / (_hash(index_raw) + '.blob')),
+                             'sha256': _hash(index_raw)}:
+        _fail(code, 'recovery_handoff_snapshot_mapping', index_path)
+    if index_raw != runtime.read(index_path, code):
+        _fail(code, 'recovery_handoff_index_snapshot', path)
+    sources = _handoff_scan(repo, baseline, index_path, prefix_head, runtime)
+    if not isinstance(value['sources'], list):
+        _fail(code, 'recovery_handoff_sources', path)
+    expected_sources = []
+    for source in sources:
+        origin = source['original_locator']
+        data = runtime.read(Path(origin), code)
+        expected_sources.append({**source, 'snapshot': {'path': str(Path(prefix_head['path']).parent.parent / 'blobs' / (_hash(data) + '.blob')), 'sha256': _hash(data)}})
+    if _canonical(expected_sources) != _canonical(value['sources']):
+        _fail(code, 'recovery_handoff_sources_recomputed', path)
+    if runtime.read_origins != set(rawmap) or runtime.observed_unreadable_scripts != set(unavailable):
+        _fail(code, 'recovery_handoff_unconsumed_input', path)
+    return {'handoff': value, 'live_raw': rawmap, 'unavailable': set(unavailable),
+            'baseline': baseline, 'index_path': index_path}
+
+
+def _replay_recovery_reserve(entry: Json, repo: Path, scope: Path) -> dict[str, bytes]:
+    """Validate the first successor's published preparation, including crash gaps."""
+    code = 'E_RECOVERY_EVIDENCE'
+    event = entry['event']
+    payload = event['payload']
+    run = Path(payload['workflow_script']['path']).parent
+    closure_path = run / 'input-closure.json'
+    raw = _Inputs().read(closure_path, code)
+    closure_ref = {'path': str(closure_path), 'sha256': _hash(raw)}
+    frozen = _history_closure(closure_ref, closure_path, scope, raw=raw)
+    manifest_path, manifest_raw = frozen.dereference(payload['manifest'], closure_path, code)
+    manifest = _parse(manifest_raw, manifest_path, code)
+    _validate_manifest(manifest)
+    if (event['seq'] != 3 or payload['identity'] != _identity(manifest) or
+            type(payload['attempt_index']) is not int or payload['attempt_index'] != 2 or
+            payload['previous_round'] is not None or payload['previous_attempt'] is not None):
+        _fail(code, 'recovery_handoff_reservation_binding', closure_path)
+    path = run / 'recovery-preflight.json'
+    reference = {'path': str(path), 'sha256': _hash(frozen.read(path, code))}
+    _verify_recovery_handoff(reference, manifest, payload['manifest'], payload['workflow_script'],
+                              event['previous_event'], frozen, repo)
+    record_path = run / 'build-record.json'
+    if record_path.exists():
+        record_raw = _Inputs().read(record_path, code)
+        record = _parse(record_raw, record_path, code)
+        _recovery_build_schema(record, record_path, frozen, code)
+        expected = {key: payload[key] for key in ('identity', 'attempt_index', 'manifest', 'workflow_script')}
+        expected.update(genesis=event['genesis'], prefix_head=event['previous_event'], reservation=entry['ref'],
+                        input_closure=closure_ref, recovery_preflight=reference)
+        if any(_canonical(record[key]) != _canonical(value) for key, value in expected.items()):
+            _fail(code, 'recovery_handoff_build_record_binding', record_path)
+    # Preserve only the captured time view, not growing original roots.
+    return {**frozen.raw, str(closure_path): raw}
+
+
+def _reserve_build(state: Json, scope: Path, manifest: Json, manifest_ref: Json, script_ref: Json, *,
+                     recovery_preflight: Json | None = None, inputs: _FrozenInputs | None = None,
+                     live: _Inputs | None = None) -> Json:
     # 此函数只接受 _replay_history 的实际产物；不接收 caller 的 policy_ok。
+    required = _first_recovery_successor(state, manifest)
+    proof = None
+    if required:
+        if recovery_preflight is None or inputs is None or live is None:
+            _fail('E_RECOVERY_EVIDENCE', 'recovery_handoff_reserve_inputs_required')
+        proof = _verify_recovery_handoff(recovery_preflight, manifest, manifest_ref, script_ref, state['head'],
+                                          inputs, scope.parents[3])
+    elif recovery_preflight is not None:
+        _fail('E_RECOVERY_EVIDENCE', 'recovery_handoff_unexpected')
     view = _replay_history(state)
     _require_dispatch_policy(view)
+    _verify_reserved_clients(_identity(manifest), state['genesis_ref'], state['head'],
+        Path(manifest_ref['path']), _FrozenInputs(view['frozen_raw']), reason='round_attempt_sequence')
     if manifest["round"] != view["charged_rounds"] + 1 or manifest["attempt_index"] != sum(entry["event"]["kind"] == "reserve" for entry in state["events"]) + 1:
         _fail("E_PREVIOUS_IDENTITY", "round_attempt_sequence")
     event = {"schema_version": 1, "seq": len(state["events"]) + 1, "genesis": state["genesis_ref"],
@@ -1786,11 +2467,16 @@ def _reserve_build(state: Json, scope: Path, manifest: Json, manifest_ref: Json,
                  "identity": _identity(manifest), "attempt_index": manifest["attempt_index"],
                  "manifest": manifest_ref, "workflow_script": script_ref,
                  "previous_round": view["latest_round"], "previous_attempt": view["latest_attempt"]}}
+    if required:
+        if live is None or proof is None:
+            _fail('E_RECOVERY_EVIDENCE', 'recovery_handoff_live_required')
+        _handoff_recheck(live, proof['live_raw'], proof['unavailable'], repo=scope.parents[3],
+                           baseline=proof['baseline'], index_path=proof['index_path'], expected_event=state['head'])
     event_ref = _publish(scope / "events" / f"{event['seq']:010d}.json", _canonical(event), scope)
     return {"event": event, "ref": event_ref}
 
 
-def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
+def build(repo_path: Path, manifest_path: Path, output_dir: Path, *, recovery_sources: Path | None = None) -> Json:
     started = time.monotonic_ns()
     repo = Path(repo_path).resolve()
     manifest_path = Path(manifest_path).resolve()
@@ -1812,13 +2498,19 @@ def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
     for key in EVIDENCE_KEYS:
         if key.endswith("_path"):
             _safe_write_path(_path(manifest["evidence"][key], manifest_path), run)
+    program = _workflow(manifest, _hash(manifest_raw))
+    _check_workflow_capacity(program)
+    recovery_capture = None
+    recovery_preflight = None
+    manifest_ref = {'path': str(manifest_path), 'sha256': _hash(manifest_raw)}
+    intended_script_ref = {'path': str(run / 'workflow.js'), 'sha256': _hash(program)}
     with _writer_lock(scope):
         state = _load_scope(scope, manifest, inputs)
         if state["genesis"] is not None:
             if not state["events"]:
                 _fail("E_POLICY_SOURCE", "incomplete_bootstrap_requires_review", scope)
             for name, source in sources.items():
-                if state["genesis"]["initial_sources"][name]["sha256"] != source["sha256"]:
+                if state.get('active_sources', state['genesis']['initial_sources'])[name]['sha256'] != source['sha256']:
                     _fail("E_SOURCE_DRIFT", "active_cycle_fixed_source_changed", source["path"])
             if state["pending"] is not None:
                 pending_payload = state["pending"]["event"]["payload"]
@@ -1838,10 +2530,11 @@ def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
             if manifest["evidence"]["cycle_origin"] != state["genesis_ref"]:
                 _fail("E_PREVIOUS_IDENTITY", "scope_origin_required", manifest_path)
             view = _replay_history(state)
+            _verify_reserved_clients(_identity(manifest), state['genesis_ref'], state['head'],
+                manifest_path, _FrozenInputs(view['frozen_raw']), reason='scope_latest_head_or_attempt')
             if (_bound_result_ref(manifest["evidence"]["previous_round"], manifest_path, view["latest_round"], scope) != view["latest_round"] or
                     manifest["round"] != view["charged_rounds"] + 1 or
-                    manifest["attempt_index"] != state["reserve_count"] + 1 or
-                    any(a["identity"]["client_round_id"] == manifest["client_round_id"] for a in view["attempts"])):
+                    manifest["attempt_index"] != state["reserve_count"] + 1):
                 _fail("E_PREVIOUS_IDENTITY", "scope_latest_head_or_attempt", manifest_path)
             # Later terminal evidence changes resources only, never old votes/policy.
             resources = view["resource_view"]
@@ -1857,6 +2550,11 @@ def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
             if not resources["next_round_dispatch_allowed"]:
                 _fail("E_RESOURCE_PENDING", "prefix_unknown_calls")
             _require_dispatch_policy(view)
+            if _first_recovery_successor(state, manifest):
+                if recovery_sources is None:
+                    _fail('E_RECOVERY_EVIDENCE', 'recovery_sources_required')
+                recovery_capture = _capture_recovery_handoff(repo, state, manifest, manifest_ref,
+                    intended_script_ref, recovery_sources, _FrozenInputs(view['frozen_raw']))
             for origin, raw in view["frozen_raw"].items():
                 if origin not in inputs.raw:
                     inputs.raw[origin] = raw
@@ -1892,7 +2590,8 @@ def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
             _fail("E_PREVIOUS_IDENTITY", "first_attempt_identity", manifest_path)
         if state["genesis"] is None and manifest["evidence"]["dispatch_preflight"] is not None:
             _fail("E_POLICY_SOURCE", "first_attempt_preflight_without_history")
-        for name in ("workflow.js", "build-record.json", "input-closure.json", "build-metadata.json"):
+        for name in ("workflow.js", "build-record.json", "input-closure.json", "build-metadata.json",
+                     "recovery-preflight.json", "recovery-handoff-observations.json"):
             if (run / name).exists():
                 _fail("E_OUTPUT_CONFLICT", "unreserved_existing_output", run / name)
         for key in EVIDENCE_KEYS:
@@ -1915,7 +2614,9 @@ def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
             state.update({"genesis": genesis, "genesis_ref": genesis_ref})
         # 空已验证事件序列导出真实初态，且在 script/reserve 之前执行政策前置。
         _require_dispatch_policy(_replay_history(state))
-        script_ref = _publish(run / "workflow.js", _workflow(manifest, _hash(manifest_raw)), run)
+        if recovery_capture is not None:
+            recovery_preflight = _publish_recovery_handoff(recovery_capture, state, scope, run, inputs)
+        script_ref = _publish(run / "workflow.js", program, run)
         inputs.read(Path(script_ref["path"]))
         metadata = {"generated_at": datetime.now(timezone.utc).isoformat(),
                     "host_build_duration_ms": max(0, (time.monotonic_ns() - started) // 1_000_000)}
@@ -1923,8 +2624,13 @@ def build(repo_path: Path, manifest_path: Path, output_dir: Path) -> Json:
         inputs.read(run / "build-metadata.json")
         closure_ref = _freeze_closure(inputs, scope, run / "input-closure.json")
         manifest_ref = {"path": str(manifest_path), "sha256": _hash(manifest_raw)}
-        reservation = _reserve_build(state, scope, manifest, manifest_ref, script_ref)
-        record = _record(manifest, manifest_ref, sources, effective, state, reservation, closure_ref, script_ref, metadata)
+        if recovery_capture is None:
+            reservation = _reserve_build(state, scope, manifest, manifest_ref, script_ref)
+        else:
+            reservation = _reserve_build(state, scope, manifest, manifest_ref, script_ref,
+                recovery_preflight=recovery_preflight, inputs=_FrozenInputs(dict(inputs.raw)), live=recovery_capture['live'])
+        record = _record(manifest, manifest_ref, sources, effective, state, reservation, closure_ref, script_ref, metadata,
+                         recovery_preflight=recovery_preflight)
         _publish(run / "build-record.json", _canonical(record), run)
         return {"build_record": str(run / "build-record.json"), "workflow_script": str(run / "workflow.js"), "resume_only": False}
 
@@ -2306,7 +3012,8 @@ def _policy_drift(view: Json, attempt: Json, config: Json, anchor: Json) -> Json
             'drift_check_skipped': skipped, 'drift_action': action}
 
 
-def _apply_policy(genesis: Json, attempts: list[Json], effective_config: Json, anchor: Json) -> Json:
+def _apply_policy(genesis: Json, attempts: list[Json], effective_config: Json, anchor: Json, *,
+                  attempt_offset: int = 0) -> Json:
     """Fold an entire VERIFIED prefix from zero, without accepting derived state.
 
     attempts are ordered {identity, attempt_index, audit: _classify_native output,
@@ -2390,8 +3097,11 @@ def _apply_policy(genesis: Json, attempts: list[Json], effective_config: Json, a
     runs: set[str] = set()
     if not isinstance(attempts, list):
         _fail('E_POLICY_SOURCE', 'verified_attempts_required')
-    for attempt_index, attempt in enumerate(attempts, 1):
-        # No input count/remaining/approved flag participates in this decision.
+    if type(attempt_offset) is not int or attempt_offset not in (0, 1):
+        _fail('E_PREVIOUS_IDENTITY', 'policy_recovery_offset')
+    for attempt_index, attempt in enumerate(attempts, 1 + attempt_offset):
+        # The offset comes only from the verified first rejection prefix;
+        # rejection is not inserted as a fabricated attempt or vote.
         _require_dispatch_policy(policy)
         _round_identity(attempt.get('identity'))
         identity = attempt['identity']
@@ -2509,7 +3219,7 @@ def _verify_termination(native: Json, index: Json, index_path: Path, inputs: _In
         _id(event_ref["event_uuid"], code)
         if event_ref["agent_id"] != link["agent_id"]:
             _fail(code, "termination_agent_mismatch", index_path)
-        path, data = inputs.dereference(event_ref["file"], index_path, code)
+        path, data = _recovery_dereference(inputs, event_ref["file"], index_path, code, "typed_event")
         # JSONL is LF-delimited bytes. Unicode U+2028/U+2029 inside JSON is NOT a line break.
         lines = data.split(b"\n")
         if event_ref["line"] > len(lines) or not lines[event_ref["line"] - 1]:
@@ -2527,9 +3237,7 @@ def _native_build(repo: Path, manifest_path: Path, build_path: Path, inputs: _In
     manifest = _parse(raw, manifest_path)
     _validate_manifest(manifest)
     build = _parse(inputs.read(build_path, code), build_path, code)
-    _keys(build, {"schema_version", "manifest", "identity", "sources", "effective_config", "budgets", "roles",
-                  "workflow_script", "attempt_index", "genesis", "prefix_head", "reservation", "input_closure",
-                  "generated_at", "host_build_duration_ms"}, code, "build_record_keys", build_path)
+    recovery_required = _recovery_build_schema(build, build_path, inputs, code)
     _version(build["schema_version"], code)
     _integer(build["attempt_index"], 1, code)
     _integer(build["host_build_duration_ms"], 0, code)
@@ -2542,6 +3250,16 @@ def _native_build(repo: Path, manifest_path: Path, build_path: Path, inputs: _In
     if (_canonical(build["budgets"]) != _canonical(BUDGETS) or
             _canonical(build["roles"]) != _canonical(_roles(manifest))):
         _fail(code, "build_roles_or_budgets", build_path)
+    if not isinstance(inputs, _FrozenInputs):
+        scope = repo / '.aria' / 'audit-reports' / '_executor-ledgers' / _hash(
+            _canonical([manifest['checkpoint'], manifest['change_id']]))
+        rejected_path = scope / 'events' / '0000000002.json'
+        if rejected_path.exists():
+            rejected_raw = inputs.read(rejected_path, 'E_POLICY_SOURCE')
+            rejected = _parse(rejected_raw, rejected_path, 'E_POLICY_SOURCE')
+            if rejected.get('kind') == 'dispatch_rejected' and rejected.get('payload', {}).get('reservation') == build['reservation']:
+                _verify_recovery_event(rejected, {'path': str(rejected_path), 'sha256': _hash(rejected_raw)}, scope)
+                _fail('E_PREVIOUS_IDENTITY', 'rejected_dispatch_not_a_run', build_path)
     _keys(build["sources"], set(SOURCE_NAMES), code, "build_sources", build_path)
     for name, path in _fixed_paths(repo).items():
         source_path, source_raw = inputs.dereference(build["sources"][name], build_path, "E_SOURCE_DRIFT")
@@ -2579,7 +3297,7 @@ def _native_build(repo: Path, manifest_path: Path, build_path: Path, inputs: _In
     if any(_canonical(payload[k]) != _canonical(build[k]) for k in
            ("identity", "attempt_index", "manifest", "workflow_script")):
         _fail(code, "reservation_binding", build_path)
-    closure_path, closure_raw = inputs.dereference(build["input_closure"], build_path, code)
+    closure_path, closure_raw = _recovery_dereference(inputs, build["input_closure"], build_path, code, "storage")
     closure = _parse(closure_raw, closure_path, code)
     _keys(closure, {"schema_version", "algorithm_version", "sources"}, code, "build_closure", closure_path)
     _version(closure["schema_version"], code)
@@ -2592,13 +3310,22 @@ def _native_build(repo: Path, manifest_path: Path, build_path: Path, inputs: _In
         origin = entry["origin"]
         if not Path(origin).is_absolute() or origin in captured:
             _fail(code, "closure_duplicate_or_relative_origin", closure_path)
-        _, blob = inputs.dereference(entry["blob"], closure_path, code)
+        _, blob = _recovery_dereference(inputs, entry["blob"], closure_path, code, "storage")
         if _hash(blob) != entry["sha256"]:
             _fail(code, "closure_blob_hash", closure_path)
         captured[origin] = blob
     if closure["sources"] != sorted(closure["sources"], key=lambda e: (e["origin"], e["sha256"])):
         _fail(code, "build_closure_order", closure_path)
-    frozen = _FrozenInputs(captured)
+    trace = _recovery_trace(inputs)
+    frozen = _TrackedFrozenInputs(captured, trace) if trace is not None else _FrozenInputs(captured)
+    if recovery_required:
+        if (reserve['seq'] != 3 or payload['previous_round'] is not None or payload['previous_attempt'] is not None):
+            _fail(code, 'build_recovery_reservation', build_path)
+        _verify_recovery_handoff(build['recovery_preflight'], manifest, build['manifest'], build['workflow_script'],
+                                  build['prefix_head'], frozen, repo)
+        if inputs.dereference(build['recovery_preflight'], build_path, code)[1] != frozen.dereference(
+                build['recovery_preflight'], build_path, code)[1]:
+            _fail(code, 'build_recovery_handoff_source', build_path)
     policy = _load_fixed_policy(repo, inputs)
     effective = _effective_policy(policy, manifest, repo, frozen)
     if _canonical(build["effective_config"]) != _canonical(effective):
@@ -2610,6 +3337,129 @@ def _native_build(repo: Path, manifest_path: Path, build_path: Path, inputs: _In
         if inputs.read(path, code) != frozen.read(path, code):
             _fail(code, "build_closure_source_mismatch", path)
     return manifest, build
+
+
+def _recovery_compatibility_manifest(repo_path: Path) -> Json:
+    """Mechanically describe the one supported transition using current bytes."""
+    paths = _fixed_paths(Path(repo_path).resolve())
+    reader = _Inputs()
+    return {"schema_version": 1, "compatibility_id": "pre-dispatch-rejection-v1",
+            "from": {"executor": "5b9a32e23d665e494a21dc002a1a8498db445462762fba52916ce79716333777",
+                     "contract": "27e145e159e5b828e2c60d9a743ca8a0ea59bfb11560ce4f1e8783e2ed711920"},
+            "to": {name: _hash(reader.read(paths[name], "E_SOURCE_DRIFT"))
+                   for name in ("executor", "contract")}}
+
+
+def _recovery_source_generations(repo_path: Path, manifest_path: Path, build_record_path: Path, *,
+                                 inputs: _Inputs | None = None) -> tuple[Json, _FrozenInputs, _Inputs]:
+    """Validate the immutable original generation separately from live sources.
+
+    This plans evidence only; it does not authorize or publish a transition.
+    """
+    repo = Path(repo_path).resolve()
+    manifest_path = Path(manifest_path).resolve()
+    build_path = Path(build_record_path).resolve()
+    live = inputs if inputs is not None else _Inputs()
+    paths = _fixed_paths(repo)
+    catalog_path = paths["executor"].parent.parent / "references" / "pre-dispatch-recovery-compat.json"
+    try:
+        catalog_raw = live.read(catalog_path, "E_SOURCE_DRIFT")
+        catalog = _parse(catalog_raw, catalog_path, "E_SOURCE_DRIFT")
+    except ExecutorError as error:
+        if error.error_code != "E_SOURCE_DRIFT":
+            raise
+        _fail("E_SOURCE_DRIFT", "recovery_compat_unreadable_or_invalid", catalog_path)
+    expected = _recovery_compatibility_manifest(repo)
+    if (not isinstance(catalog, dict) or type(catalog.get("schema_version")) is not int or
+            _canonical(catalog) != _canonical(expected)):
+        _fail("E_SOURCE_DRIFT", "recovery_compat_catalog", catalog_path)
+    if catalog["from"] == catalog["to"]:
+        _fail("E_SOURCE_DRIFT", "recovery_compat_same_generation", catalog_path)
+
+    manifest_raw = live.read(manifest_path, "E_INPUT_SCHEMA")
+    manifest = _parse(manifest_raw, manifest_path)
+    _validate_manifest(manifest)
+    build_raw = live.read(build_path, "E_NATIVE_EVIDENCE")
+    build = _parse(build_raw, build_path, "E_NATIVE_EVIDENCE")
+    _keys(build, {"schema_version", "manifest", "identity", "sources", "effective_config", "budgets", "roles",
+                  "workflow_script", "attempt_index", "genesis", "prefix_head", "reservation", "input_closure",
+                  "generated_at", "host_build_duration_ms"}, "E_NATIVE_EVIDENCE", "build_record_keys", build_path)
+    if (_canonical(build["identity"]) != _canonical(_identity(manifest)) or
+            type(build["attempt_index"]) is not int or build["attempt_index"] != manifest["attempt_index"]):
+        _fail("E_PREVIOUS_IDENTITY", "recovery_identity_build", build_path)
+    effective = build["effective_config"]
+    guard = effective.get("require_same_admitted_roles") if isinstance(effective, dict) else None
+    if (manifest["require_same_admitted_roles"] is not True or not isinstance(guard, dict) or
+            guard.get("value") is not True):
+        _fail("E_SOURCE_DRIFT", "recovery_source_guard", build_path)
+
+    _keys(build["sources"], set(SOURCE_NAMES), "E_SOURCE_DRIFT", "recovery_source_keys", build_path)
+    for name, path in paths.items():
+        source = build["sources"][name]
+        _ref_shape(source, "E_SOURCE_DRIFT")
+        if source["path"] != str(path):
+            _fail("E_SOURCE_DRIFT", "recovery_source_path", path)
+    for name in ("executor", "contract"):
+        if build["sources"][name]["sha256"] != catalog["from"][name]:
+            _fail("E_SOURCE_DRIFT", "recovery_source_from", paths[name])
+
+    _ref_shape(build["genesis"], "E_POLICY_SOURCE")
+    genesis_path = _path(build["genesis"]["path"], build_path)
+    scope = repo / ".aria" / "audit-reports" / "_executor-ledgers" / _hash(
+        _canonical([manifest["checkpoint"], manifest["change_id"]]))
+    if genesis_path != scope / "genesis.json" or build["genesis"]["path"] != str(genesis_path):
+        _fail("E_PREVIOUS_IDENTITY", "recovery_identity_scope", genesis_path)
+    _, genesis_raw = live.dereference(build["genesis"], build_path, "E_POLICY_SOURCE")
+    genesis = _parse(genesis_raw, genesis_path, "E_POLICY_SOURCE")
+    _validate_recovery_genesis(genesis, "E_POLICY_SOURCE")
+    if any(genesis[key] != manifest[key] for key in ("audit_cycle_id", "checkpoint", "change_id")):
+        _fail("E_PREVIOUS_IDENTITY", "recovery_identity_genesis", genesis_path)
+    closure_path, closure_raw = _recovery_dereference(live, build["input_closure"], build_path, "E_POLICY_SOURCE", "storage")
+    old = _TrackedFrozenInputs(_history_closure(build["input_closure"], build_path, scope, raw=closure_raw).raw,
+                               _RecoveryReadTrace())
+    if old.read(genesis_path) != genesis_raw:
+        _fail("E_POLICY_SOURCE", "history_blob_hash", genesis_path)
+
+    # Blob refs have storage paths; logical source refs deliberately do not.
+    for name in SOURCE_NAMES:
+        source = build["sources"][name]
+        original = old.read(paths[name])
+        blob_ref = genesis["initial_sources"][name]
+        if blob_ref != {"path": str(scope / "blobs" / (blob_ref["sha256"] + ".blob")),
+                        "sha256": blob_ref["sha256"]}:
+            _fail("E_SOURCE_DRIFT", "recovery_source_blob_path", genesis_path)
+        _, blob = _recovery_dereference(live, blob_ref, genesis_path, "E_POLICY_SOURCE", "storage")
+        if _hash(original) != source["sha256"] or original != blob:
+            _fail("E_SOURCE_DRIFT", "recovery_source_genesis", paths[name])
+
+    current = {name: live.reference(path, "E_SOURCE_DRIFT") for name, path in paths.items()}
+    for name in ("config", "defaults", "convergence_algorithm", "report_storage"):
+        if current[name] != build["sources"][name]:
+            _fail("E_SOURCE_DRIFT", "recovery_source_changed", paths[name])
+    if any(current[name]["sha256"] != catalog["to"][name] for name in ("executor", "contract")):
+        _fail("E_SOURCE_DRIFT", "recovery_compat_stale", catalog_path)
+    if (_load_fixed_policy(repo, old)["require_same_admitted_roles"] is not True or
+            _load_fixed_policy(repo, live)["require_same_admitted_roles"] is not True):
+        _fail("E_SOURCE_DRIFT", "recovery_source_guard", build_path)
+
+    # _native_build validates the complete record/policy/graph.  Give it a
+    # private old-generation view, augmented only with immutable envelope files;
+    # reserve is published after closure and need not be an origin within it.
+    validation_raw = dict(old.raw)
+    validation_raw[str(build_path)] = build_raw
+    validation_raw[str(closure_path)] = closure_raw
+    reserve_path, reserve_raw = live.dereference(build["reservation"], build_path, "E_POLICY_SOURCE")
+    validation_raw[str(reserve_path)] = reserve_raw
+    closure = _parse(closure_raw, closure_path, "E_POLICY_SOURCE")
+    for entry in closure["sources"]:
+        blob_path, blob_raw = _recovery_dereference(live, entry["blob"], closure_path, "E_POLICY_SOURCE", "storage")
+        validation_raw[str(blob_path)] = blob_raw
+    if old.read(manifest_path) != manifest_raw:
+        _fail("E_PREVIOUS_IDENTITY", "recovery_identity_manifest", manifest_path)
+    _native_build(repo, manifest_path, build_path, _TrackedFrozenInputs(validation_raw, old.recovery_trace))
+    return ({"compatibility_id": catalog["compatibility_id"],
+             "compatibility_manifest": {"path": str(catalog_path), "sha256": _hash(catalog_raw)},
+             "from_sources": build["sources"], "to_sources": current}, old, live)
 
 
 def _classify_native(repo_path: Path, manifest_path: Path, build_record_path: Path,
@@ -3424,6 +4274,7 @@ def _prepare_policy(repo_path: Path, manifest_path: Path, build_record_path: Pat
             renderer_inputs = _FrozenInputs({**frozen.raw, str(closure_path): Path(closure_ref['path']).read_bytes(),
                                              str(request_path): _canonical(request)})
             script = _render_policy_workflow(request_ref, inputs=renderer_inputs)
+            _check_workflow_capacity(script)
             script_ref = _publish(script_path, script, run, resume=True)
         elif script_path.exists():
             _fail('E_OUTPUT_CONFLICT', 'unexpected_policy_script', script_path)
@@ -3502,6 +4353,1525 @@ DISPOSITION_OPTIONS = [
 DISPOSITION_KEYS = {'schema_version', 'algorithm_version', 'identity', 'target_result', 'evidence',
                     'input_closure', 'action', 'token', 'effective_limit', 'remaining_rounds',
                     'overridden_by_user', 'degraded', 'converged'}
+
+
+_RUNTIME_REJECTION_PROFILES: dict[str, Json] = {
+    '2.1.318': {
+        'binary_sha256': '708c77b204db30086ff6f1ed34577bda03e1be74ced80557cbf7b54249ebf0bd',
+        'capacity_source': '.aria/notes/2026-11-07-executor-pre-dispatch-recovery/runtime-capacity-source-windows.json',
+        'loader_source': '.aria/notes/2026-11-07-executor-pre-dispatch-recovery/runtime-loader-to-call-static-evidence.json',
+        'windows': [
+            {'start': 304476230, 'end': 304478630, 'sha256': 'fd742347a3860917357f75700ac6c536f4beec15ffa72c11b5c1a6dea8528ab0'},
+            {'start': 315302860, 'end': 315303700, 'sha256': 'f9ec9f4607472d5cb24e512f8fe5487a24e1867d34d853e08bd5514528ec388d'},
+            {'start': 315310362, 'end': 315315900, 'sha256': 'f1515c786e76998c5eb220cdbed29a03b2d7fa7a959753397a678ffd29eacf02'},
+        ],
+    },
+}
+
+
+def _parse_recovery_rejection(repo_path: Path, manifest: Json, build_record: Json,
+                              native_record_path: Path, tool_use_id: str, *,
+                              inputs: _Inputs | None = None) -> Json:
+    """Observe one native capacity rejection and its local static basis, without granting recovery."""
+    inputs = inputs if inputs is not None else _Inputs()
+    code = 'E_RECOVERY_EVIDENCE'
+    stage = 'native_'
+
+    def safe_path(path: Path) -> Path:
+        if not path.is_absolute() or Path(os.path.abspath(path)) != path:
+            _fail(code, stage + 'path_not_absolute', path)
+        if not isinstance(inputs, _FrozenInputs) and any(part.is_symlink() for part in (path, *path.parents)):
+            _fail(code, stage + 'symlink', path)
+        return path
+
+    def capture(path: Path) -> bytes:
+        return inputs.read(safe_path(path), code)
+
+    try:
+        repo = Path(repo_path).resolve(strict=True)
+        config = _recovery_config_root(inputs)
+        native = safe_path(Path(native_record_path))
+        if native.parent.parent != config / 'projects' or native.is_relative_to(repo):
+            _fail(code, 'native_namespace', native)
+        session_id = native.stem
+        if not session_id or native.name != session_id + '.jsonl':
+            _fail(code, 'native_session_filename', native)
+        if not isinstance(tool_use_id, str) or not tool_use_id.strip():
+            _fail(code, 'native_tool_id')
+        with _recovery_read_role(inputs, "native_root"):
+            raw = capture(native)
+        if not raw or not raw.endswith(b'\n'):
+            _fail(code, 'native_incomplete', native)
+        lines = raw[:-1].split(b'\n')
+        rows = [_parse(line, native, code) for line in lines]
+        if any(not isinstance(row, dict) for row in rows):
+            _fail(code, 'native_row', native)
+        identity = _identity(manifest)
+        if _canonical(build_record['identity']) != _canonical(identity):
+            _fail(code, 'native_manifest_identity')
+        manifest_ref = build_record['manifest']
+        _ref_shape(manifest_ref, code)
+        manifest_path = safe_path(Path(manifest_ref['path']))
+        manifest_raw = capture(manifest_path)
+        if (_hash(manifest_raw) != manifest_ref['sha256'] or
+                _canonical(_parse(manifest_raw, manifest_path, code)) != _canonical(manifest)):
+            _fail(code, 'native_manifest_binding')
+        script_ref = build_record['workflow_script']
+        _ref_shape(script_ref, code)
+        script_path = safe_path(Path(script_ref['path']))
+        if not script_path.is_relative_to(repo):
+            _fail(code, 'native_script_path', script_path)
+        script = capture(script_path)
+        if len(script) <= 524288 or _hash(script) != script_ref['sha256']:
+            _fail(code, 'native_script_binding', script_path)
+        expected_input = {'scriptPath': str(script_path),
+                          'args': {'identity': identity, 'manifest_sha256': manifest_ref['sha256']}}
+        requests: list[tuple[int, Json, Json]] = []
+        responses: list[tuple[int, Json, Json]] = []
+        for index, row in enumerate(rows):
+            kind = row.get('type')
+            if kind not in ('assistant', 'user'):
+                continue
+            message = row.get('message')
+            if not isinstance(message, dict) or message.get('role') != kind:
+                continue
+            content = message.get('content')
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if kind == 'assistant' and block.get('type') == 'tool_use':
+                    call_input = block.get('input')
+                    args = call_input.get('args') if isinstance(call_input, dict) else None
+                    call_identity = args.get('identity') if isinstance(args, dict) else None
+                    associated = (isinstance(call_input, dict) and
+                                  (call_input.get('scriptPath') == str(script_path) or
+                                   (isinstance(args, dict) and args.get('manifest_sha256') == manifest_ref['sha256']) or
+                                   (isinstance(call_identity, dict) and
+                                    call_identity.get('audit_cycle_id') == identity['audit_cycle_id'])))
+                    if block.get('id') == tool_use_id or (block.get('name') == 'Workflow' and associated):
+                        requests.append((index, row, block))
+                if kind == 'user' and block.get('type') == 'tool_result' and block.get('tool_use_id') == tool_use_id:
+                    responses.append((index, row, block))
+        if len(requests) != 1 or len(responses) != 1:
+            _fail(code, 'native_ambiguous_pair', native)
+        qi, request, call = requests[0]
+        ri, response, result = responses[0]
+        for row in (request, response):
+            if (row.get('isSidechain') is not False or row.get('isMeta', False) is not False or
+                    row.get('sessionId') != session_id or row.get('cwd') != str(repo) or
+                    not isinstance(row.get('uuid'), str) or not row['uuid'].strip()):
+                _fail(code, 'native_root_identity', native)
+        if (qi >= ri or request['uuid'] == response['uuid'] or
+                sum(row.get('uuid') == request['uuid'] for row in rows if row.get('type') in ('assistant', 'user')) != 1 or
+                sum(row.get('uuid') == response['uuid'] for row in rows if row.get('type') in ('assistant', 'user')) != 1 or
+                response.get('parentUuid') != request['uuid'] or
+                response.get('sourceToolAssistantUUID') != request['uuid'] or
+                call.get('id') != tool_use_id or call.get('name') != 'Workflow' or
+                _canonical(call.get('input')) != _canonical(expected_input)):
+            _fail(code, 'native_pair_binding', native)
+        for selected_row in (request, response):
+            if 'wireToolInputs' not in selected_row:
+                continue
+            wire_inputs = selected_row['wireToolInputs']
+            if not isinstance(wire_inputs, dict):
+                _fail(code, 'native_wire_shape', native)
+            if tool_use_id in wire_inputs:
+                wire_input = wire_inputs[tool_use_id]
+                # This profile's observed wire value is an input object, not
+                # ordinary JSON-looking prose. Verify it before excluding the
+                # duplicate representation from further association scanning.
+                if not isinstance(wire_input, dict) or _canonical(wire_input) != _canonical(expected_input):
+                    _fail(code, 'native_wire_binding', native)
+        qt = datetime.fromisoformat(request['timestamp'].replace('Z', '+00:00'))
+        rt = datetime.fromisoformat(response['timestamp'].replace('Z', '+00:00'))
+        if qt.utcoffset() is None or rt.utcoffset() is None or rt < qt:
+            _fail(code, 'native_timestamp', native)
+        expected_error = f'<tool_use_error>Workflow script file {script_path} exceeds 524288 bytes</tool_use_error>'
+        if result.get('is_error') is not True or result.get('content') != expected_error:
+            _fail(code, 'native_error', native)
+        raw_result = response.get('toolUseResult')
+        expected_raw_error = f'Error: Workflow script file {script_path} exceeds 524288 bytes'
+        if raw_result is not None and raw_result != expected_raw_error:
+            _fail(code, 'native_response_conflict', native)
+
+        def has_run_signal(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(key in ('runId', 'taskId', 'workflowRunId', 'native_run') or
+                           (key in ('success', 'completed', 'started', 'running') and item is True) or
+                           (key in ('status', 'state') and isinstance(item, str) and
+                            item in ('completed', 'started', 'running', 'launched', 'success', 'succeeded')) or
+                           has_run_signal(item) for key, item in value.items())
+            if isinstance(value, list):
+                return any(has_run_signal(item) for item in value)
+            return False
+
+        def selected_evidence(row: Json, block: Json) -> Json:
+            view = {**row, 'message': {**row['message'], 'content': [block]}}
+            wire = row.get('wireToolInputs')
+            if isinstance(wire, dict):
+                view['wireToolInputs'] = {key: item for key, item in wire.items() if key == tool_use_id}
+            return view
+
+        if (has_run_signal(selected_evidence(request, call)) or
+                has_run_signal(selected_evidence(response, result))):
+            _fail(code, 'native_run_signal', native)
+
+        def explicitly_associated(value: Any) -> bool:
+            # Inspect structured links only, never JSON-looking prose. API replay
+            # envelopes below are not additional native evidence or authority.
+            if isinstance(value, dict):
+                wire_refs = value.get('wireToolInputs')
+                if (value.get('id') == tool_use_id or
+                        (isinstance(wire_refs, dict) and tool_use_id in wire_refs)):
+                    return True
+                for key, item in value.items():
+                    if ((key in ('tool_use_id', 'toolUseID', 'toolUseId') and item == tool_use_id) or
+                            (key == 'audit_cycle_id' and item == identity['audit_cycle_id']) or
+                            (key == 'manifest_sha256' and item == manifest_ref['sha256']) or
+                            (key == 'scriptPath' and item == str(script_path))):
+                        return True
+                    if explicitly_associated(item):
+                        return True
+            elif isinstance(value, list):
+                return any(explicitly_associated(item) for item in value)
+            return False
+
+        for index, row in enumerate(rows):
+            if row.get('type') in ('api-request', 'api-request-shape', 'api-request-blob'):
+                continue
+            remainder = row
+            if index in (qi, ri):
+                selected_block = call if index == qi else result
+                message = row['message']
+                remainder = {**row, 'message': {**message, 'content':
+                    [block for block in message['content'] if block is not selected_block]}}
+                # The selected raw wire input is another representation of the
+                # same block, not a reason to skip the rest of its assistant row.
+                wire = remainder.get('wireToolInputs')
+                if isinstance(wire, dict):
+                    remainder['wireToolInputs'] = {key: item for key, item in wire.items() if key != tool_use_id}
+            if explicitly_associated(remainder):
+                # Only the selected exact rejection pair is closed here. A
+                # linked native progress/system/other record is unresolved
+                # evidence, even if it has not supplied a runId yet.
+                _fail(code, 'native_associated_evidence', native)
+        stage = 'runtime_'
+        version = request.get('version')
+        if not isinstance(version, str) or response.get('version') != version or version not in _RUNTIME_REJECTION_PROFILES:
+            _fail(code, 'runtime_version', native)
+        profile = _RUNTIME_REJECTION_PROFILES[version]
+        windows = profile['windows']
+        if not isinstance(windows, list) or len(windows) != 3:
+            _fail(code, 'runtime_profile_windows')
+        refs: list[Json] = []
+        for name, kind, expected in (
+                ('capacity_source', 'static_distribution_bytes_not_executed', windows[:1]),
+                ('loader_source', 'static_only_no_private_module_execution', windows[1:])):
+            source = Path(profile[name])
+            path = safe_path(source if source.is_absolute() else repo / source)
+            source_raw = capture(path)
+            data = _parse(source_raw, path, code)
+            if (not isinstance(data, dict) or data.get('kind') != kind or
+                    data.get('binary_sha256') != profile['binary_sha256'] or not isinstance(data.get('windows'), list)):
+                _fail(code, 'runtime_source_schema', path)
+            for window in expected:
+                matches = [w for w in data['windows'] if isinstance(w, dict) and
+                           w.get('start') == window['start'] and w.get('end') == window['end']]
+                if len(matches) != 1:
+                    _fail(code, 'runtime_window_mapping', path)
+                found = matches[0]
+                if 'bytes_hex' in found and 'text' not in found and isinstance(found['bytes_hex'], str):
+                    content = bytes.fromhex(found['bytes_hex'])
+                elif 'text' in found and 'bytes_hex' not in found and isinstance(found['text'], str):
+                    content = found['text'].encode('utf-8')
+                else:
+                    _fail(code, 'runtime_window_bytes', path)
+                if (found.get('sha256') != window['sha256'] or
+                        len(content) != window['end'] - window['start'] or _hash(content) != window['sha256']):
+                    _fail(code, 'runtime_window_hash', path)
+            refs.append({'path': str(path), 'sha256': _hash(source_raw)})
+        return {'cause': 'workflow_input_file_too_large', 'session_id': session_id,
+                'source': {'original_locator': str(native), 'runtime_config_root': str(config),
+                           'snapshot': {'path': str(native), 'sha256': _hash(raw)}},
+                'request': {'uuid': request['uuid'], 'tool_use_id': tool_use_id,
+                            'line_sha256': _hash(lines[qi]), 'input': call['input']},
+                'response': {'uuid': response['uuid'], 'tool_use_id': tool_use_id,
+                             'line_sha256': _hash(lines[ri]), 'error': result['content']},
+                'script': {'path': str(script_path), 'sha256': _hash(script)},
+                'runtime_rejection_basis': {'schema_version': 1, 'binary_sha256': profile['binary_sha256'],
+                                            'native_version': version, 'capacity_source': refs[0],
+                                            'loader_source': refs[1], 'windows': windows}}
+    except ExecutorError as exc:
+        if exc.error_code == code and exc.reason.startswith(stage):
+            raise
+        return _fail(code, stage + (exc.reason or 'invalid'), exc.input_ref)
+    except (KeyError, TypeError, ValueError, OSError, OverflowError, RecursionError):
+        return _fail(code, stage + 'invalid')
+
+
+def _recovery_authority_questions(binding: Json, acceptance: bool) -> list[Json]:
+    """The two observed UIs, not an allowlist supplied by the locator."""
+    identity = binding['identity']
+    prefix = '仅绑定：' if acceptance else '仅绑定此历史对象：'
+    preview = (prefix + '\nchange_id: ' + identity['change_id'] +
+               '\ncheckpoint: ' + identity['checkpoint'] +
+               '\nreservation sha256:\n' + binding['reservation']['sha256'] +
+               '\nscript sha256:\n' + binding['script']['sha256'] + '\n\n')
+    if acceptance:
+        preview += ('这是产品层的证据接受决定，不是补签“历史程序身份已经查明”。\n'
+                    '不接受已知运行反证，不跳过任何启用审计，不批准推荐机制 Phase B。')
+        return [{'header': '恢复证据边界', 'multiSelect': False,
+                 'question': '对这个已冻结的历史准备物，是否接受“真实原生容量拒绝 + 已取证的本机拒绝路径 + 你已确认的独占授权声明”作为受控恢复依据，明确接受历史执行映像身份未能独立核验的残余不确定，而不再要求补出该历史身份记录？',
+                 'options': [
+                     {'label': '接受此边界，继续恢复',
+                      'description': '仅对此旧对象接受上述依据；不声称已证明历史映像相同。已知成功或未知运行反证仍否决，原件/cycle/预算不改；仍须修订规范、完成全部启用审计、实现测试与发布后才实际恢复。',
+                      'preview': preview},
+                     {'label': '保留门槛，保持阻塞',
+                      'description': '不接受这一残余不确定。旧 reserve 继续 pending；本轮目标保持未完成，不通过重建 cycle、追加证书或消耗审计轮数绕过缺口。',
+                      'preview': '不新增恢复许可。\n旧准备物及剩余两轮审计预算保持原状。\n继续需要新的可信历史证据；现有记录尚不足以按当前门槛解锁。'}]}]
+    preview += ('当前只有首个 reserve，尚未恢复。\n'
+                '操作者声明是有界可信输入，不伪称机器已证明全局无运行。\n'
+                '任何已知冲突仍拒绝；不直接修改旧账本。')
+    return [{'header': '历史恢复边界', 'multiSelect': False,
+             'question': '对于推进机制原 post_planning 的570716-byte旧准备物，你能否确认它没有被另行授权或转交到其他会话/机器运行，并接受v1采用真实操作者声明支持的本机交互恢复，而不承诺全平台自动派发隔离？',
+             'options': [
+                 {'label': '确认唯一，采用交互恢复',
+                  'description': '我确认该旧准备物由本对话及其明确委派的操作域管理，未另行授权/转交别处执行；接受只有真实操作者声明才能进入历史恢复。仍须完成规范审计、实现测试和发布，原件/预算不改；已知成功或未知运行会否决恢复，声明不覆盖反证。',
+                  'preview': preview},
+                 {'label': '不能确认，保持挂起',
+                  'description': '不提供这项事实声明。原预留保持pending，不把未知当未运行，不冒充完整goal已经完成。'},
+                 {'label': '仍要求全自动全域证明',
+                  'description': '不接受人工声明作为边界；继续要求跨会话/平台的可强制登记与派发栅栏。当前公开Workflow入口没有这一闭合能力，恢复保持阻塞，不再用纸面规则拼凑保证。'}]}]
+
+
+def _validate_recovery_genesis(genesis: Any, code: str) -> None:
+    _keys(genesis, {'schema_version', 'algorithm_version', 'audit_cycle_id', 'checkpoint', 'change_id',
+                    'policy_inputs', 'anchor', 'origin_observation', 'initial_sources', 'initial_max_rounds'},
+          code, 'genesis_shape')
+    _version(genesis['schema_version'], code)
+    if genesis['algorithm_version'] != 'canonical_v1':
+        _fail(code, 'genesis_algorithm')
+    _integer(genesis['initial_max_rounds'], 1, code)
+    _keys(genesis['initial_sources'], set(SOURCE_NAMES), code, 'genesis_sources')
+    for ref in (*genesis['initial_sources'].values(), genesis['policy_inputs'], genesis['anchor'], genesis['origin_observation']):
+        _ref_shape(ref, code)
+
+
+def _validate_recovery_known_pair(rows: list[Json], locator: Json, binding: Json,
+                                  identity: Json, native: Path, repo: Path, code: str) -> None:
+    known_q = [(i, row) for i, row in enumerate(rows) if row.get('type') == 'assistant' and
+               row.get('isSidechain') is False and row.get('uuid') == locator['known_request_uuid']]
+    known_r = [(i, row) for i, row in enumerate(rows) if row.get('type') == 'user' and
+               row.get('isSidechain') is False and row.get('uuid') == locator['known_response_uuid']]
+    if len(known_q) != 1 or len(known_r) != 1:
+        _fail(code, 'known_pair', native)
+    qi, request = known_q[0]
+    ri, response = known_r[0]
+    for row, role in ((request, 'assistant'), (response, 'user')):
+        message = row.get('message')
+        if (not isinstance(message, dict) or message.get('role') != role or
+                not isinstance(message.get('content'), list)):
+            _fail(code, 'known_message_shape', native)
+        if (row.get('isMeta', False) is not False or row.get('cwd') != str(repo) or
+                row.get('sessionId') != native.stem):
+            _fail(code, 'known_root_identity', native)
+        if sum(other.get('uuid') == row['uuid'] for other in rows
+               if other.get('type') in ('assistant', 'user') and other.get('isSidechain') is False) != 1:
+            _fail(code, 'known_uuid', native)
+        if not isinstance(row.get('timestamp'), str):
+            _fail(code, 'known_timestamp_type', native)
+    if (qi >= ri or request['uuid'] == response['uuid'] or
+            response.get('parentUuid') != request['uuid'] or
+            response.get('sourceToolAssistantUUID') != request['uuid']):
+        _fail(code, 'known_pair_binding', native)
+    try:
+        qt = datetime.fromisoformat(request['timestamp'].replace('Z', '+00:00'))
+        rt = datetime.fromisoformat(response['timestamp'].replace('Z', '+00:00'))
+    except ValueError:
+        _fail(code, 'known_timestamp', native)
+    if qt.utcoffset() is None or rt.utcoffset() is None or rt < qt:
+        _fail(code, 'known_timestamp', native)
+    tool_id = locator['known_workflow_tool_call']
+    calls: list[tuple[Json, Json]] = []
+    results: list[tuple[Json, Json]] = []
+    for row in rows:
+        if row.get('isSidechain') is True or row.get('type') in ('api-request', 'api-request-shape', 'api-request-blob'):
+            continue
+        message = row.get('message')
+        blocks = message.get('content') if isinstance(message, dict) else None
+        if isinstance(blocks, list):
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get('type') == 'tool_use' and block.get('id') == tool_id:
+                    calls.append((row, block))
+                if block.get('type') == 'tool_result' and block.get('tool_use_id') == tool_id:
+                    results.append((row, block))
+        wire = row.get('wireToolInputs')
+        if isinstance(wire, dict) and tool_id in wire and row is not request and row is not response:
+            _fail(code, 'known_duplicate_wire', native)
+    if (len(calls) != 1 or len(results) != 1 or
+            calls[0][0] is not request or results[0][0] is not response):
+        _fail(code, 'known_ambiguous_pair', native)
+    call = calls[0][1]
+    expected_input = {'scriptPath': binding['script']['path'],
+                      'args': {'identity': identity, 'manifest_sha256': binding['manifest']['sha256']}}
+    if call.get('name') != 'Workflow' or _canonical(call.get('input')) != _canonical(expected_input):
+        _fail(code, 'known_tool_binding', native)
+    for row in (request, response):
+        if 'wireToolInputs' in row:
+            wire = row['wireToolInputs']
+            if not isinstance(wire, dict) or (tool_id in wire and
+                    _canonical(wire[tool_id]) != _canonical(expected_input)):
+                _fail(code, 'known_wire_binding', native)
+
+
+def _validate_recovery_operator_length(script: bytes, acceptance: bool, code: str) -> None:
+    # This observed operator question states a fixed 570716-byte object.
+    if not acceptance and len(script) != 570716:
+        _fail(code, 'target_operator_script_bytes')
+
+
+def _parse_recovery_authority(repo_path: Path, target_binding: Json, index_path: Path,
+                              acceptance: bool, inputs: _Inputs | None) -> Json:
+    """Read and bind one recorded root Q&A; no recovery or ledger mutation."""
+    capture = inputs if inputs is not None else _Inputs()
+    code = 'E_RECOVERY_EVIDENCE'
+    category = 'evidence_acceptance_' if acceptance else 'operator_'
+    stage = category
+    adapter = ('historical_evidence_acceptance_20261109_v1' if acceptance else
+               'operator_boundary_20261109_v1')
+    try:
+        repo = Path(repo_path).resolve(strict=True)
+        index_path = Path(index_path)
+        original = _parse(capture.read(index_path, code), index_path, code)
+        if not isinstance(original, dict):
+            _fail(code, 'index_shape')
+        if 'schema_version' in original:
+            _keys(original, {'schema_version', 'adapter', 'target', 'question', 'response', 'tool_use_id'}, code, 'index_shape')
+            _version(original['schema_version'], code)
+            if original['adapter'] != adapter:
+                _fail(code, 'index_adapter')
+            index = original
+        else:
+            if acceptance:
+                q, r = original['question'], original['response']
+                target = original['target']
+                digest_key = 'line_sha256'
+            else:
+                q, r = original['native_binding']['question'], original['native_binding']['answer']
+                target = original['exact_target']
+                digest_key = 'raw_line_sha256'
+            index = {'schema_version': 1, 'adapter': adapter, 'target': target,
+                     'question': {'path': original['native_source'], 'line': q['line'],
+                                  'uuid': q['uuid'], 'line_sha256': q[digest_key]},
+                     'response': {'path': original['native_source'], 'line': r['line'],
+                                  'uuid': r['uuid'], 'line_sha256': r[digest_key]},
+                     'tool_use_id': q['tool_use_id']}
+        _id(index['tool_use_id'], code)
+        stage = 'target_'
+        _keys(target_binding, {'identity', 'attempt_index', 'genesis', 'reservation', 'head', 'manifest', 'script'}, code, 'binding_shape')
+        _round_identity(target_binding['identity'])
+        if type(target_binding['attempt_index']) is not int or target_binding['attempt_index'] != 1:
+            _fail(code, 'attempt')
+        objects: Json = {}
+        for name in ('genesis', 'reservation', 'head', 'manifest', 'script'):
+            ref = target_binding[name]
+            _ref_shape(ref, code)
+            path = Path(ref['path'])
+            if (not path.is_absolute() or Path(os.path.abspath(path)) != path or
+                    not path.is_relative_to(repo) or
+                    (not isinstance(capture, _FrozenInputs) and any(p.is_symlink() for p in (path, *path.parents)))):
+                _fail(code, 'path', path)
+            _, objects[name] = capture.dereference(ref, index_path, code)
+        genesis = _parse(objects['genesis'], Path(target_binding['genesis']['path']), code)
+        _validate_recovery_genesis(genesis, code)
+        reserve = _parse(objects['reservation'], Path(target_binding['reservation']['path']), code)
+        manifest = _parse(objects['manifest'], Path(target_binding['manifest']['path']), code)
+        identity = _identity(manifest)
+        _round_identity(identity)
+        _keys(reserve, {'schema_version', 'seq', 'genesis', 'previous_event', 'kind', 'payload'}, code, 'reserve_shape')
+        _version(reserve['schema_version'], code)
+        _keys(reserve['payload'], {'identity', 'attempt_index', 'manifest', 'workflow_script', 'previous_round', 'previous_attempt'}, code, 'reserve_payload')
+        payload = reserve['payload']
+        _round_identity(payload['identity'])
+        if (_canonical(identity) != _canonical(target_binding['identity']) or identity['round'] != 1 or
+                type(manifest['attempt_index']) is not int or manifest['attempt_index'] != 1 or
+                type(reserve['seq']) is not int or reserve['seq'] != 1 or reserve['kind'] != 'reserve' or
+                reserve['previous_event'] is not None or _canonical(reserve['genesis']) != _canonical(target_binding['genesis']) or
+                _canonical(target_binding['head']) != _canonical(target_binding['reservation']) or
+                _canonical(payload['identity']) != _canonical(identity) or type(payload['attempt_index']) is not int or payload['attempt_index'] != 1 or
+                _canonical(payload['manifest']) != _canonical(target_binding['manifest']) or
+                _canonical(payload['workflow_script']) != _canonical(target_binding['script']) or
+                payload['previous_round'] is not None or payload['previous_attempt'] is not None or
+                any(genesis[k] != identity[k] for k in ('audit_cycle_id', 'checkpoint', 'change_id'))):
+            _fail(code, 'reserve_binding')
+        _integer(genesis['initial_max_rounds'], 1, code)
+        target_path, target_raw = capture.dereference(index['target'], index_path, code)
+        locator = _parse(target_raw, target_path, code)
+        if not isinstance(locator, dict):
+            _fail(code, 'locator_shape')
+        _round_identity(locator.get('identity'))
+        if (_canonical(locator['identity']) != _canonical(identity) or
+                any(_canonical(locator.get(k)) != _canonical(target_binding[v]) for k, v in
+                    (('genesis', 'genesis'), ('reservation', 'reservation'), ('current_head', 'head'), ('script', 'script'))) or
+                type(locator.get('script_bytes')) is not int or locator['script_bytes'] != len(objects['script']) or
+                type(locator.get('initial_max_rounds')) is not int or locator['initial_max_rounds'] != genesis['initial_max_rounds']):
+            _fail(code, 'locator_binding')
+        _validate_recovery_operator_length(objects['script'], acceptance, code)
+        for key in ('known_workflow_tool_call', 'known_request_uuid', 'known_response_uuid'):
+            _id(locator[key], code)
+        stage = 'native_'
+        for key in ('question', 'response'):
+            event = index[key]
+            _keys(event, {'path', 'line', 'uuid', 'line_sha256'}, code, 'event_shape')
+            _integer(event['line'], 1, code)
+            _id(event['uuid'], code)
+            _id(event['path'], code)
+            if not isinstance(event['line_sha256'], str) or re.fullmatch(r'[0-9a-f]{64}', event['line_sha256']) is None:
+                _fail(code, 'line_hash')
+        if index['question']['path'] != index['response']['path']:
+            _fail(code, 'different_sources')
+        native = Path(index['question']['path'])
+        config = _recovery_config_root(capture)
+        if (not native.is_absolute() or Path(os.path.abspath(native)) != native or
+                (not isinstance(capture, _FrozenInputs) and any(p.is_symlink() for p in (native, *native.parents))) or
+                native.parent.parent != config / 'projects' or native.is_relative_to(repo) or
+                not native.stem or native.name != native.stem + '.jsonl'):
+            _fail(code, 'namespace', native)
+        raw = _recovery_read(capture, native, code, "native_root")
+        if not raw or not raw.endswith(b'\n'):
+            _fail(code, 'incomplete', native)
+        lines = raw[:-1].split(b'\n')
+        rows = [_parse(line, native, code) for line in lines]
+        if any(not isinstance(row, dict) for row in rows):
+            _fail(code, 'row', native)
+        selected = []
+        for key in ('question', 'response'):
+            ref = index[key]
+            if ref['line'] > len(lines) or _hash(lines[ref['line'] - 1]) != ref['line_sha256']:
+                _fail(code, 'line_binding', native)
+            row = rows[ref['line'] - 1]
+            if row.get('uuid') != ref['uuid'] or sum(x.get('uuid') == ref['uuid'] for x in rows if x.get('type') in ('assistant', 'user') and x.get('isSidechain') is False) != 1:
+                _fail(code, 'uuid', native)
+            selected.append(row)
+        question, response = selected
+        if index['question']['line'] >= index['response']['line'] or question['uuid'] == response['uuid']:
+            _fail(code, 'order', native)
+        for row, kind in ((question, 'assistant'), (response, 'user')):
+            if (row.get('type') != kind or not isinstance(row.get('message'), dict) or
+                    row['message'].get('role') != kind or row.get('isSidechain') is not False or
+                    row.get('isMeta', False) is not False or row.get('cwd') != str(repo) or row.get('sessionId') != native.stem):
+                _fail(code, 'root_identity', native)
+        if response.get('parentUuid') != question['uuid'] or response.get('sourceToolAssistantUUID') != question['uuid']:
+            _fail(code, 'parent', native)
+        for row in (question, response):
+            if not isinstance(row.get('timestamp'), str):
+                _fail(code, 'timestamp_type', native)
+        qt = datetime.fromisoformat(question['timestamp'].replace('Z', '+00:00'))
+        rt = datetime.fromisoformat(response['timestamp'].replace('Z', '+00:00'))
+        if qt.utcoffset() is None or rt.utcoffset() is None or rt < qt:
+            _fail(code, 'timestamp', native)
+        tool_id = index['tool_use_id']
+        found_calls, found_results = [], []
+        for row in rows:
+            if row.get('isSidechain') is True or row.get('type') in ('api-request', 'api-request-shape', 'api-request-blob'):
+                continue
+            message = row.get('message')
+            blocks = message.get('content') if isinstance(message, dict) else None
+            if isinstance(blocks, list):
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get('type') == 'tool_use' and block.get('id') == tool_id:
+                        found_calls.append((row, block))
+                    if block.get('type') == 'tool_result' and block.get('tool_use_id') == tool_id:
+                        found_results.append((row, block))
+            wire = row.get('wireToolInputs')
+            if isinstance(wire, dict) and tool_id in wire and row is not question and row is not response:
+                _fail(code, 'duplicate_wire', native)
+        if (len(found_calls) != 1 or len(found_results) != 1 or
+                found_calls[0][0] is not question or found_results[0][0] is not response):
+            _fail(code, 'ambiguous_pair', native)
+        call, result = found_calls[0][1], found_results[0][1]
+        if call.get('name') != 'AskUserQuestion' or result.get('is_error', False) is not False:
+            _fail(code, 'tool_pair', native)
+        if sum(isinstance(block, dict) and block.get('type') == 'tool_use' and
+               block.get('name') == 'AskUserQuestion'
+               for block in question['message']['content']) != 1:
+            _fail(code, 'ambiguous_question', native)
+        for row in (question, response):
+            if 'wireToolInputs' in row:
+                wire = row['wireToolInputs']
+                if not isinstance(wire, dict) or (tool_id in wire and _canonical(wire[tool_id]) != _canonical(call.get('input'))):
+                    _fail(code, 'wire_binding', native)
+        _validate_recovery_known_pair(rows, locator, target_binding, identity, native, repo, code)
+        stage = category
+        _keys(call['input'], {'questions'}, code, 'question_input')
+        questions = call['input']['questions']
+        expected = _recovery_authority_questions(target_binding, acceptance)
+        if not isinstance(questions, list) or len(questions) != 1 or not isinstance(questions[0], dict):
+            _fail(code, 'question_shape')
+        # Distinguish the four target values from every other fixed UI field.
+        options = questions[0].get('options')
+        if not isinstance(options, list) or not options or not isinstance(options[0], dict):
+            _fail(code, 'question_options')
+        actual_preview = options[0].get('preview')
+        expected_preview = expected[0]['options'][0]['preview']
+        if actual_preview != expected_preview:
+            _fail(code, 'target_preview')
+        if _canonical(questions) != _canonical(expected):
+            _fail(code, 'template')
+        answer = response['toolUseResult']
+        _keys(answer, {'questions', 'answers', 'annotations'}, code, 'answer_shape')
+        text = expected[0]['question']
+        option = expected[0]['options'][0]
+        if (_canonical(answer['questions']) != _canonical(questions) or
+                _canonical(answer['answers']) != _canonical({text: option['label']}) or
+                _canonical(answer['annotations']) != _canonical({text: {'preview': option['preview']}})):
+            _fail(code, 'decision')
+        data: Json = {'adapter': adapter, 'decision': 'accept_boundary' if acceptance else 'confirm_local_domain',
+                      'counterevidence_policy': 'veto', 'target': target_binding, 'target_locator': index['target'],
+                      'source': {'original_locator': str(native), 'runtime_config_root': str(config),
+                                 'snapshot': {'path': str(native), 'sha256': _hash(raw)}},
+                      'question': {k: index['question'][k] for k in ('uuid', 'line', 'line_sha256')},
+                      'response': {k: index['response'][k] for k in ('uuid', 'line', 'line_sha256')},
+                      'tool_use_id': tool_id}
+        if acceptance:
+            data.update(policy='accept_native_capacity_rejection_with_local_static_basis_and_prior_exclusive_operator_statement_for_this_target_only',
+                        residual_uncertainty='historical_executable_identity_not_independently_verified')
+        else:
+            data.update(authorization_domain='root_session_and_explicit_delegations',
+                        transfer_state='not_authorized_or_transferred', recovery_scope='local_interactive_legacy_recovery')
+        return {'schema_version': 1, 'sourceData': data}
+    except ExecutorError as exc:
+        if exc.error_code == code and exc.reason.startswith(('native_', 'target_', category)):
+            raise
+        return _fail(code, stage + (exc.reason or 'invalid'), exc.input_ref)
+    except (KeyError, TypeError, ValueError, OSError, IndexError, OverflowError, RecursionError):
+        return _fail(code, stage + 'invalid')
+
+
+def _parse_operator_recovery_statement(repo_path: Path, target_binding: Json, index_path: Path,
+                                       *, inputs: _Inputs | None = None) -> Json:
+    return _parse_recovery_authority(repo_path, target_binding, index_path, False, inputs)
+
+
+def _parse_evidence_acceptance(repo_path: Path, target_binding: Json, index_path: Path,
+                               *, inputs: _Inputs | None = None) -> Json:
+    return _parse_recovery_authority(repo_path, target_binding, index_path, True, inputs)
+
+
+def _recovery_index_present(path: Path) -> bool:
+    """A dangling declared index is unreadable evidence, not bare absence."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        _fail('E_RECOVERY_EVIDENCE', 'source_index_unreadable', path)
+    return True
+
+
+def _recovery_typed_event(reference: Json, carrier: Path, inputs: _Inputs,
+                           roots: set[Path], build_record: Json, seen: frozenset[str],
+                           selected_id: str) -> None:
+    """Validate an explicit agent event, then inspect its complete carrier."""
+    code = 'E_NATIVE_EVIDENCE'
+    _keys(reference, {'file', 'line', 'agent_id', 'event_uuid'}, code, 'jsonl_ref')
+    _integer(reference['line'], 1, code)
+    _id(reference['agent_id'], code)
+    _id(reference['event_uuid'], code)
+    path, raw = _recovery_dereference(inputs, reference['file'], carrier, code, 'typed_event')
+    if str(path) in seen:
+        _fail('E_RECOVERY_EVIDENCE', 'native_locator_cycle', path)
+    lines = raw.split(b'\n')
+    if reference['line'] > len(lines) or not lines[reference['line'] - 1]:
+        _fail(code, 'jsonl_line_bounds', path)
+    _interruption_body(_parse(lines[reference['line'] - 1], path, code),
+                       reference['agent_id'], reference['event_uuid'])
+    for line in lines:
+        if not line:
+            continue
+        row = _parse(line, path, code)
+        if not isinstance(row, dict):
+            _fail(code, 'jsonl_event_object', path)
+        if row.get('type') in ('api-request', 'api-request-shape', 'api-request-blob'):
+            continue
+        _recovery_native_links(row, path, inputs, roots, build_record, seen | {str(path)},
+                               selected_id=selected_id)
+        if _recovery_associated(row, build_record, inputs, selected_id):
+            _fail('E_RECOVERY_EVIDENCE', 'counterevidence_typed_event', path)
+
+
+def _recovery_native_reference(reference: Any, carrier: Path, inputs: _Inputs) -> tuple[Path, bytes]:
+    """Acquire a generic legacy locator; typed callers retain their FileRef gates."""
+    if not isinstance(reference, str):
+        return inputs.dereference(reference, carrier, 'E_NATIVE_EVIDENCE')
+    if (not reference.startswith('/') or reference.startswith('//') or
+            any(ord(char) < 32 or ord(char) == 127 for char in reference) or
+            reference != str(Path(os.path.abspath(reference)))):
+        _fail('E_RECOVERY_EVIDENCE', 'native_locator', carrier)
+    path = Path(reference)
+    if not isinstance(inputs, _FrozenInputs) and any(p.is_symlink() for p in (path, *path.parents)):
+        _fail('E_RECOVERY_EVIDENCE', 'native_symlink', path)
+    raw = inputs.read(path, 'E_NATIVE_EVIDENCE')
+    if isinstance(inputs, (_HandoffCaptureInputs, _HandoffFrozenInputs)):
+        expected = inputs.native_hashes.get(reference)
+        if expected is not None and _hash(raw) != expected:
+            _fail('E_NATIVE_EVIDENCE', 'recovery_source_hash_mismatch', path)
+    return path, raw
+
+
+def _recovery_carrier_links(raw: bytes, carrier: Path, inputs: _Inputs,
+                            roots: set[Path], build_record: Json, *, selected_id: str) -> None:
+    """Inspect complete object/list bytes at their logical origin, regardless of name."""
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError):
+        return
+    if isinstance(value, (dict, list)):
+        _recovery_native_links(value, carrier, inputs, roots, build_record, selected_id=selected_id)
+
+
+def _recovery_native_links(value: Any, carrier: Path, inputs: _Inputs,
+                           roots: set[Path], build_record: Json,
+                           seen: frozenset[str] = frozenset(),
+                           target_context: bool = False, *, selected_id: str) -> None:
+    """Follow explicit structured native locators only; never interpret prose."""
+    if isinstance(value, list):
+        for item in value:
+            _recovery_native_links(item, carrier, inputs, roots, build_record, seen, target_context,
+                                   selected_id=selected_id)
+        return
+    if not isinstance(value, dict):
+        return
+    identity = build_record['identity']
+    target_context = (target_context or value.get('identity') == identity or
+                      value.get('audit_cycle_id') == identity['audit_cycle_id'] or
+                      value.get('manifest_sha256') == build_record['manifest']['sha256'] or
+                      value.get('scriptPath') == build_record['workflow_script']['path'])
+    for key in ('native_source', 'original_locator'):
+        if key in value:
+            locator = value[key]
+            if not isinstance(locator, str) or not Path(locator).is_absolute():
+                _fail('E_RECOVERY_EVIDENCE', 'native_locator', carrier)
+            roots.add(Path(locator))
+    if {'file', 'line', 'event_uuid'} <= set(value):
+        if 'agent_id' in value:
+            _recovery_typed_event(value, carrier, inputs, roots, build_record, seen, selected_id)
+        else:
+            path, _ = _recovery_dereference(inputs, value['file'], carrier, 'E_RECOVERY_EVIDENCE', 'native_root')
+            roots.add(path)
+    reference = value.get('native_record')
+    if reference is not None:
+        path, raw = _recovery_native_reference(reference, carrier, inputs)
+        if str(path) in seen:
+            _fail('E_RECOVERY_EVIDENCE', 'native_locator_cycle', path)
+        native = _parse(raw, path, 'E_NATIVE_EVIDENCE')
+        if not isinstance(native, dict):
+            _fail('E_NATIVE_EVIDENCE', 'native_object', path)
+        if (not isinstance(native.get('runId'), str) or not native['runId'].strip() or
+                not isinstance(native.get('args'), dict) or not isinstance(native.get('script'), str)):
+            _fail('E_RECOVERY_EVIDENCE', 'native_unattributable', path)
+        if 'workflow_run_id' in value:
+            expected_run = value['workflow_run_id']
+            if (not isinstance(expected_run, str) or not expected_run.strip() or
+                    native.get('runId') != expected_run):
+                _fail('E_RECOVERY_EVIDENCE', 'native_run_id_mismatch', path)
+        if target_context:
+            _fail('E_RECOVERY_EVIDENCE', 'counterevidence_target_native_record', path)
+        # Every dereferenced carrier uses the same relation as a session row.
+        if _recovery_associated(native, build_record, inputs, selected_id):
+            _fail('E_RECOVERY_EVIDENCE', 'counterevidence_native_record', path)
+        if 'termination_refs' in value:
+            _verify_termination(native, value, carrier, inputs)
+        _recovery_native_links(native, path, inputs, roots, build_record, seen | {str(path)}, target_context,
+                               selected_id=selected_id)
+    for key, child in value.items():
+        if key != 'native_record':
+            _recovery_native_links(child, carrier, inputs, roots, build_record, seen, target_context,
+                                   selected_id=selected_id)
+
+
+def _recovery_associated(value: Any, build_record: Json, inputs: _Inputs, selected_id: str) -> bool:
+    if isinstance(value, list):
+        return any(_recovery_associated(item, build_record, inputs, selected_id) for item in value)
+    if not isinstance(value, dict):
+        return False
+    identity = build_record['identity']
+    script_ref = build_record['workflow_script']
+    wire = value.get('wireToolInputs')
+    if (any(value.get(key) == selected_id for key in ('id', 'tool_use_id', 'toolUseID', 'toolUseId')) or
+            (isinstance(wire, dict) and selected_id in wire)):
+        return True
+    if (value.get('manifest_sha256') == build_record['manifest']['sha256'] or
+            value.get('audit_cycle_id') == identity['audit_cycle_id'] or
+            value.get('identity') == identity or value.get('scriptPath') == script_ref['path']):
+        return True
+    source = value.get('scriptPath')
+    if isinstance(source, str) and Path(source).is_absolute():
+        candidate = Path(source)
+        if isinstance(inputs, _RecoveryFrozenInputs) and str(candidate) in inputs.unreadable_scripts:
+            inputs.observed_unreadable_scripts.add(str(candidate))
+            first = b''
+        else:
+            try:
+                first = inputs.read(candidate, 'E_RECOVERY_EVIDENCE')
+            except ExecutorError as error:
+                if isinstance(inputs, _FrozenInputs):
+                    raise
+                if error.reason != 'source_unreadable':
+                    raise
+                if isinstance(inputs, _RecoveryCaptureInputs):
+                    inputs.unreadable_scripts.add(str(candidate))
+                first = b''
+        if _hash(first) == script_ref['sha256']:
+            if not isinstance(inputs, _FrozenInputs) and any(p.is_symlink() for p in (candidate, *candidate.parents)):
+                _fail('E_RECOVERY_EVIDENCE', 'native_symlink', candidate)
+            return True
+    script = value.get('script')
+    if isinstance(script, str):
+        try:
+            if _hash(script.encode('utf-8')) == script_ref['sha256']:
+                return True
+        except UnicodeError:
+            _fail('E_RECOVERY_EVIDENCE', 'native_script_encoding')
+    return any(_recovery_associated(item, build_record, inputs, selected_id) for item in value.values())
+
+
+def _recovery_native_root_bytes(repo: Path, path: Path, inputs: _Inputs) -> tuple[Path, bytes]:
+    """Acquire a required root only after its namespace and symlink checks."""
+    code = 'E_RECOVERY_EVIDENCE'
+    config = _recovery_config_root(inputs)
+    if (not path.is_absolute() or Path(os.path.abspath(path)) != path or
+            path.parent.parent != config / 'projects' or path.is_relative_to(repo) or
+            path.suffix != '.jsonl' or
+            (not isinstance(inputs, _FrozenInputs) and any(p.is_symlink() for p in (path, *path.parents)))):
+        _fail(code, 'native_namespace', path)
+    try:
+        return config, _recovery_read(inputs, path, code, "native_root")
+    except ExecutorError as error:
+        _fail(code, 'native_' + error.reason, path)
+
+
+def _recovery_scan_root(repo: Path, path: Path, build_record: Json, selected_id: str,
+                        exempt_uuids: tuple[str, str] | None,
+                        inputs: _Inputs, roots: set[Path]) -> Json:
+    """Inspect the complete explicitly known session carrier, not prose or API copies."""
+    code = 'E_RECOVERY_EVIDENCE'
+    config, raw = _recovery_native_root_bytes(repo, path, inputs)
+    if not raw or not raw.endswith(b'\n'):
+        _fail(code, 'native_incomplete', path)
+    for line in raw[:-1].split(b'\n'):
+        row = _parse(line, path, code)
+        if not isinstance(row, dict):
+            _fail(code, 'native_row', path)
+        if row.get('type') in ('api-request', 'api-request-shape', 'api-request-blob'):
+            continue
+        if row.get('type') in ('assistant', 'user') and row.get('sessionId') != path.stem:
+            _fail(code, 'native_root_identity', path)
+        _recovery_native_links(row, path, inputs, roots, build_record, selected_id=selected_id)
+        remainder = dict(row)
+        message = row.get('message')
+        blocks = message.get('content') if isinstance(message, dict) else None
+        exempt_request = exempt_uuids is not None and row.get('uuid') == exempt_uuids[0]
+        exempt_response = exempt_uuids is not None and row.get('uuid') == exempt_uuids[1]
+        if isinstance(message, dict) and isinstance(blocks, list) and (exempt_request or exempt_response):
+            remainder['message'] = {**message, 'content': [block for block in blocks if not (
+                isinstance(block, dict) and ((exempt_request and block.get('type') == 'tool_use' and block.get('id') == selected_id) or
+                    (exempt_response and block.get('type') == 'tool_result' and block.get('tool_use_id') == selected_id)))]}
+        wire = row.get('wireToolInputs')
+        if isinstance(wire, dict) and (exempt_request or exempt_response):
+            remainder['wireToolInputs'] = {key: value for key, value in wire.items() if key != selected_id}
+        if _recovery_associated(remainder, build_record, inputs, selected_id):
+            _fail(code, 'counterevidence_native', path)
+    return {'original_locator': str(path), 'runtime_config_root': str(config),
+            'snapshot': {'path': str(path), 'sha256': _hash(raw)}}
+
+
+def _recovery_preflight_links(reference: Json, carrier: Path, inputs: _Inputs,
+                               roots: set[Path], record: Json, selected_id: str) -> None:
+    """The manifest-bound preflight keeps typed FileRefs, not generic strings."""
+    code = 'E_NATIVE_EVIDENCE'
+    path, raw = inputs.dereference(reference, carrier, code)
+    value = _parse(raw, path, code)
+    _keys(value, {'schema_version', 'observations'}, code, 'preflight_keys', path)
+    _version(value['schema_version'], code)
+    if not isinstance(value['observations'], list):
+        _fail(code, 'preflight_observations', path)
+    for observation in value['observations']:
+        _keys(observation, {'workflow_run_id', 'native_record', 'termination_refs'},
+              code, 'preflight_observation', path)
+        _id(observation['workflow_run_id'], code)
+        _ref_shape(observation['native_record'], code)
+        if not isinstance(observation['termination_refs'], list):
+            _fail(code, 'preflight_termination_refs', path)
+    _recovery_native_links(value, path, inputs, roots, record, selected_id=selected_id)
+
+
+def _recovery_index_links(value: Any, path: Path, key: str, inputs: _Inputs,
+                          roots: set[Path], record: Json, selected_id: str) -> None:
+    """Validate the role of an actual manifest-bound index before generic traversal."""
+    code = 'E_NATIVE_EVIDENCE'
+    if key == 'post_audit_index_path':
+        _keys(value, {'schema_version', 'identity', 'attempt_index', 'workflow_run_id',
+                      'native_record', 'termination_refs'}, code, 'audit_index_keys', path)
+    elif key == 'post_drift_index_path':
+        _keys(value, {'schema_version', 'identity', 'attempt_index', 'request', 'kind',
+                      'workflow_run_id', 'native_record', 'termination_refs', 'tool_failure'},
+              code, 'drift_index_keys', path)
+    else:
+        _keys(value, {'schema_version', 'target_result', 'question', 'response', 'options'},
+              code, 'disposition_index_keys', path)
+    _version(value['schema_version'], code)
+    if key != 'post_disposition_index_path':
+        if (value['identity'] != record['identity'] or type(value['attempt_index']) is not int or
+                value['attempt_index'] != 1 or not isinstance(value['termination_refs'], list)):
+            _fail(code, 'audit_index_identity', path)
+    if key == 'post_audit_index_path':
+        _id(value['workflow_run_id'], code)
+        _ref_shape(value['native_record'], code)
+    if key == 'post_drift_index_path':
+        if value['kind'] == 'workflow':
+            _id(value['workflow_run_id'], code)
+            _ref_shape(value['native_record'], code)
+            if value['tool_failure'] is not None:
+                _fail(code, 'drift_index_branch', path)
+        elif value['kind'] == 'tool_error':
+            if (value['workflow_run_id'] is not None or value['native_record'] is not None or
+                    value['termination_refs'] != [] or not isinstance(value['tool_failure'], dict)):
+                _fail(code, 'drift_index_branch', path)
+        else:
+            _fail(code, 'drift_index_kind', path)
+    _recovery_native_links(value, path, inputs, roots, record, selected_id=selected_id)
+    if key == 'post_disposition_index_path' or value.get('kind') == 'tool_error':
+        _fail('E_RECOVERY_EVIDENCE', 'counterevidence_index', path)
+
+
+class _RecoveryBindingClosure:
+    """Alternate actual binding metadata and native roots until both are exhausted."""
+    def __init__(self, repo: Path, record: Json, selected_id: str, primary: Path,
+                 selected: tuple[str, str], reader: _Inputs, traces: list[_RecoveryReadTrace],
+                 roots: set[Path], scan: Callable[[Path, set[Path]], Json] | None = None) -> None:
+        self.repo, self.record, self.selected_id = repo, record, selected_id
+        self.primary, self.selected, self.reader = primary, selected, reader
+        self.traces, self.roots, self.scan = traces, roots, scan
+        self.done: set[tuple[int, str, str]] = set()
+        self.root_done: set[str] = set()
+        self.sources: Json = {}
+
+    def drain(self, errors: list[ExecutorError] | None = None,
+              rejected_bindings: set[str] | None = None) -> Json:
+        if rejected_bindings and not errors:
+            _fail('E_POLICY_SOURCE', 'recovery_rejected_binding_without_error')
+        current_trace = _recovery_trace(self.reader)
+        while True:
+            pending = []
+            for view, trace in enumerate(self.traces):
+                for (origin, role), raw in trace.events.items():
+                    key = (view, origin, trace.digests[origin])
+                    # A JSONL carrier retains its typed/root parser, including API exclusions.
+                    typed = any((origin, r) in trace.events for r in ('native_root', 'typed_event'))
+                    rejected = trace is current_trace and rejected_bindings is not None and origin in rejected_bindings
+                    if role == 'binding' and not typed and not rejected and key not in self.done:
+                        pending.append((key, raw))
+            if pending:
+                key, raw = min(pending, key=lambda item: item[0])
+                self.done.add(key)
+                try:
+                    _recovery_carrier_links(raw, Path(key[1]), self.reader, self.roots,
+                                            self.record, selected_id=self.selected_id)
+                except ExecutorError as error:
+                    if errors is None or error.reason.startswith('counterevidence'):
+                        raise
+                    errors.append(error)
+                continue
+            if not self.roots:
+                return self.sources
+            root = min(self.roots, key=str)
+            self.roots.remove(root)
+            if str(root) in self.root_done:
+                continue
+            self.root_done.add(str(root))
+            try:
+                source = (self.scan(root, self.roots) if self.scan is not None else
+                          _recovery_scan_root(self.repo, root, self.record, self.selected_id,
+                              self.selected if root == self.primary else None, self.reader, self.roots))
+                self.sources[str(root)] = source
+            except ExecutorError as error:
+                if errors is None or error.reason.startswith('counterevidence'):
+                    raise
+                errors.append(error)
+
+
+def _recovery_traces(*readers: _Inputs) -> list[_RecoveryReadTrace]:
+    traces = [_recovery_trace(reader) for reader in readers]
+    if any(trace is None for trace in traces):
+        _fail('E_POLICY_SOURCE', 'recovery_read_trace_required')
+    return [trace for trace in traces if trace is not None]
+
+
+def _recovery_validate(repo: Path, manifest_path: Path, build_path: Path, native_path: Path,
+                       tool_use_id: str, operator_index: Path, acceptance_index: Path,
+                       additional_sources: tuple[Path, ...], *, existing_event: Json | None = None) -> Json:
+    """Read the original generation and all known live evidence without writing."""
+    live = _RecoveryCaptureInputs()
+    transition, old, _ = _recovery_source_generations(repo, manifest_path, build_path, inputs=live)
+    manifest = _parse(live.read(manifest_path, 'E_INPUT_SCHEMA'), manifest_path)
+    record = _parse(live.read(build_path, 'E_NATIVE_EVIDENCE'), build_path, 'E_NATIVE_EVIDENCE')
+    scope = repo / '.aria' / 'audit-reports' / '_executor-ledgers' / _hash(
+        _canonical([manifest['checkpoint'], manifest['change_id']]))
+    if not scope.is_dir():
+        _fail('E_RECOVERY_EVIDENCE', 'scope_missing', scope)
+    state = _load_scope(scope, manifest, live)
+    if existing_event is None:
+        valid_prefix = (len(state['events']) == 1 and state['reserve_count'] == 1 and state['pending'] is not None and
+                        state['pending']['ref'] == record['reservation'] and state['head'] == record['reservation'])
+    else:
+        valid_prefix = (len(state['events']) == 2 and state['reserve_count'] == 1 and state['pending'] is None and
+                        state['head'] == existing_event and state['events'][-1]['event']['kind'] == 'dispatch_rejected' and
+                        state['events'][-1]['event']['payload']['reservation'] == record['reservation'])
+    if not valid_prefix or state['genesis_ref'] != record['genesis']:
+        _fail('E_RECOVERY_EVIDENCE', 'target_head_changed', scope)
+    target = {'identity': record['identity'], 'attempt_index': record['attempt_index'],
+              'genesis': record['genesis'], 'reservation': record['reservation'], 'head': record['reservation'],
+              'manifest': record['manifest'], 'script': record['workflow_script']}
+    operator = _parse_operator_recovery_statement(repo, target, operator_index, inputs=live)
+    acceptance = _parse_evidence_acceptance(repo, target, acceptance_index, inputs=live)
+    paths = {native_path, Path(operator['sourceData']['source']['original_locator']),
+             Path(acceptance['sourceData']['source']['original_locator']), *additional_sources}
+    preflight = manifest['evidence']['dispatch_preflight']
+    if preflight is not None:
+        _recovery_preflight_links(preflight, manifest_path, live, paths, record, tool_use_id)
+    for key in ('post_audit_index_path', 'post_drift_index_path', 'post_disposition_index_path'):
+        path = _path(manifest['evidence'][key], manifest_path)
+        if _recovery_index_present(path):
+            value = _parse(live.read(path, 'E_RECOVERY_EVIDENCE'), path, 'E_NATIVE_EVIDENCE')
+            _recovery_index_links(value, path, key, live, paths, record, tool_use_id)
+    locator_path, locator_raw = live.dereference(operator['sourceData']['target_locator'], operator_index,
+                                                  'E_RECOVERY_EVIDENCE')
+    locator = _parse(locator_raw, locator_path, 'E_RECOVERY_EVIDENCE')
+    if locator.get('known_workflow_tool_call') != tool_use_id:
+        _fail('E_RECOVERY_EVIDENCE', 'native_tool_id_binding', locator_path)
+    selected_uuids = (locator['known_request_uuid'], locator['known_response_uuid'])
+    # A missing primary is not proof that its selected rejection in an authority
+    # root is an additional run. Establish safe acquisition before the union scan;
+    # exact rejection/static validation and both fixedpoint drains stay mandatory.
+    _recovery_native_root_bytes(repo, native_path, live)
+    closure = _RecoveryBindingClosure(repo, record, tool_use_id, native_path, selected_uuids,
+                                      live, _recovery_traces(old, live), paths)
+    closure.drain()
+    rejection = _parse_recovery_rejection(repo, manifest, record, native_path, tool_use_id, inputs=live)
+    authority_indexes = {'operator_statement': live.reference(operator_index, 'E_RECOVERY_EVIDENCE'),
+                         'evidence_acceptance': live.reference(acceptance_index, 'E_RECOVERY_EVIDENCE')}
+    # Static basis and role references can be read after the first drain.
+    sources = closure.drain()
+    if set(live.raw) != live.read_origins:
+        _fail('E_POLICY_SOURCE', 'history_recovery_unconsumed_verification_input')
+    return {'scope': scope, 'state': state, 'manifest': manifest, 'record': record, 'target': target,
+            'transition': transition, 'old': old, 'live': live, 'operator': operator,
+            'acceptance': acceptance, 'rejection': rejection, 'sources': sources,
+            'authority_indexes': authority_indexes,
+            'additional': sorted({str(p) for p in additional_sources})}
+
+
+def _recovery_freeze_capture(inputs: _Inputs, scope: Path) -> Json:
+    entries = [{'origin': origin, 'sha256': _hash(raw), 'blob': _freeze_blob(raw, scope)}
+               for origin, raw in sorted(inputs.raw.items())]
+    return _freeze_blob(_canonical({'schema_version': 1, 'algorithm_version': 'canonical_v1',
+                                    'sources': entries}), scope)
+
+
+def _recovery_freeze_value(value: Any, scope: Path, inputs: _Inputs) -> Json:
+    raw = _canonical(value)
+    ref = _freeze_blob(raw, scope)
+    inputs.raw[ref['path']] = raw
+    return ref
+
+
+def _recovery_publish(observed: Json, build_path: Path) -> Json:
+    scope: Path = observed['scope']
+    live: _RecoveryCaptureInputs = observed['live']
+    if set(live.raw) != live.read_origins:
+        _fail('E_POLICY_SOURCE', 'history_recovery_unconsumed_verification_input')
+    # Stability reads cannot turn unconsumed cache entries into binding seeds.
+    for origin in list(live.raw):
+        _recovery_read(live, Path(origin), 'E_RECOVERY_EVIDENCE', 'recheck')
+    unavailable = sorted(live.unreadable_scripts) if isinstance(live, _RecoveryCaptureInputs) else []
+    for origin in unavailable:
+        try:
+            Path(origin).read_bytes()
+        except OSError:
+            continue
+        _fail('E_RECOVERY_EVIDENCE', 'native_source_changed_during_capture', origin)
+    known = [{'path': origin, 'sha256': _hash(raw)} for origin, raw in sorted(live.raw.items())]
+    # This is a host observation, not a fabricated file read or NoRun flag.
+    # It is frozen separately from real input origins so offline checking never
+    # guesses whether an uncaptured script candidate was readable at capture.
+    observation_origin = str(scope / 'recovery-read-observations.json')
+    live.raw[observation_origin] = _canonical({'schema_version': 1, 'unreadable_scripts': unavailable,
+                                              'authority_indexes': observed['authority_indexes']})
+    transition = dict(observed['transition'])
+    # Seal the actual verification input view before adding generated evidence.
+    # The offline kernel consumes this view and independently traces its reads;
+    # it is not a duplicate caller-supplied known-sources list.
+    source_inputs = _Inputs()
+    source_inputs.raw = dict(live.raw)
+    source_closure = _recovery_freeze_capture(source_inputs, scope)
+    live.raw[source_closure['path']] = Path(source_closure['path']).read_bytes()
+    transition['new_source_closure'] = source_closure
+    frozen_sources: Json = {}
+    for locator, source in observed['sources'].items():
+        raw = live.raw[locator]
+        snapshot = _freeze_blob(raw, scope)
+        live.raw[snapshot['path']] = raw
+        frozen_sources[locator] = {**source, 'snapshot': snapshot}
+    rejection = dict(observed['rejection'])
+    rejection['source'] = frozen_sources[rejection['source']['original_locator']]
+    basis = _recovery_freeze_value(rejection.pop('runtime_rejection_basis'), scope, live)
+    authority_refs = []
+    for name in ('operator', 'acceptance'):
+        authority = json.loads(_canonical(observed[name]))
+        source = authority['sourceData']['source']
+        authority['sourceData']['source'] = frozen_sources[source['original_locator']]
+        authority_refs.append(_recovery_freeze_value(authority, scope, live))
+    evidence = {'schema_version': 1, **rejection, 'runtime_rejection_basis': basis,
+                'operator_statement': authority_refs[0], 'evidence_acceptance': authority_refs[1],
+                'known_binding_sources': known,
+                'additional_sources': [frozen_sources[p] for p in observed['additional']]}
+    evidence_ref = _recovery_freeze_value(evidence, scope, live)
+    input_closure = _recovery_freeze_capture(live, scope)
+    record = observed['record']
+    event = {'schema_version': 1, 'seq': 2, 'genesis': record['genesis'],
+             'previous_event': observed['state']['head'], 'kind': 'dispatch_rejected',
+             'payload': {'reservation': record['reservation'],
+                         'build_record': {'path': str(build_path), 'sha256': _hash(live.raw[str(build_path)])},
+                         'evidence': evidence_ref, 'input_closure': input_closure,
+                         'source_transition': transition}}
+    event_path = scope / 'events' / '0000000002.json'
+    proposed = {'path': str(event_path), 'sha256': _hash(_canonical(event))}
+    # Blobs may be orphaned on failure, but the sole commit point must never
+    # publish a package which its immutable proof consumer cannot replay.
+    _verify_recovery_event(event, proposed, scope)
+    ref = _publish(event_path, _canonical(event), scope)
+    return {'eligible': True, 'would_append': True, 'event': ref}
+
+
+def _recovery_idempotency_key(target: Json, rejection: Json, operator: Json, acceptance: Json) -> bytes:
+    def native_pair(value: Json) -> Json:
+        return {key: {name: value[key][name] for name in ('uuid', 'tool_use_id', 'line_sha256')}
+                for key in ('request', 'response')}
+    def authority_pair(value: Json) -> Json:
+        data = value['sourceData']
+        return {'tool_use_id': data['tool_use_id'], 'target': data['target'],
+                'question': data['question'], 'response': data['response']}
+    return _canonical({'target': target, 'rejection': native_pair(rejection),
+                       'operator': authority_pair(operator), 'acceptance': authority_pair(acceptance)})
+
+
+def _recovery_rescan_committed(repo: Path, manifest: Json, build: Json, evidence: Json,
+                               package: _FrozenInputs, baseline: Json, native_path: Path, tool_use_id: str,
+                               operator_index: Path, acceptance_index: Path,
+                               additional_sources: tuple[Path, ...]) -> None:
+    """Inspect current evidence before deciding whether an old receipt is reusable."""
+    live = _RecoveryCaptureInputs()
+    primary = Path(evidence['source']['original_locator'])
+    roots = {Path(origin) for origin in baseline['sources']} | {primary, native_path, *additional_sources}
+    for field in ('operator_statement', 'evidence_acceptance'):
+        _, raw = package.dereference(evidence[field], Path(build['manifest']['path']))
+        data = _parse(raw, Path(evidence[field]['path']))['sourceData']
+        roots.add(Path(data['source']['original_locator']))
+    roots.update(Path(source['original_locator']) for source in evidence['additional_sources'])
+    selected_id = evidence['request']['tool_use_id']
+    selected_uuids = (evidence['request']['uuid'], evidence['response']['uuid'])
+    errors: list[ExecutorError] = []
+    rejected_bindings: set[str] = set()
+    # Roots are reread by their real scanner, not a metadata pre-read that can
+    # mask native acquisition errors with the generic input_changed wrapper.
+    paths = {Path(origin) for origin in baseline['roles'] if origin not in baseline['sources']}
+    paths.update((operator_index, acceptance_index))
+    manifest_path = Path(build['manifest']['path'])
+    preflight = manifest['evidence']['dispatch_preflight']
+    if preflight is not None:
+        _recovery_preflight_links(preflight, manifest_path, live, roots, build, selected_id)
+    index_roles = {_path(manifest['evidence'][key], manifest_path): key for key in
+                   ('post_audit_index_path', 'post_drift_index_path', 'post_disposition_index_path')}
+    for path in index_roles:
+        try:
+            if _recovery_index_present(path):
+                paths.add(path)
+        except ExecutorError as error:
+            errors.append(error)
+    for path in sorted(paths, key=str):
+        role = index_roles.get(path)
+        value: Any = None
+        try:
+            roles = baseline['roles'].get(str(path), {'binding'})
+            for read_role in sorted(roles):
+                raw = _recovery_read(live, path, 'E_RECOVERY_EVIDENCE', read_role)
+            if role is not None or path in (operator_index, acceptance_index):
+                value = _parse(raw, path, 'E_RECOVERY_EVIDENCE')
+                if path in (operator_index, acceptance_index) and isinstance(value, dict):
+                    for key in ('question', 'response'):
+                        event = value.get(key)
+                        if isinstance(event, dict) and isinstance(event.get('path'), str):
+                            roots.add(Path(event['path']))
+                if role is not None:
+                    _recovery_index_links(value, path, role, live, roots, build, selected_id)
+                else:
+                    _recovery_native_links(value, path, live, roots, build, selected_id=selected_id)
+        except ExecutorError as error:
+            # Preserve mandatory-key/null schema errors and the established
+            # input_changed_* wrapper for non-null acquisition failures.
+            schema_error = (role is not None and error.error_code == 'E_NATIVE_EVIDENCE' and
+                            (error.reason.endswith('_index_keys') or
+                             (error.reason == 'file_ref' and isinstance(value, dict) and
+                              value.get('native_record') is None)))
+            if error.reason.startswith('counterevidence') or schema_error:
+                raise
+            if role is not None:
+                # The strict parser has refused this exact current carrier.
+                # Keep its error, without retrying the invalid schema as generic union.
+                rejected_bindings.add(str(path))
+            errors.append(error)
+    closure = _RecoveryBindingClosure(repo, build, selected_id, primary, selected_uuids,
+                                      live, _recovery_traces(baseline['old'], live), roots)
+    closure.drain(errors, rejected_bindings)
+    if errors:
+        error = errors[0]
+        if error.reason.startswith(('native_', 'operator_', 'evidence_acceptance_', 'additional_source_')):
+            raise error
+        _fail('E_RECOVERY_EVIDENCE', 'input_changed_' + error.reason, error.input_ref)
+
+
+def _recovery_submission(repo: Path, manifest_path: Path, build_path: Path, native_path: Path,
+                          tool_use_id: str, operator_index: Path, acceptance_index: Path,
+                          additional_sources: tuple[Path, ...]) -> Json:
+    """Resolve either a first submission or an exact, freshly checked receipt."""
+    initial = _Inputs()
+    manifest = _parse(initial.read(manifest_path, 'E_INPUT_SCHEMA'), manifest_path)
+    _validate_manifest(manifest)
+    scope = repo / '.aria' / 'audit-reports' / '_executor-ledgers' / _hash(
+        _canonical([manifest['checkpoint'], manifest['change_id']]))
+    state = _load_scope(scope, manifest, initial)
+    rejections = [entry for entry in state['events'] if entry['event']['kind'] == 'dispatch_rejected']
+    if not rejections:
+        return _recovery_validate(repo, manifest_path, build_path, native_path, tool_use_id,
+                                  operator_index, acceptance_index, additional_sources)
+    entry = rejections[0]
+    if len(rejections) != 1 or len(state['events']) != 2 or state['head'] != entry['ref']:
+        _fail('E_RECOVERY_EVIDENCE', 'target_head_changed', scope)
+    event, reference = entry['event'], entry['ref']
+    proof = _verify_recovery_event(event, reference, scope)
+    package = _history_closure(event['payload']['input_closure'], Path(reference['path']), scope)
+    def document(ref: Json) -> Json:
+        path, raw = package.dereference(ref, Path(reference['path']))
+        return _parse(raw, path)
+    build = proof['build']
+    evidence = document(event['payload']['evidence'])
+    original_manifest = document(build['manifest'])
+    # Use the old, already proved identity for association. A changed argument
+    # must not hide counterevidence by changing the scope it asks us to inspect.
+    baseline = _handoff_baseline(repo, reference, _FrozenInputs(proof['capture']))
+    _recovery_rescan_committed(repo, original_manifest, build, evidence, package, baseline, native_path,
+                               tool_use_id, operator_index, acceptance_index, additional_sources)
+    verification = _history_closure(event['payload']['source_transition']['new_source_closure'],
+                                    Path(reference['path']), scope)
+    observation = _parse(verification.read(scope / 'recovery-read-observations.json'),
+                         scope / 'recovery-read-observations.json')
+    role_refs = observation['authority_indexes']
+    expected_additional = sorted(source['original_locator'] for source in evidence['additional_sources'])
+    if (str(manifest_path) != build['manifest']['path'] or
+            str(build_path) != event['payload']['build_record']['path'] or
+            str(native_path) != evidence['source']['original_locator'] or
+            tool_use_id != evidence['request']['tool_use_id'] or
+            str(operator_index) != role_refs['operator_statement']['path'] or
+            str(acceptance_index) != role_refs['evidence_acceptance']['path'] or
+            sorted({str(path) for path in additional_sources}) != expected_additional):
+        _fail('E_RECOVERY_EVIDENCE', 'input_changed_recovery_arguments', scope)
+    current = _recovery_validate(repo, manifest_path, build_path, native_path, tool_use_id,
+                                 operator_index, acceptance_index, additional_sources,
+                                 existing_event=reference)
+    old_operator = document(evidence['operator_statement'])
+    old_acceptance = document(evidence['evidence_acceptance'])
+    old_target = old_operator['sourceData']['target']
+    if _recovery_idempotency_key(current['target'], current['rejection'], current['operator'], current['acceptance']) != _recovery_idempotency_key(old_target, evidence, old_operator, old_acceptance):
+        _fail('E_RECOVERY_EVIDENCE', 'input_changed_recovery_key', scope)
+    source_locators = set(baseline['sources'])
+    if set(current['sources']) != source_locators:
+        _fail('E_RECOVERY_EVIDENCE', 'input_changed_known_roots', scope)
+    old_known = {ref['path']: ref for ref in evidence['known_binding_sources']}
+    new_origins = set(current['live'].raw) - {reference['path']}
+    if new_origins != set(old_known):
+        _fail('E_RECOVERY_EVIDENCE', 'input_changed_known_sources', scope)
+    for origin in sorted(old_known):
+        old_raw = package.read(Path(origin))
+        now = current['live'].raw[origin]
+        if (origin in source_locators and not now.startswith(old_raw)) or (origin not in source_locators and now != old_raw):
+            _fail('E_RECOVERY_EVIDENCE', 'input_changed_source_prefix_or_bytes', origin)
+    try:
+        for origin in list(current['live'].raw):
+            _recovery_read(current['live'], Path(origin), 'E_RECOVERY_EVIDENCE', 'recheck')
+    except ExecutorError as error:
+        # If the capture changed at the receipt boundary, inspect that new view
+        # for conflicts before reporting a generic input change.
+        _recovery_rescan_committed(repo, original_manifest, build, evidence, package, baseline, native_path,
+                                   tool_use_id, operator_index, acceptance_index, additional_sources)
+        _fail('E_RECOVERY_EVIDENCE', 'input_changed_' + error.reason, error.input_ref)
+    current['existing_event'] = reference
+    return current
+
+
+def recover_dispatch_rejection(repo_path: Path, manifest_path: Path, build_record_path: Path,
+                               native_record_path: Path, tool_use_id: str, operator_index: Path,
+                               evidence_acceptance_index: Path, *, check_only: bool = False,
+                               additional_sources: tuple[Path, ...] = ()) -> Json:
+    repo = Path(repo_path).resolve()
+    manifest = Path(os.path.abspath(manifest_path))
+    build_record = Path(os.path.abspath(build_record_path))
+    native = Path(os.path.abspath(native_record_path))
+    operator = Path(os.path.abspath(operator_index))
+    acceptance = Path(os.path.abspath(evidence_acceptance_index))
+    additional = tuple(Path(os.path.abspath(path)) for path in additional_sources)
+    observed = _recovery_submission(repo, manifest, build_record, native, tool_use_id, operator, acceptance, additional)
+    if check_only:
+        return {'eligible': True, 'would_append': 'existing_event' not in observed, 'event': None}
+    with _writer_lock(observed['scope']):
+        current = _recovery_submission(repo, manifest, build_record, native, tool_use_id, operator, acceptance, additional)
+        if _canonical(current['target']) != _canonical(observed['target']):
+            _fail('E_RECOVERY_EVIDENCE', 'target_head_changed', observed['scope'])
+        if 'existing_event' in current:
+            return {'eligible': True, 'would_append': False, 'event': current['existing_event']}
+        return _recovery_publish(current, build_record)
+
+
+def _verify_recovery_event(event: Json, reference: Json, scope: Path) -> Json:
+    """Acquire the immutable package, then use the shared sealed-binding verifier."""
+    carrier = Path(reference['path'])
+    package = _history_closure(event['payload']['input_closure'], carrier, scope)
+    proof = _recovery_frozen_bindings(event, reference, scope, package)
+    payload, evidence, build = event['payload'], proof['evidence'], proof['build']
+    for ref in (payload['input_closure'], payload['source_transition']['new_source_closure'],
+                build['input_closure'], payload['evidence'],
+                *(evidence[key] for key in ('runtime_rejection_basis', 'operator_statement', 'evidence_acceptance'))):
+        raw = _HistoryGraph(scope).leaf(ref, carrier, published=True)
+        proof['capture'][ref['path']] = raw
+        proof['capture'][str(scope / 'blobs' / (ref['sha256'] + '.blob'))] = raw
+    return proof
+
+
+def _recovery_frozen_bindings(event: Json, reference: Json, scope: Path, package: _FrozenInputs) -> Json:
+    """Rebuild a rejection proof from immutable packages, without live evidence."""
+    code = 'E_POLICY_SOURCE'
+    carrier = Path(reference['path'])
+    _keys(event, {'schema_version', 'seq', 'genesis', 'previous_event', 'kind', 'payload'}, code, 'history_recovery_event')
+    _version(event['schema_version'], code)
+    payload = event['payload']
+    _keys(payload, {'reservation', 'build_record', 'evidence', 'input_closure', 'source_transition'}, code, 'history_recovery_payload')
+    if type(event['seq']) is not int or event['seq'] != 2 or event['kind'] != 'dispatch_rejected' or event['previous_event'] != payload['reservation']:
+        _fail(code, 'history_recovery_position', carrier)
+    capture = dict(package.raw)
+    def document(ref: Json, reader: _Inputs = package) -> Json:
+        path, raw = reader.dereference(ref, carrier, code)
+        return _parse(raw, path, code)
+    build = document(payload['build_record'])
+    manifest = document(build['manifest'])
+    _validate_manifest(manifest)
+    genesis = document(event['genesis'])
+    _validate_recovery_genesis(genesis, code)
+    reserve = document(payload['reservation'])
+    _keys(reserve, {'schema_version', 'seq', 'genesis', 'previous_event', 'kind', 'payload'}, code, 'history_recovery_reserve')
+    if (reserve['kind'] != 'reserve' or type(reserve['seq']) is not int or reserve['seq'] != 1 or
+            reserve['previous_event'] is not None or reserve['genesis'] != event['genesis'] or
+            build['genesis'] != event['genesis'] or build['reservation'] != payload['reservation'] or
+            build['attempt_index'] != 1 or manifest['attempt_index'] != 1 or manifest['round'] != 1 or
+            _canonical(build['identity']) != _canonical(_identity(manifest))):
+        _fail(code, 'history_recovery_original_binding')
+    transition = payload['source_transition']
+    _keys(transition, {'compatibility_id', 'compatibility_manifest', 'from_sources', 'to_sources', 'new_source_closure'}, code, 'history_recovery_transition')
+    catalog_path = _fixed_paths(scope.parents[3])['executor'].parent.parent / 'references' / 'pre-dispatch-recovery-compat.json'
+    _ref_shape(transition['compatibility_manifest'], code)
+    if transition['compatibility_manifest']['path'] != str(catalog_path):
+        _fail(code, 'history_recovery_catalog_path', carrier)
+    # The verification snapshot itself must have been sealed by the enclosing
+    # package; never satisfy this binding by searching arbitrary published blobs.
+    _, current_raw = package.dereference(transition['new_source_closure'], carrier, code)
+    current = _TrackedFrozenInputs(_handoff_closure(transition['new_source_closure'], package, carrier, scope).raw,
+                                   _RecoveryReadTrace())
+    for origin, raw in current.raw.items():
+        if package.read(Path(origin), code) != raw:
+            _fail(code, 'history_recovery_cross_capture_binding', origin)
+    for ref in (payload['build_record'], build['manifest'], event['genesis'], payload['reservation']):
+        _, input_raw = current.dereference(ref, carrier, code)
+        if input_raw != package.dereference(ref, carrier, code)[1]:
+            _fail(code, 'history_recovery_original_capture_binding', ref['path'])
+    catalog = document(transition['compatibility_manifest'], current)
+    _keys(catalog, {'schema_version', 'compatibility_id', 'from', 'to'}, code, 'history_recovery_catalog')
+    _version(catalog['schema_version'], code)
+    expected_from = {'executor': '5b9a32e23d665e494a21dc002a1a8498db445462762fba52916ce79716333777',
+                     'contract': '27e145e159e5b828e2c60d9a743ca8a0ea59bfb11560ce4f1e8783e2ed711920'}
+    if (catalog['compatibility_id'] != 'pre-dispatch-rejection-v1' or transition['compatibility_id'] != catalog['compatibility_id'] or
+            catalog['from'] != expected_from or catalog['from'] == catalog['to'] or
+            _canonical(transition['from_sources']) != _canonical(build['sources'])):
+        _fail(code, 'history_recovery_compatibility')
+    for name in ('from', 'to'):
+        _keys(catalog[name], {'executor', 'contract'}, code, 'history_recovery_catalog_pair')
+    repo = scope.parents[3]
+    fixed = _fixed_paths(repo)
+    for generation in ('from_sources', 'to_sources'):
+        _keys(transition[generation], set(SOURCE_NAMES), code, 'history_recovery_sources')
+        for name, ref in transition[generation].items():
+            _ref_shape(ref, code)
+            if ref['path'] != str(fixed[name]):
+                _fail(code, 'history_recovery_source_path', ref['path'])
+    _recovery_dereference(current, build['input_closure'], carrier, code, 'storage')
+    old = _TrackedFrozenInputs(_handoff_closure(build['input_closure'], package, carrier, scope).raw,
+                               _RecoveryReadTrace())
+    for field in ('policy_inputs', 'anchor', 'origin_observation'):
+        current.dereference(genesis[field], carrier, code)
+    for name in SOURCE_NAMES:
+        previous = transition['from_sources'][name]
+        following = transition['to_sources'][name]
+        _, before = old.dereference(previous, carrier, code)
+        _, after = current.dereference(following, carrier, code)
+        _, initial = _recovery_dereference(current, genesis['initial_sources'][name], carrier, code, 'storage')
+        if before != initial:
+            _fail(code, 'history_recovery_initial_source')
+        if name in ('executor', 'contract'):
+            if previous['sha256'] != catalog['from'][name] or following['sha256'] != catalog['to'][name]:
+                _fail(code, 'history_recovery_source_pair')
+        elif previous != following:
+            _fail(code, 'history_recovery_fixed_source_changed')
+        capture[str(scope / 'blobs' / (previous['sha256'] + '.blob'))] = before
+        capture[following['path']] = after
+    # Revalidate the original build using only its original generation. The
+    # immutable envelope is published after that generation's capture.
+    original = dict(old.raw)
+    for ref in (payload['build_record'], build['input_closure'], event['genesis'], payload['reservation']):
+        role = 'storage' if ref == build['input_closure'] else 'binding'
+        _, raw = _recovery_dereference(current, ref, carrier, code, role)
+        original[ref['path']] = raw
+    closure_path, closure_raw = _recovery_dereference(current, build['input_closure'], carrier, code, 'storage')
+    closure = _parse(closure_raw, closure_path, code)
+    for entry in closure['sources']:
+        _, raw = _recovery_dereference(current, entry['blob'], carrier, code, 'storage')
+        original[entry['blob']['path']] = raw
+        capture[entry['blob']['path']] = raw
+    _load_fixed_policy(repo, old)
+    _load_fixed_policy(repo, current)
+    _native_build(repo, Path(build['manifest']['path']), Path(payload['build_record']['path']),
+                  _TrackedFrozenInputs(original, old.recovery_trace))
+    evidence = document(payload['evidence'])
+    _keys(evidence, {'schema_version', 'cause', 'source', 'session_id', 'request', 'response', 'script',
+        'runtime_rejection_basis', 'operator_statement', 'evidence_acceptance', 'known_binding_sources', 'additional_sources'}, code, 'history_recovery_evidence')
+    _version(evidence['schema_version'], code)
+    source = evidence['source']
+    _keys(source, {'original_locator', 'runtime_config_root', 'snapshot'}, code, 'history_recovery_native_source')
+    observation_path = scope / 'recovery-read-observations.json'
+    observation = _parse(_recovery_read(current, observation_path, code, 'host_control'), observation_path, code)
+    _keys(observation, {'schema_version', 'unreadable_scripts', 'authority_indexes'}, code, 'history_recovery_read_observations')
+    _version(observation['schema_version'], code)
+    _keys(observation['authority_indexes'], {'operator_statement', 'evidence_acceptance'}, code,
+          'history_recovery_authority_roles')
+    for role_reference in observation['authority_indexes'].values():
+        current.dereference(role_reference, carrier, code)
+    unavailable = observation['unreadable_scripts']
+    if (not isinstance(unavailable, list) or any(not isinstance(p, str) or not Path(p).is_absolute() or
+            str(Path(os.path.abspath(p))) != p or p in current.raw for p in unavailable) or
+            unavailable != sorted(set(unavailable))):
+        _fail(code, 'history_recovery_read_observations')
+    runtime = _RecoveryFrozenInputs(dict(current.raw), source['runtime_config_root'], set(unavailable),
+                                    current.recovery_trace)
+    def source_check(value: Json) -> None:
+        _keys(value, {'original_locator', 'runtime_config_root', 'snapshot'}, code, 'history_recovery_native_source')
+        _, raw = package.dereference(value['snapshot'], carrier, code)
+        if _recovery_read(runtime, Path(value['original_locator']), code, 'native_root') != raw or value['runtime_config_root'] != source['runtime_config_root']:
+            _fail(code, 'history_recovery_snapshot')
+    source_check(source)
+    rejection = _parse_recovery_rejection(repo, manifest, build, Path(source['original_locator']),
+                                         evidence['request']['tool_use_id'], inputs=runtime)
+    basis = document(evidence['runtime_rejection_basis'])
+    if _canonical(rejection['runtime_rejection_basis']) != _canonical(basis):
+        _fail(code, 'recovery_basis_recomputed')
+    rejection['source'] = source
+    for key in ('cause', 'source', 'session_id', 'request', 'response', 'script'):
+        if _canonical(rejection[key]) != _canonical(evidence[key]):
+            _fail(code, 'history_recovery_rejection_' + key)
+    target = {'identity': build['identity'], 'attempt_index': 1, 'genesis': event['genesis'],
+              'reservation': payload['reservation'], 'head': payload['reservation'],
+              'manifest': build['manifest'], 'script': build['workflow_script']}
+    def authority(field: str, acceptance: bool) -> None:
+        value = document(evidence[field])
+        _keys(value, {'schema_version', 'sourceData'}, code, 'history_recovery_authority')
+        _version(value['schema_version'], code)
+        data = value['sourceData']
+        source_check(data['source'])
+        # Role comes from the actual validated recovery argument, not JSON
+        # shape, filenames, candidate order, or caller approval booleans.
+        index_reference = observation['authority_indexes'][field]
+        index_path, _ = runtime.dereference(index_reference, carrier, code)
+        parser = _parse_evidence_acceptance if acceptance else _parse_operator_recovery_statement
+        derived = parser(repo, target, index_path, inputs=runtime)
+        derived['sourceData']['source'] = data['source']
+        if _canonical(derived) != _canonical(value):
+            _fail(code, 'authority_recomputed')
+    authority('operator_statement', False)
+    authority('evidence_acceptance', True)
+    known = evidence['known_binding_sources']
+    if not isinstance(known, list) or known != sorted(known, key=lambda x: (x['path'], x['sha256'])) or len({(x['path'], x['sha256']) for x in known}) != len(known):
+        _fail(code, 'history_recovery_known_sources')
+    for ref in known:
+        package.dereference(ref, carrier, code)
+    for value in evidence['additional_sources']:
+        source_check(value)
+    # Re-run the same structured relation and carrier validators against the
+    # frozen view. Only immutable content-addressed storage may be read here.
+    roots = {Path(source['original_locator'])}
+    for field in ('operator_statement', 'evidence_acceptance'):
+        roots.add(Path(document(evidence[field])['sourceData']['source']['original_locator']))
+    roots.update(Path(value['original_locator']) for value in evidence['additional_sources'])
+    if manifest['evidence']['dispatch_preflight'] is not None:
+        _fail(code, 'history_recovery_first_preflight')
+    for key in ('post_audit_index_path', 'post_drift_index_path', 'post_disposition_index_path'):
+        if str(_path(manifest['evidence'][key], Path(build['manifest']['path']))) in package.raw:
+            _fail('E_RECOVERY_EVIDENCE', 'counterevidence_frozen_index')
+    primary = Path(source['original_locator'])
+    selected = (evidence['request']['uuid'], evidence['response']['uuid'])
+    closure = _RecoveryBindingClosure(repo, build, evidence['request']['tool_use_id'], primary,
+                                      selected, runtime, _recovery_traces(old, runtime), roots)
+    sources = closure.drain()
+    expected_known = [{'path': origin, 'sha256': _hash(current.raw[origin])}
+                      for origin in sorted(runtime.read_origins) if origin != str(observation_path)]
+    if _canonical(known) != _canonical(expected_known):
+        _fail(code, 'history_recovery_known_sources_membership')
+    if set(current.raw) != runtime.read_origins:
+        _fail(code, 'history_recovery_unconsumed_verification_input')
+    # Keep physical old leaves and new logical sources in the result package;
+    # never merge the old generation's logical paths into the current one.
+    for origin, raw in current.raw.items():
+        capture[origin] = raw
+    capture[reference['path']] = _canonical(event)
+    return {'active_sources': transition['to_sources'], 'capture': capture, 'build': build,
+            'old': old, 'runtime': runtime, 'sources': sources, 'evidence': evidence, 'manifest': manifest}
+
+
+def _prefix_active_sources(genesis: Json, head: Json | None, carrier: Path, inputs: _Inputs) -> Json:
+    seen: set[str] = set()
+    while head is not None:
+        path, raw = inputs.dereference(head, carrier, 'E_POLICY_SOURCE')
+        if str(path) in seen:
+            _fail('E_HISTORY_CYCLE', 'recovery_prefix_cycle', path)
+        seen.add(str(path))
+        event = _parse(raw, path, 'E_POLICY_SOURCE')
+        if event['kind'] == 'dispatch_rejected':
+            proof = _verify_recovery_event(event, head, Path(event['genesis']['path']).parent)
+            return proof['active_sources']
+        head = event['previous_event']
+        carrier = path
+    return genesis['initial_sources']
 
 
 def _parse_human_disposition(index_path: Path, target: Json, identity: Json, policy: Json,
@@ -4015,6 +6385,7 @@ def main(argv: list[str] | None = None) -> int:
     builder.add_argument("--repo-path", type=Path, required=True)
     builder.add_argument("--manifest", type=Path, required=True)
     builder.add_argument("--output-dir", type=Path, required=True)
+    builder.add_argument('--recovery-sources', type=Path)
     collector = subparsers.add_parser('collect')
     for name in ('repo-path', 'manifest', 'build-record', 'native-record', 'output'):
         collector.add_argument('--' + name, type=Path, required=True)
@@ -4023,13 +6394,23 @@ def main(argv: list[str] | None = None) -> int:
     modes = collector.add_mutually_exclusive_group()
     modes.add_argument('--prepare-policy', action='store_true')
     modes.add_argument('--check-result', type=Path)
+    recovery = subparsers.add_parser('recover-dispatch-rejection')
+    for name in ('repo-path', 'manifest', 'build-record', 'native-record', 'operator-index', 'evidence-acceptance-index'):
+        recovery.add_argument('--' + name, type=Path, required=True)
+    recovery.add_argument('--tool-use-id', required=True)
+    recovery.add_argument('--check-only', action='store_true')
+    recovery.add_argument('--additional-source', type=Path, action='append', default=[])
     args = parser.parse_args(argv)
     if args.command == 'collect' and args.check_result is not None:
         if Path(os.path.abspath(args.check_result)) != Path(os.path.abspath(args.output)):
             parser.error('E_ARGUMENTS: check-result must equal output')
     try:
         if args.command == 'build':
-            result = build(args.repo_path, args.manifest, args.output_dir)
+            result = build(args.repo_path, args.manifest, args.output_dir, recovery_sources=args.recovery_sources)
+        elif args.command == 'recover-dispatch-rejection':
+            result = recover_dispatch_rejection(args.repo_path, args.manifest, args.build_record,
+                args.native_record, args.tool_use_id, args.operator_index, args.evidence_acceptance_index,
+                check_only=args.check_only, additional_sources=tuple(args.additional_source))
         elif args.prepare_policy:
             result = _prepare_policy(args.repo_path, args.manifest, args.build_record,
                 args.workflow_run_id, args.native_record, args.output, args.previous_round)

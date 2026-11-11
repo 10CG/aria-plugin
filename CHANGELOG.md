@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      evidence. Unblock prerequisite = aria-submodule-gate-operationalize (R-fix-1 shipped
      v1.40.0 below; R-fix-2 tripwire infra pending). See .aria/decisions/2026-06-07-v1.40.0-block-flip.md. -->
 
+## [1.79.0] - 2026-11-11 — 审计执行器派发前容量拒绝的受限恢复
+
+### Added — 容量前检与窄恢复 CLI
+
+- 主 build 与独立 checker 对最终 JS bytes 做 `L=524288` 容量前检（等于上限允许）；主 build 在 scope/run 写入前拒绝超限，checker 前检不承诺整次 prepare 零写入。
+- 新增 `recover-dispatch-rejection`，含只读 `--check-only` 与独立 `dispatch_rejected` 事件；恢复与证据接纳分别验证两项独立真人 authority，固定旧/新来源 pair 经兼容 catalog 绑定，新旧双闭包分别复验。
+- 首次后继 build 重查旧 manifest 的三项 typed locator，发布及 reserve 前以 raw 初始为空的独立 reader 重扫并核对实际消费字节；Frozen 消费与 pending resume 不补读 live、不重派。普通 build/collect 路径与原预算不变。
+
+### Validation and scope
+
+- 已审候选 `source 130e1a3e` / `contract 2d5f5ff8` / `catalog 08f2ea87` 的既有验证：1008 项当前回归、19 项独立 compiled 坏态及类型 + 源码双 fresh 审查通过；真实旧对象 check-only 为 exit 0 / eligible，原件字节保持不变。本次版本准备不重跑上述全套验证，不将历史 AB 当作新程序 AB。
+- 版本准备阶段的验证边界：当时尚未执行实际恢复或主仓采用，原推荐 change 的 Phase A 仍未完成。不表示 Skill 自动选择恢复，不放宽签字或 namespace，也不承诺全平台 fencing。
+
 ## [1.78.0] - 2026-11-07 — 审计执行器与显式可比性守卫
 
 ### Added — Workflow/convergence 受守卫执行路径

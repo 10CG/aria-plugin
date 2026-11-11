@@ -1,7 +1,9 @@
 # Aria Plugin 版本信息
 
-1.78.0
-> **发布日期**: 2026-11-07  # minor: audit-executor-minimal-repair — 审计执行器与显式可比性守卫；既有周期与原件保全，历史字段读取兼容；详见 CHANGELOG.md
+1.79.0
+> **发布日期**: 2026-11-11  # minor: audit-executor-pre-dispatch-recovery — 容量前检与受限派发拒绝恢复；详见 CHANGELOG.md
+> **tag 标识**: `v1.79.0`
+> **发布日期(旧)**: 2026-11-07  # minor: audit-executor-minimal-repair — 审计执行器与显式可比性守卫；既有周期与原件保全，历史字段读取兼容；详见 CHANGELOG.md
 #
 > **发布日期(旧)**: 2026-10-28  # patch: v1.77.5 secret-guard W10 尺寸误拦收窄 (10CG/aria-plugin#217: >8KB 大命令按增长量在硬截止内完整重判, 放宽条件 x86_64 GNU/Linux bash 5.0-5.3 非 WSL; 真实流量放行 136/137; 套件 831→991 例)
 #
@@ -90,7 +92,7 @@
 ## 版本号
 
 ```
-1.77.1
+1.79.0
 ```
 
 ## 说明
